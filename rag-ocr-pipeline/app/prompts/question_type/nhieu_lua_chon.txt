@@ -1,0 +1,8 @@
+QUESTION TYPE: nhieu_lua_chon (Multiple Choice - Multiple Correct Answers)
+
+RULES:
+1. Generate exactly 4 options: A, B, C, D.
+2. AT LEAST TWO options must be correct.
+3. Distractors must be plausible and challenge the student's deep understanding.
+4. The `options` field in JSON must be an object with keys "A", "B", "C", "D".
+5. The `correct_answer` field MUST contain all correct keys separated by a comma and a space (e.g., "A, C", "B, C, D").

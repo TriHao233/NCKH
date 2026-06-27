@@ -1,0 +1,151 @@
+/* ═══════════════════════════════════════════════════════════════
+   Footer.css  |  Shared Footer
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Footer ────────────────────────────────────────────────── */
+.footer {
+  background: var(--navy, #0f172a); /* Fallback màu navy nếu chưa khai báo biến */
+  color: rgba(255, 255, 255, 0.80);
+  padding: 64px 0 0;
+}
+
+/* Kế thừa class container nếu dùng chung toàn layout, định nghĩa thêm nếu cần */
+.container {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+}
+
+.footer-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 40px;
+  padding: 0 24px 48px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.footer-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-logo {
+  height: 44px;
+  width: auto;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 6px;
+  padding: 3px 5px;
+}
+
+.footer-name {
+  font-family: var(--font-display, inherit);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.footer-name-sub {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent, #38bdf8);
+  letter-spacing: 0.06em;
+}
+
+.footer-tagline {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.65);
+  line-height: 1.7;
+}
+
+/* Columns */
+.footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.footer-col-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.50);
+  margin: 0;
+}
+
+.footer-col-text {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.70);
+  line-height: 1.8;
+  margin: 0;
+}
+
+.footer-link {
+  font-size: 0.875rem;
+  color: var(--accent, #38bdf8);
+  text-decoration: none;
+  transition: color var(--transition, 0.3s ease);
+}
+
+.footer-link:hover {
+  color: #fff;
+}
+
+.footer-links {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  list-style: none; /* Xóa dấu chấm tròn của list */
+  margin: 0;
+  padding: 0;
+}
+
+/* Bottom bar */
+.footer-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px 24px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.40);
+  text-align: center;
+}
+
+/* ─── Responsive ────────────────────────────────────────────── */
+@media (max-width: 960px) {
+  .footer-grid {
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 32px;
+  }
+
+  .footer-logo { height: 40px; }
+  .footer-name { font-size: 1rem; }
+  .footer-tagline { font-size: 0.8rem; }
+  .footer-col-text { font-size: 0.8rem; }
+  .footer-link { font-size: 0.8rem; }
+}
+
+@media (max-width: 640px) {
+  .footer { padding: 48px 0 0; }
+  .footer-grid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding-bottom: 32px;
+  }
+  .footer-logo-row { gap: 10px; }
+  .footer-logo { height: 38px; }
+  .footer-name { font-size: 0.95rem; }
+  .footer-tagline { font-size: 0.75rem; }
+  .footer-col-title { font-size: 0.75rem; margin-top: 8px; }
+  .footer-col-text { font-size: 0.75rem; }
+  .footer-link { font-size: 0.75rem; }
+  .footer-bottom { padding: 18px 24px; font-size: 0.7rem; }
+}

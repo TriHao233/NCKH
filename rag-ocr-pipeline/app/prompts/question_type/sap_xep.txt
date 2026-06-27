@@ -1,0 +1,9 @@
+QUESTION TYPE: sap_xep (Ordering / Sequencing)
+
+RULES:
+1. Extract a real process, algorithm flow, or logical sequence directly from the context. Do NOT invent steps that are not in the text.
+2. Present the steps SHUFFLED and numbered as "1", "2", "3", "4", etc.
+3. There must be at least 4 steps.
+4. The `options` field in JSON must list the shuffled steps. Example:
+   "options": {"1": "Step X", "2": "Step Y", "3": "Step Z", "4": "Step W"}
+5. The `correct_answer` field MUST provide the correct chronological sequence of the keys, separated by commas. Example: "3, 1, 4, 2".

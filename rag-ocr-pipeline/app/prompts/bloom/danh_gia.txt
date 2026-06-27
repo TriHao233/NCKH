@@ -1,0 +1,8 @@
+BLOOM LEVEL: DANH_GIA (Evaluating)
+
+DEMAND: The ability to make judgments and decisions about the value of information, ideas, or methods based on specific criteria and standards.
+KEY VERBS TO TARGET: Evaluate, conclude, defend, judge, justify, decide, recommend, criticize.
+
+RULE: 
+- Provide a scenario with multiple approaches or a statement that requires critical thinking.
+- The student must critique, justify, or evaluate a choice or position using evidence-based reasoning derived from the context.

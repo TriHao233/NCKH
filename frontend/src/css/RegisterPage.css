@@ -1,0 +1,371 @@
+/* ═══════════════════════════════════════════════════════════════
+   RegisterPage.css | QBankCTU — Trang đăng ký
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --primary:      #0099E5;
+  --primary-dark: #007CC4;
+  --secondary:    #005BAC;
+  --accent:       #5CC8FF;
+  --navy:         #003A75;
+  --bg:           #F5FAFF;
+  --text:         #1E293B;
+  --text-muted:   #64748B;
+  --text-light:   #94A3B8;
+  --border:       #D6E6F5;
+  --border-light: #EAF3FC;
+  --shadow-xl:    0 24px 64px rgba(0, 58, 117, 0.18);
+  --radius-sm:    8px;
+  --radius-md:    14px;
+  --radius-lg:    20px;
+  --radius-xl:    28px;
+  --font-body:    'Be Vietnam Pro', sans-serif;
+  --font-display: 'Fraunces', serif;
+  --transition:   0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Mesh background ───────────────────────────────────────── */
+.page-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.mesh-circle {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.35;
+}
+.mesh-circle--1 {
+  width: 560px; height: 560px;
+  background: radial-gradient(circle, #5CC8FF 0%, transparent 70%);
+  top: -200px; right: -100px;
+}
+.mesh-circle--2 {
+  width: 380px; height: 380px;
+  background: radial-gradient(circle, #0099E5 0%, transparent 70%);
+  bottom: -140px; left: -80px;
+}
+.mesh-circle--3 {
+  width: 240px; height: 240px;
+  background: radial-gradient(circle, #005BAC 0%, transparent 70%);
+  top: 55%; left: 35%;
+}
+
+/* ─── Top bar ────────────────────────────────────────────────── */
+.topbar {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.topbar-logo {
+  height: 36px;
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.topbar-title {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--secondary);
+}
+
+.topbar-sub {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.topbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.8);
+  backdrop-filter: blur(6px);
+  text-decoration: none;
+  transition: all var(--transition);
+}
+.topbar-back:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+/* ─── Main wrapper ───────────────────────────────────────────── */
+.auth-wrapper {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+  min-height: 0; /* ✨ QUAN TRỌNG: Ngăn flex-item tự phình to quá màn hình */
+}
+
+/* ─── Auth card ──────────────────────────────────────────────── */
+.auth-card {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  width: 100%;
+  max-width: 1000px;
+  height: 100%; /* Bắt buộc lấy chiều cao theo wrapper */
+  max-height: 680px; /* Giới hạn chiều cao tối đa để form không bị kéo dãn quá đà */
+  background: #fff;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--border-light);
+  animation: cardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Left panel (Branding) ──────────────────────────────────── */
+.auth-panel--left {
+  background: linear-gradient(155deg, var(--navy) 0%, var(--secondary) 55%, var(--primary) 100%);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 48px;
+  color: #fff;
+}
+
+.panel-heading {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 3.5vw, 2.8rem);
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 20px;
+}
+
+.panel-heading em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.panel-desc {
+  font-size: 0.95rem;
+  color: rgba(255,255,255,0.75);
+  line-height: 1.6;
+  margin-bottom: 40px;
+  max-width: 320px;
+}
+
+.panel-perks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.perk-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: rgba(255,255,255,0.9);
+}
+
+.perk-icon {
+  width: 22px;
+  height: 22px;
+  background: rgba(92, 200, 255, 0.2);
+  border: 1px solid rgba(92, 200, 255, 0.3);
+  color: var(--accent);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+/* ─── Right panel (Form) ─────────────────────────────────────── */
+.auth-panel--right {
+  padding: 32px 60px; /* Giảm padding dọc từ 48px xuống 32px */
+  display: flex;
+  align-items: center;
+  overflow-y: auto; /* Nội dung dư sẽ tự cuộn ngầm bên trong thẻ card */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.auth-panel--right::-webkit-scrollbar {
+  display: none;
+}
+
+.form-wrap {
+  width: 100%;
+}
+
+.form-header { margin-bottom: 24px; }
+.form-title {
+  font-family: var(--font-display);
+  font-size: 1.85rem;
+  color: var(--navy);
+  margin-bottom: 4px;
+}
+.form-subtitle { font-size: 0.875rem; color: var(--text-muted); }
+.form-link { color: var(--primary); font-weight: 600; text-decoration: none; }
+.form-link:hover { text-decoration: underline; }
+
+/* Google Button & Divider */
+.btn-google {
+  width: 100%;
+  padding: 10px;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: all 0.2s;
+  margin-bottom: 20px;
+  font-family: inherit;
+  color: var(--text);
+}
+.btn-google:hover { background: #f8fbff; border-color: var(--primary); }
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: var(--text-light);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+/* Form Fields */
+.auth-form { display: grid; gap: 16px; }
+.field-group { display: grid; gap: 6px; }
+.field-label { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+
+.field-wrap { position: relative; display: flex; align-items: center; }
+.field-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--text-light);
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+
+.field-input {
+  width: 100%;
+  padding: 11px 14px 11px 40px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 0.9rem;
+  outline: none;
+  transition: all var(--transition);
+  font-family: inherit;
+}
+.field-input:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(0,153,229,0.1); }
+
+.field-toggle {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 5px;
+}
+
+/* Độ mạnh mật khẩu (Strength Meter) */
+.pw-strength {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pw-bars {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.pw-bar {
+  height: 4px;
+  flex: 1;
+  background: var(--border);
+  border-radius: 2px;
+  transition: all 0.3s ease;
+}
+.pw-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  min-width: 65px;
+  text-align: right;
+}
+
+/* Nút Submit */
+.btn-submit {
+  width: 100%;
+  padding: 13px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 0 4px 12px rgba(0,153,229,0.25);
+  transition: all 0.2s;
+  margin-top: 10px;
+  font-family: inherit;
+}
+.btn-submit:hover { background: var(--primary-dark); transform: translateY(-1px); }
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .auth-card { 
+    grid-template-columns: 1fr; 
+    max-width: 500px; 
+    height: auto; 
+    max-height: 90vh; /* Điều chỉnh lại cho màn hình di động/tablet */
+  }
+  .auth-panel--left { display: none; }
+  .auth-panel--right { padding: 40px 30px; }
+}

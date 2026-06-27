@@ -1,0 +1,8 @@
+QUESTION TYPE: dien_khuyet (Fill in the Blank)
+
+RULES:
+1. The `question` text MUST contain exactly one placeholder represented by five underscores: "_____".
+2. The blank must target a key technical concept, algorithm, or important term from the context, NOT a trivial connecting word.
+3. There is only ONE precise correct answer (the exact text that fills the blank).
+4. The `options` field in JSON MUST be set to `null`.
+5. The `correct_answer` field MUST contain the exact word/phrase to fill in the blank.

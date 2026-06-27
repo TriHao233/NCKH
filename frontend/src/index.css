@@ -1,0 +1,52 @@
+/* ==========================================================================
+   1. CSS Variables (Design Tokens toàn cục)
+   ========================================================================== */
+:root {
+    --bg: #f6fbff;
+    --surface: #ffffff;
+    --line: #d9e6f2;
+    --text: #13253f;
+    --muted: #5c6f89;
+    --primary: #0c78d4;
+    --primary-strong: #03539a;
+    --accent: #12b886;
+    --shadow: 0 10px 30px rgba(5, 40, 90, 0.1);
+}
+
+/* ==========================================================================
+   2. CSS Reset (Đồng bộ hiển thị trên mọi trình duyệt)
+   ========================================================================== */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* ==========================================================================
+   3. Base Layout (Cấu trúc khung chuẩn của React)
+   ========================================================================== */
+html,
+body,
+#root {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden; /* Chặn hoàn toàn cuộn ngang */
+}
+
+/* ==========================================================================
+   4. Typography & Base Elements
+   ========================================================================== */
+body {
+    font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background-color: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: var(--primary);
+    text-decoration: none;
+}

@@ -1,0 +1,8 @@
+QUESTION TYPE: trac_nghiem (Multiple Choice - Single Correct Answer)
+
+RULES:
+1. Generate exactly 4 options: A, B, C, D.
+2. There must be ONLY ONE correct answer.
+3. Distractors (incorrect options) must be plausible and related to the context, avoiding obviously wrong choices.
+4. Strictly AVOID using lazy options like "Tất cả các ý trên đều đúng" (All of the above) or "Không có ý nào đúng" (None of the above).
+5. The `options` field in JSON must be an object with keys "A", "B", "C", "D".

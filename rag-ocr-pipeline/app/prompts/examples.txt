@@ -1,0 +1,19 @@
+EXAMPLE OUTPUT (For trac_nghiem at HIEU level):
+{
+  "questions": [
+    {
+      "question": "Trong cấu trúc dữ liệu mảng, nhược điểm chính của việc chèn hoặc xóa một phần tử ở giữa mảng là gì?",
+      "options": {
+        "A": "Làm mất tính ngẫu nhiên khi truy cập các phần tử.",
+        "B": "Yêu cầu phải dịch chuyển nhiều phần tử khác, gây tốn thời gian.",
+        "C": "Phải cấp phát lại toàn bộ bộ nhớ từ đầu.",
+        "D": "Không thể thực hiện được nếu mảng đã đầy."
+      },
+      "correct_answer": "B",
+      "explanation": "Vì các phần tử trong mảng được lưu trữ liên tiếp, việc chèn/xóa ở giữa đòi hỏi phải dịch chuyển các phần tử phía sau để tạo chỗ trống hoặc lấp đầy khoảng trống, làm giảm hiệu suất.",
+      "question_type": "trac_nghiem",
+      "bloom_level": "hieu",
+      "source_context": "việc chèn/xóa phần tử ở giữa mảng tốn nhiều thời gian do phải dịch chuyển các phần tử khác."
+    }
+  ]
+}

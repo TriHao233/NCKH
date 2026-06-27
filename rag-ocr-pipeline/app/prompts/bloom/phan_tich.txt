@@ -1,0 +1,8 @@
+BLOOM LEVEL: PHAN_TICH (Analyzing)
+
+DEMAND: The ability to break information into its component parts and determine how the parts relate to one another and to an overall structure.
+KEY VERBS TO TARGET: Analyze, break down, compare, contrast, deduce, differentiate, investigate, examine.
+
+RULE: 
+- The question must require identifying relationships, underlying structures, or root causes.
+- The student must demonstrate understanding of how different parts of the knowledge interact with each other.

@@ -1,0 +1,12 @@
+QUESTION TYPE: ghep_cot (Matching)
+
+RULES:
+1. Create two groups of items: Numbered items (Group 1: 1, 2, 3...) and Lettered items (Group 2: a, b, c...).
+2. There must be a minimum of 3 to 4 matching pairs.
+3. Add exactly 1 extra distractor item to Group 2 to prevent answering by elimination.
+4. The `options` field in JSON must be a dictionary combining both groups. Example format:
+   "options": {
+     "1": "Term 1", "2": "Term 2", "3": "Term 3",
+     "a": "Definition X", "b": "Definition Y", "c": "Definition Z", "d": "Distractor Definition"
+   }
+5. The `correct_answer` field MUST follow the exact format of pairs separated by commas. Example: "1-b, 2-a, 3-c".

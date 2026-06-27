@@ -1,0 +1,8 @@
+QUESTION TYPE: tinh_huong (Scenario-Based)
+
+RULES:
+1. Open the `question` with a realistic, practical scenario (e.g., a programmer facing a bug, a system design choice) based on the context.
+2. Do NOT explicitly mention "trong tài liệu", "trong đoạn văn", or "theo ngữ liệu". Act as if this is a real-world problem.
+3. Generate exactly 4 options: A, B, C, D. Only ONE correct answer.
+4. The correct answer must require reasoning and applying the context knowledge, not just mere recognition or keyword matching.
+5. The `options` field in JSON must be an object with keys "A", "B", "C", "D".

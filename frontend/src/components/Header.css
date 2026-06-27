@@ -1,0 +1,153 @@
+/* ═══════════════════════════════════════════════════════════════
+   Header.css  |  Shared Navigation Bar
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Navbar ────────────────────────────────────────────────── */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 999;
+  height: var(--nav-h, 64px); /* Fallback mặc định nếu chưa khai báo biến */
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-light, #eaeaea);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+  transition: box-shadow var(--transition, 0.3s ease);
+}
+
+.nav-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  height: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Brand */
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.nav-brand-link {
+  display: flex;
+  align-items: center;
+}
+
+.nav-logo {
+  height: 42px;
+  width: auto;
+  object-fit: contain;
+}
+
+.nav-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.nav-title {
+  font-family: var(--font-display, inherit);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--secondary, #333);
+  letter-spacing: -0.01em;
+}
+
+.nav-subtitle {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--primary, #0056b3);
+  background: var(--bg-subtle, #f0f4f8);
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 5px;
+  padding: 1px 6px;
+  letter-spacing: 0.04em;
+}
+
+/* Menu */
+.nav-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-link {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted, #6b7280);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm, 6px);
+  transition: color var(--transition, 0.3s), background var(--transition, 0.3s);
+  white-space: nowrap;
+  text-decoration: none; /* Reset cho Link component */
+}
+
+.nav-link:hover {
+  color: var(--primary, #0056b3);
+  background: var(--bg-subtle, #f0f4f8);
+}
+
+.nav-link--active {
+  color: var(--primary, #0056b3);
+  background: var(--bg-subtle, #f0f4f8);
+  font-weight: 600;
+}
+
+/* Actions */
+.nav-actions {
+  flex-shrink: 0;
+}
+
+/* ─── Buttons ───────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm, 6px);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all var(--transition, 0.3s ease);
+}
+
+.btn--login {
+  color: var(--primary, #0056b3);
+  border: 1.5px solid var(--border, #d1d5db);
+  background: transparent;
+}
+
+.btn--login:hover {
+  border-color: var(--primary, #0056b3);
+  background: var(--bg-subtle, #f0f4f8);
+}
+
+.btn-icon {
+  font-size: 1rem;
+}
+
+/* ─── Responsive ────────────────────────────────────────────── */
+@media (max-width: 960px) {
+  .nav-container { gap: 24px; }
+  .nav-title { font-size: 1rem; }
+  .nav-menu { gap: 2px; }
+  .nav-link { font-size: 0.85rem; padding: 5px 12px; }
+}
+
+@media (max-width: 768px) {
+  .navbar { height: 60px; }
+  .nav-container { gap: 16px; }
+  .nav-logo { height: 36px; }
+  .nav-menu { display: none; }
+  .nav-title-group { gap: 2px; }
+  .nav-title { font-size: 0.95rem; }
+  .nav-subtitle { font-size: 0.7rem; padding: 0px 4px; }
+}

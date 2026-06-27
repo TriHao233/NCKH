@@ -1,0 +1,17 @@
+OUTPUT FORMAT:
+Return ONLY a raw JSON object strictly matching this schema. DO NOT wrap in ```json, DO NOT add explanations or conversational text before or after the JSON.
+
+SCHEMA:
+{
+  "questions": [
+    {
+      "question": "string",
+      "options": {"A": "...", "B": "..."} or null,
+      "correct_answer": "string",
+      "explanation": "string",
+      "question_type": "string",
+      "bloom_level": "string",
+      "source_context": "string (exact verbatim quote)"
+    }
+  ]
+}

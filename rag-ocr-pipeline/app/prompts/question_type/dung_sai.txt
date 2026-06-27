@@ -1,0 +1,7 @@
+QUESTION TYPE: dung_sai (True / False)
+
+RULES:
+1. Write a precise, clear declarative statement about the subject matter based on the context.
+2. The statement must be unambiguously true or unambiguously false.
+3. The `options` field in JSON MUST be exactly: {"A": "Đúng", "B": "Sai"}.
+4. The `correct_answer` field MUST be either "A" or "B".
