@@ -16,21 +16,23 @@ async def login_user(request: TokenRequest):
         
         # Lấy thêm thông tin từ MongoDB
         user_info = users_collection.find_one({"uid": uid}, {"_id": 0})
-        
+
+        # 'picture' chỉ xuất hiện trong token khi đăng nhập bằng Google
+        google_picture = decoded_token.get('picture', '')
+
         # NẾU LÀ ĐĂNG NHẬP GOOGLE LẦN ĐẦU (Chưa có trong MongoDB)
         if not user_info:
             email = decoded_token.get('email', '')
             name = decoded_token.get('name', 'Người dùng Google')
-            picture = decoded_token.get('picture', '') # Avatar từ Google
 
             user_info = {
                 "uid": uid,
                 "Full name": name,
                 "Email": email,
-                "Địa Chỉ": "",  
-                "School": "",          
+                "Địa Chỉ": "",
+                "School": "",
                 "role": "Giảng viên",
-                "avatar": picture, # Lưu thêm avatar
+                "avatar": google_picture, # Lưu ảnh đại diện lấy từ tài khoản Google
                 "created_at": datetime.utcnow(),
                 "status": "active"
             }
@@ -39,6 +41,12 @@ async def login_user(request: TokenRequest):
             # Xóa _id sau khi insert để trả về JSON không bị lỗi
             if "_id" in user_info:
                 del user_info["_id"]
+
+        # Tài khoản đã tồn tại: đồng bộ lại ảnh đại diện Google mỗi lần đăng nhập
+        # (phòng trường hợp user đổi ảnh trên Google, hoặc tài khoản cũ chưa từng có avatar)
+        elif google_picture and user_info.get("avatar") != google_picture:
+            users_collection.update_one({"uid": uid}, {"$set": {"avatar": google_picture}})
+            user_info["avatar"] = google_picture
 
         return {
             "message": "Đăng nhập thành công",

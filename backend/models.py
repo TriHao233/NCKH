@@ -7,3 +7,9 @@ class UserRegister(BaseModel):
 
 class TokenRequest(BaseModel):
     id_token: str
+
+class ProfileUpdate(BaseModel):
+    id_token: str
+    full_name: str
+    school: str = ""
+    address: str = ""

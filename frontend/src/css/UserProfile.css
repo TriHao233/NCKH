@@ -110,6 +110,8 @@
 }
 .profile-page .field-input:focus { border-color: var(--primary, #0c78d4); background: #fff; box-shadow: 0 0 0 3px rgba(12,120,212,0.1); }
 .profile-page .field-input:disabled { color: var(--text-muted, #5c6f89); background: #f1f5f9; cursor: not-allowed; }
+.profile-page .field-hint { display: block; font-size: 0.75rem; color: var(--text-muted, #5c6f89); margin-top: 6px; }
+.profile-page .btn:disabled { opacity: 0.65; cursor: not-allowed; transform: none; }
 
 /* ─── Sidebar ────────────────────────────────────────────────── */
 .profile-page .profile-side { display: flex; flex-direction: column; gap: 20px; }

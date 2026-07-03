@@ -20,9 +20,6 @@ OUTPUT_DIRS = [
 
 def ensure_env() -> None:
     if "MONGO_URI" not in os.environ:
-        # OLD: os.environ["MONGO_URI"] = "mongodb://localhost:27017/"
-        if Path("/.dockerenv").exists():
-            return
         os.environ["MONGO_URI"] = "mongodb://localhost:27017/"
 
 

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from auth import register, login 
+from auth import register, login, profile
 
 app = FastAPI(title="QBankCTU API")
 
@@ -16,6 +16,7 @@ app.add_middleware(
 # Gắn các router vào app chính
 app.include_router(register.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(login.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(profile.router, prefix="/api/auth", tags=["Authentication"])
 
 @app.get("/")
 def root():

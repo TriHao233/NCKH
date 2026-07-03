@@ -1,14 +1,15 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
+import { auth } from '../../firebase';
 import '../css/UserProfile.css';
 
 function UserProfile() {
-  const { user } = useContext(AuthContext);
+  const { user, updateUser } = useContext(AuthContext);
 
   const displayName = user?.['Full name'] || user?.full_name || 'Giảng viên';
   const displayEmail = user?.Email || user?.email || '';
   const displayRole = user?.role || 'Giảng viên';
-  const displaySchool = user?.School || 'Trường Công nghệ Thông tin & Truyền thông - ĐHCT';
+  const displaySchool = user?.School || '';
   const displayAddress = user?.['Địa Chỉ'] || '';
   const displayStatus = user?.status === 'active' ? 'Đang hoạt động' : 'Ngừng hoạt động';
   const joinedAt = user?.created_at
@@ -19,6 +20,48 @@ function UserProfile() {
   const [fullName, setFullName] = useState(displayName);
   const [school, setSchool] = useState(displaySchool);
   const [address, setAddress] = useState(displayAddress);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Đồng bộ lại form khi dữ liệu user từ AuthContext sẵn sàng/thay đổi
+  useEffect(() => {
+    setFullName(displayName);
+    setSchool(displaySchool);
+    setAddress(displayAddress);
+  }, [user]);
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    if (!fullName.trim()) {
+      alert('Họ và tên không được để trống.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+
+      const response = await fetch('http://localhost:8000/api/auth/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id_token: idToken,
+          full_name: fullName,
+          school,
+          address,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) throw new Error(data.detail || 'Cập nhật hồ sơ thất bại');
+
+      updateUser(data.user);
+      alert('Cập nhật hồ sơ thành công!');
+    } catch (error) {
+      alert('Cập nhật hồ sơ thất bại: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <main className="profile-page">
@@ -37,7 +80,7 @@ function UserProfile() {
         <div className="container profile-grid">
           {/* Main column */}
           <div className="profile-main">
-            <form className="card profile-card" onSubmit={(e) => e.preventDefault()}>
+            <form className="card profile-card" onSubmit={handleSaveProfile}>
               <h3 className="profile-card-title">Thông tin cá nhân</h3>
 
               <div className="field-group">
@@ -53,6 +96,7 @@ function UserProfile() {
                 <div className="field-group">
                   <label className="field-label">Email</label>
                   <input className="field-input" value={displayEmail} disabled />
+                  <span className="field-hint">Không thể thay đổi email</span>
                 </div>
                 <div className="field-group">
                   <label className="field-label">Vai trò</label>
@@ -79,7 +123,9 @@ function UserProfile() {
                 />
               </div>
 
-              <button className="btn btn--primary" type="submit">Lưu thay đổi</button>
+              <button className="btn btn--primary" type="submit" disabled={isSaving}>
+                {isSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
             </form>
 
             <form className="card profile-card" onSubmit={(e) => e.preventDefault()}>

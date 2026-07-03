@@ -28,8 +28,14 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     };
 
+    // Cập nhật thông tin user hiện tại (VD: sau khi chỉnh sửa hồ sơ) mà không đổi token
+    const updateUser = (userInfo) => {
+        localStorage.setItem("userInfo", JSON.stringify(userInfo));
+        setUser(userInfo);
+    };
+
     return (
-        <AuthContext.Provider value={{ user, login, logout, loading }}>
+        <AuthContext.Provider value={{ user, login, logout, updateUser, loading }}>
             {children}
         </AuthContext.Provider>
     );

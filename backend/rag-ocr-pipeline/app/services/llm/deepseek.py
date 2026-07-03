@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 class DeepseekProvider:
     def __init__(self):
-        self.url = "http://host.docker.internal:11434/api/generate"
+        self.url = "http://localhost:11434/api/generate"
         self.model_name = "deepseek-r1:8b"
 
     async def generate_text(self, prompt: str) -> str:

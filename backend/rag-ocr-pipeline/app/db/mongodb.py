@@ -8,8 +8,7 @@ from bson.objectid import ObjectId
 
 logger = logging.getLogger(__name__)
 
-# Dùng host mongodb nếu chạy qua docker-compose
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = "rag_database"
 
 _mongo_client = None
