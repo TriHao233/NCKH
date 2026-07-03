@@ -8,7 +8,6 @@
 NCKH/
 ├── .git/
 ├── backend/
-│   ├── .git/
 │   ├── __pycache__/
 │   ├── auth/
 │   │   ├── __pycache__/
@@ -21,7 +20,6 @@ NCKH/
 │   ├── package-lock.json
 │   └── package.json
 ├── frontend/
-│   ├── .git/
 │   ├── node_modules/
 │   ├── src/
 │   │   ├── components/
@@ -57,7 +55,6 @@ NCKH/
 │   ├── package.json
 │   └── vite.config.js
 ├── rag-ocr-pipeline/
-│   ├── .git/
 │   ├── __pycache__/
 │   ├── app/
 │   │   ├── api/
@@ -144,6 +141,7 @@ NCKH/
 │   ├── requirements.txt
 │   ├── test_llm.py
 │   └── test_prompt.py
+├── .gitignore
 ├── package-lock.json
 └── source_dump.txt
 ```

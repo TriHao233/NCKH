@@ -1,0 +1,142 @@
+/* ═══════════════════════════════════════════════════════════════
+   ContactPage.css | QBankCTU — Liên hệ
+   ═══════════════════════════════════════════════════════════════ */
+
+.contact-page { width: 100%; }
+
+.contact-page .container {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.contact-page .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-radius: var(--radius-sm, 8px);
+  padding: 12px 22px;
+  transition: all 0.25s;
+  cursor: pointer;
+  border: none;
+}
+.contact-page .btn--primary {
+  color: #fff;
+  background: var(--primary, #0c78d4);
+  box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3);
+}
+.contact-page .btn--primary:hover { background: var(--primary-strong, #03539a); transform: translateY(-1px); }
+
+/* ─── Page hero ─────────────────────────────────────────────── */
+.contact-page .page-hero {
+  padding: 76px 0 56px;
+  text-align: center;
+  background: linear-gradient(160deg, #F0F8FF 0%, #E8F4FD 55%, #F5FAFF 100%);
+}
+.contact-page .page-hero-badge {
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--secondary, #005bac);
+  background: rgba(255,255,255,0.85);
+  border: 1px solid var(--border, #d9e6f2);
+  border-radius: 40px;
+  padding: 6px 16px;
+  margin-bottom: 22px;
+}
+.contact-page .page-hero-title {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+  font-weight: 700;
+  color: var(--navy, #003a75);
+  margin-bottom: 18px;
+  max-width: 720px;
+  margin-left: auto; margin-right: auto;
+  line-height: 1.25;
+}
+.contact-page .page-hero-desc { font-size: 1.05rem; color: var(--text-muted, #5c6f89); line-height: 1.7; max-width: 640px; margin: 0 auto; }
+
+/* ─── Body ───────────────────────────────────────────────────── */
+.contact-page .contact-body { padding: 72px 0 96px; background: #fff; }
+.contact-page .contact-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 28px; align-items: start; }
+
+.contact-page .contact-info { display: flex; flex-direction: column; gap: 20px; }
+.contact-page .info-card {
+  background: #fafcff;
+  border: 1px solid #EAF3FC;
+  border-radius: 14px;
+  padding: 26px 24px;
+}
+.contact-page .info-card--muted { background: linear-gradient(135deg, #EBF8FF 0%, #F5FAFF 100%); border-color: rgba(12,120,212,0.2); }
+.contact-page .info-label {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary, #0c78d4);
+  margin-bottom: 10px;
+}
+.contact-page .info-card h3 { font-size: 1.05rem; font-weight: 700; color: var(--navy, #003a75); margin-bottom: 4px; }
+.contact-page .info-card > p { font-size: 0.86rem; color: var(--text-muted, #5c6f89); margin-bottom: 14px; }
+.contact-page .info-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.contact-page .info-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.86rem;
+  color: var(--text, #13253f);
+  line-height: 1.5;
+}
+.contact-page .info-list svg { flex-shrink: 0; margin-top: 2px; color: var(--primary, #0c78d4); }
+.contact-page .info-link { font-size: 0.86rem; font-weight: 600; color: var(--primary, #0c78d4); text-decoration: none; }
+.contact-page .info-link:hover { text-decoration: underline; }
+
+/* ─── Form ───────────────────────────────────────────────────── */
+.contact-page .contact-form {
+  background: #fff;
+  border: 1px solid #EAF3FC;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 6px 24px rgba(5, 40, 90, 0.05);
+}
+.contact-page .form-card-title { font-family: 'Fraunces', serif; font-size: 1.3rem; font-weight: 700; color: var(--navy, #003a75); margin-bottom: 6px; }
+.contact-page .form-card-sub { font-size: 0.88rem; color: var(--text-muted, #5c6f89); margin-bottom: 24px; }
+
+.contact-page .field-group { margin-bottom: 18px; }
+.contact-page .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.contact-page .field-label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text, #13253f); margin-bottom: 8px; }
+.contact-page .field-input,
+.contact-page .field-select {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1.5px solid var(--border, #d9e6f2);
+  border-radius: var(--radius-sm, 8px);
+  background: #fafcff;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--text, #13253f);
+  outline: none;
+  transition: all 0.2s;
+  resize: vertical;
+}
+.contact-page .field-input:focus,
+.contact-page .field-select:focus { border-color: var(--primary, #0c78d4); background: #fff; box-shadow: 0 0 0 3px rgba(12,120,212,0.1); }
+.contact-page .contact-form .btn { width: 100%; margin-top: 6px; }
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 960px) {
+  .contact-page .contact-grid { grid-template-columns: 1fr; }
+  .contact-page .contact-info { order: 2; }
+  .contact-page .contact-form { order: 1; }
+}
+@media (max-width: 640px) {
+  .contact-page .page-hero { padding: 56px 0 40px; }
+  .contact-page .field-row-2 { grid-template-columns: 1fr; }
+  .contact-page .contact-form { padding: 24px; }
+}
