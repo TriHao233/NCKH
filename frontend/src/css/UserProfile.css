@@ -1,0 +1,137 @@
+/* ═══════════════════════════════════════════════════════════════
+   UserProfile.css | QBankCTU — Hồ sơ cá nhân
+   ═══════════════════════════════════════════════════════════════ */
+
+.profile-page { width: 100%; }
+
+.profile-page .container {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.profile-page .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.9rem;
+  border-radius: var(--radius-sm, 8px);
+  padding: 11px 22px;
+  transition: all 0.25s;
+  cursor: pointer;
+  border: none;
+}
+.profile-page .btn--primary {
+  color: #fff;
+  background: var(--primary, #0c78d4);
+  box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3);
+}
+.profile-page .btn--primary:hover { background: var(--primary-strong, #03539a); transform: translateY(-1px); }
+.profile-page .btn--outline {
+  color: var(--secondary, #005bac);
+  border: 1.5px solid var(--border, #d9e6f2);
+  background: transparent;
+}
+.profile-page .btn--outline:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
+
+/* ─── Page hero ─────────────────────────────────────────────── */
+.profile-page .page-hero {
+  padding: 56px 0 40px;
+  background: linear-gradient(160deg, #F0F8FF 0%, #E8F4FD 55%, #F5FAFF 100%);
+}
+.profile-page .profile-hero-row { display: flex; align-items: center; gap: 22px; }
+.profile-page .profile-avatar {
+  width: 84px; height: 84px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 20px rgba(5, 40, 90, 0.12);
+  flex-shrink: 0;
+}
+.profile-page .profile-role-badge {
+  display: inline-block;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--primary, #0c78d4);
+  background: #eaf4ff;
+  border: 1px solid var(--border, #d9e6f2);
+  border-radius: 20px;
+  padding: 3px 12px;
+  margin-bottom: 10px;
+}
+.profile-page .page-hero-title {
+  font-family: 'Fraunces', serif;
+  font-size: clamp(1.5rem, 2.6vw, 2rem);
+  font-weight: 700;
+  color: var(--navy, #003a75);
+  margin-bottom: 4px;
+}
+.profile-page .page-hero-desc { font-size: 0.92rem; color: var(--text-muted, #5c6f89); }
+
+/* ─── Body layout ────────────────────────────────────────────── */
+.profile-page .profile-body { padding: 40px 0 96px; background: #fafcff; }
+.profile-page .profile-grid { display: grid; grid-template-columns: 1fr 300px; gap: 24px; align-items: start; }
+
+.profile-page .card {
+  background: #fff;
+  border: 1px solid #EAF3FC;
+  border-radius: 16px;
+  padding: 26px;
+  box-shadow: 0 6px 24px rgba(5, 40, 90, 0.04);
+}
+
+.profile-page .profile-main { display: flex; flex-direction: column; gap: 20px; }
+.profile-page .profile-card-title {
+  font-family: 'Fraunces', serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--navy, #003a75);
+  margin-bottom: 18px;
+}
+
+.profile-page .field-group { margin-bottom: 16px; }
+.profile-page .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.profile-page .field-label { display: block; font-size: 0.84rem; font-weight: 600; color: var(--text, #13253f); margin-bottom: 7px; }
+.profile-page .field-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border, #d9e6f2);
+  border-radius: var(--radius-sm, 8px);
+  background: #fafcff;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--text, #13253f);
+  outline: none;
+  transition: all 0.2s;
+}
+.profile-page .field-input:focus { border-color: var(--primary, #0c78d4); background: #fff; box-shadow: 0 0 0 3px rgba(12,120,212,0.1); }
+.profile-page .field-input:disabled { color: var(--text-muted, #5c6f89); background: #f1f5f9; cursor: not-allowed; }
+
+/* ─── Sidebar ────────────────────────────────────────────────── */
+.profile-page .profile-side { display: flex; flex-direction: column; gap: 20px; }
+.profile-page .side-card h3 {
+  font-family: 'Fraunces', serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--navy, #003a75);
+  margin-bottom: 16px;
+}
+.profile-page .status-row { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; font-weight: 600; color: #16A34A; margin-bottom: 16px; }
+.profile-page .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #16A34A; flex-shrink: 0; }
+.profile-page .info-list { display: flex; flex-direction: column; gap: 10px; }
+.profile-page .info-list li { display: flex; align-items: center; justify-content: space-between; font-size: 0.86rem; color: var(--text, #13253f); }
+.profile-page .info-list-label { color: var(--text-muted, #5c6f89); }
+.profile-page .side-note { font-size: 0.86rem; color: var(--text-muted, #5c6f89); line-height: 1.6; }
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 960px) {
+  .profile-page .profile-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .profile-page .profile-hero-row { flex-direction: column; text-align: center; }
+  .profile-page .field-row-2 { grid-template-columns: 1fr; }
+}

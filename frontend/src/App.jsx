@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import GuidePage from './pages/GuidePage';
 import ContactPage from './pages/ContactPage';
+import UserProfile from './pages/UserProfile';
 
 function App() {
     return (
@@ -20,6 +21,7 @@ function App() {
                 <Route path="/quan-ly" element={<ManagePage />} />
                 <Route path="/huong-dan" element={<GuidePage />} />
                 <Route path="/lien-he" element={<ContactPage />} />
+                <Route path="/ho-so" element={<UserProfile />} />
             </Route>
 
             <Route path="/dang-nhap" element={<LoginPage />} />
