@@ -1,4 +1,4 @@
-EXAMPLE OUTPUT (For trac_nghiem at HIEU level):
+EXAMPLE OUTPUT (For trac_nghiem):
 {
   "questions": [
     {

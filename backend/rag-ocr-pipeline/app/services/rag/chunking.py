@@ -304,6 +304,18 @@ def _normalize_heading_meta(value: str) -> str:
 	return re.sub(r"\s+", " ", folded).strip().lower()
 
 
+def _is_heading_like_remainder(remainder: str) -> bool:
+	"""Real Roman-numeral headings in this corpus are followed by ALL-CAPS
+	Vietnamese text (e.g. "I TỪ BÀI TOÁN ĐẾN CHƯƠNG TRÌNH"). Single-letter
+	numerals (I/V/X) also collide with common variable names in code/math
+	sentences (e.g. "x giống như x = X + 1"), which are lowercase/mixed-case.
+	Require the remainder to be substantially uppercase to reject those."""
+	letters = [ch for ch in _strip_accents(remainder) if ch.isalpha()]
+	if len(letters) < 3:
+		return False
+	return all(ch.isupper() for ch in letters)
+
+
 def _smart_normalize_heading(line: str) -> str:
 	stripped = line.strip()
 	if not stripped:
@@ -316,7 +328,8 @@ def _smart_normalize_heading(line: str) -> str:
 	folded = _strip_accents(stripped).upper()
 	if any(pattern.match(folded) for pattern in TOP_LEVEL_PATTERNS):
 		return f"# {stripped}"
-	if SUB_LEVEL_2_PATTERN.match(stripped):
+	sub2_match = SUB_LEVEL_2_PATTERN.match(stripped)
+	if sub2_match and _is_heading_like_remainder(stripped[sub2_match.end():]):
 		return f"## {stripped}"
 	if SUB_LEVEL_3_PATTERN.match(stripped):
 		return f"### {stripped}"
@@ -325,10 +338,17 @@ def _smart_normalize_heading(line: str) -> str:
 
 
 def _buffer_has_content(lines: list[str]) -> bool:
+	"""A buffer only counts as real content once it has body text, not just
+	page markers or heading lines. Without this, a run of consecutive
+	headings (e.g. a table-of-contents page listing every chapter title)
+	each triggers a yield, producing near-empty chunks."""
 	for line in lines:
 		s = line.strip()
-		if s and not PAGE_MARKER_PATTERN.match(s):
-			return True
+		if not s or PAGE_MARKER_PATTERN.match(s):
+			continue
+		if s.startswith("#"):
+			continue
+		return True
 	return False
 
 

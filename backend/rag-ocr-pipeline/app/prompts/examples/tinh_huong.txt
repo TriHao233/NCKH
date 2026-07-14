@@ -1,0 +1,19 @@
+EXAMPLE OUTPUT (For tinh_huong):
+{
+  "questions": [
+    {
+      "question": "Một lập trình viên cần cài đặt chức năng 'Hoàn tác' (Undo) cho phần mềm soạn thảo văn bản, trong đó thao tác được hoàn tác gần nhất phải luôn là thao tác vừa thực hiện trước đó. Cấu trúc dữ liệu nào phù hợp nhất để lưu lịch sử thao tác?",
+      "options": {
+        "A": "Hàng đợi (Queue)",
+        "B": "Ngăn xếp (Stack)",
+        "C": "Mảng tĩnh (Static Array)",
+        "D": "Danh sách liên kết đôi không có thứ tự truy cập"
+      },
+      "correct_answer": "B",
+      "explanation": "Chức năng Undo cần lấy ra thao tác được thêm vào sau cùng trước tiên, đúng với nguyên tắc LIFO của Ngăn xếp (Stack).",
+      "question_type": "tinh_huong",
+      "bloom_level": "van_dung",
+      "source_context": "Ngăn xếp (Stack) hoạt động theo nguyên tắc LIFO (Last In First Out)."
+    }
+  ]
+}

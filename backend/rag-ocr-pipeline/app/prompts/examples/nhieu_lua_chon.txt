@@ -1,0 +1,19 @@
+EXAMPLE OUTPUT (For nhieu_lua_chon):
+{
+  "questions": [
+    {
+      "question": "Những đặc điểm nào sau đây đúng với cấu trúc dữ liệu Mảng (Array)?",
+      "options": {
+        "A": "Các phần tử được lưu trữ liên tục trong bộ nhớ",
+        "B": "Kích thước có thể thay đổi linh hoạt trong lúc chạy",
+        "C": "Hỗ trợ truy cập ngẫu nhiên với thời gian O(1)",
+        "D": "Chèn/xóa phần tử ở giữa luôn có độ phức tạp O(1)"
+      },
+      "correct_answer": "A, C",
+      "explanation": "Mảng lưu trữ liên tục trong bộ nhớ (A) nên hỗ trợ truy cập ngẫu nhiên O(1) (C). Kích thước mảng tĩnh thường cố định (B sai), và chèn/xóa giữa mảng tốn O(n) do phải dịch chuyển phần tử (D sai).",
+      "question_type": "nhieu_lua_chon",
+      "bloom_level": "phan_tich",
+      "source_context": "Mảng lưu trữ liên tục trong bộ nhớ, hỗ trợ truy cập ngẫu nhiên O(1); chèn/xóa giữa mảng tốn O(n) do phải dịch chuyển phần tử."
+    }
+  ]
+}

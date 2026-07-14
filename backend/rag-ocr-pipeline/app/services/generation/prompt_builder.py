@@ -5,7 +5,8 @@ class PromptBuilder:
         system = PromptLoader.load("system.txt")
         bloom = PromptLoader.load(f"bloom/{bloom_level}.txt")
         qtype = PromptLoader.load(f"question_type/{question_type}.txt")
-        example = PromptLoader.load("examples.txt") # Thêm dòng này
+        # Ví dụ theo đúng loại câu đang sinh (mỗi loại có cấu trúc JSON khác nhau)
+        example = PromptLoader.load(f"examples/{question_type}.txt")
         output = PromptLoader.load("output_format.txt")
 
         # Ráp lại với cấu trúc tối ưu hóa
