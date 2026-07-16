@@ -6,9 +6,9 @@ from core.config import settings
 from core.database import init_firebase
 from core.logging import setup_logging
 from modules.auth import register, login, profile
-from modules.ocr.router import router as ocr_router
-from modules.rag.router import router as rag_router
-from modules.generation.router import router as generation_router
+from modules.ocr.ocr import router as ocr_router
+from modules.rag.chunking import router as rag_router
+from modules.generation.generate import router as generation_router
 
 setup_logging()
 init_firebase()

@@ -46,7 +46,7 @@ def clean_mongo(filename: str) -> None:
 
 async def generate_questions(document_id: str, model_provider: str) -> None:
     from modules.generation.schemas import BloomLevel, QuestionGenerateRequest, QuestionType
-    from modules.generation.service import generate_questions_rag
+    from modules.generation.question import generate_questions_rag
 
     req = QuestionGenerateRequest(
         document_id=document_id,
@@ -81,9 +81,9 @@ def main() -> int:
     clean_mongo(INPUT_PDF.name)
 
     from core.config import settings
-    from modules.ocr.repository import create_document_record, save_document_pages, update_document_status
+    from modules.ocr.mongodb import create_document_record, save_document_pages, update_document_status
     from modules.ocr.pipeline import run_ocr_pipeline
-    from modules.rag.service import chunk_document_and_store
+    from modules.rag.chunking import chunk_document_and_store
 
     title = INPUT_PDF.stem.replace("_", " ")
     document_id = create_document_record(filename=INPUT_PDF.name, title=title)

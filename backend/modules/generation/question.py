@@ -11,7 +11,7 @@ from modules.generation.schemas import (
 from modules.generation.prompt_builder import PromptBuilder
 from modules.rag.search import get_context_for_generation
 from modules.generation.llm.factory import get_llm_service
-from modules.generation.repository import save_generated_questions
+from modules.generation.mongodb import save_generated_questions
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ import logging
 import re
 import unicodedata
 
-from modules.rag.vector_store import get_chroma_client
+from modules.rag.chromadb_engine import get_chroma_client
 
 logger = logging.getLogger(__name__)
 

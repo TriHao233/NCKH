@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import logging
 from modules.generation.schemas import QuestionGenerateRequest, QuestionGenerateResponse
-from modules.generation.service import generate_questions_rag
+from modules.generation.question import generate_questions_rag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/generate", tags=["generation"])

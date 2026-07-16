@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from modules.ocr.engine import is_easyocr_available, stream_and_ocr_pdf
+from modules.ocr.easyocr_engine import is_easyocr_available, stream_and_ocr_pdf
 from modules.ocr.formula_processor import process_pages_with_formula_blocks
 from modules.ocr.text_cleaner import clean_ocr_pages
 from modules.ocr.formula_detector import mark_formulas_in_pages

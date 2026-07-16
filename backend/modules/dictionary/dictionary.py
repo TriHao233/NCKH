@@ -5,7 +5,7 @@ import httpx
 
 from core.config import settings
 from core.database import get_rag_db
-from modules.dictionary.repository import add_pending_keywords
+from modules.dictionary.mongodb import add_pending_keywords
 
 logger = logging.getLogger(__name__)
 

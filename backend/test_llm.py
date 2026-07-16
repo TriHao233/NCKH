@@ -8,7 +8,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.llm.factory import get_llm_service
-from modules.generation.service import _clean_llm_output
+from modules.generation.question import _clean_llm_output
 
 async def run_test():
     context = """

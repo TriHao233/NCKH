@@ -5,13 +5,18 @@ import unicodedata
 from collections import Counter
 from typing import Iterable
 
-from core.config import settings
-from modules.dictionary.repository import get_active_keywords
-from modules.rag.export import export_chunks_to_file
-from modules.rag.repository import get_document_record, iter_document_pages, update_chunking_status
-from modules.rag.schemas import ChunkingStats, DocumentChunkResponse
-from modules.rag.vector_store import store_chunks
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 
+from core.config import settings
+from modules.dictionary.dictionary import run_dictionary_auto_learning
+from modules.dictionary.mongodb import get_active_keywords
+from modules.rag.chunking_export import export_chunks_to_file
+from modules.rag.chromadb_engine import store_chunks
+from modules.rag.mongodb import get_document_record, iter_document_pages, update_chunking_status
+from modules.rag.schemas import ChunkingStats, DocumentChunkRequest, DocumentChunkResponse
+
+router = APIRouter(prefix="/api/v1/chunk", tags=["chunking"])
 logger = logging.getLogger(__name__)
 
 PAGE_MARKER_PATTERN = re.compile(r"<!--\s*PAGE:(\d+)\s*-->")
@@ -33,6 +38,44 @@ BIG_O_PATTERN = re.compile(r"\bO\([^)]*\)")
 EXAMPLE_PATTERN = re.compile(r"\b(thí dụ|ví dụ|vd)\b", re.IGNORECASE)
 EXERCISE_PATTERN = re.compile(r"\b(bài tập|câu hỏi|thực hành|luyện tập|ôn tập)\b", re.IGNORECASE)
 DEFINITION_PATTERN = re.compile(r"\b(định nghĩa|khái niệm|là gì)\b", re.IGNORECASE)
+
+
+# -------------------------------------------------------------
+# API: Chunk tài liệu OCR và lưu vào ChromaDB
+# -------------------------------------------------------------
+@router.post("/document", response_model=DocumentChunkResponse, summary="Chunk OCR document and store to ChromaDB")
+async def chunk_document(req: DocumentChunkRequest, background_tasks: BackgroundTasks):
+    doc = get_document_record(req.document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        result = await run_in_threadpool(
+            chunk_document_and_store,
+            document_id=req.document_id,
+            chunk_size=req.chunk_size,
+            chunk_overlap=req.chunk_overlap,
+            collection_name=req.collection_name,
+            buffer_max_pages=req.buffer_max_pages,
+            buffer_max_chars=req.buffer_max_chars,
+            max_code_block_lines=req.max_code_block_lines,
+            dry_run=req.dry_run,
+        )
+
+        if not req.dry_run and result.total_chunks > 0:
+            logger.info("Đang kích hoạt tiến trình AI học từ khóa ngầm...")
+            background_tasks.add_task(
+                run_dictionary_auto_learning,
+                document_id=req.document_id,
+                course_id="it_fundamentals"
+            )
+
+        return result
+    except Exception as ex:
+        logger.exception("Chunking failed: %s", ex)
+        update_chunking_status(req.document_id, status="failed", error_message=str(ex))
+        raise HTTPException(status_code=500, detail=str(ex)) from ex
+
 
 def chunk_document_and_store(
     document_id: str,
