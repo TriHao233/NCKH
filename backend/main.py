@@ -1,23 +1,41 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from auth import register, login, profile
+from fastapi.responses import RedirectResponse
 
-app = FastAPI(title="QBankCTU API")
+from core.config import settings
+from core.database import init_firebase
+from core.logging import setup_logging
+from modules.auth import register, login, profile
+from modules.ocr.router import router as ocr_router
+from modules.rag.router import router as rag_router
+from modules.generation.router import router as generation_router
 
-# Cấu hình CORS để cho phép Frontend (Vite) gọi API
+setup_logging()
+init_firebase()
+
+app = FastAPI(title=settings.app_name, version=settings.app_version)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"], # Cho phép cổng 5173 của React
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"], # Cho phép tất cả các phương thức (GET, POST, PUT, DELETE)
-    allow_headers=["*"], # Cho phép tất cả các header
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Gắn các router vào app chính
 app.include_router(register.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(login.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(profile.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(ocr_router)
+app.include_router(rag_router)
+app.include_router(generation_router)
 
-@app.get("/")
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "message": "Hệ thống đang hoạt động!"}
+
+
+@app.get("/", include_in_schema=False)
 def root():
-    return {"message": "Server đang chạy thành công!"}
+    return RedirectResponse(url="/docs")

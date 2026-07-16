@@ -1,1 +1,22 @@
 uvicorn main:app --reload
+
+# Cấu trúc backend (Feature-based Modular Architecture)
+backend/
+├── main.py          # 1 entrypoint duy nhất — chỉ include router ở đây, không viết logic
+├── core/             # config, database (Mongo/Firebase dùng chung), security, logging
+├── common/           # exceptions, responses, utils dùng chung
+└── modules/
+    ├── auth/          # register.py, login.py, profile.py — CHỈ 3 file, mỗi file tự chứa
+    │                  #   router + schema (Pydantic) + gọi thẳng core.database.get_auth_db().
+    │                  #   Module đơn giản, cố tình KHÔNG tách service/repository riêng.
+    ├── ocr/           # router.py -> service.py -> pipeline/engine/formula_*/text_cleaner -> repository.py
+    ├── rag/           # router.py -> service.py (chunking) -> vector_store/search/export -> repository.py
+    ├── generation/    # router.py -> service.py -> prompt_builder/prompt_loader, llm/{gemini,qwen,deepseek} -> repository.py
+    └── dictionary/    # service.py (auto-learning) -> repository.py (không có router riêng, chạy nền từ rag)
+
+# Quy ước khi thêm code mới:
+# - Thêm endpoint vào module đã có -> viết trong router.py của module đó (hoặc thêm 1 file riêng như auth
+#   nếu muốn tách theo action). Router CHỈ nhận request/trả response, không gọi Mongo/ChromaDB trực tiếp.
+# - Logic nghiệp vụ -> service.py. Truy vấn Mongo/ChromaDB -> repository.py.
+# - Thêm module hoàn toàn mới -> tạo modules/<ten_module>/ theo đúng pattern router -> service -> repository.
+# - Router mới CHỈ được include trong backend/main.py (app.include_router), không tạo FastAPI() ở nơi khác.

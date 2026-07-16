@@ -50,32 +50,28 @@ NCKH/
 │       ├── components/        # Header, Footer, Layout, UserProfileMenu
 │       └── context/           # AuthContext (Firebase Auth)
 │
-├── backend/                   # FastAPI — Auth & orchestration
-│   ├── main.py                 # App entrypoint, CORS, router mount
-│   ├── auth/                   # register / login / profile (Firebase Auth)
-│   ├── database.py, models.py  # Pydantic models
-│   │
-│   └── rag-ocr-pipeline/       # FastAPI con — Core AI (OCR + RAG + Generation)
-│       └── app/
-│           ├── engine/          # easyocr_engine.py, chromadb_engine.py
-│           ├── models/          # ocr.py, chunking.py, schemas.py
-│           ├── services/        # ocr/, rag/, llm/, generation/
-│           ├── prompts/         # system.txt, bloom/, question_type/, examples.txt
-│           ├── db/               # mongodb.py
-│           └── api/v1/
+├── backend/                   # FastAPI — 1 app duy nhất (auth + AI core)
+│   ├── main.py                 # Entrypoint duy nhất: FastAPI(), CORS, router mount
+│   ├── core/                   # config, database (Mongo/Firebase), security, logging — dùng chung
+│   ├── common/                 # exceptions, responses, utils dùng chung
+│   ├── modules/                # Feature-based, mỗi module theo router → service → repository
+│   │   ├── auth/                # register / login / profile (Firebase Auth)
+│   │   ├── ocr/                  # easyocr pipeline, formula detector/processor
+│   │   ├── rag/                   # chunking, chromadb vector store, search
+│   │   ├── generation/            # sinh câu hỏi, prompt builder, LLM factory (gemini/qwen/deepseek)
+│   │   └── dictionary/             # auto-learning từ khóa
+│   ├── prompts/                # system.txt, bloom/, question_type/, examples/
+│   └── data/                   # uploads, ocr_outputs, chunk_outputs, metadata, chroma_data
 ```
 
 **Stack:**
 - **Frontend:** React 18 + Vite, React Router, Firebase SDK (auth), FontAwesome.
-- **Backend (auth/orchestration):** FastAPI, Firebase Admin (xác thực người dùng).
-- **Core AI (`rag-ocr-pipeline`):** FastAPI riêng, chạy độc lập.
+- **Backend:** 1 FastAPI app duy nhất (`uvicorn main:app --reload`), Firebase Admin (xác thực người dùng).
   - OCR: `easyocr` + `pdf2image` (xử lý PDF scan tiếng Việt).
   - Vector DB: `chromadb` + `sentence-transformers` (embedding & retrieval cho RAG).
   - LLM: `google-genai` hiện dùng để thử nghiệm (mục tiêu cuối là LLM local qua PyTorch CUDA — `torch`/`torchvision`/`torchaudio` đã có trong requirements).
   - Lưu trữ tài liệu/metadata: MongoDB (`pymongo`).
   - Prompt được tổ chức theo **thang đo BLOOM** và theo **loại câu hỏi** (`prompts/bloom/`, `prompts/question_type/`).
-
-> Ghi chú: `backend/` (auth) và `backend/rag-ocr-pipeline/` (AI core) là 2 service FastAPI tách biệt — backend chính lo auth/CRUD, pipeline lo xử lý tài liệu + sinh câu hỏi. Cần làm rõ giao tiếp giữa 2 service này (gọi trực tiếp qua HTTP nội bộ, hay gộp lại) khi phát triển tiếp.
 
 ## 5. Flow hoạt động dự kiến (end-to-end)
 
@@ -160,4 +156,4 @@ Các trang frontend hiện có khớp với các chức năng trên: `HomePage`,
 - **OCR chỉ cần khi tài liệu là PDF scan** (ảnh) — tài liệu PDF text thuần không cần qua easyocr.
 - **Không được auto-publish câu hỏi AI sinh ra** — luôn phải qua bước duyệt của giảng viên (human-in-the-loop) trước khi vào Moodle.
 - **Chuẩn hóa output theo Moodle**: đáp án, thiết lập xáo trộn, mã hóa tiếng Việt phải đúng ngay từ bước Generation để Plugin xuất bản không cần xử lý lại.
-- Hai service FastAPI (`backend/` và `backend/rag-ocr-pipeline/`) hiện tách rời — cần quyết định cơ chế giao tiếp (REST nội bộ, message queue, hay hợp nhất) khi ghép luồng end-to-end.
+- Backend đã hợp nhất thành 1 FastAPI app duy nhất (`backend/main.py`), tổ chức theo Feature-based Modular Architecture (`core/`, `common/`, `modules/{auth,ocr,rag,generation,dictionary}/`), mỗi module theo pattern router → service → repository.
