@@ -31,6 +31,21 @@
   box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3);
 }
 .generate-page .btn--primary:hover { background: var(--primary-strong, #03539a); transform: translateY(-1px); }
+.generate-page .btn--primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+.generate-page .btn--secondary {
+  color: var(--primary, #0c78d4);
+  background: #eaf4ff;
+  border: 1px solid #cfe6fb;
+}
+.generate-page .btn--ghost {
+  color: var(--text-muted, #5c6f89);
+  background: transparent;
+  border: 1px solid var(--border, #d9e6f2);
+}
 
 /* ─── Page hero ─────────────────────────────────────────────── */
 .generate-page .page-hero {
@@ -131,6 +146,11 @@
   background: #fafcff;
 }
 .generate-page .upload-drop:hover { border-color: var(--primary, #0c78d4); background: #f0f8ff; color: var(--primary, #0c78d4); }
+.generate-page .upload-drop--disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 .generate-page .upload-drop span { font-size: 0.88rem; font-weight: 600; }
 .generate-page .upload-hint { font-size: 0.75rem !important; font-weight: 400 !important; color: var(--text-muted, #5c6f89) !important; }
 
@@ -148,10 +168,113 @@
   transition: all 0.2s;
 }
 .generate-page .chip--active { background: var(--primary, #0c78d4); border-color: var(--primary, #0c78d4); color: #fff; }
+.generate-page .chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .generate-page .chip--bloom.chip--active { background: var(--navy, #003a75); border-color: var(--navy, #003a75); }
 
 .generate-page .gen-submit { width: 100%; margin-top: 4px; }
 .generate-page .gen-form-note { font-size: 0.78rem; color: var(--text-muted, #5c6f89); line-height: 1.6; margin-top: 14px; text-align: center; }
+
+.generate-page .gen-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  margin-bottom: 18px;
+  border: 1px solid #cfe6fb;
+  background: #f5faff;
+}
+.generate-page .gen-status--failed {
+  border-color: rgba(220, 38, 38, 0.25);
+  background: #fff5f5;
+}
+.generate-page .gen-status--done {
+  border-color: rgba(34, 197, 94, 0.25);
+  background: #f0fff6;
+}
+.generate-page .gen-status-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.84rem;
+  color: var(--text-muted, #5c6f89);
+}
+.generate-page .gen-status-text strong {
+  color: var(--navy, #003a75);
+  font-size: 0.9rem;
+}
+.generate-page .gen-status-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #cfe6fb;
+  border-top-color: var(--primary, #0c78d4);
+  border-radius: 50%;
+  animation: gen-spin 0.8s linear infinite;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.generate-page .gen-status-spinner--inline {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
+}
+.generate-page .job-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary, #0c78d4);
+  background: #eaf4ff;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.generate-page .gen-error {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  background: #fff5f5;
+  margin-bottom: 18px;
+}
+.generate-page .gen-error p {
+  margin: 0 0 12px;
+  color: #b91c1c;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.generate-page .gen-error-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.generate-page .gen-preview-empty {
+  padding: 36px 20px;
+  text-align: center;
+  border: 1px dashed #d9e6f2;
+  border-radius: 12px;
+  background: #fafcff;
+}
+.generate-page .gen-preview-empty p {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: var(--navy, #003a75);
+}
+.generate-page .gen-preview-empty span {
+  font-size: 0.84rem;
+  color: var(--text-muted, #5c6f89);
+}
+.generate-page .draft-item-explanation {
+  font-size: 0.8rem;
+  color: var(--text-muted, #5c6f89);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+@keyframes gen-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ─── Draft preview ──────────────────────────────────────────── */
 .generate-page .draft-list { display: flex; flex-direction: column; gap: 16px; }

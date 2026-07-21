@@ -41,12 +41,14 @@ def clean_mongo(filename: str) -> None:
     doc_ids = [str(d["_id"]) for d in docs]
     db["pages"].delete_many({"document_id": {"$in": doc_ids}})
     db["questions"].delete_many({"document_id": {"$in": doc_ids}})
+    db["generation_jobs"].delete_many({"request.document_id": {"$in": doc_ids}})
     db["documents"].delete_many({"_id": {"$in": [d["_id"] for d in docs]}})
 
 
 async def generate_questions(document_id: str, model_provider: str) -> None:
+    from modules.generation.generate import process_generate_background
+    from modules.generation.mongodb import create_generation_job, get_generation_job
     from modules.generation.schemas import BloomLevel, QuestionGenerateRequest, QuestionType
-    from modules.generation.question import generate_questions_rag
 
     req = QuestionGenerateRequest(
         document_id=document_id,
@@ -56,15 +58,27 @@ async def generate_questions(document_id: str, model_provider: str) -> None:
         num_questions=3,
         model_provider=model_provider,
     )
-    result = await generate_questions_rag(req)
+    job_id = create_generation_job(req.model_dump(mode="json"))
+    await process_generate_background(job_id)
+
+    job = get_generation_job(job_id)
+    if not job or job["status"] != "completed":
+        error = job.get("error_message") if job else "Job not found"
+        raise RuntimeError(f"Generation failed: {error}")
+
+    result_data = job["result"]["data"]
     print("Questions generated:")
-    for idx, item in enumerate(result.data, 1):
-        print(f"\n[{idx}] {item.question}")
-        if item.options:
-            for key, value in item.options.items():
-                print(f"  {key}. {value}")
-        print(f"Answer: {item.correct_answer}")
-        print(f"Bloom: {item.bloom_level} | Type: {item.question_type}")
+    for idx, item in enumerate(result_data, 1):
+        print(f"\n[{idx}] {item['question']}")
+        options = item.get("options")
+        if options:
+            if isinstance(options, dict):
+                for key, value in options.items():
+                    print(f"  {key}. {value}")
+            else:
+                print(f"  Options: {options}")
+        print(f"Answer: {item['correct_answer']}")
+        print(f"Bloom: {item['bloom_level']} | Type: {item['question_type']}")
 
 
 def main() -> int:

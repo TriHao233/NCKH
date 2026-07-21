@@ -32,7 +32,15 @@ def get_rag_db() -> Database:
 
 def init_firebase() -> None:
     """Khởi tạo Firebase Admin đúng 1 lần khi app start."""
-    if not firebase_admin._apps:
+    if firebase_admin._apps:
+        return
+    try:
         cred = credentials.Certificate(settings.firebase_credentials_path)
         firebase_admin.initialize_app(cred)
         logger.info("Firebase Admin initialized")
+    except FileNotFoundError:
+        logger.warning(
+            "Không tìm thấy firebase-service-account.json tại %s — bỏ qua Firebase. "
+            "Các API auth dùng Firebase sẽ không hoạt động cho tới khi bổ sung file này.",
+            settings.firebase_credentials_path,
+        )

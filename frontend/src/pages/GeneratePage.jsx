@@ -1,58 +1,197 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { chunkDocument } from '../api/chunk';
+import { enqueueGenerateQuestions, getGenerateStatus } from '../api/generate';
+import { getOcrStatus, uploadOcrPdf } from '../api/ocr';
+import {
+  BLOOM_LEVELS,
+  QUESTION_TYPES,
+  toBackendBloomLevel,
+  toBackendQuestionType,
+} from '../constants/generationEnums';
+import { pollJob } from '../hooks/useJobPoll';
+import { mapGeneratedQuestions } from '../utils/mapGeneratedQuestion';
 import '../css/GeneratePage.css';
 
-const questionTypes = [
-  { id: 'mcq', label: 'Trắc nghiệm (MCQ)' },
-  { id: 'tf', label: 'Đúng / Sai' },
-  { id: 'fill', label: 'Điền khuyết' },
-  { id: 'match', label: 'Ghép đôi' },
-  { id: 'scenario', label: 'Tình huống' },
-];
+const PHASE_LABELS = {
+  idle: 'Sẵn sàng',
+  uploading: 'Đang tải tài liệu lên...',
+  ocr_queued: 'OCR đã vào hàng đợi',
+  ocr_processing: 'Đang OCR tài liệu...',
+  chunking: 'Đang index / chunk tài liệu...',
+  generate_queued: 'Sinh câu hỏi đã vào hàng đợi',
+  generate_processing: 'Đang sinh câu hỏi bằng AI...',
+  completed: 'Hoàn tất',
+  failed: 'Thất bại',
+};
 
-const bloomLevels = [
-  { id: 'remember', label: 'Nhớ' },
-  { id: 'understand', label: 'Hiểu' },
-  { id: 'apply', label: 'Áp dụng' },
-  { id: 'analyze', label: 'Phân tích' },
-  { id: 'evaluate', label: 'Đánh giá' },
-  { id: 'create', label: 'Sáng tạo' },
-];
-
-const draftQuestions = [
-  {
-    id: 'Q-DRAFT-01',
-    type: 'MCQ',
-    bloom: 'Nhớ',
-    text: 'Cấu trúc dữ liệu nào sau đây hoạt động theo nguyên tắc LIFO (Vào sau ra trước)?',
-    choices: ['A. Hàng đợi (Queue)', 'B. Ngăn xếp (Stack)', 'C. Danh sách liên kết', 'D. Đồ thị (Graph)'],
-    correct: 1,
-  },
-  {
-    id: 'Q-DRAFT-02',
-    type: 'Đúng/Sai',
-    bloom: 'Phân tích',
-    text: 'Trong cây nhị phân tìm kiếm (BST), phần tử ở nút con trái luôn lớn hơn phần tử ở nút cha.',
-    choices: ['Đúng', 'Sai'],
-    correct: 1,
-  },
-  {
-    id: 'Q-DRAFT-03',
-    type: 'Điền khuyết',
-    bloom: 'Hiểu',
-    text: 'Thuật toán duyệt đồ thị theo chiều rộng có tên tiếng Anh là ______.',
-    choices: ['Breadth-First Search (BFS)'],
-    correct: 0,
-  },
-];
+function shortId(id) {
+  if (!id) return '';
+  return id.length > 8 ? `${id.slice(0, 8)}...` : id;
+}
 
 function GeneratePage() {
-  const [selectedTypes, setSelectedTypes] = useState(['mcq', 'tf']);
-  const [selectedBloom, setSelectedBloom] = useState(['understand', 'apply']);
+  const abortRef = useRef(null);
+  const [phase, setPhase] = useState('idle');
+  const [error, setError] = useState('');
+  const [statusDetail, setStatusDetail] = useState('');
+  const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState('');
+  const [selectedType, setSelectedType] = useState('mcq');
+  const [selectedBloom, setSelectedBloom] = useState('understand');
+  const [numQuestions, setNumQuestions] = useState(5);
+  const [documentId, setDocumentId] = useState(null);
+  const [activeJobId, setActiveJobId] = useState('');
+  const [drafts, setDrafts] = useState([]);
+  const [chunkReady, setChunkReady] = useState(false);
 
-  const toggle = (list, setList, id) => {
-    setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  const isBusy = !['idle', 'completed', 'failed'].includes(phase);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const resetPoll = () => {
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    return abortRef.current;
   };
+
+  const validateForm = () => {
+    if (!file) return 'Vui lòng chọn file PDF';
+    if (!file.name.toLowerCase().endsWith('.pdf')) return 'Chỉ hỗ trợ file PDF';
+    if (!selectedType) return 'Vui lòng chọn loại câu hỏi';
+    if (!selectedBloom) return 'Vui lòng chọn cấp độ Bloom';
+    if (numQuestions < 1 || numQuestions > 10) return 'Số câu hỏi phải từ 1 đến 10';
+    return null;
+  };
+
+  const runOcrPipeline = async (pdfFile, signal) => {
+    setPhase('uploading');
+    setStatusDetail('Đang upload file PDF...');
+    const uploadResult = await uploadOcrPdf(pdfFile);
+    const ocrJobId = uploadResult.job_id;
+    setActiveJobId(ocrJobId);
+    setDocumentId(ocrJobId);
+
+    const ocrResult = await pollJob(getOcrStatus, ocrJobId, {
+      signal,
+      onUpdate: (status) => {
+        if (status.status === 'queued') setPhase('ocr_queued');
+        if (status.status === 'processing') setPhase('ocr_processing');
+        setStatusDetail(`OCR: ${status.status}`);
+      },
+    });
+
+    if (ocrResult.status === 'failed') {
+      throw new Error(ocrResult.error_message || 'OCR thất bại');
+    }
+
+    return ocrJobId;
+  };
+
+  const runChunk = async (docId) => {
+    setPhase('chunking');
+    setStatusDetail('Đang chunk và lưu vector...');
+    await chunkDocument(docId);
+    setChunkReady(true);
+  };
+
+  const runGenerate = async (docId, signal) => {
+    setPhase('generate_queued');
+    setStatusDetail('Đang đưa yêu cầu sinh câu hỏi vào hàng đợi...');
+
+    const payload = {
+      document_id: docId,
+      collection_name: 'chunks',
+      bloom_level: toBackendBloomLevel(selectedBloom),
+      question_type: toBackendQuestionType(selectedType),
+      num_questions: Number(numQuestions),
+    };
+
+    const enqueueResult = await enqueueGenerateQuestions(payload);
+    const genJobId = enqueueResult.job_id;
+    setActiveJobId(genJobId);
+
+    const genResult = await pollJob(getGenerateStatus, genJobId, {
+      signal,
+      onUpdate: (status) => {
+        if (status.status === 'queued') setPhase('generate_queued');
+        if (status.status === 'processing') setPhase('generate_processing');
+        setStatusDetail(`Generate: ${status.status}`);
+      },
+    });
+
+    if (genResult.status === 'failed') {
+      throw new Error(genResult.error_message || 'Sinh câu hỏi thất bại');
+    }
+
+    setDrafts(mapGeneratedQuestions(genResult.data || []));
+    setPhase('completed');
+    setStatusDetail('Đã sinh câu hỏi thành công');
+  };
+
+  const runPipeline = async ({ fromGenerateOnly = false } = {}) => {
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setError('');
+    if (!fromGenerateOnly) {
+      setDrafts([]);
+    }
+
+    const signal = resetPoll().signal;
+
+    try {
+      let docId = documentId;
+
+      if (!fromGenerateOnly) {
+        docId = await runOcrPipeline(file, signal);
+        await runChunk(docId);
+      } else if (!docId || !chunkReady) {
+        throw new Error('Tài liệu chưa sẵn sàng để sinh câu hỏi lại');
+      }
+
+      await runGenerate(docId, signal);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setPhase('failed');
+      setError(err.message || 'Đã xảy ra lỗi');
+      setStatusDetail('');
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    await runPipeline({ fromGenerateOnly: false });
+  };
+
+  const handleRetry = async () => {
+    if (chunkReady && documentId) {
+      await runPipeline({ fromGenerateOnly: true });
+      return;
+    }
+    await runPipeline({ fromGenerateOnly: false });
+  };
+
+  const handleReset = () => {
+    abortRef.current?.abort();
+    setPhase('idle');
+    setError('');
+    setStatusDetail('');
+    setFile(null);
+    setFileName('');
+    setDocumentId(null);
+    setActiveJobId('');
+    setDrafts([]);
+    setChunkReady(false);
+  };
+
+  const step1Active = ['uploading', 'ocr_queued', 'ocr_processing', 'chunking'].includes(phase);
+  const step2Active = ['generate_queued', 'generate_processing'].includes(phase);
+  const step3Active = phase === 'completed';
+  const step1Done = ['generate_queued', 'generate_processing', 'completed'].includes(phase) || chunkReady;
+  const step2Done = phase === 'completed';
 
   return (
     <main className="generate-page">
@@ -69,17 +208,17 @@ function GeneratePage() {
 
       <section className="gen-steps">
         <div className="container gen-steps-row">
-          <div className="gen-step gen-step--active">
+          <div className={`gen-step ${step1Active || step1Done ? 'gen-step--active' : ''}`}>
             <span className="gen-step-num">1</span>
             <span className="gen-step-label">Tải tài liệu</span>
           </div>
           <div className="gen-step-line" />
-          <div className="gen-step gen-step--active">
+          <div className={`gen-step ${step2Active || step2Done ? 'gen-step--active' : ''}`}>
             <span className="gen-step-num">2</span>
             <span className="gen-step-label">Cấu hình sinh câu hỏi</span>
           </div>
           <div className="gen-step-line" />
-          <div className="gen-step">
+          <div className={`gen-step ${step3Active ? 'gen-step--active' : ''}`}>
             <span className="gen-step-num">3</span>
             <span className="gen-step-label">Xem trước &amp; duyệt</span>
           </div>
@@ -88,17 +227,50 @@ function GeneratePage() {
 
       <section className="gen-body">
         <div className="container gen-grid">
-          {/* Left: form */}
-          <form className="gen-form-card" onSubmit={(e) => e.preventDefault()}>
+          <form className="gen-form-card" onSubmit={handleSubmit}>
             <h3 className="gen-card-title">Cấu hình sinh câu hỏi</h3>
+
+            {phase !== 'idle' && phase !== 'failed' && (
+              <div className={`gen-status gen-status--${phase === 'completed' ? 'done' : 'running'}`}>
+                {phase !== 'completed' && <span className="gen-status-spinner" aria-hidden="true" />}
+                <div className="gen-status-text">
+                  <strong>{PHASE_LABELS[phase] || phase}</strong>
+                  {statusDetail && <span>{statusDetail}</span>}
+                  {activeJobId && (
+                    <span className="job-badge">Job: {shortId(activeJobId)}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="gen-error">
+                <p>{error}</p>
+                <div className="gen-error-actions">
+                  <button type="button" className="btn btn--secondary" onClick={handleRetry}>
+                    Thử lại
+                  </button>
+                  <button type="button" className="btn btn--ghost" onClick={handleReset}>
+                    Bắt đầu lại
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="field-group">
               <label className="field-label">Tài liệu nguồn</label>
-              <label className="upload-drop">
+              <label className={`upload-drop ${isBusy ? 'upload-drop--disabled' : ''}`}>
                 <input
                   type="file"
-                  accept=".pdf,.doc,.docx"
-                  onChange={(e) => setFileName(e.target.files?.[0]?.name || '')}
+                  accept=".pdf"
+                  disabled={isBusy}
+                  onChange={(e) => {
+                    const nextFile = e.target.files?.[0] || null;
+                    setFile(nextFile);
+                    setFileName(nextFile?.name || '');
+                    setDocumentId(null);
+                    setChunkReady(false);
+                  }}
                   hidden
                 />
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -106,14 +278,14 @@ function GeneratePage() {
                   <polyline points="17 8 12 3 7 8" />
                   <line x1="12" y1="3" x2="12" y2="15" />
                 </svg>
-                <span>{fileName || 'Kéo thả hoặc chọn file PDF / DOC'}</span>
-                <span className="upload-hint">Hỗ trợ tài liệu tiếng Việt · Tự động OCR với file scan</span>
+                <span>{fileName || 'Kéo thả hoặc chọn file PDF'}</span>
+                <span className="upload-hint">Chỉ hỗ trợ PDF · Tự động OCR với file scan</span>
               </label>
             </div>
 
             <div className="field-group">
               <label className="field-label">Học phần</label>
-              <select className="field-select" defaultValue="ctdl">
+              <select className="field-select" defaultValue="ctdl" disabled={isBusy}>
                 <option value="ctdl">Cấu trúc dữ liệu</option>
                 <option value="soon" disabled>Học phần khác (sắp ra mắt)</option>
               </select>
@@ -122,14 +294,15 @@ function GeneratePage() {
             <div className="field-group">
               <label className="field-label">Loại câu hỏi</label>
               <div className="chip-group">
-                {questionTypes.map((t) => (
+                {QUESTION_TYPES.map((type) => (
                   <button
                     type="button"
-                    key={t.id}
-                    className={`chip ${selectedTypes.includes(t.id) ? 'chip--active' : ''}`}
-                    onClick={() => toggle(selectedTypes, setSelectedTypes, t.id)}
+                    key={type.id}
+                    className={`chip ${selectedType === type.id ? 'chip--active' : ''}`}
+                    disabled={isBusy}
+                    onClick={() => setSelectedType(type.id)}
                   >
-                    {t.label}
+                    {type.label}
                   </button>
                 ))}
               </div>
@@ -138,14 +311,15 @@ function GeneratePage() {
             <div className="field-group">
               <label className="field-label">Cấp độ tư duy (Bloom)</label>
               <div className="chip-group">
-                {bloomLevels.map((b) => (
+                {BLOOM_LEVELS.map((bloom) => (
                   <button
                     type="button"
-                    key={b.id}
-                    className={`chip chip--bloom ${selectedBloom.includes(b.id) ? 'chip--active' : ''}`}
-                    onClick={() => toggle(selectedBloom, setSelectedBloom, b.id)}
+                    key={bloom.id}
+                    className={`chip chip--bloom ${selectedBloom === bloom.id ? 'chip--active' : ''}`}
+                    disabled={isBusy}
+                    onClick={() => setSelectedBloom(bloom.id)}
                   >
-                    {b.label}
+                    {bloom.label}
                   </button>
                 ))}
               </div>
@@ -154,65 +328,87 @@ function GeneratePage() {
             <div className="field-row">
               <div className="field-group">
                 <label className="field-label">Số lượng câu hỏi</label>
-                <input className="field-input" type="number" min="1" max="30" defaultValue="10" />
+                <input
+                  className="field-input"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={numQuestions}
+                  disabled={isBusy}
+                  onChange={(e) => setNumQuestions(Number(e.target.value))}
+                />
               </div>
             </div>
 
-            <button className="btn btn--primary gen-submit" type="submit">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
-              </svg>
-              Sinh câu hỏi bằng AI
+            <button className="btn btn--primary gen-submit" type="submit" disabled={isBusy}>
+              {isBusy ? (
+                <>
+                  <span className="gen-status-spinner gen-status-spinner--inline" aria-hidden="true" />
+                  Đang xử lý...
+                </>
+              ) : (
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+                  </svg>
+                  Sinh câu hỏi bằng AI
+                </>
+              )}
             </button>
             <p className="gen-form-note">
               Toàn bộ câu hỏi sinh ra sẽ ở trạng thái nháp và cần giảng viên xác nhận trước khi lưu vào ngân hàng câu hỏi.
             </p>
           </form>
 
-          {/* Right: preview */}
           <div className="gen-preview-card">
             <div className="gen-card-title-row">
               <h3 className="gen-card-title">Xem trước câu hỏi nháp</h3>
-              <span className="gen-preview-count">{draftQuestions.length} câu hỏi</span>
+              <span className="gen-preview-count">{drafts.length} câu hỏi</span>
             </div>
 
-            <div className="draft-list">
-              {draftQuestions.map((q) => (
-                <article className="draft-item" key={q.id}>
-                  <div className="draft-item-meta">
-                    <span className="q-tag">{q.type}</span>
-                    <span className="bloom-tag">{q.bloom}</span>
-                    <span className="draft-status">Nháp · Chờ duyệt</span>
-                  </div>
-                  <p className="draft-item-text">{q.text}</p>
-                  <div className="draft-item-choices">
-                    {q.choices.map((c, i) => (
-                      <span key={c} className={`choice ${i === q.correct ? 'choice--correct' : ''}`}>{c}</span>
-                    ))}
-                  </div>
-                  <div className="draft-item-actions">
-                    <button type="button" className="icon-btn" title="Chỉnh sửa">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                      </svg>
-                      Sửa
-                    </button>
-                    <button type="button" className="icon-btn icon-btn--approve" title="Duyệt">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      Duyệt
-                    </button>
-                    <button type="button" className="icon-btn icon-btn--reject" title="Từ chối">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                      Từ chối
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
+            {drafts.length === 0 ? (
+              <div className="gen-preview-empty">
+                <p>Chưa có câu hỏi nháp.</p>
+                <span>Tải PDF, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.</span>
+              </div>
+            ) : (
+              <div className="draft-list">
+                {drafts.map((question) => (
+                  <article className="draft-item" key={question.id}>
+                    <div className="draft-item-meta">
+                      <span className="q-tag">{question.type}</span>
+                      <span className="bloom-tag">{question.bloom}</span>
+                      <span className="draft-status">Nháp · Chờ duyệt</span>
+                    </div>
+                    <p className="draft-item-text">{question.text}</p>
+                    <div className="draft-item-choices">
+                      {question.choices.map((choice) => (
+                        <span
+                          key={choice.text}
+                          className={`choice ${choice.isCorrect ? 'choice--correct' : ''}`}
+                        >
+                          {choice.text}
+                        </span>
+                      ))}
+                    </div>
+                    {question.explanation && (
+                      <p className="draft-item-explanation">{question.explanation}</p>
+                    )}
+                    <div className="draft-item-actions">
+                      <button type="button" className="icon-btn" title="Chỉnh sửa" disabled>
+                        Sửa
+                      </button>
+                      <button type="button" className="icon-btn icon-btn--approve" title="Duyệt" disabled>
+                        Duyệt
+                      </button>
+                      <button type="button" className="icon-btn icon-btn--reject" title="Từ chối" disabled>
+                        Từ chối
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
