@@ -48,15 +48,6 @@ def get_chroma_client() -> chromadb.ClientAPI:
     return _chroma_client
 
 
-def get_collection(collection_name: str | None = None):
-    """Open a collection with the same embedding function used for indexing."""
-    return get_chroma_client().get_or_create_collection(
-        name=collection_name or settings.chromadb_collection_name,
-        embedding_function=STEmbeddingFunction(_get_embedding_model()),
-        metadata={"hnsw:space": "cosine"},
-    )
-
-
 def sanitize_metadata_for_chromadb(meta: dict) -> dict:
     cleaned: dict = {}
     for key, value in meta.items():
@@ -78,8 +69,16 @@ def store_chunks(
     if not ids:
         return 0
 
+    client = get_chroma_client()
+    model = _get_embedding_model()
+    embedding_fn = STEmbeddingFunction(model)
+
     resolved_collection = collection_name or settings.chromadb_collection_name
-    collection = get_collection(resolved_collection)
+    collection = client.get_or_create_collection(
+        name=resolved_collection,
+        embedding_function=embedding_fn,
+        metadata={"hnsw:space": "cosine"},
+    )
 
     batch_size = max(settings.chromadb_batch_size, 1)
     total = len(ids)

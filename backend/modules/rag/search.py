@@ -3,7 +3,7 @@ import logging
 import re
 import unicodedata
 
-from modules.rag.chromadb_engine import get_collection
+from modules.rag.chromadb_engine import get_chroma_client
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +44,11 @@ def _build_heading_label(meta: dict) -> str:
     return ""
 
 
-def get_context_snapshot(
-    document_id: str,
-    collection_name: str,
-    target_heading: str = None,
-    min_density: float = 0.0,
-    limit: int = 5,
-) -> dict:
+def get_context_for_generation(document_id: str, collection_name: str, target_heading: str = None, min_density: float = 0.0, limit: int = 5) -> str:
     """Truy xuất các chunk từ ChromaDB làm Context cho LLM"""
-    collection = get_collection(collection_name)
+    client = get_chroma_client()
+
+    collection = client.get_or_create_collection(name=collection_name)
 
     where_filter = {"document_id": document_id}
     normalized_target = _normalize_heading_text(target_heading) if target_heading else ""
@@ -136,45 +132,13 @@ def get_context_snapshot(
         selected_chunks = filtered_chunks[:limit]
 
         assembled_context = []
-        retrieval_results = []
         for doc, meta in selected_chunks:
             heading_label = _build_heading_label(meta)
             heading = f"[{heading_label}]" if heading_label else ""
             assembled_context.append(f"Mục lục: {heading}\nNội dung: {doc}")
-            retrieval_results.append(
-                {
-                    "chunk_id": meta.get("chunk_id"),
-                    "chunk_set_id": meta.get("chunk_set_id"),
-                    "chunk_content_hash": meta.get("content_hash"),
-                    "page_start": meta.get("page_start"),
-                    "page_end": meta.get("page_end"),
-                    "information_density": meta.get("information_density", 0),
-                    "heading": heading_label,
-                }
-            )
 
-        return {
-            "context_text": "\n\n---\n\n".join(assembled_context),
-            "results": retrieval_results,
-        }
+        return "\n\n---\n\n".join(assembled_context)
 
     except Exception as e:
         logger.error(f"Lỗi khi truy xuất ChromaDB: {e}")
         raise ValueError(f"Lỗi truy xuất hệ thống Vector: {str(e)}")
-
-
-def get_context_for_generation(
-    document_id: str,
-    collection_name: str,
-    target_heading: str = None,
-    min_density: float = 0.0,
-    limit: int = 5,
-) -> str:
-    """Compatibility wrapper for callers that only need the assembled text."""
-    return get_context_snapshot(
-        document_id=document_id,
-        collection_name=collection_name,
-        target_heading=target_heading,
-        min_density=min_density,
-        limit=limit,
-    )["context_text"]

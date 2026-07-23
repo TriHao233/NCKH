@@ -110,9 +110,6 @@ class DocumentChunkRequest(BaseModel):
 
 class DocumentChunkResponse(BaseModel):
     document_id: str
-    chunk_job_id: Optional[str] = None
-    chunk_set_id: Optional[str] = None
-    vector_collection_id: Optional[str] = None
     collection_name: str
     total_chunks: int
     stored_chunks: int

@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 import logging
-from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.generation.schemas import QuestionGenerateRequest, QuestionGenerateResponse
 from modules.generation.question import generate_questions_rag
 
@@ -8,13 +7,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/generate", tags=["generation"])
 
 @router.post("/questions", response_model=QuestionGenerateResponse, summary="Sinh câu hỏi tự động từ hệ thống RAG")
-async def api_generate_questions(
-    req: QuestionGenerateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
-):
+async def api_generate_questions(req: QuestionGenerateRequest):
     try:
         # Chuyển hướng yêu cầu vào luồng RAG
-        result = await generate_questions_rag(req, requested_by_user_id=current_user.id)
+        result = await generate_questions_rag(req)
         return result
     except ValueError as ve:
         logger.warning(f"Lỗi truy xuất dữ liệu RAG: {ve}")

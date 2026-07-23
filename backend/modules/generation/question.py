@@ -1,7 +1,6 @@
 import json
 import re
 import logging
-import time
 from typing import List
 
 from modules.generation.schemas import (
@@ -10,29 +9,21 @@ from modules.generation.schemas import (
     GeneratedQuestion
 )
 from modules.generation.prompt_builder import PromptBuilder
-from modules.rag.search import get_context_snapshot
+from modules.rag.search import get_context_for_generation
 from modules.generation.llm.factory import get_llm_service
-from modules.generation.mongodb import (
-    create_generation_run,
-    finish_generation_run,
-    save_generated_questions,
-)
+from modules.generation.mongodb import save_generated_questions
 
 logger = logging.getLogger(__name__)
 
-async def generate_questions_rag(
-    req: QuestionGenerateRequest,
-    requested_by_user_id=None,
-) -> QuestionGenerateResponse:
+async def generate_questions_rag(req: QuestionGenerateRequest) -> QuestionGenerateResponse:
     logger.info(f"Sinh câu hỏi [Doc: {req.document_id} | Type: {req.question_type.value}]")
 
     # 1. Truy xuất ngữ cảnh (RAG)
-    context_snapshot = get_context_snapshot(
+    context_text = get_context_for_generation(
         document_id=req.document_id,
         collection_name=req.collection_name,
         target_heading=req.target_heading
     )
-    context_text = context_snapshot["context_text"]
 
     if not context_text:
         raise ValueError("Không tìm thấy đủ dữ liệu tri thức để sinh câu hỏi.")
@@ -45,29 +36,10 @@ async def generate_questions_rag(
         question_type=req.question_type.value,
         num_questions=req.num_questions
     )
-    generation_run_id = create_generation_run(
-        document_id=req.document_id,
-        requested_by_user_id=requested_by_user_id,
-        request_snapshot=req.model_dump(mode="json"),
-        model_snapshot={"provider": req.model_provider},
-        rendered_prompt=full_prompt,
-        context_text=context_text,
-        retrieval_results=context_snapshot["results"],
-    )
 
     # 3. Gọi LLM
     llm = get_llm_service(req.model_provider)
-    started_at = time.perf_counter()
-    try:
-        raw_response = await llm.generate_text(full_prompt)
-    except Exception as exc:
-        finish_generation_run(
-            generation_run_id,
-            status="FAILED",
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-            error_message=str(exc),
-        )
-        raise
+    raw_response = await llm.generate_text(full_prompt)
 
     # 4. Làm sạch và Parse JSON
     clean_json_str = _clean_llm_output(raw_response)
@@ -86,46 +58,13 @@ async def generate_questions_rag(
         validated_data = _validate_and_format(questions_list, req)
 
         # 5. Lưu vào DB
-        save_generated_questions(
-            req.document_id,
-            [q.model_dump() for q in validated_data],
-            generation_run_id=generation_run_id,
-            requested_by_user_id=requested_by_user_id,
-            source_chunk_ids=[
-                result["chunk_id"]
-                for result in context_snapshot["results"]
-                if result.get("chunk_id")
-            ],
-        )
-        finish_generation_run(
-            generation_run_id,
-            status="COMPLETED",
-            raw_model_response=raw_response,
-            generated_count=len(validated_data),
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-        )
+        save_generated_questions(req.document_id, [q.model_dump() for q in validated_data])
 
         return QuestionGenerateResponse(status="success", data=validated_data)
 
     except json.JSONDecodeError:
         logger.error(f"Parse JSON lỗi: {clean_json_str}")
-        finish_generation_run(
-            generation_run_id,
-            status="FAILED",
-            raw_model_response=raw_response,
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-            error_message="Invalid JSON response",
-        )
         raise Exception("Định dạng phản hồi từ LLM không hợp lệ.")
-    except Exception as exc:
-        finish_generation_run(
-            generation_run_id,
-            status="FAILED",
-            raw_model_response=raw_response,
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-            error_message=str(exc),
-        )
-        raise
 
 def _clean_llm_output(text: str) -> str:
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)

@@ -6,14 +6,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-ENV_CANDIDATES = (
-    BASE_DIR / ".env",
-    BASE_DIR.parent / ".env",
-    BASE_DIR.parent / "rag-ocr-pipeline" / ".env",
-)
-for env_file in ENV_CANDIDATES:
-    if env_file.exists():
-        load_dotenv(env_file, override=False)
+load_dotenv(BASE_DIR / ".env")
 
 
 class Settings(BaseModel):
@@ -24,28 +17,13 @@ class Settings(BaseModel):
 
     cors_origins: list[str] = [
         origin.strip()
-        for origin in os.getenv(
-            "CORS_ORIGINS",
-            os.getenv(
-                "ALLOWED_ORIGINS",
-                "http://localhost:5173,http://127.0.0.1:5173",
-            ),
-        ).split(",")
+        for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
         if origin.strip()
     ]
-    allowed_hosts: list[str] = [
-        host.strip()
-        for host in os.getenv(
-            "ALLOWED_HOSTS",
-            "localhost,127.0.0.1,testserver",
-        ).split(",")
-        if host.strip()
-    ]
-    api_prefix: str = os.getenv("API_PREFIX", "/api/v1")
 
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    db_name: str = os.getenv("DB_NAME", os.getenv("RAG_DB_NAME", "rag_database"))
-    mongo_connect_timeout_ms: int = int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "10000"))
+    auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
+    rag_db_name: str = os.getenv("RAG_DB_NAME", "rag_database")
 
     firebase_credentials_path: str = os.getenv(
         "FIREBASE_CREDENTIALS_PATH", str(BASE_DIR / "firebase-service-account.json")

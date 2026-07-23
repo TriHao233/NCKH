@@ -1,100 +1,59 @@
-from core.database import get_database
-from modules.documents.repository import (
-    MongoDocumentRepository,
-    json_safe,
-    serialize_document,
-)
+from datetime import datetime
+
+from bson.objectid import ObjectId
+
+from core.database import get_rag_db
 
 
-def _repository() -> MongoDocumentRepository:
-    return MongoDocumentRepository(get_database())
-
-
-def create_document_record(
-    filename: str,
-    title: str,
-    *,
-    uploaded_by_user_id=None,
-) -> str:
-    document = _repository().create(
-        {
-            "original_filename": filename,
-            "title": title,
-            "subject_id": None,
-            "chapter_id": None,
-        },
-        uploaded_by_user_id,
-    )
-    return str(document["_id"])
-
-
-def attach_original_artifact(
-    document_id: str,
-    *,
-    uri: str,
-    size_bytes: int,
-    sha256: str,
-) -> None:
-    _repository().attach_original_artifact(
-        document_id,
-        uri=uri,
-        size_bytes=size_bytes,
-        sha256=sha256,
-    )
-
-
-def create_ocr_job(document_id: str) -> str:
-    job = _repository().create_job(document_id, "OCR")
-    return str(job["_id"])
-
-
-def update_document_status(
-    document_id: str,
-    job_id: str,
-    status: str,
-    stats: dict | None = None,
-    error_message: str | None = None,
-):
-    normalized = {
-        "queued": "QUEUED",
-        "processing": "PROCESSING",
-        "completed": "COMPLETED",
-        "failed": "FAILED",
-    }.get(status.lower(), status.upper())
-    repository = _repository()
-    repository.update_job(
-        job_id,
-        normalized,
-        progress=100 if normalized == "COMPLETED" else None,
-        stats=stats,
-        error_message=error_message,
-    )
-    if normalized == "COMPLETED":
-        document = repository.find_by_id(document_id)
-        if document:
-            get_database().documents.update_one(
-                {"_id": document["_id"]},
-                {
-                    "$set": {
-                        "status": "PROCESSING",
-                        "pipeline_summary.chunk_status": "NOT_STARTED",
-                        "pipeline_summary.index_status": "NOT_STARTED",
-                    }
-                },
-            )
-
-
-def save_document_pages(document_id: str, job_id: str, pages: list):
-    return _repository().save_pages(document_id, job_id, pages)
-
-
-def get_document_status(job_id: str) -> dict | None:
-    repository = _repository()
-    job = repository.find_job(job_id)
-    if not job:
-        return None
-    document = repository.find_by_id(job["document_id"])
-    return {
-        "job": json_safe(job),
-        "document": serialize_document(document) if document else None,
+def create_document_record(filename: str, title: str) -> str:
+    """Tạo vé chờ (Job ID) với trạng thái queued"""
+    db = get_rag_db()
+    doc = {
+        "filename": filename,
+        "title": title,
+        "status": "queued",  # Trạng thái ban đầu
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+        "error_message": None,
+        "stats": None
     }
+    result = db["documents"].insert_one(doc)
+    return str(result.inserted_id)
+
+
+def update_document_status(doc_id: str, status: str, stats: dict = None, error_message: str = None):
+    """Cập nhật trạng thái tiến trình (processing, completed, failed)"""
+    db = get_rag_db()
+    update_data = {
+        "status": status,
+        "updated_at": datetime.utcnow()
+    }
+    if stats: update_data["stats"] = stats
+    if error_message: update_data["error_message"] = error_message
+
+    db["documents"].update_one({"_id": ObjectId(doc_id)}, {"$set": update_data})
+
+
+def save_document_pages(doc_id: str, pages: list):
+    """Lưu TỪNG TRANG thành các bản ghi riêng biệt để không bao giờ chạm trần 16MB"""
+    db = get_rag_db()
+    page_docs = []
+    for page in pages:
+        page_docs.append({
+            "document_id": str(doc_id),
+            "page_number": page["page_number"],
+            "text": page["text"],
+            "created_at": datetime.utcnow()
+        })
+    if page_docs:
+        db["pages"].insert_many(page_docs)
+
+
+def get_document_status(doc_id: str) -> dict:
+    """Hàm API dùng để truy vấn trạng thái tiến trình"""
+    db = get_rag_db()
+    doc = db["documents"].find_one({"_id": ObjectId(doc_id)})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        return doc
+    return None
