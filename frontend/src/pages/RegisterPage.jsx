@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { signInWithPopup } from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
+import { apiRequest } from "../services/apiClient";
 
 import {
   faArrowLeft,
@@ -66,14 +67,11 @@ function DangKy() {
       const idToken = await result.user.getIdToken();
 
       // Vẫn gọi về API Login vì Backend đã được set up để tự động tạo User nếu chưa có
-      const response = await fetch("http://localhost:8000/api/auth/login", {
+      const data = await apiRequest("/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
+        body: { id_token: idToken },
+        authRequired: false,
       });
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || "Lỗi xác thực Google");
 
       login(idToken, data.user);
       navigate("/trang-chu");
@@ -99,22 +97,15 @@ function DangKy() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/api/auth/register", {
+      await apiRequest("/auth/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+        body: {
           email: formData.email,
           password: formData.password,
           full_name: formData.fullName
-        }),
+        },
+        authRequired: false,
       });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || "Đăng ký thất bại");
-      }
 
       alert("Đăng ký thành công! Đang chuyển hướng đến trang đăng nhập...");
       navigate("/dang-nhap");

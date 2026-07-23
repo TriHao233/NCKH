@@ -13,7 +13,14 @@ from modules.dictionary.dictionary import run_dictionary_auto_learning
 from modules.dictionary.mongodb import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import store_chunks
-from modules.rag.mongodb import get_document_record, iter_document_pages, update_chunking_status
+from modules.rag.mongodb import (
+    complete_chunk_set,
+    get_document_record,
+    iter_document_pages,
+    persist_chunks,
+    start_chunk_set,
+    update_chunking_status,
+)
 from modules.rag.schemas import ChunkingStats, DocumentChunkRequest, DocumentChunkResponse
 
 router = APIRouter(prefix="/api/v1/chunk", tags=["chunking"])
@@ -94,8 +101,17 @@ def chunk_document_and_store(
     resolved_buffer_pages = buffer_max_pages or settings.chunk_buffer_max_pages
     resolved_buffer_chars = buffer_max_chars or settings.chunk_buffer_max_chars
     resolved_code_lines = max_code_block_lines or settings.max_code_block_lines
-
-    update_chunking_status(document_id, status="processing")
+    resolved_collection = collection_name or settings.chromadb_collection_name
+    run_config = {
+        "strategy": "recursive",
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "buffer_max_pages": resolved_buffer_pages,
+        "buffer_max_chars": resolved_buffer_chars,
+        "max_code_block_lines": resolved_code_lines,
+        "dry_run": dry_run,
+    }
+    chunk_job_id, chunk_set_id = start_chunk_set(document_id, run_config)
 
     total_chunks = 0
     stored_chunks = 0
@@ -105,12 +121,8 @@ def chunk_document_and_store(
     max_chunk = 0
     content_type_distribution: Counter[str] = Counter()
 
-    batch_ids: list[str] = []
-    batch_docs: list[str] = []
-    batch_metas: list[dict] = []
-
-    # Mảng lưu trữ toàn bộ chunk để xuất file JSON & Markdown
-    all_chunks_for_export = []
+    all_chunks_for_export: list[dict] = []
+    vector_collection_id: str | None = None
 
     for buffer_text, source_len in _iter_chapter_buffers(
         document_id,
@@ -138,22 +150,6 @@ def chunk_document_and_store(
             max_chunk = max(max_chunk, char_count)
             content_type_distribution[metadata.get("content_type", "text")] += 1
 
-            if dry_run:
-                continue
-
-            batch_ids.append(chunk["chunk_id"])
-            batch_docs.append(content)
-            batch_metas.append(metadata)
-
-            if len(batch_ids) >= settings.chromadb_batch_size:
-                stored_chunks += store_chunks(batch_ids, batch_docs, batch_metas, collection_name)
-                batch_ids.clear()
-                batch_docs.clear()
-                batch_metas.clear()
-
-    if not dry_run and batch_ids:
-        stored_chunks += store_chunks(batch_ids, batch_docs, batch_metas, collection_name)
-
     avg_chunk = round(total_chars / max(total_chunks, 1), 2)
     stats = ChunkingStats(
         original_length=original_length,
@@ -165,13 +161,34 @@ def chunk_document_and_store(
         content_type_distribution=dict(content_type_distribution),
     )
 
-    update_chunking_status(
+    if not dry_run and all_chunks_for_export:
+        (
+            vector_collection_id,
+            vector_ids,
+            vector_documents,
+            vector_metadatas,
+        ) = persist_chunks(
+            document_id,
+            chunk_set_id,
+            resolved_collection,
+            all_chunks_for_export,
+        )
+        stored_chunks = store_chunks(
+            vector_ids,
+            vector_documents,
+            vector_metadatas,
+            resolved_collection,
+        )
+
+    complete_chunk_set(
         document_id,
-        status="completed" if not dry_run else "dry_run",
-        stats=stats.model_dump(),
-        collection_name=collection_name or settings.chromadb_collection_name,
+        chunk_job_id,
+        chunk_set_id,
+        vector_collection_id,
         total_chunks=total_chunks,
-        stored_chunks=stored_chunks,
+        total_characters=total_chars,
+        stats=stats.model_dump(),
+        dry_run=dry_run,
     )
 
     # THỰC HIỆN XUẤT FILE SAU KHI ĐÃ CẮT XONG (Bao gồm cả dry_run và real run)
@@ -183,7 +200,10 @@ def chunk_document_and_store(
 
     return DocumentChunkResponse(
         document_id=document_id,
-        collection_name=collection_name or settings.chromadb_collection_name,
+        chunk_job_id=chunk_job_id,
+        chunk_set_id=chunk_set_id,
+        vector_collection_id=vector_collection_id,
+        collection_name=resolved_collection,
         total_chunks=total_chunks,
         stored_chunks=stored_chunks,
         stats=stats,

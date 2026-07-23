@@ -4,6 +4,7 @@ import "../css/LoginPage.css";
 import { AuthContext } from "../context/AuthContext";
 import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
+import { apiRequest } from "../services/apiClient";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -36,14 +37,11 @@ function LoginPage() {
       const result = await signInWithPopup(auth, googleProvider);
       const idToken = await result.user.getIdToken();
 
-      const response = await fetch("http://localhost:8000/api/auth/login", {
+      const data = await apiRequest("/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
+        body: { id_token: idToken },
+        authRequired: false,
       });
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || "Lỗi xác thực Google");
 
       login(idToken, data.user);
       navigate("/trang-chu");
@@ -73,18 +71,11 @@ function LoginPage() {
       const firebaseUser = userCredential.user;
       const idToken = await firebaseUser.getIdToken();
 
-      const response = await fetch("http://localhost:8000/api/auth/login", {
+      const data = await apiRequest("/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id_token: idToken }),
+        body: { id_token: idToken },
+        authRequired: false,
       });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || "Lỗi xác thực từ máy chủ");
-      }
 
       login(idToken, data.user);
       alert("Đăng nhập thành công!");
