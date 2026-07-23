@@ -29,10 +29,8 @@ async def lifespan(_app: FastAPI):
     init_firebase()
     await asyncio.to_thread(ping_database)
     await asyncio.to_thread(bootstrap_database)
-    try:
-        yield
-    finally:
-        close_database()
+    yield
+    close_database()
 
 
 app = FastAPI(

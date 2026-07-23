@@ -125,6 +125,9 @@ def persist_chunks(
                 "created_at": now,
             }
         )
+    if records:
+        db.document_chunks.insert_many(records, ordered=True)
+
     vector = db.vector_collections.find_one_and_update(
         {"provider": "CHROMA", "collection_name": collection_name},
         {
@@ -146,16 +149,6 @@ def persist_chunks(
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
-    indexed_model = (vector.get("embedding_model") or {}).get("model_name")
-    if indexed_model != settings.embedding_model_name:
-        raise ValueError(
-            "Collection ChromaDB đã dùng embedding model "
-            f"'{indexed_model}'. Hãy chọn collection_name mới cho model "
-            f"'{settings.embedding_model_name}'."
-        )
-    if records:
-        db.document_chunks.insert_many(records, ordered=True)
-
     ids, documents, metadatas, embeddings = [], [], [], []
     for chunk, record in zip(chunks, records):
         external_id = f"{record['_id']}:{vector['_id']}"
@@ -164,7 +157,6 @@ def persist_chunks(
             "document_id": document_id,
             "chunk_id": str(record["_id"]),
             "chunk_set_id": chunk_set_id,
-            "vector_collection_id": str(vector["_id"]),
             "content_hash": record["content_hash"],
         }
         ids.append(external_id)
@@ -260,20 +252,16 @@ def complete_chunk_set(
                     "status": "READY",
                 }
             )
-        document_result = db.documents.update_one(
-            {"_id": document_oid, "archived_at": None},
+        db.documents.update_one(
+            {"_id": document_oid},
             {"$set": document_fields},
             session=session,
         )
-        if not document_result.matched_count:
-            raise RuntimeError("DOCUMENT_ARCHIVED")
 
 
 def fail_chunk_set(document_id: str, message: str) -> None:
     db = get_database()
-    document = db.documents.find_one(
-        {"_id": object_id(document_id, "document_id")}
-    )
+    document = get_document_record(document_id)
     if not document:
         return
     latest = db.chunk_sets.find_one(
@@ -290,23 +278,12 @@ def fail_chunk_set(document_id: str, message: str) -> None:
             {"_id": latest["chunk_job_id"]},
             {"$set": {"status": "FAILED", "error": {"message": message, "at": now}, "finished_at": now}},
         )
-        db.chunk_embeddings.update_many(
-            {"chunk_set_id": latest["_id"], "status": "PENDING"},
-            {
-                "$set": {
-                    "status": "FAILED",
-                    "error": {"message": message, "at": now},
-                    "updated_at": now,
-                }
-            },
-        )
     db.documents.update_one(
-        {"_id": document["_id"], "archived_at": None},
+        {"_id": document["_id"]},
         {
             "$set": {
                 "status": "FAILED",
                 "pipeline_summary.chunk_status": "FAILED",
-                "pipeline_summary.index_status": "FAILED",
                 "latest_error": {"message": message, "at": now},
                 "updated_at": now,
             }

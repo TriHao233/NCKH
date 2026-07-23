@@ -170,10 +170,7 @@ Nhánh `fixed_CRUD` giữ cấu trúc feature-based của `full-dev` và bổ su
   `Authorization: Bearer <token>`.
 
 Sao chép `backend/.env.example` thành `backend/.env`, cấu hình `MONGO_URI`,
-`AUTH_DB_NAME=NCKH`, `RAG_DB_NAME=rag_database` và đường dẫn Firebase service
-account. `NCKH.User` chỉ lưu `uid` và Firebase token; hồ sơ/role đầy đủ để CRUD
-nằm ở `rag_database.users`. Token do Firebase phát hành và xác minh, backend
-không phát JWT riêng. MongoDB phải là replica set.
+`DB_NAME` và đường dẫn Firebase service account. MongoDB phải là replica set.
 Trong workspace cũ, backend cũng tự fallback sang `rag-ocr-pipeline/.env` để
 tái sử dụng URI MongoDB hiện có mà không sao chép secret vào Git.
 
@@ -194,15 +191,10 @@ npm install
 npm run dev
 ```
 
-Khi deploy, đặt `VITE_API_BASE_URL` thành URL backend hoặc cấu hình gateway
-reverse-proxy `/api`; đồng thời đặt `CORS_ORIGINS` bằng origin frontend và
-`ALLOWED_HOSTS` bằng hostname backend.
-
 Các CRUD endpoint:
 
 - `/api/v1/users`
 - `/api/v1/documents`
 - `/api/v1/questions`
-- `/api/v1/questions/{question_id}/versions`
 
 Thiết kế dữ liệu chi tiết xem tại [`DATABASE_DESIGN_V2.md`](DATABASE_DESIGN_V2.md).

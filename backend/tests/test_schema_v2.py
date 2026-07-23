@@ -1,11 +1,8 @@
 import inspect
 import unittest
 
-from bson import ObjectId
 from pydantic import ValidationError
 
-from core.bootstrap import VALIDATORS
-from core.config import settings
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
 from modules.questions.schemas import QuestionCreateRequest, QuestionUpdateRequest
@@ -54,57 +51,6 @@ class SchemaV2Tests(unittest.TestCase):
     def test_services_depend_on_abstractions_via_constructor(self):
         self.assertIn("repository", inspect.signature(DocumentService).parameters)
         self.assertIn("repository", inspect.signature(QuestionService).parameters)
-        self.assertIn("references", inspect.signature(QuestionService).parameters)
-
-    def test_auth_and_rag_databases_are_separate(self):
-        self.assertEqual(settings.auth_db_name, "NCKH")
-        self.assertEqual(settings.rag_db_name, "rag_database")
-        self.assertNotEqual(settings.auth_db_name, settings.rag_db_name)
-
-    def test_key_validators_require_schema_version(self):
-        for collection in ("users", "documents", "questions", "question_versions"):
-            required = VALIDATORS[collection]["$jsonSchema"]["required"]
-            self.assertIn("schema_version", required)
-
-    def test_auth_user_is_minimal_uid_and_token_link(self):
-        schema = VALIDATORS["User"]["$jsonSchema"]
-        self.assertEqual(set(schema["required"]), {"uid", "token"})
-        self.assertEqual(set(schema["properties"]), {"_id", "uid", "token"})
-        self.assertFalse(schema["additionalProperties"])
-
-    def test_question_sources_cannot_mix_documents(self):
-        first_document_id = ObjectId()
-        second_document_id = ObjectId()
-        chunks = {
-            ObjectId(): {
-                "_id": ObjectId(),
-                "document_id": first_document_id,
-                "chunk_set_id": ObjectId(),
-                "content": "A",
-                "content_hash": "a",
-            },
-            ObjectId(): {
-                "_id": ObjectId(),
-                "document_id": second_document_id,
-                "chunk_set_id": ObjectId(),
-                "content": "B",
-                "content_hash": "b",
-            },
-        }
-
-        class References:
-            def find_chunk(self, chunk_id):
-                return chunks.get(chunk_id)
-
-            def find_document(self, _document_id):
-                return None
-
-            def find_subject(self, _subject_id):
-                return None
-
-        service = QuestionService(repository=None, references=References())
-        with self.assertRaises(ValueError):
-            service._sources([str(chunk_id) for chunk_id in chunks])
 
 
 if __name__ == "__main__":

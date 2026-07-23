@@ -14,10 +14,7 @@ from core.database import ping_database
 def main() -> int:
     ping_database()
     bootstrap_database()
-    print(
-        f"Databases '{settings.auth_db_name}' and '{settings.rag_db_name}' "
-        f"are ready at schema version {SCHEMA_VERSION}."
-    )
+    print(f"Database '{settings.db_name}' is ready at schema version {SCHEMA_VERSION}.")
     return 0
 
 

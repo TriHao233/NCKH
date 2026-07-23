@@ -6,8 +6,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 
-from core.database import get_rag_db
-from modules.auth.session_repository import get_firebase_session_repository
+from core.database import get_database
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -37,7 +36,7 @@ def get_current_user(
             detail="Firebase ID token không hợp lệ hoặc đã hết hạn",
         ) from exc
 
-    user = get_rag_db().users.find_one({"firebase_uid": claims["uid"]})
+    user = get_database().users.find_one({"firebase_uid": claims["uid"]})
     if not user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -45,10 +44,6 @@ def get_current_user(
         )
     if not user.get("is_active", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
-    get_firebase_session_repository().upsert(
-        claims["uid"],
-        credentials.credentials,
-    )
     return CurrentUser(
         id=user["_id"],
         firebase_uid=user["firebase_uid"],

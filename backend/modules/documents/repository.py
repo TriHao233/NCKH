@@ -76,36 +76,11 @@ class MongoDocumentRepository:
         subject = self.db.subjects.find_one({"subject_code": "CTDL", "is_active": True}, {"_id": 1})
         return subject["_id"] if subject else None
 
-    def validate_subject_chapter(
-        self,
-        subject_id: ObjectId | None,
-        chapter_id: ObjectId | None,
-    ) -> None:
-        if subject_id is None:
-            if chapter_id is not None:
-                raise ValueError("Chương phải thuộc một học phần")
-            return
-        subject = self.db.subjects.find_one(
-            {"_id": subject_id, "is_active": True},
-        )
-        if not subject:
-            raise ValueError("Học phần không tồn tại hoặc đã ngừng hoạt động")
-        if chapter_id is None:
-            return
-        chapter_ids = {
-            object_id(chapter.get("_id") or chapter.get("id"), "chapter_id")
-            for chapter in subject.get("chapters", [])
-            if chapter.get("_id") or chapter.get("id")
-        }
-        if chapter_id not in chapter_ids:
-            raise ValueError("Chương không thuộc học phần đã chọn")
-
     def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
         now = utc_now()
         document_id = ObjectId()
         subject_id = object_id(data["subject_id"], "subject_id") if data.get("subject_id") else self.default_subject_id()
         chapter_id = object_id(data["chapter_id"], "chapter_id") if data.get("chapter_id") else None
-        self.validate_subject_chapter(subject_id, chapter_id)
         artifacts = []
         if data.get("original_uri"):
             artifacts.append(
@@ -154,11 +129,7 @@ class MongoDocumentRepository:
 
     def find_by_id(self, document_id: str | ObjectId) -> dict | None:
         return self.collection.find_one(
-            {
-                "_id": object_id(document_id, "document_id"),
-                "schema_version": SCHEMA_VERSION,
-                "archived_at": None,
-            }
+            {"_id": object_id(document_id, "document_id"), "schema_version": SCHEMA_VERSION}
         )
 
     def list(
@@ -186,25 +157,14 @@ class MongoDocumentRepository:
         return records, total
 
     def update(self, document_id: str | ObjectId, fields: dict) -> dict | None:
-        current = self.find_by_id(document_id)
-        if not current:
-            return None
         normalized = dict(fields)
         if "subject_id" in normalized:
             normalized["subject_id"] = object_id(normalized["subject_id"], "subject_id")
         if "chapter_id" in normalized:
             normalized["chapter_id"] = object_id(normalized["chapter_id"], "chapter_id")
-        self.validate_subject_chapter(
-            normalized.get("subject_id", current.get("subject_id")),
-            normalized.get("chapter_id", current.get("chapter_id")),
-        )
         normalized["updated_at"] = utc_now()
         return self.collection.find_one_and_update(
-            {
-                "_id": object_id(document_id, "document_id"),
-                "schema_version": SCHEMA_VERSION,
-                "archived_at": None,
-            },
+            {"_id": object_id(document_id, "document_id"), "schema_version": SCHEMA_VERSION},
             {"$set": normalized},
             return_document=ReturnDocument.AFTER,
         )
@@ -212,11 +172,7 @@ class MongoDocumentRepository:
     def archive(self, document_id: str | ObjectId) -> bool:
         now = utc_now()
         result = self.collection.update_one(
-            {
-                "_id": object_id(document_id, "document_id"),
-                "schema_version": SCHEMA_VERSION,
-                "archived_at": None,
-            },
+            {"_id": object_id(document_id, "document_id"), "schema_version": SCHEMA_VERSION},
             {"$set": {"status": "ARCHIVED", "archived_at": now, "updated_at": now}},
         )
         return result.matched_count == 1
@@ -345,10 +301,7 @@ class MongoDocumentRepository:
                 "message": error_message,
                 "at": now,
             }
-        self.collection.update_one(
-            {"_id": job["document_id"], "archived_at": None},
-            {"$set": document_fields},
-        )
+        self.collection.update_one({"_id": job["document_id"]}, {"$set": document_fields})
         return self.find_job(job_id)
 
     def save_pages(self, document_id: str, ocr_job_id: str, pages: list[dict]) -> int:
@@ -374,7 +327,7 @@ class MongoDocumentRepository:
         if records:
             self.db.document_pages.insert_many(records, ordered=True)
         self.collection.update_one(
-            {"_id": document_oid, "archived_at": None},
+            {"_id": document_oid},
             {"$set": {"page_count": len(records), "updated_at": now}},
         )
         return len(records)

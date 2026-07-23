@@ -23,7 +23,6 @@ export async function apiRequest(
   }
 
   if (authRequired) {
-    await auth.authStateReady();
     const firebaseUser = auth.currentUser;
     if (!firebaseUser) {
       throw new ApiError("Bạn chưa đăng nhập", 401, null);

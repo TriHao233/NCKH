@@ -29,8 +29,8 @@ const UserProfileMenu = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleLogout = async () => {
-    await logout();
+  const handleLogout = () => {
+    logout(); // Gọi hàm clear token & state từ Context
     navigate('/dang-nhap'); // Chuyển hướng về đăng nhập
   };
 
