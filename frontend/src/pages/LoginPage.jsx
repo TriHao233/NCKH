@@ -4,7 +4,6 @@ import "../css/LoginPage.css";
 import { AuthContext } from "../context/AuthContext";
 import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
-import { apiRequest } from "../services/apiClient";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -35,15 +34,7 @@ function LoginPage() {
     setIsLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const idToken = await result.user.getIdToken();
-
-      const data = await apiRequest("/auth/login", {
-        method: "POST",
-        body: { id_token: idToken },
-        authRequired: false,
-      });
-
-      login(idToken, data.user);
+      await login(result.user);
       navigate("/trang-chu");
     } catch (error) {
       alert("Đăng nhập Google thất bại: " + error.message);
@@ -69,15 +60,7 @@ function LoginPage() {
         formData.password
       );
       const firebaseUser = userCredential.user;
-      const idToken = await firebaseUser.getIdToken();
-
-      const data = await apiRequest("/auth/login", {
-        method: "POST",
-        body: { id_token: idToken },
-        authRequired: false,
-      });
-
-      login(idToken, data.user);
+      await login(firebaseUser);
       alert("Đăng nhập thành công!");
       navigate("/trang-chu");
     } catch (error) {

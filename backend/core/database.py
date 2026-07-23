@@ -34,18 +34,19 @@ def get_mongo_client() -> MongoClient:
     return _mongo_client
 
 
-def get_database() -> Database:
-    return get_mongo_client()[settings.db_name]
-
-
-# Compatibility aliases for existing OCR/RAG modules. V2 intentionally uses one
-# database so cross-domain references can be validated consistently.
 def get_auth_db() -> Database:
-    return get_database()
+    """Database for Firebase-linked application user profiles."""
+    return get_mongo_client()[settings.auth_db_name]
 
 
 def get_rag_db() -> Database:
-    return get_database()
+    """Database for the V2 document, RAG, and question-bank schema."""
+    return get_mongo_client()[settings.rag_db_name]
+
+
+def get_database() -> Database:
+    """Compatibility alias for existing OCR/RAG modules."""
+    return get_rag_db()
 
 
 def ping_database() -> None:

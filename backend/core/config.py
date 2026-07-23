@@ -44,7 +44,11 @@ class Settings(BaseModel):
     api_prefix: str = os.getenv("API_PREFIX", "/api/v1")
 
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    db_name: str = os.getenv("DB_NAME", os.getenv("RAG_DB_NAME", "rag_database"))
+    auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
+    rag_db_name: str = os.getenv(
+        "RAG_DB_NAME",
+        os.getenv("DB_NAME", "rag_database"),
+    )
     mongo_connect_timeout_ms: int = int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "10000"))
 
     firebase_credentials_path: str = os.getenv(

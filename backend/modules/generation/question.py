@@ -53,6 +53,8 @@ async def generate_questions_rag(
         rendered_prompt=full_prompt,
         context_text=context_text,
         retrieval_results=context_snapshot["results"],
+        chunk_set_id=context_snapshot["chunk_set_id"],
+        vector_collection_id=context_snapshot["vector_collection_id"],
     )
 
     # 3. Gọi LLM

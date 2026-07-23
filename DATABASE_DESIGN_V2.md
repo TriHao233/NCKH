@@ -4,49 +4,72 @@
 
 MongoDB là nguồn dữ liệu chính cho hồ sơ người dùng, tài liệu, lịch sử xử lý,
 chunk, cấu hình embedding, lần sinh câu hỏi và workflow duyệt câu hỏi.
-ChromaDB chỉ lưu vector; Firebase chịu trách nhiệm định danh và mật khẩu.
+ChromaDB chỉ lưu vector; Firebase chịu trách nhiệm định danh, mật khẩu và phiên
+đăng nhập.
 
-Backend dùng đúng một database lấy từ `DB_NAME` và URI lấy từ `MONGO_URI`.
-MongoDB phải chạy dưới dạng replica set để hỗ trợ transaction.
+Backend dùng một `MONGO_URI` và tách dữ liệu thành hai database:
+
+- `NCKH` (`AUTH_DB_NAME`): collection `User` chỉ lưu `uid` và Firebase ID token.
+- `rag_database` (`RAG_DB_NAME`): hồ sơ người dùng đầy đủ cùng toàn bộ schema
+  tài liệu, RAG và ngân hàng câu hỏi V2.
+
+MongoDB phải chạy dưới dạng replica set để hỗ trợ transaction trong
+`rag_database`. Các trường `*_user_id` tham chiếu `rag_database.users`; trường
+`firebase_uid` liên kết hồ sơ đầy đủ này với `NCKH.User.uid`.
 
 ## 2. Quy tắc chung
 
-- Mọi collection nghiệp vụ mới có `schema_version: 2`.
+- Mọi collection nghiệp vụ trong `rag_database` có `schema_version: 2`;
+  `NCKH.User` là liên kết Firebase tối giản nên không mang schema nghiệp vụ.
 - ID nội bộ và liên kết MongoDB dùng `ObjectId`.
 - Thời gian dùng UTC timezone-aware.
 - Không xóa vật lý dữ liệu đã được tham chiếu; dùng trạng thái `ARCHIVED` hoặc
   `is_active: false`.
 - Chỉ có hai role ứng dụng: `Admin` và `Teacher`.
-- Không lưu mật khẩu hoặc Firebase ID token trong MongoDB.
+- Không lưu mật khẩu. `NCKH.User.token` chỉ là token do Firebase phát hành;
+  backend không tự phát hành JWT.
 - Nội dung câu hỏi và kết quả OCR/chunk được version hóa, không ghi đè lịch sử.
 
 ## 3. Collections
 
-| Collection | Trách nhiệm |
-|---|---|
-| `users` | Hồ sơ ứng dụng liên kết Firebase UID |
-| `subjects` | Học phần, chương và CLO |
-| `documents` | Aggregate tài liệu và con trỏ tới phiên xử lý hiện tại |
-| `document_jobs` | Lịch sử OCR, chunk và index |
-| `document_pages` | Trang OCR bất biến theo OCR job |
-| `chunk_sets` | Một lần chunk tài liệu với snapshot cấu hình |
-| `document_chunks` | Nội dung chunk authoritative |
-| `vector_collections` | Snapshot collection và embedding model |
-| `chunk_embeddings` | Trạng thái vector của từng chunk theo collection |
-| `keywords` | Từ khóa theo học phần |
-| `ai_models` | Registry model AI |
-| `prompt_templates` | Prompt version bất biến |
-| `evaluation_policies` | Trọng số và ngưỡng đánh giá |
-| `generation_runs` | Snapshot request, model, prompt và retrieval |
-| `questions` | Aggregate và trạng thái workflow của câu hỏi |
-| `question_versions` | Nội dung bất biến của từng phiên bản |
-| `question_evaluations` | Lịch sử AI đánh giá từng phiên bản |
-| `question_reviews` | Lịch sử con người duyệt từng phiên bản |
-| `audit_logs` | Nhật ký hành động quan trọng |
-| `moodle_publications` | Lịch sử xuất bản sang Moodle |
-| `schema_meta` | Phiên bản schema hiện tại |
+| Database | Collection | Trách nhiệm |
+|---|---|---|
+| `NCKH` | `User` | Liên kết phiên Firebase chỉ gồm `uid`, `token` |
+| `rag_database` | `users` | Hồ sơ người dùng đầy đủ và role ứng dụng |
+| `rag_database` | `subjects` | Học phần, chương và CLO |
+| `rag_database` | `documents` | Aggregate tài liệu và con trỏ tới phiên xử lý hiện tại |
+| `rag_database` | `document_jobs` | Lịch sử OCR, chunk và index |
+| `rag_database` | `document_pages` | Trang OCR bất biến theo OCR job |
+| `rag_database` | `chunk_sets` | Một lần chunk tài liệu với snapshot cấu hình |
+| `rag_database` | `document_chunks` | Nội dung chunk authoritative |
+| `rag_database` | `vector_collections` | Snapshot collection và embedding model |
+| `rag_database` | `chunk_embeddings` | Trạng thái vector của từng chunk theo collection |
+| `rag_database` | `keywords` | Từ khóa theo học phần |
+| `rag_database` | `ai_models` | Registry model AI |
+| `rag_database` | `prompt_templates` | Prompt version bất biến |
+| `rag_database` | `evaluation_policies` | Trọng số và ngưỡng đánh giá |
+| `rag_database` | `generation_runs` | Snapshot request, model, prompt và retrieval |
+| `rag_database` | `questions` | Aggregate và trạng thái workflow của câu hỏi |
+| `rag_database` | `question_versions` | Nội dung bất biến của từng phiên bản |
+| `rag_database` | `question_evaluations` | Lịch sử AI đánh giá từng phiên bản |
+| `rag_database` | `question_reviews` | Lịch sử con người duyệt từng phiên bản |
+| `rag_database` | `audit_logs` | Nhật ký hành động quan trọng |
+| `rag_database` | `moodle_publications` | Lịch sử xuất bản sang Moodle |
+| `rag_database` | `schema_meta` | Phiên bản schema hiện tại |
 
 ## 4. Users và Firebase
+
+Collection `NCKH.User` tối giản:
+
+```javascript
+{
+  _id: ObjectId(),
+  uid: "firebase-uid",
+  token: "firebase-id-token"
+}
+```
+
+Hồ sơ đầy đủ nằm trong `rag_database.users`:
 
 ```javascript
 {
@@ -67,7 +90,8 @@ MongoDB phải chạy dưới dạng replica set để hỗ trợ transaction.
 }
 ```
 
-`firebase_uid` và `email` là duy nhất. Tài khoản đăng ký công khai luôn là
+`NCKH.User.uid`, `rag_database.users.firebase_uid` và email là duy nhất. Tài
+khoản đăng ký công khai luôn là
 `Teacher`. Chỉ Admin được thay đổi role hoặc khóa tài khoản.
 
 ## 5. Documents và processing version

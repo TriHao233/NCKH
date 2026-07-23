@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Protocol
@@ -38,6 +40,8 @@ def serialize_question(question: dict, version: dict) -> dict:
             "id": question["_id"],
             "question_code": question["question_code"],
             "current_version": question["current_version"],
+            "current_version_id": question["current_version_id"],
+            "approved_version_id": question.get("approved_version_id"),
             "lifecycle_status": question["lifecycle_status"],
             "evaluation_status": question["evaluation_status"],
             "review_status": question["review_status"],
@@ -47,6 +51,8 @@ def serialize_question(question: dict, version: dict) -> dict:
             "classification": version["classification"],
             "sources": version.get("sources") or [],
             "content_hash": version["content_hash"],
+            "quality_summary": question.get("quality_summary") or {},
+            "latest_review_id": question.get("latest_review_id"),
             "created_at": question["created_at"],
             "updated_at": question["updated_at"],
         }
@@ -75,6 +81,36 @@ class QuestionRepository(Protocol):
 
     def archive(self, question_id: str | ObjectId) -> bool: ...
 
+    def list_versions(self, question_id: str | ObjectId) -> list[dict]: ...
+
+
+class QuestionReferenceRepository(Protocol):
+    def find_chunk(self, chunk_id: ObjectId) -> dict | None: ...
+
+    def find_document(self, document_id: ObjectId) -> dict | None: ...
+
+    def find_subject(self, subject_id: ObjectId) -> dict | None: ...
+
+
+class MongoQuestionReferenceRepository:
+    def __init__(self, database: Database):
+        self.db = database
+
+    def find_chunk(self, chunk_id: ObjectId) -> dict | None:
+        return self.db.document_chunks.find_one({"_id": chunk_id})
+
+    def find_document(self, document_id: ObjectId) -> dict | None:
+        return self.db.documents.find_one(
+            {
+                "_id": document_id,
+                "schema_version": SCHEMA_VERSION,
+                "archived_at": None,
+            }
+        )
+
+    def find_subject(self, subject_id: ObjectId) -> dict | None:
+        return self.db.subjects.find_one({"_id": subject_id, "is_active": True})
+
 
 class MongoQuestionRepository:
     def __init__(self, database: Database):
@@ -82,7 +118,11 @@ class MongoQuestionRepository:
 
     def find_pair(self, question_id: str | ObjectId) -> tuple[dict, dict] | None:
         question = self.db.questions.find_one(
-            {"_id": object_id(question_id, "question_id"), "schema_version": SCHEMA_VERSION}
+            {
+                "_id": object_id(question_id, "question_id"),
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+            }
         )
         if not question:
             return None
@@ -160,7 +200,11 @@ class MongoQuestionRepository:
         with mongo_transaction() as session:
             self.db.question_versions.insert_one(new_version, session=session)
             result = self.db.questions.update_one(
-                {"_id": question["_id"], "current_version": expected_version},
+                {
+                    "_id": question["_id"],
+                    "current_version": expected_version,
+                    "lifecycle_status": "ACTIVE",
+                },
                 {
                     "$set": {
                         "current_version": expected_version + 1,
@@ -186,7 +230,11 @@ class MongoQuestionRepository:
     def archive(self, question_id: str | ObjectId) -> bool:
         now = utc_now()
         result = self.db.questions.update_one(
-            {"_id": object_id(question_id, "question_id"), "schema_version": SCHEMA_VERSION},
+            {
+                "_id": object_id(question_id, "question_id"),
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+            },
             {
                 "$set": {
                     "lifecycle_status": "ARCHIVED",
@@ -196,3 +244,17 @@ class MongoQuestionRepository:
             },
         )
         return result.matched_count == 1
+
+    def list_versions(self, question_id: str | ObjectId) -> list[dict]:
+        question_oid = object_id(question_id, "question_id")
+        if not self.db.questions.find_one(
+            {"_id": question_oid, "schema_version": SCHEMA_VERSION},
+            {"_id": 1},
+        ):
+            return []
+        return list(
+            self.db.question_versions.find({"question_id": question_oid}).sort(
+                "version",
+                -1,
+            )
+        )

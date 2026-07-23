@@ -2,6 +2,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 
+from core.config import settings
+
 class BloomLevel(str, Enum):
     NHO = "nho"
     HIEU = "hieu"
@@ -22,7 +24,7 @@ class QuestionType(str, Enum):
 class QuestionGenerateRequest(BaseModel):
     # Xóa context: str, thay bằng document_id để gọi ChromaDB
     document_id: str = Field(..., description="ID của giáo trình trong DB")
-    collection_name: str = "chunks"
+    collection_name: str = settings.chromadb_collection_name
     target_heading: Optional[str] = Field(None, description="Tên mục lục muốn giới hạn sinh câu hỏi")
     bloom_level: BloomLevel
     question_type: QuestionType = QuestionType.TRAC_NGHIEM

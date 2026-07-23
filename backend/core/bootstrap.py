@@ -4,11 +4,14 @@ from datetime import datetime, timezone
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from pymongo.errors import CollectionInvalid
 
-from core.database import get_database
+from core.database import get_auth_db, get_rag_db
+from core.config import settings
 
 SCHEMA_VERSION = 2
 
-COLLECTIONS = (
+AUTH_COLLECTIONS = ("User",)
+
+RAG_COLLECTIONS = (
     "users",
     "subjects",
     "documents",
@@ -33,11 +36,26 @@ COLLECTIONS = (
     "migration_id_map",
 )
 
+COLLECTIONS = AUTH_COLLECTIONS + RAG_COLLECTIONS
+
 VALIDATORS = {
+    "User": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "additionalProperties": False,
+            "required": ["uid", "token"],
+            "properties": {
+                "_id": {"bsonType": "objectId"},
+                "uid": {"bsonType": "string", "minLength": 1},
+                "token": {"bsonType": ["string", "null"]},
+            },
+        }
+    },
     "users": {
         "$jsonSchema": {
             "bsonType": "object",
             "required": [
+                "schema_version",
                 "firebase_uid",
                 "email",
                 "display_name",
@@ -47,6 +65,7 @@ VALIDATORS = {
                 "updated_at",
             ],
             "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
                 "firebase_uid": {"bsonType": "string", "minLength": 1},
                 "email": {"bsonType": "string", "minLength": 3},
                 "display_name": {"bsonType": "string", "minLength": 1},
@@ -133,6 +152,7 @@ VALIDATORS = {
         "$jsonSchema": {
             "bsonType": "object",
             "required": [
+                "schema_version",
                 "question_id",
                 "version",
                 "origin",
@@ -144,9 +164,11 @@ VALIDATORS = {
                 "created_at",
             ],
             "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
                 "question_id": {"bsonType": "objectId"},
                 "version": {"bsonType": "int", "minimum": 1},
                 "origin": {"enum": ["AI", "MANUAL", "IMPORT"]},
+                "classification": {"bsonType": "object"},
                 "content": {"bsonType": "string", "minLength": 1},
                 "question_data": {"bsonType": "object"},
                 "sources": {"bsonType": "array"},
@@ -158,10 +180,9 @@ VALIDATORS = {
 }
 
 
-def _ensure_collections() -> None:
-    db = get_database()
+def _ensure_collections(db, collection_names: tuple[str, ...]) -> None:
     existing = set(db.list_collection_names())
-    for name in COLLECTIONS:
+    for name in collection_names:
         if name in existing:
             continue
         options = {}
@@ -176,7 +197,10 @@ def _ensure_collections() -> None:
         except CollectionInvalid:
             pass
 
-    for name, validator in VALIDATORS.items():
+    for name in collection_names:
+        validator = VALIDATORS.get(name)
+        if validator is None:
+            continue
         db.command(
             {
                 "collMod": name,
@@ -188,16 +212,22 @@ def _ensure_collections() -> None:
 
 
 def _ensure_indexes() -> None:
-    db = get_database()
-    db.users.create_indexes(
+    auth_db = get_auth_db()
+    rag_db = get_rag_db()
+    auth_db["User"].create_indexes(
+        [
+            IndexModel([("uid", ASCENDING)], unique=True, name="uq_user_uid"),
+        ]
+    )
+    rag_db.users.create_indexes(
         [
             IndexModel([("firebase_uid", ASCENDING)], unique=True, name="uq_users_firebase_uid"),
             IndexModel([("email", ASCENDING)], unique=True, name="uq_users_email"),
             IndexModel([("role", ASCENDING), ("is_active", ASCENDING)], name="ix_users_role_active"),
         ]
     )
-    db.subjects.create_index([("subject_code", ASCENDING)], unique=True, name="uq_subject_code")
-    db.documents.create_indexes(
+    rag_db.subjects.create_index([("subject_code", ASCENDING)], unique=True, name="uq_subject_code")
+    rag_db.documents.create_indexes(
         [
             IndexModel(
                 [
@@ -212,7 +242,7 @@ def _ensure_indexes() -> None:
             IndexModel([("artifacts.sha256", ASCENDING)], name="ix_documents_artifact_hash"),
         ]
     )
-    db.document_jobs.create_indexes(
+    rag_db.document_jobs.create_indexes(
         [
             IndexModel(
                 [
@@ -227,7 +257,7 @@ def _ensure_indexes() -> None:
             IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_document_jobs_queue"),
         ]
     )
-    db.document_pages.create_indexes(
+    rag_db.document_pages.create_indexes(
         [
             IndexModel([("ocr_job_id", ASCENDING), ("page_number", ASCENDING)], unique=True, name="uq_ocr_job_page"),
             IndexModel(
@@ -236,24 +266,24 @@ def _ensure_indexes() -> None:
             ),
         ]
     )
-    db.chunk_sets.create_indexes(
+    rag_db.chunk_sets.create_indexes(
         [
             IndexModel([("chunk_job_id", ASCENDING)], unique=True, name="uq_chunk_set_job"),
             IndexModel([("document_id", ASCENDING), ("document_version", ASCENDING)], name="ix_chunk_sets_document"),
         ]
     )
-    db.document_chunks.create_indexes(
+    rag_db.document_chunks.create_indexes(
         [
             IndexModel([("chunk_set_id", ASCENDING), ("chunk_no", ASCENDING)], unique=True, name="uq_chunk_set_number"),
             IndexModel([("document_id", ASCENDING), ("chunk_set_id", ASCENDING)], name="ix_chunks_document_set"),
         ]
     )
-    db.vector_collections.create_index(
+    rag_db.vector_collections.create_index(
         [("provider", ASCENDING), ("collection_name", ASCENDING)],
         unique=True,
         name="uq_vector_collection",
     )
-    db.chunk_embeddings.create_indexes(
+    rag_db.chunk_embeddings.create_indexes(
         [
             IndexModel(
                 [("chunk_id", ASCENDING), ("vector_collection_id", ASCENDING)],
@@ -267,13 +297,13 @@ def _ensure_indexes() -> None:
             ),
         ]
     )
-    db.generation_runs.create_indexes(
+    rag_db.generation_runs.create_indexes(
         [
             IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
             IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"),
         ]
     )
-    db.questions.create_indexes(
+    rag_db.questions.create_indexes(
         [
             IndexModel([("question_code", ASCENDING)], unique=True, name="uq_question_code"),
             IndexModel(
@@ -286,30 +316,30 @@ def _ensure_indexes() -> None:
             ),
         ]
     )
-    db.question_versions.create_indexes(
+    rag_db.question_versions.create_indexes(
         [
             IndexModel([("question_id", ASCENDING), ("version", ASCENDING)], unique=True, name="uq_question_version"),
             IndexModel([("sources.chunk_id", ASCENDING)], name="ix_question_sources"),
         ]
     )
-    db.question_evaluations.create_index(
+    rag_db.question_evaluations.create_index(
         [("question_version_id", ASCENDING), ("created_at", DESCENDING)],
         name="ix_evaluations_version",
     )
-    db.question_reviews.create_index(
+    rag_db.question_reviews.create_index(
         [("question_version_id", ASCENDING), ("reviewed_at", DESCENDING)],
         name="ix_reviews_version",
     )
-    db.audit_logs.create_index(
+    rag_db.audit_logs.create_index(
         [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],
         name="ix_audit_entity",
     )
-    db.moodle_publications.create_index(
+    rag_db.moodle_publications.create_index(
         [("idempotency_key", ASCENDING)],
         unique=True,
         name="uq_publication_idempotency",
     )
-    db.migration_id_map.create_index(
+    rag_db.migration_id_map.create_index(
         [("source_collection", ASCENDING), ("source_id", ASCENDING)],
         unique=True,
         name="uq_migration_source",
@@ -317,7 +347,7 @@ def _ensure_indexes() -> None:
 
 
 def _seed_reference_data() -> None:
-    db = get_database()
+    db = get_rag_db()
     now = datetime.now(timezone.utc)
     db.subjects.update_one(
         {"subject_code": "CTDL"},
@@ -360,11 +390,14 @@ def _seed_reference_data() -> None:
 
 def bootstrap_database() -> None:
     """Create or align V2 collections without deleting existing data."""
-    _ensure_collections()
+    if settings.auth_db_name == settings.rag_db_name:
+        raise ValueError("AUTH_DB_NAME và RAG_DB_NAME phải là hai database khác nhau")
+    _ensure_collections(get_auth_db(), AUTH_COLLECTIONS)
+    _ensure_collections(get_rag_db(), RAG_COLLECTIONS)
     _ensure_indexes()
     _seed_reference_data()
     now = datetime.now(timezone.utc)
-    get_database().schema_meta.update_one(
+    get_rag_db().schema_meta.update_one(
         {"_id": "database_schema"},
         {
             "$set": {"current_version": SCHEMA_VERSION, "updated_at": now},

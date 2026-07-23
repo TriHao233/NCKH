@@ -23,7 +23,7 @@ from modules.rag.mongodb import (
 )
 from modules.rag.schemas import ChunkingStats, DocumentChunkRequest, DocumentChunkResponse
 
-router = APIRouter(prefix="/api/v1/chunk", tags=["chunking"])
+router = APIRouter(prefix=f"{settings.api_prefix}/chunk", tags=["chunking"])
 logger = logging.getLogger(__name__)
 
 PAGE_MARKER_PATTERN = re.compile(r"<!--\s*PAGE:(\d+)\s*-->")

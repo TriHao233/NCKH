@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 
@@ -7,7 +9,10 @@ from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database
 from modules.questions.repository import (
     MongoQuestionRepository,
+    MongoQuestionReferenceRepository,
     QuestionRepository,
+    QuestionReferenceRepository,
+    json_safe,
     object_id,
     serialize_question,
     utc_now,
@@ -30,20 +35,34 @@ def stable_hash(value: dict) -> str:
 
 
 class QuestionService:
-    def __init__(self, repository: QuestionRepository, database):
+    def __init__(
+        self,
+        repository: QuestionRepository,
+        references: QuestionReferenceRepository,
+    ):
         self.repository = repository
-        self.db = database
+        self.references = references
 
-    def _sources(self, chunk_ids: list[str]) -> list[dict]:
+    def _sources(
+        self,
+        chunk_ids: list[str],
+        expected_document_id: ObjectId | None = None,
+    ) -> tuple[list[dict], ObjectId | None]:
         unique_chunk_ids = list(dict.fromkeys(chunk_ids))
         if not unique_chunk_ids:
-            return []
+            return [], expected_document_id
         sources = []
+        resolved_document_id = expected_document_id
         for citation_order, chunk_id in enumerate(unique_chunk_ids, start=1):
             chunk_oid = object_id(chunk_id, "chunk_id")
-            chunk = self.db.document_chunks.find_one({"_id": chunk_oid})
+            chunk = self.references.find_chunk(chunk_oid)
             if not chunk:
                 raise ValueError(f"Chunk không tồn tại: {chunk_id}")
+            chunk_document_id = chunk.get("document_id")
+            if resolved_document_id is None:
+                resolved_document_id = chunk_document_id
+            elif chunk_document_id != resolved_document_id:
+                raise ValueError("Các chunk nguồn phải thuộc cùng tài liệu")
             sources.append({
                 "source_type": "CHUNK",
                 "chunk_id": chunk_oid,
@@ -54,7 +73,59 @@ class QuestionService:
                 "scores": {},
                 "context_excerpt": chunk.get("content", "")[:2000],
             })
-        return sources
+        return sources, resolved_document_id
+
+    def _document(self, document_id: str | ObjectId | None) -> dict | None:
+        if document_id is None:
+            return None
+        document_oid = object_id(document_id, "document_id")
+        document = self.references.find_document(document_oid)
+        if not document:
+            raise ValueError("Tài liệu nguồn không tồn tại hoặc đã lưu trữ")
+        return document
+
+    def _validate_subject(self, subject_id: str | ObjectId | None) -> dict | None:
+        if subject_id is None:
+            return None
+        subject_oid = object_id(subject_id, "subject_id")
+        subject = self.references.find_subject(subject_oid)
+        if not subject:
+            raise ValueError("Học phần không tồn tại hoặc đã ngừng hoạt động")
+        return subject
+
+    def _validate_classification_refs(
+        self,
+        subject_id: str | ObjectId | None,
+        chapter_id: str | ObjectId | None,
+    ) -> None:
+        subject = self._validate_subject(subject_id)
+        if chapter_id is None:
+            return
+        if subject is None:
+            raise ValueError("Chương phải thuộc một học phần")
+        chapter_oid = object_id(chapter_id, "chapter_id")
+        chapter_ids = {
+            object_id(chapter.get("_id") or chapter.get("id"), "chapter_id")
+            for chapter in subject.get("chapters", [])
+            if chapter.get("_id") or chapter.get("id")
+        }
+        if chapter_oid not in chapter_ids:
+            raise ValueError("Chương không thuộc học phần đã chọn")
+
+    @staticmethod
+    def _validate_active_sources(sources: list[dict], document: dict | None) -> None:
+        if not sources or not document:
+            return
+        active_chunk_set_id = (document.get("current_processing") or {}).get(
+            "chunk_set_id"
+        )
+        if not active_chunk_set_id:
+            raise ValueError("Tài liệu chưa có chunk set hiện hành")
+        if any(
+            source.get("chunk_set_id") != active_chunk_set_id
+            for source in sources
+        ):
+            raise ValueError("Chunk nguồn không thuộc phiên xử lý hiện hành của tài liệu")
 
     @staticmethod
     def _classification(
@@ -90,12 +161,37 @@ class QuestionService:
         source_chunk_ids = payload.source_chunk_ids or (
             [payload.chunk_id] if payload.chunk_id else []
         )
-        sources = self._sources(source_chunk_ids)
+        document = self._document(payload.document_id)
+        expected_document_id = document["_id"] if document else None
+        sources, resolved_document_id = self._sources(
+            source_chunk_ids,
+            expected_document_id,
+        )
+        if resolved_document_id and document is None:
+            document = self._document(resolved_document_id)
+        self._validate_active_sources(sources, document)
+        document_subject_id = document.get("subject_id") if document else None
+        document_chapter_id = document.get("chapter_id") if document else None
+        if (
+            payload.subject_id
+            and document_subject_id
+            and object_id(payload.subject_id, "subject_id") != document_subject_id
+        ):
+            raise ValueError("Học phần câu hỏi không khớp với tài liệu nguồn")
+        if (
+            payload.chapter_id
+            and document_chapter_id
+            and object_id(payload.chapter_id, "chapter_id") != document_chapter_id
+        ):
+            raise ValueError("Chương câu hỏi không khớp với tài liệu nguồn")
+        subject_id = document_subject_id or payload.subject_id
+        chapter_id = document_chapter_id or payload.chapter_id
+        self._validate_classification_refs(subject_id, chapter_id)
         classification = self._classification(
             question_type=payload.question_type,
             bloom_level=payload.bloom_level,
-            subject_id=payload.subject_id,
-            chapter_id=payload.chapter_id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
         )
         content_hash = stable_hash(
             {
@@ -129,7 +225,7 @@ class QuestionService:
             "version": 1,
             "origin": origin,
             "generation_run_id": generation_run_id,
-            "document_id": object_id(payload.document_id, "document_id") if payload.document_id else None,
+            "document_id": resolved_document_id,
             "created_by_user_id": created_by_user_id,
             "generated_by_model_id": None,
             "classification": classification,
@@ -164,6 +260,34 @@ class QuestionService:
             "page_size": page_size,
         }
 
+    def versions(self, question_id: str) -> list[dict] | None:
+        versions = self.repository.list_versions(question_id)
+        if not versions:
+            return None
+        return [
+            json_safe(
+                {
+                    "id": version["_id"],
+                    "version": version["version"],
+                    "origin": version["origin"],
+                    "generation_run_id": version.get("generation_run_id"),
+                    "document_id": version.get("document_id"),
+                    "created_by_user_id": version.get("created_by_user_id"),
+                    "generated_by_model_id": version.get("generated_by_model_id"),
+                    "classification": version["classification"],
+                    "clos": version.get("clos") or [],
+                    "content": version["content"],
+                    "question_data": version["question_data"],
+                    "sources": version.get("sources") or [],
+                    "keywords": version.get("keywords") or [],
+                    "content_hash": version["content_hash"],
+                    "change_note": version.get("change_note", ""),
+                    "created_at": version["created_at"],
+                }
+            )
+            for version in versions
+        ]
+
     def update(
         self,
         question_id: str,
@@ -179,6 +303,37 @@ class QuestionService:
             value is not None
             for value in (payload.question_type, payload.bloom_level, payload.subject_id, payload.chapter_id)
         ):
+            next_subject_id = (
+                payload.subject_id
+                if payload.subject_id is not None
+                else classification["subject"].get("id")
+            )
+            next_chapter_id = (
+                payload.chapter_id
+                if payload.chapter_id is not None
+                else classification["chapter"].get("id")
+            )
+            current_document = self._document(current.get("document_id"))
+            if current_document:
+                document_subject_id = current_document.get("subject_id")
+                document_chapter_id = current_document.get("chapter_id")
+                if (
+                    document_subject_id
+                    and object_id(next_subject_id, "subject_id")
+                    != document_subject_id
+                ):
+                    raise ValueError(
+                        "Học phần câu hỏi không khớp với tài liệu nguồn"
+                    )
+                if (
+                    document_chapter_id
+                    and object_id(next_chapter_id, "chapter_id")
+                    != document_chapter_id
+                ):
+                    raise ValueError(
+                        "Chương câu hỏi không khớp với tài liệu nguồn"
+                    )
+            self._validate_classification_refs(next_subject_id, next_chapter_id)
             classification = self._classification(
                 question_type=payload.question_type or classification["assessment_type"],
                 bloom_level=(
@@ -203,12 +358,50 @@ class QuestionService:
             if payload.question_data is not None
             else current["question_data"]
         )
+        current_document_id = current.get("document_id")
+        resolved_document_id = current_document_id
         if payload.source_chunk_ids is not None:
-            sources = self._sources(payload.source_chunk_ids)
+            sources, resolved_document_id = self._sources(
+                payload.source_chunk_ids,
+                current_document_id,
+            )
         elif payload.chunk_id is not None:
-            sources = self._sources([payload.chunk_id])
+            sources, resolved_document_id = self._sources(
+                [payload.chunk_id],
+                current_document_id,
+            )
         else:
             sources = current["sources"]
+        if current_document_id is None and resolved_document_id is not None:
+            source_document = self._document(resolved_document_id)
+            source_subject_id = source_document.get("subject_id")
+            source_chapter_id = source_document.get("chapter_id")
+            current_subject_id = classification["subject"].get("id")
+            current_chapter_id = classification["chapter"].get("id")
+            if (
+                current_subject_id
+                and source_subject_id
+                and current_subject_id != source_subject_id
+            ):
+                raise ValueError("Học phần câu hỏi không khớp với tài liệu nguồn")
+            if (
+                current_chapter_id
+                and source_chapter_id
+                and current_chapter_id != source_chapter_id
+            ):
+                raise ValueError("Chương câu hỏi không khớp với tài liệu nguồn")
+            next_subject_id = source_subject_id or current_subject_id
+            next_chapter_id = source_chapter_id or current_chapter_id
+            self._validate_classification_refs(next_subject_id, next_chapter_id)
+            classification = self._classification(
+                question_type=classification["assessment_type"],
+                bloom_level=classification["bloom"]["level"],
+                subject_id=next_subject_id,
+                chapter_id=next_chapter_id,
+            )
+        if payload.source_chunk_ids is not None or payload.chunk_id is not None:
+            document = self._document(resolved_document_id)
+            self._validate_active_sources(sources, document)
         content_hash = stable_hash(
             {
                 "content": content,
@@ -223,6 +416,7 @@ class QuestionService:
             {
                 "origin": "MANUAL",
                 "created_by_user_id": created_by_user_id,
+                "document_id": resolved_document_id,
                 "classification": classification,
                 "content": content,
                 "question_data": question_data,
@@ -240,4 +434,7 @@ class QuestionService:
 
 def get_question_service() -> QuestionService:
     database = get_database()
-    return QuestionService(MongoQuestionRepository(database), database)
+    return QuestionService(
+        MongoQuestionRepository(database),
+        MongoQuestionReferenceRepository(database),
+    )

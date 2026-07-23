@@ -11,7 +11,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from core.bootstrap import SCHEMA_VERSION, bootstrap_database
-from core.database import get_database, ping_database
+from core.database import get_auth_db, get_database, get_rag_db, ping_database
 from modules.documents.repository import MongoDocumentRepository, utc_now
 from modules.questions.schemas import QuestionCreateRequest
 from modules.questions.service import get_question_service
@@ -44,43 +44,82 @@ def record_mapping(source_collection: str, source_id, target_collection: str, ta
 
 
 def migrate_users(apply: bool) -> tuple[int, int]:
-    db = get_database()
-    source = db["UserInfo"]
+    auth_db = get_auth_db()
+    rag_db = get_rag_db()
+    sources = (
+        ("NCKH.UserInfo", auth_db["UserInfo"]),
+        ("NCKH.users", auth_db["users"]),
+        ("rag_database.users", rag_db["users"]),
+    )
     scanned = eligible = 0
-    for legacy in source.find({}):
-        scanned += 1
-        if migrated("UserInfo", legacy["_id"]) or not legacy.get("uid"):
-            continue
-        eligible += 1
-        if not apply:
-            continue
-        role = "Admin" if str(legacy.get("role", "")).lower() in {"admin", "quản trị"} else "Teacher"
-        now = utc_now()
-        target = db.users.find_one_and_update(
-            {"firebase_uid": legacy["uid"]},
-            {
-                "$setOnInsert": {
-                    "schema_version": SCHEMA_VERSION,
-                    "firebase_uid": legacy["uid"],
-                    "email": (
-                        legacy.get("Email") or f"{legacy['uid']}@firebase.local"
-                    ).lower(),
-                    "display_name": legacy.get("Full name") or "Teacher",
-                    "role": role,
-                    "profile": {
-                        "school": legacy.get("School", ""),
-                        "address": legacy.get("Địa Chỉ", ""),
-                        "avatar": legacy.get("avatar", ""),
-                    },
-                    "is_active": legacy.get("status", "active") == "active",
-                    "created_at": legacy.get("created_at") or now,
-                    "updated_at": now,
-                }
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        record_mapping("UserInfo", legacy["_id"], "users", target["_id"])
+    for source_name, source in sources:
+        for legacy in source.find({}):
+            scanned += 1
+            uid = legacy.get("firebase_uid") or legacy.get("uid")
+            if not uid:
+                continue
+            if (
+                migrated(source_name, legacy["_id"])
+                and rag_db.users.find_one({"firebase_uid": uid}, {"_id": 1})
+                and auth_db["User"].find_one({"uid": uid}, {"_id": 1})
+            ):
+                continue
+            eligible += 1
+            if not apply:
+                continue
+            now = utc_now()
+            role = (
+                "Admin"
+                if str(legacy.get("role", "")).lower() in {"admin", "quản trị"}
+                else "Teacher"
+            )
+            target = rag_db.users.find_one_and_update(
+                {"firebase_uid": uid},
+                {
+                    "$setOnInsert": {
+                        "schema_version": SCHEMA_VERSION,
+                        "firebase_uid": uid,
+                        "email": (
+                            legacy.get("email")
+                            or legacy.get("Email")
+                            or f"{uid}@firebase.local"
+                        ).lower(),
+                        "display_name": (
+                            legacy.get("display_name")
+                            or legacy.get("Full name")
+                            or "Teacher"
+                        ),
+                        "role": role,
+                        "profile": legacy.get("profile")
+                        or {
+                            "school": legacy.get("School", ""),
+                            "address": legacy.get("Địa Chỉ", ""),
+                            "avatar": legacy.get("avatar", ""),
+                        },
+                        "is_active": legacy.get(
+                            "is_active",
+                            legacy.get("status", "active") == "active",
+                        ),
+                        "created_at": legacy.get("created_at") or now,
+                        "updated_at": now,
+                    }
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            token = legacy.get("token")
+            existing_session = auth_db["User"].find_one({"uid": uid})
+            normalized_token = (
+                token
+                if token is not None
+                else (existing_session or {}).get("token")
+            )
+            auth_db["User"].replace_one(
+                {"uid": uid},
+                {"uid": uid, "token": normalized_token},
+                upsert=True,
+            )
+            record_mapping(source_name, legacy["_id"], "users", target["_id"])
     return scanned, eligible
 
 

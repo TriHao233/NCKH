@@ -73,7 +73,7 @@ def update_document_status(
         document = repository.find_by_id(document_id)
         if document:
             get_database().documents.update_one(
-                {"_id": document["_id"]},
+                {"_id": document["_id"], "archived_at": None},
                 {
                     "$set": {
                         "status": "PROCESSING",

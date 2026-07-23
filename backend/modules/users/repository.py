@@ -48,6 +48,8 @@ class UserRepository(Protocol):
 
     def update(self, user_id: str | ObjectId, fields: dict) -> dict | None: ...
 
+    def delete_by_id(self, user_id: str | ObjectId) -> None: ...
+
 
 class MongoUserRepository:
     def __init__(self, database: Database):
@@ -141,3 +143,6 @@ class MongoUserRepository:
             {"$set": fields},
             return_document=ReturnDocument.AFTER,
         )
+
+    def delete_by_id(self, user_id: str | ObjectId) -> None:
+        self.collection.delete_one({"_id": object_id(user_id)})

@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
+
+from core.config import settings
 import logging
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.generation.schemas import QuestionGenerateRequest, QuestionGenerateResponse
 from modules.generation.question import generate_questions_rag
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/generate", tags=["generation"])
+router = APIRouter(prefix=f"{settings.api_prefix}/generate", tags=["generation"])
 
 @router.post("/questions", response_model=QuestionGenerateResponse, summary="Sinh câu hỏi tự động từ hệ thống RAG")
 async def api_generate_questions(

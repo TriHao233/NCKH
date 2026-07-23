@@ -6,6 +6,7 @@ from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionListResponse,
     QuestionResponse,
+    QuestionVersionResponse,
     QuestionUpdateRequest,
 )
 from modules.questions.service import QuestionService, get_question_service
@@ -50,6 +51,21 @@ def get_question(
     if not question:
         raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
     return question
+
+
+@router.get("/{question_id}/versions", response_model=list[QuestionVersionResponse])
+def list_question_versions(
+    question_id: str,
+    _user: CurrentUser = Depends(require_teacher_or_admin),
+    service: QuestionService = Depends(get_question_service),
+):
+    try:
+        versions = service.versions(question_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if versions is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
+    return versions
 
 
 @router.patch("/{question_id}", response_model=QuestionResponse)

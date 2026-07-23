@@ -2,7 +2,11 @@ from typing import Protocol
 
 from firebase_admin import auth
 
-from core.database import get_database
+from core.database import get_rag_db
+from modules.auth.session_repository import (
+    FirebaseSessionRepository,
+    get_firebase_session_repository,
+)
 from modules.users.repository import MongoUserRepository, UserRepository, serialize_user
 from modules.users.schemas import (
     PublicRegisterRequest,
@@ -37,9 +41,15 @@ class FirebaseIdentityGateway:
 
 
 class UserService:
-    def __init__(self, repository: UserRepository, identity: IdentityGateway):
+    def __init__(
+        self,
+        repository: UserRepository,
+        identity: IdentityGateway,
+        sessions: FirebaseSessionRepository,
+    ):
         self.repository = repository
         self.identity = identity
+        self.sessions = sessions
 
     def sync_from_claims(self, claims: dict) -> dict:
         return serialize_user(self.repository.sync_identity(claims))
@@ -50,6 +60,7 @@ class UserService:
             password=payload.password,
             display_name=payload.full_name,
         )
+        user = None
         try:
             user = self.repository.create(
                 {
@@ -59,7 +70,10 @@ class UserService:
                     "role": "Teacher",
                 }
             )
+            self.sessions.upsert(firebase_user.uid, None)
         except Exception:
+            if user:
+                self.repository.delete_by_id(user["_id"])
             self.identity.delete_user(firebase_user.uid)
             raise
         return serialize_user(user)
@@ -70,6 +84,7 @@ class UserService:
             password=payload.password,
             display_name=payload.display_name,
         )
+        user = None
         try:
             user = self.repository.create(
                 {
@@ -80,7 +95,10 @@ class UserService:
                     "profile": payload.profile.model_dump(),
                 }
             )
+            self.sessions.upsert(firebase_user.uid, None)
         except Exception:
+            if user:
+                self.repository.delete_by_id(user["_id"])
             self.identity.delete_user(firebase_user.uid)
             raise
         return serialize_user(user)
@@ -132,6 +150,8 @@ class UserService:
         if payload.is_active is not None:
             self.identity.set_user_disabled(user["firebase_uid"], not payload.is_active)
         updated = self.repository.update(user_id, fields)
+        if updated and payload.is_active is False:
+            self.sessions.upsert(user["firebase_uid"], None)
         return serialize_user(updated) if updated else None
 
     def deactivate(self, user_id: str) -> bool:
@@ -139,8 +159,15 @@ class UserService:
         if not user:
             return False
         self.identity.set_user_disabled(user["firebase_uid"], True)
-        return self.repository.update(user_id, {"is_active": False}) is not None
+        updated = self.repository.update(user_id, {"is_active": False})
+        if updated:
+            self.sessions.upsert(user["firebase_uid"], None)
+        return updated is not None
 
 
 def get_user_service() -> UserService:
-    return UserService(MongoUserRepository(get_database()), FirebaseIdentityGateway())
+    return UserService(
+        MongoUserRepository(get_rag_db()),
+        FirebaseIdentityGateway(),
+        get_firebase_session_repository(),
+    )

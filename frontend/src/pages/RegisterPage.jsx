@@ -64,16 +64,7 @@ function DangKy() {
     setLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const idToken = await result.user.getIdToken();
-
-      // Vẫn gọi về API Login vì Backend đã được set up để tự động tạo User nếu chưa có
-      const data = await apiRequest("/auth/login", {
-        method: "POST",
-        body: { id_token: idToken },
-        authRequired: false,
-      });
-
-      login(idToken, data.user);
+      await login(result.user);
       navigate("/trang-chu");
     } catch (error) {
       alert("Đăng nhập/Đăng ký Google thất bại: " + error.message);

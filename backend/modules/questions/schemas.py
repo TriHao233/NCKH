@@ -40,6 +40,8 @@ class QuestionResponse(BaseModel):
     id: str
     question_code: str
     current_version: int
+    current_version_id: str
+    approved_version_id: str | None
     lifecycle_status: str
     evaluation_status: str
     review_status: str
@@ -49,8 +51,29 @@ class QuestionResponse(BaseModel):
     classification: dict[str, Any]
     sources: list[dict[str, Any]]
     content_hash: str
+    quality_summary: dict[str, Any]
+    latest_review_id: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class QuestionVersionResponse(BaseModel):
+    id: str
+    version: int
+    origin: QuestionOrigin
+    generation_run_id: str | None
+    document_id: str | None
+    created_by_user_id: str | None
+    generated_by_model_id: str | None
+    classification: dict[str, Any]
+    clos: list[Any]
+    content: str
+    question_data: dict[str, Any]
+    sources: list[dict[str, Any]]
+    keywords: list[Any]
+    content_hash: str
+    change_note: str
+    created_at: datetime
 
 
 class QuestionListResponse(BaseModel):

@@ -32,11 +32,38 @@ def create_generation_run(
     rendered_prompt: str,
     context_text: str,
     retrieval_results: list[dict],
+    chunk_set_id: str,
+    vector_collection_id: str,
 ) -> str:
     document_oid = object_id(document_id, "document_id")
-    document = get_database().documents.find_one({"_id": document_oid})
+    db = get_database()
+    document = db.documents.find_one({"_id": document_oid, "archived_at": None})
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
+    chunk_set_oid = object_id(chunk_set_id, "chunk_set_id")
+    vector_collection_oid = object_id(
+        vector_collection_id,
+        "vector_collection_id",
+    )
+    if not db.chunk_sets.find_one(
+        {
+            "_id": chunk_set_oid,
+            "document_id": document_oid,
+            "status": "COMPLETED",
+        },
+        {"_id": 1},
+    ):
+        raise ValueError("Chunk set truy xuất không hợp lệ")
+    if not db.vector_collections.find_one(
+        {"_id": vector_collection_oid, "is_active": True},
+        {"_id": 1},
+    ):
+        raise ValueError("Vector collection truy xuất không hợp lệ")
+    if any(
+        result.get("chunk_set_id") != chunk_set_id
+        for result in retrieval_results
+    ):
+        raise ValueError("Kết quả retrieval không cùng chunk set")
     now = utc_now()
     record = {
         "_id": ObjectId(),
@@ -44,7 +71,8 @@ def create_generation_run(
         "requested_by_user_id": requested_by_user_id,
         "document_id": document_oid,
         "document_version": document.get("current_version", 1),
-        "chunk_set_id": (document.get("current_processing") or {}).get("chunk_set_id"),
+        "chunk_set_id": chunk_set_oid,
+        "vector_collection_id": vector_collection_oid,
         "subject": {"id": document.get("subject_id")},
         "chapter": {"id": document.get("chapter_id")},
         "request": request_snapshot,
@@ -71,7 +99,7 @@ def create_generation_run(
         "started_at": now,
         "finished_at": None,
     }
-    get_database().generation_runs.insert_one(record)
+    db.generation_runs.insert_one(record)
     return str(record["_id"])
 
 

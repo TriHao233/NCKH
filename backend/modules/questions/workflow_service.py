@@ -92,7 +92,11 @@ class QuestionWorkflowService:
         with mongo_transaction() as session:
             self.db.question_evaluations.insert_one(evaluation, session=session)
             result = self.db.questions.update_one(
-                {"_id": question["_id"], "current_version_id": version["_id"]},
+                {
+                    "_id": question["_id"],
+                    "current_version_id": version["_id"],
+                    "lifecycle_status": "ACTIVE",
+                },
                 {
                     "$set": {
                         "evaluation_status": "PASSED" if passed else "FAILED",
@@ -116,6 +120,14 @@ class QuestionWorkflowService:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
+        if (
+            payload.decision == "APPROVED"
+            and question["evaluation_status"] != "PASSED"
+            and not payload.override.applied
+        ):
+            raise ValueError(
+                "Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override"
+            )
         now = utc_now()
         review = {
             "_id": ObjectId(),
@@ -139,6 +151,8 @@ class QuestionWorkflowService:
         }
         if payload.decision == "APPROVED":
             question_fields["approved_version_id"] = version["_id"]
+        elif question.get("approved_version_id") == version["_id"]:
+            question_fields["approved_version_id"] = None
         audit = {
             "schema_version": SCHEMA_VERSION,
             "actor": {
@@ -171,7 +185,12 @@ class QuestionWorkflowService:
         with mongo_transaction() as session:
             self.db.question_reviews.insert_one(review, session=session)
             result = self.db.questions.update_one(
-                {"_id": question["_id"], "current_version_id": version["_id"]},
+                {
+                    "_id": question["_id"],
+                    "current_version_id": version["_id"],
+                    "lifecycle_status": "ACTIVE",
+                    "latest_review_id": question.get("latest_review_id"),
+                },
                 {"$set": question_fields},
                 session=session,
             )
