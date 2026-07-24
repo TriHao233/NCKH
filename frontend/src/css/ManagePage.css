@@ -141,8 +141,42 @@
   transition: all 0.2s;
 }
 .manage-page .icon-btn:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); }
+.manage-page .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .manage-page .icon-btn--danger:hover { border-color: #DC2626; color: #DC2626; background: #FFF0F0; }
 .manage-page .empty-note { text-align: center; color: var(--text-muted, #5c6f89); font-size: 0.88rem; padding: 24px 0; }
+.manage-page .manage-error { color: #DC2626; font-size: 0.85rem; margin-bottom: 12px; }
+.manage-page .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ─── Edit modal ─────────────────────────────────────────────── */
+.manage-page .modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 20, 45, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}
+.manage-page .modal-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(5, 40, 90, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.manage-page .modal-card .field-group { margin: 0; }
+.manage-page .modal-card .field-label { display: block; font-size: 0.84rem; font-weight: 600; color: var(--text, #13253f); margin-bottom: 7px; }
+.manage-page .modal-card .field-input { width: 100%; }
+.manage-page .modal-card textarea.field-input { resize: vertical; font-family: inherit; }
+.manage-page .modal-card .profile-card-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy, #003a75); }
+.manage-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
 /* ─── Sidebar ────────────────────────────────────────────────── */
 .manage-page .manage-side { display: flex; flex-direction: column; gap: 20px; }

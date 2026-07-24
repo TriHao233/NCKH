@@ -135,4 +135,12 @@ def check_job_status(job_id: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not result:
         raise HTTPException(status_code=404, detail="Không tìm thấy OCR job")
-    return result
+    job = result["job"]
+    return {
+        "job_id": job["_id"],
+        "document_id": job["document_id"],
+        "status": job["status"].lower(),
+        "progress": job.get("progress"),
+        "error_message": (job.get("error") or {}).get("message"),
+        "stats": job.get("stats"),
+    }

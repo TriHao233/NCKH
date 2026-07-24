@@ -68,11 +68,13 @@ function GeneratePage() {
     setStatusDetail('Đang upload file PDF...');
     const uploadResult = await uploadOcrPdf(pdfFile);
     const ocrJobId = uploadResult.job_id;
+    const docId = uploadResult.document_id;
     setActiveJobId(ocrJobId);
-    setDocumentId(ocrJobId);
+    setDocumentId(docId);
 
     const ocrResult = await pollJob(getOcrStatus, ocrJobId, {
       signal,
+      timeoutMs: 45 * 60 * 1000,
       onUpdate: (status) => {
         if (status.status === 'queued') setPhase('ocr_queued');
         if (status.status === 'processing') setPhase('ocr_processing');
@@ -84,7 +86,7 @@ function GeneratePage() {
       throw new Error(ocrResult.error_message || 'OCR thất bại');
     }
 
-    return ocrJobId;
+    return docId;
   };
 
   const runChunk = async (docId) => {
@@ -112,6 +114,7 @@ function GeneratePage() {
 
     const genResult = await pollJob(getGenerateStatus, genJobId, {
       signal,
+      timeoutMs: 20 * 60 * 1000,
       onUpdate: (status) => {
         if (status.status === 'queued') setPhase('generate_queued');
         if (status.status === 'processing') setPhase('generate_processing');
