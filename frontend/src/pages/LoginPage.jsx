@@ -34,18 +34,7 @@ function LoginPage() {
     setIsLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const idToken = await result.user.getIdToken();
-
-      const response = await fetch("http://localhost:8000/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id_token: idToken }),
-      });
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || "Lỗi xác thực Google");
-
-      login(idToken, data.user);
+      await login(result.user);
       navigate("/trang-chu");
     } catch (error) {
       alert("Đăng nhập Google thất bại: " + error.message);
@@ -71,22 +60,7 @@ function LoginPage() {
         formData.password
       );
       const firebaseUser = userCredential.user;
-      const idToken = await firebaseUser.getIdToken();
-
-      const response = await fetch("http://localhost:8000/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id_token: idToken }),
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || "Lỗi xác thực từ máy chủ");
-      }
-
-      login(idToken, data.user);
+      await login(firebaseUser);
       alert("Đăng nhập thành công!");
       navigate("/trang-chu");
     } catch (error) {

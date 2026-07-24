@@ -1,21 +1,21 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { auth } from '../../firebase';
+import { apiRequest } from '../services/apiClient';
 import '../css/UserProfile.css';
 
 function UserProfile() {
   const { user, updateUser } = useContext(AuthContext);
 
-  const displayName = user?.['Full name'] || user?.full_name || 'Giảng viên';
-  const displayEmail = user?.Email || user?.email || '';
-  const displayRole = user?.role || 'Giảng viên';
-  const displaySchool = user?.School || '';
-  const displayAddress = user?.['Địa Chỉ'] || '';
-  const displayStatus = user?.status === 'active' ? 'Đang hoạt động' : 'Ngừng hoạt động';
+  const displayName = user?.display_name || 'Giảng viên';
+  const displayEmail = user?.email || '';
+  const displayRole = user?.role || 'Teacher';
+  const displaySchool = user?.profile?.school || '';
+  const displayAddress = user?.profile?.address || '';
+  const displayStatus = user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động';
   const joinedAt = user?.created_at
     ? new Date(user.created_at).toLocaleDateString('vi-VN')
     : '—';
-  const avatarUrl = user?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0c78d4&color=fff`;
+  const avatarUrl = user?.profile?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0c78d4&color=fff`;
 
   const [fullName, setFullName] = useState(displayName);
   const [school, setSchool] = useState(displaySchool);
@@ -38,21 +38,15 @@ function UserProfile() {
 
     setIsSaving(true);
     try {
-      const idToken = await auth.currentUser.getIdToken();
-
-      const response = await fetch('http://localhost:8000/api/auth/profile', {
+      const data = await apiRequest('/auth/profile', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id_token: idToken,
+        body: {
           full_name: fullName,
           school,
           address,
-        }),
+          avatar: user?.profile?.avatar || '',
+        },
       });
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || 'Cập nhật hồ sơ thất bại');
 
       updateUser(data.user);
       alert('Cập nhật hồ sơ thành công!');

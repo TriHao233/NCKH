@@ -1,43 +1,36 @@
-from fastapi import APIRouter, HTTPException
-from firebase_admin import auth
-from pydantic import BaseModel
-from pymongo import ReturnDocument
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
-from core.database import get_auth_db
+from core.dependencies import CurrentUser, get_current_user
+from modules.users.schemas import UserProfile, UserSelfUpdateRequest
+from modules.users.service import get_user_service
 
 router = APIRouter()
 
 
 class ProfileUpdate(BaseModel):
-    id_token: str
-    full_name: str
+    full_name: str = Field(..., min_length=1, max_length=120)
     school: str = ""
     address: str = ""
+    avatar: str = ""
 
 
 @router.put("/profile")
-async def update_profile(payload: ProfileUpdate):
-    try:
-        decoded_token = auth.verify_id_token(payload.id_token)
-        uid = decoded_token["uid"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token không hợp lệ hoặc đã hết hạn")
-
-    # Email và uid không được phép chỉnh sửa qua endpoint này
-    update_fields = {
-        "Full name": payload.full_name,
-        "School": payload.school,
-        "Địa Chỉ": payload.address,
-    }
-
-    result = get_auth_db()["UserInfo"].find_one_and_update(
-        {"uid": uid},
-        {"$set": update_fields},
-        return_document=ReturnDocument.AFTER,
-        projection={"_id": 0},
+def update_profile(
+    payload: ProfileUpdate,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    user = get_user_service().update_self(
+        str(current_user.id),
+        UserSelfUpdateRequest(
+            display_name=payload.full_name,
+            profile=UserProfile(
+                school=payload.school,
+                address=payload.address,
+                avatar=payload.avatar,
+            ),
+        ),
     )
-
-    if not result:
+    if not user:
         raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
-
-    return {"message": "Cập nhật hồ sơ thành công", "user": result}
+    return {"message": "Cập nhật hồ sơ thành công", "user": user}

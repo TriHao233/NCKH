@@ -1,10 +1,10 @@
-from datetime import datetime
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from firebase_admin import auth
 from pydantic import BaseModel
 
-from core.database import get_auth_db
+from core.dependencies import CurrentUser, get_current_user
+from modules.auth.session_repository import get_firebase_session_repository
+from modules.users.service import get_user_service
 
 router = APIRouter()
 
@@ -14,51 +14,34 @@ class TokenRequest(BaseModel):
 
 
 @router.post("/login")
-async def login_user(request: TokenRequest):
+def login_user(request: TokenRequest):
+    """Verify Firebase identity and synchronize the MongoDB application profile."""
     try:
-        # Xác thực Token từ Frontend gửi xuống
-        decoded_token = auth.verify_id_token(request.id_token)
-        uid = decoded_token['uid']
+        claims = auth.verify_id_token(request.id_token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Firebase ID token không hợp lệ hoặc đã hết hạn",
+        ) from exc
 
-        # Lấy thêm thông tin từ MongoDB
-        users_collection = get_auth_db()["UserInfo"]
-        user_info = users_collection.find_one({"uid": uid}, {"_id": 0})
+    try:
+        user = get_user_service().sync_from_claims(claims)
+        if not user["is_active"]:
+            raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
+        get_firebase_session_repository().upsert(claims["uid"], request.id_token)
+        return {"message": "Đăng nhập thành công", "user": user}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Không thể đồng bộ phiên đăng nhập",
+        ) from exc
 
-        # 'picture' chỉ xuất hiện trong token khi đăng nhập bằng Google
-        google_picture = decoded_token.get('picture', '')
 
-        # NẾU LÀ ĐĂNG NHẬP GOOGLE LẦN ĐẦU (Chưa có trong MongoDB)
-        if not user_info:
-            email = decoded_token.get('email', '')
-            name = decoded_token.get('name', 'Người dùng Google')
-
-            user_info = {
-                "uid": uid,
-                "Full name": name,
-                "Email": email,
-                "Địa Chỉ": "",
-                "School": "",
-                "role": "Giảng viên",
-                "avatar": google_picture,  # Lưu ảnh đại diện lấy từ tài khoản Google
-                "created_at": datetime.utcnow(),
-                "status": "active"
-            }
-            # Lưu vào MongoDB
-            users_collection.insert_one(user_info)
-            # Xóa _id sau khi insert để trả về JSON không bị lỗi
-            if "_id" in user_info:
-                del user_info["_id"]
-
-        # Tài khoản đã tồn tại: đồng bộ lại ảnh đại diện Google mỗi lần đăng nhập
-        # (phòng trường hợp user đổi ảnh trên Google, hoặc tài khoản cũ chưa từng có avatar)
-        elif google_picture and user_info.get("avatar") != google_picture:
-            users_collection.update_one({"uid": uid}, {"$set": {"avatar": google_picture}})
-            user_info["avatar"] = google_picture
-
-        return {
-            "message": "Đăng nhập thành công",
-            "user": user_info
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Token không hợp lệ hoặc đã hết hạn")
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout_user(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    get_firebase_session_repository().upsert(current_user.firebase_uid, None)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

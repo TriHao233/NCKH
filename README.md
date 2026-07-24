@@ -157,3 +157,52 @@ Các trang frontend hiện có khớp với các chức năng trên: `HomePage`,
 - **Không được auto-publish câu hỏi AI sinh ra** — luôn phải qua bước duyệt của giảng viên (human-in-the-loop) trước khi vào Moodle.
 - **Chuẩn hóa output theo Moodle**: đáp án, thiết lập xáo trộn, mã hóa tiếng Việt phải đúng ngay từ bước Generation để Plugin xuất bản không cần xử lý lại.
 - Backend đã hợp nhất thành 1 FastAPI app duy nhất (`backend/main.py`), tổ chức theo Feature-based Modular Architecture (`core/`, `common/`, `modules/{auth,ocr,rag,generation,dictionary}/`), mỗi module theo pattern router → service → repository.
+
+## 11. CRUD V2, Firebase và API Gateway
+
+Nhánh `fixed_CRUD` giữ cấu trúc feature-based của `full-dev` và bổ sung:
+
+- `modules/users`: CRUD hồ sơ ứng dụng; Firebase quản lý identity/password.
+- `modules/documents`: CRUD document aggregate và processing jobs.
+- `modules/questions`: CRUD câu hỏi theo `question_versions`, optimistic locking và transaction.
+- `core/bootstrap.py`: tự tạo collections, validators, indexes và seed khi FastAPI startup.
+- Frontend dùng `src/services/apiClient.js`; Firebase ID token được gửi qua
+  `Authorization: Bearer <token>`.
+
+Sao chép `backend/.env.example` thành `backend/.env`, cấu hình `MONGO_URI`,
+`AUTH_DB_NAME=NCKH`, `RAG_DB_NAME=rag_database` và đường dẫn Firebase service
+account. `NCKH.User` chỉ lưu `uid` và Firebase token; hồ sơ/role đầy đủ để CRUD
+nằm ở `rag_database.users`. Token do Firebase phát hành và xác minh, backend
+không phát JWT riêng. MongoDB phải là replica set.
+Trong workspace cũ, backend cũng tự fallback sang `rag-ocr-pipeline/.env` để
+tái sử dụng URI MongoDB hiện có mà không sao chép secret vào Git.
+
+```powershell
+cd backend
+python scripts/database/bootstrap_v2.py
+python scripts/database/migrate_v2.py
+# Sau khi kiểm tra dry-run:
+python scripts/database/migrate_v2.py --apply
+uvicorn main:app --reload
+```
+
+Frontend local gọi `/api/v1` qua Vite proxy:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Khi deploy, đặt `VITE_API_BASE_URL` thành URL backend hoặc cấu hình gateway
+reverse-proxy `/api`; đồng thời đặt `CORS_ORIGINS` bằng origin frontend và
+`ALLOWED_HOSTS` bằng hostname backend.
+
+Các CRUD endpoint:
+
+- `/api/v1/users`
+- `/api/v1/documents`
+- `/api/v1/questions`
+- `/api/v1/questions/{question_id}/versions`
+
+Thiết kế dữ liệu chi tiết xem tại [`DATABASE_DESIGN_V2.md`](DATABASE_DESIGN_V2.md).

@@ -1,42 +1,173 @@
-from datetime import datetime
+import hashlib
+from datetime import datetime, timezone
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
 
-from core.database import get_rag_db
+from core.bootstrap import SCHEMA_VERSION
+from core.database import get_database
+from modules.documents.repository import object_id
+from modules.questions.schemas import QuestionCreateRequest
+from modules.questions.service import get_question_service
+
+BLOOM_TO_LEVEL = {
+    "nho": 1,
+    "hieu": 2,
+    "van_dung": 3,
+    "phan_tich": 4,
+    "danh_gia": 5,
+    "sang_tao": 6,
+}
 
 
-def save_generated_questions(document_id: str, questions: list) -> int:
-    """Lưu danh sách câu hỏi AI sinh ra vào collection 'questions'"""
-    db = get_rag_db()
-
-    if not questions:
-        return 0
-
-    docs_to_insert = []
-    for q in questions:
-        q_dict = dict(q)
-        q_dict["document_id"] = str(document_id)
-        q_dict["created_at"] = datetime.utcnow()
-        q_dict["status"] = "pending"
-        docs_to_insert.append(q_dict)
-
-    try:
-        if docs_to_insert:
-            result = db["questions"].insert_many(docs_to_insert)
-            return len(result.inserted_ids)
-        return 0
-    except Exception as e:
-        print(f"Lỗi Insert MongoDB: {e}")
-        raise e
+def utc_now():
+    return datetime.now(timezone.utc)
 
 
-def create_generation_job(request: dict) -> str:
-    """Tạo job sinh câu hỏi với trạng thái queued."""
-    db = get_rag_db()
-    now = datetime.utcnow()
+def create_generation_run(
+    *,
+    document_id: str,
+    requested_by_user_id,
+    request_snapshot: dict,
+    model_snapshot: dict,
+    rendered_prompt: str,
+    context_text: str,
+    retrieval_results: list[dict],
+    chunk_set_id: str,
+    vector_collection_id: str,
+) -> str:
+    document_oid = object_id(document_id, "document_id")
+    db = get_database()
+    document = db.documents.find_one({"_id": document_oid, "archived_at": None})
+    if not document:
+        raise ValueError("Không tìm thấy tài liệu")
+    chunk_set_oid = object_id(chunk_set_id, "chunk_set_id")
+    vector_collection_oid = object_id(
+        vector_collection_id,
+        "vector_collection_id",
+    )
+    if not db.chunk_sets.find_one(
+        {
+            "_id": chunk_set_oid,
+            "document_id": document_oid,
+            "status": "COMPLETED",
+        },
+        {"_id": 1},
+    ):
+        raise ValueError("Chunk set truy xuất không hợp lệ")
+    if not db.vector_collections.find_one(
+        {"_id": vector_collection_oid, "is_active": True},
+        {"_id": 1},
+    ):
+        raise ValueError("Vector collection truy xuất không hợp lệ")
+    if any(
+        result.get("chunk_set_id") != chunk_set_id
+        for result in retrieval_results
+    ):
+        raise ValueError("Kết quả retrieval không cùng chunk set")
+    now = utc_now()
+    record = {
+        "_id": ObjectId(),
+        "schema_version": SCHEMA_VERSION,
+        "requested_by_user_id": requested_by_user_id,
+        "document_id": document_oid,
+        "document_version": document.get("current_version", 1),
+        "chunk_set_id": chunk_set_oid,
+        "vector_collection_id": vector_collection_oid,
+        "subject": {"id": document.get("subject_id")},
+        "chapter": {"id": document.get("chapter_id")},
+        "request": request_snapshot,
+        "model": model_snapshot,
+        "prompts": [],
+        "rendered_prompt": rendered_prompt,
+        "rendered_prompt_hash": hashlib.sha256(rendered_prompt.encode("utf-8")).hexdigest(),
+        "retrieval": {
+            "context_hash": hashlib.sha256(context_text.encode("utf-8")).hexdigest(),
+            "context_excerpt": context_text[:4000],
+            "results": retrieval_results,
+        },
+        "execution": {
+            "attempt_no": 1,
+            "latency_ms": None,
+            "parser_version": "question-json-v1",
+        },
+        "raw_model_response": None,
+        "status": "GENERATING",
+        "generated_count": 0,
+        "validation_errors": [],
+        "error": None,
+        "created_at": now,
+        "started_at": now,
+        "finished_at": None,
+    }
+    db.generation_runs.insert_one(record)
+    return str(record["_id"])
+
+
+def finish_generation_run(
+    generation_run_id: str,
+    *,
+    status: str,
+    raw_model_response: str | None = None,
+    generated_count: int = 0,
+    latency_ms: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    now = utc_now()
+    get_database().generation_runs.update_one(
+        {"_id": object_id(generation_run_id, "generation_run_id")},
+        {
+            "$set": {
+                "status": status.upper(),
+                "raw_model_response": raw_model_response,
+                "generated_count": generated_count,
+                "execution.latency_ms": latency_ms,
+                "error": {"message": error_message, "at": now} if error_message else None,
+                "finished_at": now,
+            }
+        },
+    )
+
+
+def save_generated_questions(
+    document_id: str,
+    questions: list,
+    *,
+    generation_run_id: str,
+    requested_by_user_id,
+    source_chunk_ids: list[str],
+) -> int:
+    service = get_question_service()
+    run_oid = object_id(generation_run_id, "generation_run_id")
+    for question in questions:
+        service.create(
+            QuestionCreateRequest(
+                content=question["question"],
+                question_type=question["question_type"],
+                bloom_level=BLOOM_TO_LEVEL.get(question["bloom_level"]),
+                question_data={
+                    "options": question.get("options"),
+                    "correct_answer": question.get("correct_answer"),
+                    "explanation": question.get("explanation"),
+                    "model_source_context": question.get("source_context"),
+                },
+                document_id=document_id,
+                source_chunk_ids=source_chunk_ids,
+            ),
+            requested_by_user_id,
+            origin="AI",
+            generation_run_id=run_oid,
+        )
+    return len(questions)
+
+
+def create_generation_job(request: dict, requested_by_user_id=None) -> str:
+    """Tạo job sinh câu hỏi với trạng thái queued (dùng cho polling ở FE)."""
+    db = get_database()
+    now = utc_now()
     doc = {
         "request": request,
+        "requested_by_user_id": requested_by_user_id,
         "status": "queued",
         "result": None,
         "error_message": None,
@@ -54,10 +185,10 @@ def update_generation_job(
     error_message: str | None = None,
 ):
     """Cập nhật trạng thái job sinh câu hỏi."""
-    db = get_rag_db()
+    db = get_database()
     update_data: dict = {
         "status": status,
-        "updated_at": datetime.utcnow(),
+        "updated_at": utc_now(),
     }
     if result is not None:
         update_data["result"] = result
@@ -69,7 +200,7 @@ def update_generation_job(
 
 def get_generation_job(job_id: str) -> dict | None:
     """Lấy thông tin job sinh câu hỏi theo job_id."""
-    db = get_rag_db()
+    db = get_database()
     try:
         doc = db["generation_jobs"].find_one({"_id": ObjectId(job_id)})
     except InvalidId:
@@ -80,24 +211,3 @@ def get_generation_job(job_id: str) -> dict | None:
 
     doc["job_id"] = str(doc.pop("_id"))
     return doc
-
-
-def validate_document_ready_for_generation(document_id: str) -> None:
-    """Kiểm tra document đã OCR và chunk xong trước khi enqueue generate."""
-    try:
-        oid = ObjectId(document_id)
-    except InvalidId as exc:
-        raise ValueError("document_id không hợp lệ") from exc
-
-    db = get_rag_db()
-    doc = db["documents"].find_one({"_id": oid})
-    if not doc:
-        raise ValueError("Không tìm thấy document_id trong hệ thống")
-
-    ocr_status = doc.get("status")
-    if ocr_status != "completed":
-        raise ValueError(f"Tài liệu chưa OCR xong (status={ocr_status})")
-
-    chunk_status = doc.get("chunk_status")
-    if chunk_status != "completed":
-        raise ValueError(f"Tài liệu chưa chunk xong (chunk_status={chunk_status})")

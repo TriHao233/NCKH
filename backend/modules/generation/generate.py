@@ -1,13 +1,14 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
+from core.config import settings
+from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.generation.mongodb import (
     create_generation_job,
     get_generation_job,
     update_generation_job,
-    validate_document_ready_for_generation,
 )
 from modules.generation.question import generate_questions_rag
 from modules.generation.schemas import (
@@ -19,12 +20,12 @@ from modules.generation.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1/generate", tags=["generation"])
+router = APIRouter(prefix=f"{settings.api_prefix}/generate", tags=["generation"])
 
 generate_semaphore = asyncio.Semaphore(1)
 
 
-async def process_generate_background(job_id: str):
+async def process_generate_background(job_id: str, requested_by_user_id=None):
     """Worker xử lý sinh câu hỏi ngầm."""
     job = get_generation_job(job_id)
     if not job:
@@ -37,7 +38,7 @@ async def process_generate_background(job_id: str):
         async with generate_semaphore:
             update_generation_job(job_id, status="processing")
             req = QuestionGenerateRequest(**job["request"])
-            result = await generate_questions_rag(req)
+            result = await generate_questions_rag(req, requested_by_user_id=requested_by_user_id)
             update_generation_job(
                 job_id,
                 status="completed",
@@ -61,15 +62,14 @@ async def process_generate_background(job_id: str):
 async def api_generate_questions(
     req: QuestionGenerateRequest,
     background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
 ):
-    try:
-        validate_document_ready_for_generation(req.document_id)
-    except ValueError as ve:
-        logger.warning("Validation failed for document %s: %s", req.document_id, ve)
-        raise HTTPException(status_code=400, detail=str(ve)) from ve
-
-    job_id = create_generation_job(req.model_dump(mode="json"))
-    background_tasks.add_task(process_generate_background, job_id=job_id)
+    job_id = create_generation_job(req.model_dump(mode="json"), requested_by_user_id=current_user.id)
+    background_tasks.add_task(
+        process_generate_background,
+        job_id=job_id,
+        requested_by_user_id=current_user.id,
+    )
 
     return JobAcceptedResponse(
         job_id=job_id,

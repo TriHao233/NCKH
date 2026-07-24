@@ -3,9 +3,50 @@ import logging
 import re
 import unicodedata
 
-from modules.rag.chromadb_engine import get_chroma_client
+from bson import ObjectId
+
+from core.config import settings
+from core.database import get_rag_db
+from modules.rag.chromadb_engine import get_collection
 
 logger = logging.getLogger(__name__)
+
+
+def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str, str]:
+    try:
+        document_oid = ObjectId(document_id)
+    except Exception as exc:
+        raise ValueError("document_id không hợp lệ") from exc
+
+    db = get_rag_db()
+    document = db.documents.find_one(
+        {"_id": document_oid, "schema_version": 2, "archived_at": None}
+    )
+    if not document:
+        raise ValueError("Không tìm thấy tài liệu")
+
+    current = document.get("current_processing") or {}
+    chunk_set_id = current.get("chunk_set_id")
+    vector_collection_id = current.get("vector_collection_id")
+    if not chunk_set_id or not vector_collection_id:
+        raise ValueError("Tài liệu chưa có chunk set đã được index")
+
+    vector = db.vector_collections.find_one(
+        {"_id": vector_collection_id, "is_active": True}
+    )
+    if not vector:
+        raise ValueError("Không tìm thấy cấu hình vector hiện hành")
+    if vector.get("collection_name") != collection_name:
+        raise ValueError(
+            f"Tài liệu đang được index trong collection '{vector.get('collection_name')}'"
+        )
+    indexed_model = (vector.get("embedding_model") or {}).get("model_name")
+    if indexed_model != settings.embedding_model_name:
+        raise ValueError(
+            "Embedding model hiện tại không khớp snapshot đã index: "
+            f"'{settings.embedding_model_name}' != '{indexed_model}'"
+        )
+    return str(chunk_set_id), str(vector_collection_id)
 
 def _strip_accents(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text)
@@ -44,13 +85,26 @@ def _build_heading_label(meta: dict) -> str:
     return ""
 
 
-def get_context_for_generation(document_id: str, collection_name: str, target_heading: str = None, min_density: float = 0.0, limit: int = 5) -> str:
+def get_context_snapshot(
+    document_id: str,
+    collection_name: str,
+    target_heading: str = None,
+    min_density: float = 0.0,
+    limit: int = 5,
+) -> dict:
     """Truy xuất các chunk từ ChromaDB làm Context cho LLM"""
-    client = get_chroma_client()
+    chunk_set_id, vector_collection_id = _active_vector_snapshot(
+        document_id,
+        collection_name,
+    )
+    collection = get_collection(collection_name)
 
-    collection = client.get_or_create_collection(name=collection_name)
-
-    where_filter = {"document_id": document_id}
+    where_filter = {
+        "$and": [
+            {"document_id": document_id},
+            {"chunk_set_id": chunk_set_id},
+        ]
+    }
     normalized_target = _normalize_heading_text(target_heading) if target_heading else ""
 
     try:
@@ -132,13 +186,47 @@ def get_context_for_generation(document_id: str, collection_name: str, target_he
         selected_chunks = filtered_chunks[:limit]
 
         assembled_context = []
+        retrieval_results = []
         for doc, meta in selected_chunks:
             heading_label = _build_heading_label(meta)
             heading = f"[{heading_label}]" if heading_label else ""
             assembled_context.append(f"Mục lục: {heading}\nNội dung: {doc}")
+            retrieval_results.append(
+                {
+                    "chunk_id": meta.get("chunk_id"),
+                    "chunk_set_id": meta.get("chunk_set_id"),
+                    "chunk_content_hash": meta.get("content_hash"),
+                    "page_start": meta.get("page_start"),
+                    "page_end": meta.get("page_end"),
+                    "information_density": meta.get("information_density", 0),
+                    "heading": heading_label,
+                }
+            )
 
-        return "\n\n---\n\n".join(assembled_context)
+        return {
+            "context_text": "\n\n---\n\n".join(assembled_context),
+            "results": retrieval_results,
+            "chunk_set_id": chunk_set_id,
+            "vector_collection_id": vector_collection_id,
+        }
 
     except Exception as e:
         logger.error(f"Lỗi khi truy xuất ChromaDB: {e}")
         raise ValueError(f"Lỗi truy xuất hệ thống Vector: {str(e)}")
+
+
+def get_context_for_generation(
+    document_id: str,
+    collection_name: str,
+    target_heading: str = None,
+    min_density: float = 0.0,
+    limit: int = 5,
+) -> str:
+    """Compatibility wrapper for callers that only need the assembled text."""
+    return get_context_snapshot(
+        document_id=document_id,
+        collection_name=collection_name,
+        target_heading=target_heading,
+        min_density=min_density,
+        limit=limit,
+    )["context_text"]

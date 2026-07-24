@@ -29,8 +29,8 @@ const UserProfileMenu = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleLogout = () => {
-    logout(); // Gọi hàm clear token & state từ Context
+  const handleLogout = async () => {
+    await logout();
     navigate('/dang-nhap'); // Chuyển hướng về đăng nhập
   };
 
@@ -38,11 +38,11 @@ const UserProfileMenu = () => {
   if (!user) return null;
 
   // Trích xuất thông tin hiển thị (Dựa trên cấu trúc UserInfo trả về từ MongoDB)
-  const displayName = user['Full name'] || user.full_name || 'Giảng viên';
+  const displayName = user.display_name || 'Giảng viên';
   const displayRole = user.role || 'Giảng viên';
   
   // Tự động generate avatar dựa trên tên người dùng
-  const avatarUrl = user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0c78d4&color=fff`;
+  const avatarUrl = user.profile?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0c78d4&color=fff`;
 
   return (
     <div className="user-menu-container" ref={menuRef}>
