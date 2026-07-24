@@ -1,0 +1,183 @@
+/* ═══════════════════════════════════════════════════════════════
+   UsersAdminPage.css | QBankCTU — Admin Dashboard / Quản lý người dùng
+   ═══════════════════════════════════════════════════════════════ */
+
+.users-page { width: 100%; }
+
+.users-page .container {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.users-page .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.88rem;
+  border-radius: var(--radius-sm, 8px);
+  padding: 10px 18px;
+  transition: all 0.25s;
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+}
+.users-page .btn--primary { color: #fff; background: var(--primary, #0c78d4); box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3); }
+.users-page .btn--primary:hover { background: var(--primary-strong, #03539a); }
+.users-page .btn--outline { color: var(--secondary, #005bac); border: 1.5px solid var(--border, #d9e6f2); background: #fff; }
+.users-page .btn--outline:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
+.users-page .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ─── Page hero ─────────────────────────────────────────────── */
+.users-page .page-hero {
+  padding: 56px 0 40px;
+  background: linear-gradient(160deg, #F0F8FF 0%, #E8F4FD 55%, #F5FAFF 100%);
+}
+.users-page .users-hero-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.users-page .page-hero-badge {
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--secondary, #005bac);
+  background: rgba(255,255,255,0.85);
+  border: 1px solid var(--border, #d9e6f2);
+  border-radius: 40px;
+  padding: 6px 16px;
+  margin-bottom: 18px;
+}
+.users-page .page-hero-title { font-family: 'Fraunces', serif; font-size: clamp(1.7rem, 3vw, 2.3rem); font-weight: 700; color: var(--navy, #003a75); margin-bottom: 12px; }
+.users-page .page-hero-desc { font-size: 0.98rem; color: var(--text-muted, #5c6f89); max-width: 560px; line-height: 1.65; }
+.users-page .users-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ─── Body ───────────────────────────────────────────────────── */
+.users-page .users-body { padding: 40px 0 96px; background: #fafcff; }
+
+.users-page .card {
+  background: #fff;
+  border: 1px solid #EAF3FC;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 6px 24px rgba(5, 40, 90, 0.04);
+}
+
+/* ─── Stats ──────────────────────────────────────────────────── */
+.users-page .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+.users-page .stat-card {
+  background: #fff;
+  border: 1.5px solid #EAF3FC;
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+.users-page .stat-card:hover { border-color: var(--primary, #0c78d4); }
+.users-page .stat-card--active { border-color: var(--primary, #0c78d4); background: #f0f8ff; }
+.users-page .stat-card b { font-family: 'Fraunces', serif; font-size: 1.6rem; color: var(--navy, #003a75); }
+.users-page .stat-card span { font-size: 0.8rem; color: var(--text-muted, #5c6f89); font-weight: 500; }
+
+/* ─── List ───────────────────────────────────────────────────── */
+.users-page .list-card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.users-page .list-card-header h3 { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; color: var(--navy, #003a75); }
+.users-page .list-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.users-page .field-select,
+.users-page .field-input {
+  padding: 8px 12px;
+  border: 1.5px solid var(--border, #d9e6f2);
+  border-radius: 8px;
+  background: #fafcff;
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: var(--text, #13253f);
+  outline: none;
+}
+.users-page .field-select:focus, .users-page .field-input:focus { border-color: var(--primary, #0c78d4); }
+.users-page .search-input { width: 220px; }
+.users-page .users-error { color: #DC2626; font-size: 0.85rem; margin-bottom: 12px; }
+.users-page .empty-note { text-align: center; color: var(--text-muted, #5c6f89); font-size: 0.88rem; padding: 24px 0; }
+
+.users-page .user-list { display: flex; flex-direction: column; gap: 12px; }
+.users-page .user-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #fafcff;
+  border: 1px solid #EAF3FC;
+  border-radius: 12px;
+  padding: 14px 18px;
+  transition: box-shadow 0.2s;
+}
+.users-page .user-item:hover { box-shadow: 0 6px 18px rgba(5, 40, 90, 0.06); }
+.users-page .user-avatar-sm { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.users-page .user-main { flex: 1; min-width: 0; }
+.users-page .user-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.users-page .user-name { font-size: 0.92rem; font-weight: 700; color: var(--navy, #003a75); }
+.users-page .role-tag { font-size: 0.68rem; font-weight: 700; color: #fff; background: var(--primary, #0c78d4); border-radius: 5px; padding: 2px 8px; }
+.users-page .user-email { font-size: 0.82rem; color: var(--text-muted, #5c6f89); }
+.users-page .status-badge { font-size: 0.72rem; font-weight: 700; border-radius: 20px; padding: 4px 12px; white-space: nowrap; }
+.users-page .status--revise { background: #FFF0F0; color: #DC2626; }
+
+.users-page .user-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.users-page .icon-btn {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border, #d9e6f2);
+  background: #fff;
+  color: var(--text-muted, #5c6f89);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.users-page .icon-btn:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); }
+.users-page .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.users-page .icon-btn--danger:hover { border-color: #DC2626; color: #DC2626; background: #FFF0F0; }
+
+/* ─── Modal ──────────────────────────────────────────────────── */
+.users-page .modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 20, 45, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}
+.users-page .modal-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(5, 40, 90, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.users-page .modal-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy, #003a75); }
+.users-page .field-group { margin: 0; }
+.users-page .field-label { display: block; font-size: 0.84rem; font-weight: 600; color: var(--text, #13253f); margin-bottom: 7px; }
+.users-page .field-group .field-input,
+.users-page .field-group .field-select { width: 100%; }
+.users-page .field-group--checkbox { display: flex; align-items: center; }
+.users-page .field-checkbox { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; color: var(--text, #13253f); cursor: pointer; }
+.users-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .users-page .users-hero-row { flex-direction: column; align-items: flex-start; }
+  .users-page .stats-row { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .users-page .user-item { flex-wrap: wrap; }
+  .users-page .list-toolbar { width: 100%; }
+  .users-page .search-input { width: 100%; }
+}

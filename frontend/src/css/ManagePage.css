@@ -184,7 +184,8 @@
 .manage-page .doc-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .manage-page .doc-item { display: flex; align-items: flex-start; gap: 10px; }
 .manage-page .doc-item svg { color: var(--primary, #0c78d4); flex-shrink: 0; margin-top: 2px; }
-.manage-page .doc-info { display: flex; flex-direction: column; gap: 2px; }
+.manage-page .doc-info { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.manage-page .doc-delete-btn { width: 26px; height: 26px; flex-shrink: 0; }
 .manage-page .doc-name { font-size: 0.84rem; font-weight: 600; color: var(--text, #13253f); }
 .manage-page .doc-meta { font-size: 0.74rem; color: var(--text-muted, #5c6f89); }
 .manage-page .doc-upload-btn { width: 100%; }

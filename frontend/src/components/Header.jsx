@@ -17,6 +17,7 @@ const Header = () => {
     { path: '/trang-chu', label: 'Trang Chủ' },
     { path: '/sinh-cau-hoi', label: 'Sinh Câu Hỏi' },
     { path: '/quan-ly', label: 'Quản Lý' },
+    ...(user?.role === 'Admin' ? [{ path: '/quan-ly-nguoi-dung', label: 'Người Dùng' }] : []),
     { path: '/huong-dan', label: 'Hướng Dẫn' },
     { path: '/lien-he', label: 'Liên Hệ' },
   ];

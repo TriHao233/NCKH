@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { deleteQuestion, listQuestions, updateQuestion } from '../api/questions';
-import { listDocuments } from '../api/documents';
+import { deleteDocument, listDocuments } from '../api/documents';
 import { QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ManagePage.css';
 
@@ -50,6 +50,7 @@ function ManagePage() {
   const [editChangeNote, setEditChangeNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [deletingDocId, setDeletingDocId] = useState(null);
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
@@ -162,6 +163,21 @@ function ManagePage() {
       alert('Xoá câu hỏi thất bại: ' + error.message);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDeleteDocument = async (doc) => {
+    if (!window.confirm(`Xoá tài liệu "${doc.title}"? Hành động này sẽ lưu trữ tài liệu và ẩn khỏi danh sách.`)) {
+      return;
+    }
+    setDeletingDocId(doc.id);
+    try {
+      await deleteDocument(doc.id);
+      await fetchDocuments();
+    } catch (error) {
+      alert('Xoá tài liệu thất bại: ' + error.message);
+    } finally {
+      setDeletingDocId(null);
     }
   };
 
@@ -302,6 +318,15 @@ function ManagePage() {
                           {d.page_count ? `${d.page_count} trang · ` : ''}{DOC_STATUS_LABEL[d.status] || d.status}
                         </span>
                       </div>
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn--danger doc-delete-btn"
+                        title="Xoá tài liệu"
+                        disabled={deletingDocId === d.id}
+                        onClick={() => handleDeleteDocument(d)}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                      </button>
                     </div>
                   ))}
                   {documents.length === 0 && (

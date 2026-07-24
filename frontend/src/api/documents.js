@@ -12,3 +12,7 @@ export function listDocuments({ page = 1, pageSize = 20, status, search } = {}) 
 export function getDocument(id) {
   return apiRequest(`/documents/${id}`);
 }
+
+export function deleteDocument(id) {
+  return apiRequest(`/documents/${id}`, { method: 'DELETE' });
+}

@@ -4,6 +4,7 @@ import HomePage from './pages/HomePage';
 import AboutPage from './pages/AboutPage';
 import GeneratePage from './pages/GeneratePage';
 import ManagePage from './pages/ManagePage';
+import UsersAdminPage from './pages/UsersAdminPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import GuidePage from './pages/GuidePage';
@@ -19,6 +20,7 @@ function App() {
                 <Route path="/gioi-thieu" element={<AboutPage />} />
                 <Route path="/sinh-cau-hoi" element={<GeneratePage />} />
                 <Route path="/quan-ly" element={<ManagePage />} />
+                <Route path="/quan-ly-nguoi-dung" element={<UsersAdminPage />} />
                 <Route path="/huong-dan" element={<GuidePage />} />
                 <Route path="/lien-he" element={<ContactPage />} />
                 <Route path="/ho-so" element={<UserProfile />} />
