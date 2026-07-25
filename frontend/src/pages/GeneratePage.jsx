@@ -74,20 +74,37 @@ function documentPipeline(document) {
   return document?.pipeline_summary || {};
 }
 
+function normalizeStatus(status) {
+  return String(status || '').toUpperCase();
+}
+
+function isUnavailableDocument(document) {
+  const pipeline = documentPipeline(document);
+  const blockedStatuses = new Set(['FAILED', 'CANCELLED', 'ARCHIVED']);
+  return (
+    blockedStatuses.has(normalizeStatus(document?.status))
+    || blockedStatuses.has(normalizeStatus(pipeline.ocr_status))
+    || blockedStatuses.has(normalizeStatus(pipeline.chunk_status))
+    || blockedStatuses.has(normalizeStatus(pipeline.index_status))
+  );
+}
+
 function isDocumentOcrReady(document) {
+  if (isUnavailableDocument(document)) return false;
   const pipeline = documentPipeline(document);
   return (
-    document?.status === 'READY' ||
-    pipeline.ocr_status === 'COMPLETED' ||
-    Boolean(document?.current_processing?.ocr_job_id && document?.page_count)
+    normalizeStatus(document?.status) === 'READY' ||
+    normalizeStatus(pipeline.ocr_status) === 'COMPLETED' ||
+    Boolean(document?.current_processing?.ocr_job_id && Number(document?.page_count) > 0)
   );
 }
 
 function isDocumentIndexed(document) {
+  if (isUnavailableDocument(document)) return false;
   const pipeline = documentPipeline(document);
   return (
-    document?.status === 'READY' ||
-    (pipeline.chunk_status === 'COMPLETED' && pipeline.index_status === 'COMPLETED')
+    normalizeStatus(document?.status) === 'READY' ||
+    (normalizeStatus(pipeline.chunk_status) === 'COMPLETED' && normalizeStatus(pipeline.index_status) === 'COMPLETED')
   );
 }
 
@@ -96,7 +113,7 @@ function reusableDocumentLabel(document) {
   const pipeline = documentPipeline(document);
   const state = isDocumentIndexed(document)
     ? 'đã index'
-    : pipeline.ocr_status === 'COMPLETED'
+    : normalizeStatus(pipeline.ocr_status) === 'COMPLETED'
       ? 'đã OCR'
       : document.status;
   return `${document.title} (${pages}, ${state})`;
@@ -164,7 +181,7 @@ function GeneratePage() {
     .filter((item) => item.question_type && item.bloom_level && item.num_questions > 0);
   const totalQuestions = questionPlan.reduce((total, item) => total + item.num_questions, 0);
   const reusableDocuments = documents.filter(isDocumentOcrReady);
-  const selectedDocument = documents.find((item) => item.id === selectedDocumentId);
+  const selectedDocument = reusableDocuments.find((item) => item.id === selectedDocumentId);
   const generationShortfalls = generationSummary.filter((item) => (
     item.skipped_count > 0 || item.duplicate_count > 0 || (item.warnings || []).length > 0
   ));
@@ -758,11 +775,10 @@ function GeneratePage() {
                       <option value="">
                         {documentsLoading ? 'Đang tải tài liệu...' : 'Chọn tài liệu đã OCR'}
                       </option>
-                      {documents.map((doc) => (
+                      {reusableDocuments.map((doc) => (
                         <option
                           key={doc.id}
                           value={doc.id}
-                          disabled={!isDocumentOcrReady(doc)}
                         >
                           {reusableDocumentLabel(doc)}
                         </option>
