@@ -20,3 +20,27 @@ export function updateQuestion(id, payload) {
 export function deleteQuestion(id) {
   return apiRequest(`/questions/${id}`, { method: 'DELETE' });
 }
+
+export function autoEvaluateQuestion(id, payload) {
+  return apiRequest(`/questions/${id}/evaluations/auto`, { method: 'POST', body: payload });
+}
+
+export function listQuestionEvaluations(id) {
+  return apiRequest(`/questions/${id}/evaluations`);
+}
+
+export function reviewQuestion(id, payload) {
+  return apiRequest(`/questions/${id}/reviews`, { method: 'POST', body: payload });
+}
+
+export function listQuestionReviews(id) {
+  return apiRequest(`/questions/${id}/reviews`);
+}
+
+export function publishQuestionToMoodle(id, payload) {
+  return apiRequest(`/questions/${id}/moodle-publications`, { method: 'POST', body: payload });
+}
+
+export function listQuestionMoodlePublications(id) {
+  return apiRequest(`/questions/${id}/moodle-publications`);
+}

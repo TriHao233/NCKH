@@ -1,6 +1,16 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deleteQuestion, listQuestions, updateQuestion } from '../api/questions';
+import {
+  autoEvaluateQuestion,
+  deleteQuestion,
+  listQuestionEvaluations,
+  listQuestionMoodlePublications,
+  listQuestionReviews,
+  listQuestions,
+  publishQuestionToMoodle,
+  reviewQuestion,
+  updateQuestion,
+} from '../api/questions';
 import { deleteDocument, listDocuments } from '../api/documents';
 import { QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
@@ -28,11 +38,44 @@ const DOC_STATUS_LABEL = {
   ARCHIVED: 'Đã lưu trữ',
 };
 
+const EVALUATION_STATUS_LABEL = {
+  NOT_STARTED: 'Chưa đánh giá',
+  PROCESSING: 'Đang đánh giá',
+  PASSED: 'Đạt',
+  FAILED: 'Không đạt',
+};
+
+const PUBLICATION_STATUS_LABEL = {
+  NOT_PUBLISHED: 'Chưa xuất',
+  PUBLISHED: 'Đã xuất Moodle',
+  STALE: 'Cần xuất lại',
+  FAILED: 'Xuất lỗi',
+};
+
+const QUALITY_COLOR_CLASS = {
+  GREEN: 'quality--green',
+  YELLOW: 'quality--yellow',
+  RED: 'quality--red',
+};
+
+function formatScore(value) {
+  return typeof value === 'number' ? value.toFixed(2) : '—';
+}
+
+function latestEvaluationText(item) {
+  const quality = item.quality_summary || {};
+  if (!quality.overall_score && quality.overall_score !== 0) {
+    return EVALUATION_STATUS_LABEL[item.evaluation_status] || item.evaluation_status;
+  }
+  return `${formatScore(quality.overall_score)} · ${quality.color || 'N/A'}`;
+}
+
 function ManagePage() {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
+  const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
 
   const [questions, setQuestions] = useState([]);
   const [questionsLoading, setQuestionsLoading] = useState(true);
@@ -55,6 +98,13 @@ function ManagePage() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [deletingDocId, setDeletingDocId] = useState(null);
+  const [workflowBusyId, setWorkflowBusyId] = useState(null);
+  const [selectedQuestion, setSelectedQuestion] = useState(null);
+  const [evaluationHistory, setEvaluationHistory] = useState([]);
+  const [reviewHistory, setReviewHistory] = useState([]);
+  const [publicationHistory, setPublicationHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [workflowMessage, setWorkflowMessage] = useState('');
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
@@ -93,6 +143,27 @@ function ManagePage() {
     }
   };
 
+  const loadWorkflowHistory = async (question, { keepMessage = false } = {}) => {
+    if (!question) return;
+    setHistoryLoading(true);
+    if (!keepMessage) setWorkflowMessage('');
+    try {
+      const [evaluations, reviews, publications] = await Promise.all([
+        listQuestionEvaluations(question.id),
+        listQuestionReviews(question.id),
+        listQuestionMoodlePublications(question.id),
+      ]);
+      setSelectedQuestion(question);
+      setEvaluationHistory(evaluations.items || []);
+      setReviewHistory(reviews.items || []);
+      setPublicationHistory(publications.items || []);
+    } catch (error) {
+      setWorkflowMessage(error.message || 'Không tải được lịch sử kiểm duyệt');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchQuestions(searchTerm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,6 +172,15 @@ function ManagePage() {
   useEffect(() => {
     fetchDocuments();
   }, [canManageDocuments]);
+
+  useEffect(() => {
+    if (!selectedQuestion) return;
+    const fresh = questions.find((question) => question.id === selectedQuestion.id);
+    if (fresh && fresh !== selectedQuestion) {
+      setSelectedQuestion(fresh);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions]);
 
   const counts = useMemo(() => ({
     all: questions.length,
@@ -119,6 +199,10 @@ function ManagePage() {
       return true;
     });
   }, [questions, statusFilter, typeFilter]);
+
+  const approvedForPublication = questions.filter((q) => (
+    q.review_status === 'APPROVED' && q.publication_status !== 'PUBLISHED'
+  ));
 
   const openEdit = (item) => {
     setEditing(item);
@@ -191,6 +275,82 @@ function ManagePage() {
     }
   };
 
+  const refreshAfterWorkflow = async (message, item) => {
+    setWorkflowMessage(message);
+    await fetchQuestions(searchTerm);
+    await loadWorkflowHistory(item, { keepMessage: true });
+  };
+
+  const handleAutoEvaluate = async (item) => {
+    setWorkflowBusyId(item.id);
+    try {
+      await autoEvaluateQuestion(item.id, {
+        expected_version: item.current_version,
+      });
+      await refreshAfterWorkflow('Đã chạy AI evaluation cho câu hỏi.', item);
+    } catch (error) {
+      alert('AI evaluation thất bại: ' + error.message);
+    } finally {
+      setWorkflowBusyId(null);
+    }
+  };
+
+  const handleReview = async (item, decision) => {
+    const labels = {
+      APPROVED: 'duyệt',
+      NEEDS_REVISION: 'yêu cầu sửa',
+      REJECTED: 'từ chối',
+    };
+    const note = window.prompt(`Ghi chú ${labels[decision]} câu hỏi ${item.question_code}:`, '');
+    if (note === null) return;
+    const payload = {
+      expected_version: item.current_version,
+      decision,
+      note,
+    };
+    if (decision === 'APPROVED' && item.evaluation_status !== 'PASSED') {
+      const reason = window.prompt('Câu hỏi chưa đạt AI evaluation. Nhập lý do override để vẫn duyệt:', '');
+      if (!reason?.trim()) return;
+      payload.override = {
+        applied: true,
+        score: item.quality_summary?.overall_score ?? 0.8,
+        color: item.quality_summary?.color || 'YELLOW',
+        reason: reason.trim(),
+      };
+    }
+    setWorkflowBusyId(item.id);
+    try {
+      await reviewQuestion(item.id, payload);
+      await refreshAfterWorkflow('Đã cập nhật trạng thái kiểm duyệt.', item);
+    } catch (error) {
+      alert('Kiểm duyệt thất bại: ' + error.message);
+    } finally {
+      setWorkflowBusyId(null);
+    }
+  };
+
+  const handlePublishMoodle = async (item) => {
+    if (item.review_status !== 'APPROVED') {
+      alert('Chỉ câu hỏi đã duyệt mới được đồng bộ Moodle.');
+      return;
+    }
+    if (!window.confirm(`Ghi nhận đồng bộ Moodle cho ${item.question_code}?`)) {
+      return;
+    }
+    setWorkflowBusyId(item.id);
+    try {
+      await publishQuestionToMoodle(item.id, {
+        expected_version: item.current_version,
+        mock: true,
+      });
+      await refreshAfterWorkflow('Đã ghi nhận mock Moodle publication.', item);
+    } catch (error) {
+      alert('Đồng bộ Moodle thất bại: ' + error.message);
+    } finally {
+      setWorkflowBusyId(null);
+    }
+  };
+
   return (
     <main className="manage-page">
       <section className="page-hero">
@@ -203,11 +363,20 @@ function ManagePage() {
             </p>
           </div>
           <div className="manage-hero-actions">
-            <button type="button" className="btn btn--outline" disabled>
+            <button
+              type="button"
+              className="btn btn--outline"
+              onClick={() => setStatusFilter('PENDING')}
+            >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-              Xuất đề thi
+              Hàng đợi duyệt
             </button>
-            <button type="button" className="btn btn--primary" disabled>
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={!canReviewQuestions || approvedForPublication.length === 0}
+              onClick={() => handlePublishMoodle(approvedForPublication[0])}
+            >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></svg>
               Đồng bộ Moodle
             </button>
@@ -280,28 +449,85 @@ function ManagePage() {
                           <span className="source-tag">v{item.current_version}</span>
                         </div>
                         <p>{item.content}</p>
+                        <div className="question-workflow-row">
+                          <span className={`quality-pill ${QUALITY_COLOR_CLASS[item.quality_summary?.color] || ''}`}>
+                            AI: {latestEvaluationText(item)}
+                          </span>
+                          <span className="publication-pill">
+                            {PUBLICATION_STATUS_LABEL[item.publication_status] || item.publication_status}
+                          </span>
+                        </div>
                       </div>
                       <div className="question-side">
                         <span className={`status-badge ${REVIEW_STATUS_CLASS[item.review_status] || ''}`}>
                           {REVIEW_STATUS_LABEL[item.review_status] || item.review_status}
                         </span>
-	                        {canEditQuestions && (
-	                          <div className="question-actions">
-	                            <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
-	                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
-	                            </button>
-	                            <button
-	                              type="button"
-	                              className="icon-btn icon-btn--danger"
-	                              title="Xoá"
-	                              disabled={deletingId === item.id}
-	                              onClick={() => handleDelete(item)}
-	                            >
-	                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-	                            </button>
-	                          </div>
-	                        )}
-	                      </div>
+                        <div className="question-actions question-actions--wrap">
+                          <button type="button" className="mini-action" onClick={() => loadWorkflowHistory(item)}>
+                            Chi tiết
+                          </button>
+                          {canReviewQuestions && (
+                            <>
+                              <button
+                                type="button"
+                                className="mini-action"
+                                disabled={workflowBusyId === item.id}
+                                onClick={() => handleAutoEvaluate(item)}
+                              >
+                                AI đánh giá
+                              </button>
+                              <button
+                                type="button"
+                                className="mini-action mini-action--approve"
+                                disabled={workflowBusyId === item.id}
+                                onClick={() => handleReview(item, 'APPROVED')}
+                              >
+                                Duyệt
+                              </button>
+                              <button
+                                type="button"
+                                className="mini-action"
+                                disabled={workflowBusyId === item.id}
+                                onClick={() => handleReview(item, 'NEEDS_REVISION')}
+                              >
+                                Cần sửa
+                              </button>
+                              <button
+                                type="button"
+                                className="mini-action mini-action--danger"
+                                disabled={workflowBusyId === item.id}
+                                onClick={() => handleReview(item, 'REJECTED')}
+                              >
+                                Từ chối
+                              </button>
+                              <button
+                                type="button"
+                                className="mini-action"
+                                disabled={workflowBusyId === item.id || item.review_status !== 'APPROVED' || item.publication_status === 'PUBLISHED'}
+                                onClick={() => handlePublishMoodle(item)}
+                              >
+                                Moodle
+                              </button>
+                            </>
+                          )}
+                          {canEditQuestions && (
+                            <>
+                              <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="icon-btn icon-btn--danger"
+                                title="Xoá"
+                                disabled={deletingId === item.id}
+                                onClick={() => handleDelete(item)}
+                              >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </article>
                   ))}
                   {filtered.length === 0 && (
@@ -353,15 +579,70 @@ function ManagePage() {
 	              </div>
 	            )}
 
+            <div className="card side-card workflow-card">
+              <h3>Luồng kiểm duyệt</h3>
+              {!selectedQuestion ? (
+                <p className="side-note">Chọn "Chi tiết" trên một câu hỏi để xem evaluation, review và Moodle publication.</p>
+              ) : (
+                <>
+                  <div className="workflow-question-code">{selectedQuestion.question_code}</div>
+                  <div className="workflow-status-grid">
+                    <span>AI</span>
+                    <b>{latestEvaluationText(selectedQuestion)}</b>
+                    <span>Review</span>
+                    <b>{REVIEW_STATUS_LABEL[selectedQuestion.review_status] || selectedQuestion.review_status}</b>
+                    <span>Moodle</span>
+                    <b>{PUBLICATION_STATUS_LABEL[selectedQuestion.publication_status] || selectedQuestion.publication_status}</b>
+                  </div>
+                  {workflowMessage && <p className="workflow-message">{workflowMessage}</p>}
+                  {historyLoading ? (
+                    <p className="side-note">Đang tải lịch sử...</p>
+                  ) : (
+                    <>
+                      <div className="history-block">
+                        <h4>AI evaluation</h4>
+                        {evaluationHistory.slice(0, 2).map((item) => (
+                          <div className="history-item" key={item.id || item._id}>
+                            <b>{formatScore(item.scores?.overall)} · {item.color}</b>
+                            <span>{item.feedback?.summary || 'Không có nhận xét'}</span>
+                          </div>
+                        ))}
+                        {evaluationHistory.length === 0 && <span className="history-empty">Chưa có evaluation.</span>}
+                      </div>
+                      <div className="history-block">
+                        <h4>Reviewer</h4>
+                        {reviewHistory.slice(0, 2).map((item) => (
+                          <div className="history-item" key={item.id || item._id}>
+                            <b>{REVIEW_STATUS_LABEL[item.decision] || item.decision}</b>
+                            <span>{item.note || 'Không có ghi chú'}</span>
+                          </div>
+                        ))}
+                        {reviewHistory.length === 0 && <span className="history-empty">Chưa có review.</span>}
+                      </div>
+                      <div className="history-block">
+                        <h4>Moodle</h4>
+                        {publicationHistory.slice(0, 2).map((item) => (
+                          <div className="history-item" key={item.id || item._id}>
+                            <b>{item.status}</b>
+                            <span>{item.moodle_question_ref_id || item.idempotency_key}</span>
+                          </div>
+                        ))}
+                        {publicationHistory.length === 0 && <span className="history-empty">Chưa xuất Moodle.</span>}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+
             <div className="card side-card">
               <h3>Trạng thái Moodle</h3>
               <p className="side-note">
-                Câu hỏi đã duyệt sẽ được chuyển đổi sang định dạng chuẩn của Moodle (nội dung, đáp án, thiết lập xáo trộn)
-                trước khi đồng bộ.
+                Câu hỏi đã duyệt có thể được ghi nhận publication mock vào `moodle_publications` để demo luồng xuất bản.
               </p>
               <div className="moodle-status">
                 <span className="moodle-dot" />
-                Plugin Moodle: sẵn sàng đồng bộ
+                Mock Moodle: sẵn sàng ghi nhận
               </div>
             </div>
           </aside>

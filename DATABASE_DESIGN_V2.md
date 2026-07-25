@@ -1838,9 +1838,9 @@ Hiện backend đã có bootstrap V2, `users`, `documents`, `document_jobs`, `do
 
 1. `dictionaries` vẫn là compatibility collection; cần migrate hoặc đồng bộ sang `keywords`.
 2. `ai_models` và `prompt_templates` đã có collection nhưng generation vẫn đọc prompt từ file và nhận provider từ request; cần đồng bộ catalog DB hoặc ghi rõ đây là cấu hình file-based trong release đầu.
-3. AI evaluation hiện là endpoint nhận scores/feedback, chưa có worker tự gọi model evaluator để chấm câu hỏi.
+3. AI evaluation đã có endpoint nhận scores/feedback và endpoint P0 tự chấm bằng heuristic nội bộ; production vẫn cần worker/model local evaluator thật.
 4. Subject/chapter/CLO mới có seed subject mặc định; chưa có CRUD/catalog đầy đủ và chưa bắt buộc CLO trong câu hỏi.
-5. `moodle_publications` mới có collection/index; chưa có API/worker xuất Moodle.
+5. `moodle_publications` đã có API P0 ghi nhận mock publication; chưa có worker/API gọi Moodle thật.
 6. Endpoint upload hiện chỉ nhận PDF; DOC/DOCX phải thêm converter/sanitizer hoặc công bố PDF-only cho release đầu.
 7. Production cần MongoDB replica set để transaction thật sự chạy; code có fallback khi standalone nên cần ghi rõ giới hạn môi trường dev.
 
@@ -1964,7 +1964,7 @@ Bootstrap phải có version và chạy lại an toàn:
 
 - Mọi input/output HTTP dùng string ID; boundary layer chuyển và validate sang `ObjectId` trước khi gọi MongoDB.
 - Router không ghi Mongo/Chroma trực tiếp. Theo cấu trúc hiện tại, logic và hàm truy cập dữ liệu đặt trong module tương ứng (`mongodb.py` khi cần), dùng helper chung từ `core`.
-- Tạo thêm module theo nghiệp vụ còn thiếu: catalog/subject, AI evaluator worker, audit mở rộng và Moodle publication; router mới chỉ include tại `backend/main.py`.
+- Tạo thêm module theo nghiệp vụ còn thiếu: catalog/subject, AI evaluator worker production, audit mở rộng và Moodle publication worker thật; router mới chỉ include tại `backend/main.py`.
 - Worker convert/extract/OCR/chunk/index/evaluation/publication phải claim job nguyên tử, cập nhật heartbeat và hỗ trợ retry idempotent.
 - List API của question bank phải lấy `questions` làm aggregate gốc rồi join/batch-load `current_version_id`; không suy ra current version bằng sort tự do.
 - Mọi write tạo version/evaluation/review/publication phải kiểm tra quyền, status và invariant trước transaction, sau đó kiểm tra lại điều kiện compare-and-set trong transaction.

@@ -1,9 +1,18 @@
+import hashlib
+import re
+
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database, mongo_transaction
 from modules.questions.repository import MongoQuestionRepository, json_safe, utc_now
-from modules.questions.workflow_schemas import EvaluationCreateRequest, ReviewCreateRequest
+from modules.questions.workflow_schemas import (
+    AutoEvaluationRequest,
+    EvaluationCreateRequest,
+    EvaluationScores,
+    MoodlePublicationRequest,
+    ReviewCreateRequest,
+)
 
 DEFAULT_WEIGHTS = {
     "faithfulness": 0.35,
@@ -37,6 +46,88 @@ class QuestionWorkflowService:
             "weights": DEFAULT_WEIGHTS,
             "thresholds": DEFAULT_THRESHOLDS,
         }
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        normalized = (text or "").lower()
+        return {
+            token
+            for token in re.findall(r"[\wÀ-ỹ]+", normalized, flags=re.UNICODE)
+            if len(token) >= 3
+        }
+
+    @classmethod
+    def _overlap_score(cls, text: str, context: str) -> float:
+        text_tokens = cls._tokens(text)
+        if not text_tokens:
+            return 0.0
+        context_tokens = cls._tokens(context)
+        if not context_tokens:
+            return 0.0
+        return len(text_tokens & context_tokens) / len(text_tokens)
+
+    @staticmethod
+    def _clamp(score: float) -> float:
+        return round(max(0.0, min(1.0, score)), 4)
+
+    def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
+        question_data = version.get("question_data") or {}
+        sources = version.get("sources") or []
+        source_context = "\n\n".join(
+            str(source.get("context_excerpt") or "")
+            for source in sources
+            if source.get("context_excerpt")
+        )
+        content = version.get("content") or ""
+        answer = str(question_data.get("correct_answer") or "")
+        explanation = str(question_data.get("explanation") or "")
+        answer_block = " ".join([content, answer, explanation]).strip()
+
+        question_overlap = self._overlap_score(content, source_context)
+        answer_overlap = self._overlap_score(answer_block, source_context)
+        has_answer = bool(answer.strip())
+        has_explanation = bool(explanation.strip())
+        has_context = bool(source_context.strip())
+        has_bloom = bool((version.get("classification") or {}).get("bloom", {}).get("level"))
+        has_clo = bool(version.get("clos") or [])
+
+        scores = EvaluationScores(
+            faithfulness=self._clamp(0.50 + 0.50 * answer_overlap if has_context else 0.45),
+            contextual_relevancy=self._clamp(0.45 + 0.45 * question_overlap + min(len(sources), 3) * 0.03 if has_context else 0.35),
+            answer_relevancy=self._clamp(0.50 + (0.25 if has_answer else 0.0) + (0.20 if has_explanation else 0.0) + 0.05 * min(len(answer), 40) / 40),
+            bloom_alignment=0.86 if has_bloom else 0.50,
+            clo_alignment=0.86 if has_clo else 0.62,
+        )
+        feedback = {
+            "summary": (
+                "Đánh giá tự động bằng heuristic nội bộ phục vụ demo P0; "
+                "cần thay bằng local evaluator model ở bản production."
+            ),
+            "missing": [
+                label
+                for label, missing in (
+                    ("Không có source context", not has_context),
+                    ("Thiếu đáp án đúng", not has_answer),
+                    ("Thiếu giải thích", not has_explanation),
+                    ("Chưa gắn CLO", not has_clo),
+                )
+                if missing
+            ],
+        }
+        evidence = {
+            "source_count": len(sources),
+            "question_context_overlap": round(question_overlap, 4),
+            "answer_context_overlap": round(answer_overlap, 4),
+            "source_excerpt": source_context[:1200],
+            "checks": {
+                "has_context": has_context,
+                "has_answer": has_answer,
+                "has_explanation": has_explanation,
+                "has_bloom": has_bloom,
+                "has_clo": has_clo,
+            },
+        }
+        return scores, feedback, evidence
 
     def evaluate(self, question_id: str, payload: EvaluationCreateRequest, user_id) -> dict:
         question, version = self._pair(question_id)
@@ -115,6 +206,24 @@ class QuestionWorkflowService:
             if not result.matched_count:
                 raise RuntimeError("VERSION_CONFLICT")
         return json_safe(evaluation)
+
+    def auto_evaluate(self, question_id: str, payload: AutoEvaluationRequest, user_id) -> dict:
+        question, version = self._pair(question_id)
+        if question["current_version"] != payload.expected_version:
+            raise RuntimeError("VERSION_CONFLICT")
+        scores, feedback, evidence = self._auto_scores(question, version)
+        return self.evaluate(
+            question_id,
+            EvaluationCreateRequest(
+                expected_version=payload.expected_version,
+                scores=scores,
+                feedback=feedback,
+                evidence=evidence,
+                evaluator_model_code=payload.evaluator_model_code,
+                raw_model_response=None,
+            ),
+            user_id,
+        )
 
     def review(self, question_id: str, payload: ReviewCreateRequest, user_id) -> dict:
         question, version = self._pair(question_id)
@@ -199,10 +308,94 @@ class QuestionWorkflowService:
             self.db.audit_logs.insert_one(audit, session=session)
         return json_safe(review)
 
+    def publish_to_moodle(self, question_id: str, payload: MoodlePublicationRequest, user_id) -> dict:
+        question, version = self._pair(question_id)
+        if question["current_version"] != payload.expected_version:
+            raise RuntimeError("VERSION_CONFLICT")
+        if question["review_status"] != "APPROVED" or question.get("approved_version_id") != version["_id"]:
+            raise ValueError("Chỉ câu hỏi đã được duyệt ở phiên bản hiện tại mới được xuất Moodle")
+
+        target = {
+            "moodle_site_id": payload.moodle_site_id,
+            "course_id": payload.course_id,
+            "category_id": payload.category_id,
+        }
+        published_content_hash = version["content_hash"]
+        idempotency_material = "|".join(
+            [
+                payload.moodle_site_id,
+                payload.course_id,
+                payload.category_id,
+                str(version["_id"]),
+                published_content_hash,
+            ]
+        )
+        idempotency_key = hashlib.sha256(idempotency_material.encode("utf-8")).hexdigest()
+        now = utc_now()
+        publication = {
+            "_id": ObjectId(),
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question["_id"],
+            "question_version_id": version["_id"],
+            "question_version": version["version"],
+            "publisher_user_id": user_id,
+            "target": target,
+            "published_content_hash": published_content_hash,
+            "idempotency_key": idempotency_key,
+            "status": "PUBLISHED",
+            "attempt_no": 1,
+            "moodle_question_ref_id": f"mock-{str(version['_id'])}",
+            "request_payload": {
+                "question_code": question["question_code"],
+                "content": version["content"],
+                "question_data": version.get("question_data") or {},
+                "classification": version.get("classification") or {},
+                "mock": payload.mock,
+            },
+            "response_payload": {
+                "mock": payload.mock,
+                "message": "Mock Moodle publication recorded locally",
+            },
+            "error": None,
+            "created_at": now,
+            "updated_at": now,
+            "published_at": now,
+        }
+        with mongo_transaction() as session:
+            self.db.moodle_publications.update_one(
+                {"idempotency_key": idempotency_key},
+                {"$setOnInsert": publication},
+                upsert=True,
+                session=session,
+            )
+            saved = self.db.moodle_publications.find_one(
+                {"idempotency_key": idempotency_key},
+                session=session,
+            )
+            self.db.questions.update_one(
+                {
+                    "_id": question["_id"],
+                    "current_version_id": version["_id"],
+                    "review_status": "APPROVED",
+                },
+                {
+                    "$set": {
+                        "publication_status": "PUBLISHED",
+                        "updated_at": now,
+                    }
+                },
+                session=session,
+            )
+        return json_safe(saved or publication)
+
     def history(self, question_id: str, kind: str) -> list[dict]:
         question, _ = self._pair(question_id)
         if kind == "evaluations":
             cursor = self.db.question_evaluations.find(
+                {"question_id": question["_id"]}
+            ).sort("created_at", -1)
+        elif kind == "publications":
+            cursor = self.db.moodle_publications.find(
                 {"question_id": question["_id"]}
             ).sort("created_at", -1)
         else:

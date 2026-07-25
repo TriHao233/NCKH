@@ -32,6 +32,8 @@ Quy ước đọc:
 - Response sinh câu hỏi đã có `summary` theo từng dòng plan để biết sinh thiếu, trùng, invalid hoặc có warning.
 - Logic sinh đã có bước lọc/tránh trùng câu hỏi trong cùng một job bằng fingerprint nội dung.
 - Backend đã có collection/API nền cho AI evaluation và human review: `question_evaluations`, `question_reviews`, cập nhật trạng thái review và ghi `audit_logs`.
+- Đã có endpoint P0 `POST /questions/{id}/evaluations/auto` để tạo AI evaluation tự động bằng heuristic nội bộ, ghi score/evidence vào `question_evaluations` và cập nhật `quality_summary`.
+- Đã có endpoint P0 `POST /questions/{id}/moodle-publications` để ghi nhận mock Moodle publication vào `moodle_publications`, chỉ cho câu hỏi đã được reviewer/admin duyệt.
 - Firebase Admin đã có cấu hình đọc service account local qua `backend/firebase-service-account.json`; file credential này phải giữ local và không commit.
 
 ### 2.2. Frontend phục vụ luồng Teacher
@@ -45,15 +47,15 @@ Quy ước đọc:
 - Có thao tác bỏ/xóa câu hỏi nháp khỏi danh sách sau khi sinh.
 - Có hiển thị summary khi job sinh bị thiếu câu, trùng câu hoặc có cảnh báo.
 - Điều hướng frontend đã có phân quyền cơ bản: `Admin`/`Teacher` vào sinh câu hỏi, `Admin`/`Teacher`/`Reviewer` vào quản lý, `Admin` vào quản trị user.
+- Trang quản lý đã có thao tác P0 cho Reviewer/Admin: chạy AI evaluation, duyệt, yêu cầu sửa, từ chối, xem lịch sử evaluation/review/publication và ghi nhận mock Moodle publication.
 
 ## 3. Còn thiếu hoặc chưa nên claim hoàn tất
 
-- Reviewer là tính năng cần có nhưng frontend reviewer chưa hoàn chỉnh: chưa có hàng đợi review riêng, màn hình xem điểm AI, thao tác duyệt/từ chối/yêu cầu sửa theo workflow đầy đủ.
-- AI evaluator chưa phải luồng tự động end-to-end sau khi sinh câu hỏi; backend có nơi lưu evaluation nhưng chưa khóa chặt việc gọi model evaluator và sinh điểm tự động trong pipeline demo.
-- `question_reviews` và `question_evaluations` đã có backend, nhưng trải nghiệm Human-in-the-loop trên FE còn thiếu.
+- Reviewer đã có thao tác P0 trên trang quản lý, nhưng chưa có một trang reviewer queue riêng tối ưu cho khối lượng lớn.
+- AI evaluator P0 đang là heuristic nội bộ để phục vụ demo; chưa phải model local evaluator thật theo đúng yêu cầu production.
 - Trang quản lý câu hỏi hiện chưa có form sửa structured options đầy đủ như preview sau khi sinh; phần sửa ngoài luồng Generate vẫn còn đơn giản hơn.
 - `ai_models`, `prompt_templates`, `evaluation_policies` đã có trong thiết kế/bootstrap nhưng generation vẫn chủ yếu dùng config/prompt hiện tại, chưa chuyển hẳn sang catalog trong DB.
-- Moodle publication mới có collection/index và thiết kế idempotency; chưa có worker/API xuất Moodle end-to-end.
+- Moodle publication P0 mới ghi nhận mock publication/idempotency trong DB; chưa gọi Moodle API thật hoặc export định dạng Moodle XML/GIFT end-to-end.
 - `keywords` chưa thay thế hoàn toàn compatibility collection/dictionary cũ; cần quyết định migrate hẳn hay giữ song song có tài liệu rõ.
 - Subject/Chapter/CLO management chưa đầy đủ; nếu báo cáo claim theo chuẩn đầu ra thì cần CRUD/catalog và mapping dữ liệu thật.
 - Upload hiện chủ yếu phục vụ PDF; DOC/DOCX chưa phải end-to-end nếu chưa có converter/normalizer.
@@ -68,19 +70,20 @@ Quy ước đọc:
 
 1. Restart backend với Firebase service account đúng project và smoke test Google login.
 2. Demo chắc luồng Teacher: chọn tài liệu đã OCR -> thêm nhiều dòng plan -> nhập instruction -> sinh câu hỏi -> xem summary -> sửa/lưu/bỏ câu hỏi nháp.
-3. Chuẩn bị ít nhất một tài khoản `Reviewer` thật trong DB hoặc nói rõ Reviewer là phần backend/schema đã có, frontend phát triển sau.
+3. Demo luồng Reviewer P0: chọn câu hỏi -> AI đánh giá -> duyệt/yêu cầu sửa/từ chối -> xem lịch sử.
 4. Kiểm tra target MongoDB đã có các collection/index chính của V2, đặc biệt `document_pages`, `generation_jobs`, `generation_runs`, `questions`, `question_versions`.
+5. Chuẩn bị ít nhất một tài khoản `Reviewer` thật trong DB trước demo.
 
 ### P1 - Quan trọng sau demo Teacher
 
-1. Làm Reviewer UI end-to-end: queue câu hỏi, xem version/source/evaluation, duyệt, từ chối, yêu cầu sửa, lịch sử review.
-2. Tự động hóa AI evaluator: gọi model, lưu score/feedback/evidence vào `question_evaluations`, sau đó đẩy sang queue reviewer.
+1. Tách Reviewer UI thành queue riêng: lọc theo môn/chương/Bloom/score, xem source/evidence sâu hơn và thao tác hàng loạt.
+2. Thay heuristic evaluator bằng local evaluator model thật, lưu raw response và evidence chặt hơn.
 3. Đồng bộ form sửa câu hỏi ở Manage với editor structured options đã có ở Generate preview.
 4. Chuyển model/prompt/evaluation policy sang đọc từ DB và snapshot vào `generation_runs`/`question_evaluations`.
 
 ### P2 - Hoàn thiện dữ liệu và tích hợp
 
-1. Moodle publication worker/API và retry bằng `idempotency_key`.
+1. Moodle publication worker/API thật và retry bằng `idempotency_key`.
 2. Subject/Chapter/CLO catalog và mapping câu hỏi theo chuẩn đầu ra.
 3. Migration/backfill dữ liệu legacy, gồm `pages -> document_pages`, user role, dictionary/keyword.
 4. Audit đầy đủ cho document/question/evaluation/publication.
@@ -91,5 +94,6 @@ Quy ước đọc:
 - "File `DATABASE_DESIGN_V2.md` là đặc tả chính; file gap đi kèm ghi rõ trạng thái triển khai để tránh claim quá mức."
 - "Schema V2 đã chuyển nội dung authoritative về MongoDB, còn ChromaDB là index phục vụ truy hồi và có thể rebuild."
 - "Question bank đã có `questions` và `question_versions`, nên việc chỉnh sửa không ghi đè mất lịch sử."
-- "Reviewer là role bắt buộc trong thiết kế Human-in-the-loop; backend/schema đã có nền, frontend reviewer là phần ưu tiên tiếp theo."
+- "Reviewer là role bắt buộc trong thiết kế Human-in-the-loop; bản P0 đã có thao tác duyệt và lịch sử trên trang quản lý."
 - "Luồng Teacher là ưu tiên demo trước: tái sử dụng tài liệu OCR, tạo nhiều dòng yêu cầu sinh câu hỏi, chỉnh nháp và lưu version."
+- "Moodle publication ở bản P0 là mock publication ghi vào DB; tích hợp Moodle thật là bước tiếp theo."

@@ -17,7 +17,11 @@ from modules.generation.schemas import (
 )
 from modules.questions.schemas import QuestionCreateRequest, QuestionUpdateRequest
 from modules.questions.service import QuestionService, stable_hash
-from modules.questions.workflow_schemas import ReviewOverride
+from modules.questions.workflow_schemas import (
+    AutoEvaluationRequest,
+    MoodlePublicationRequest,
+    ReviewOverride,
+)
 from modules.users.schemas import PublicRegisterRequest, RoleEnum
 
 
@@ -48,6 +52,18 @@ class SchemaV2Tests(unittest.TestCase):
     def test_review_override_requires_reason(self):
         with self.assertRaises(ValidationError):
             ReviewOverride(applied=True, score=0.9)
+
+    def test_auto_evaluation_requires_expected_version(self):
+        with self.assertRaises(ValidationError):
+            AutoEvaluationRequest()
+
+        payload = AutoEvaluationRequest(expected_version=1)
+        self.assertEqual(payload.evaluator_model_code, "local-heuristic-evaluator-v1")
+
+    def test_moodle_publication_request_has_demo_defaults(self):
+        payload = MoodlePublicationRequest(expected_version=1)
+        self.assertEqual(payload.moodle_site_id, "demo-moodle")
+        self.assertTrue(payload.mock)
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(

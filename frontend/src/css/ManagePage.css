@@ -122,6 +122,22 @@
 .manage-page .bloom-tag { font-size: 0.7rem; font-weight: 600; border-radius: 6px; padding: 2px 9px; background: #FFF4E0; color: #B36500; }
 .manage-page .source-tag { font-size: 0.7rem; font-weight: 500; color: var(--text-muted, #5c6f89); }
 .manage-page .question-main p { font-size: 0.9rem; color: var(--text, #13253f); line-height: 1.5; }
+.manage-page .question-workflow-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.manage-page .quality-pill,
+.manage-page .publication-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #F3F6FA;
+  color: var(--text-muted, #5c6f89);
+}
+.manage-page .quality--green { background: #E8FFF0; color: #15803D; }
+.manage-page .quality--yellow { background: #FFF4E0; color: #B36500; }
+.manage-page .quality--red { background: #FFF0F0; color: #DC2626; }
 
 .manage-page .question-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex-shrink: 0; }
 .manage-page .status-badge { font-size: 0.72rem; font-weight: 700; border-radius: 20px; padding: 4px 12px; white-space: nowrap; }
@@ -130,6 +146,24 @@
 .manage-page .status--revise { background: #FFF0F0; color: #DC2626; }
 
 .manage-page .question-actions { display: flex; gap: 6px; }
+.manage-page .question-actions--wrap { justify-content: flex-end; flex-wrap: wrap; max-width: 260px; }
+.manage-page .mini-action {
+  min-height: 30px;
+  border: 1px solid var(--border, #d9e6f2);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-muted, #5c6f89);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 5px 9px;
+  transition: all 0.2s;
+}
+.manage-page .mini-action:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
+.manage-page .mini-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.manage-page .mini-action--approve { color: #15803D; border-color: #BBF7D0; }
+.manage-page .mini-action--danger { color: #DC2626; border-color: #FECACA; }
 .manage-page .icon-btn {
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
@@ -193,11 +227,47 @@
 .manage-page .side-note { font-size: 0.84rem; color: var(--text-muted, #5c6f89); line-height: 1.6; margin-bottom: 16px; }
 .manage-page .moodle-status { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; font-weight: 600; color: #16A34A; }
 .manage-page .moodle-dot { width: 8px; height: 8px; border-radius: 50%; background: #16A34A; flex-shrink: 0; }
+.manage-page .workflow-card { position: sticky; top: 88px; }
+.manage-page .workflow-question-code { font-size: 0.8rem; font-weight: 800; color: var(--navy, #003a75); margin-bottom: 12px; }
+.manage-page .workflow-status-grid {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  gap: 8px 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #EAF3FC;
+  border-radius: 8px;
+  background: #fafcff;
+  margin-bottom: 12px;
+}
+.manage-page .workflow-status-grid span { font-size: 0.72rem; color: var(--text-muted, #5c6f89); font-weight: 700; }
+.manage-page .workflow-status-grid b { font-size: 0.78rem; color: var(--text, #13253f); }
+.manage-page .workflow-message {
+  border-radius: 8px;
+  background: #E8FFF0;
+  color: #15803D;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+.manage-page .history-block { border-top: 1px solid #EAF3FC; padding-top: 12px; margin-top: 12px; }
+.manage-page .history-block h4 { font-size: 0.78rem; font-weight: 800; color: var(--navy, #003a75); margin-bottom: 8px; }
+.manage-page .history-item { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; }
+.manage-page .history-item b { font-size: 0.78rem; color: var(--text, #13253f); }
+.manage-page .history-item span,
+.manage-page .history-empty {
+  font-size: 0.74rem;
+  color: var(--text-muted, #5c6f89);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 
 /* ─── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 960px) {
   .manage-page .manage-grid { grid-template-columns: 1fr; }
   .manage-page .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .manage-page .workflow-card { position: static; }
 }
 @media (max-width: 640px) {
   .manage-page .manage-hero-row { flex-direction: column; align-items: flex-start; }

@@ -6,7 +6,12 @@ from core.dependencies import (
     require_reviewer_or_admin,
     require_teacher_reviewer_or_admin,
 )
-from modules.questions.workflow_schemas import EvaluationCreateRequest, ReviewCreateRequest
+from modules.questions.workflow_schemas import (
+    AutoEvaluationRequest,
+    EvaluationCreateRequest,
+    MoodlePublicationRequest,
+    ReviewCreateRequest,
+)
 from modules.questions.workflow_service import QuestionWorkflowService, get_workflow_service
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Question workflow"])
@@ -31,6 +36,19 @@ def evaluate_question(
 ):
     try:
         return service.evaluate(question_id, payload, current_user.id)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/evaluations/auto", status_code=201)
+def auto_evaluate_question(
+    question_id: str,
+    payload: AutoEvaluationRequest,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.auto_evaluate(question_id, payload, current_user.id)
     except Exception as exc:
         _translate_workflow_error(exc)
 
@@ -68,5 +86,30 @@ def review_history(
 ):
     try:
         return {"items": service.history(question_id, "reviews")}
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/moodle-publications", status_code=201)
+def publish_question_to_moodle(
+    question_id: str,
+    payload: MoodlePublicationRequest,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.publish_to_moodle(question_id, payload, current_user.id)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/{question_id}/moodle-publications")
+def moodle_publication_history(
+    question_id: str,
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"items": service.history(question_id, "publications")}
     except Exception as exc:
         _translate_workflow_error(exc)
