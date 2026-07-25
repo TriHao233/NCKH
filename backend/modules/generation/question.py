@@ -5,9 +5,11 @@ import time
 from typing import List
 
 from modules.generation.schemas import (
+    QuestionPlanItem,
     QuestionGenerateRequest,
     QuestionGenerateResponse,
-    GeneratedQuestion
+    GeneratedQuestion,
+    GenerationPlanSummary,
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.rag.search import get_context_snapshot
@@ -24,7 +26,12 @@ async def generate_questions_rag(
     req: QuestionGenerateRequest,
     requested_by_user_id=None,
 ) -> QuestionGenerateResponse:
-    logger.info(f"Sinh câu hỏi [Doc: {req.document_id} | Type: {req.question_type.value}]")
+    plan = req.effective_plan()
+    plan_log = ", ".join(
+        f"{item.question_type.value}/{(item.bloom_level or req.bloom_level).value}:{item.num_questions}"
+        for item in plan
+    )
+    logger.info("Sinh câu hỏi [Doc: %s | Plan: %s]", req.document_id, plan_log)
 
     # 1. Truy xuất ngữ cảnh (RAG)
     context_snapshot = get_context_snapshot(
@@ -37,18 +44,69 @@ async def generate_questions_rag(
     if not context_text:
         raise ValueError("Không tìm thấy đủ dữ liệu tri thức để sinh câu hỏi.")
 
-    # 2. Xây dựng Prompt thông qua hệ thống file-based
     prompt_builder = PromptBuilder()
+    llm = get_llm_service(req.model_provider)
+    generated_questions: List[GeneratedQuestion] = []
+    summaries: List[GenerationPlanSummary] = []
+    seen_question_fingerprints: set[str] = set()
+
+    for plan_index, plan_item in enumerate(plan, start=1):
+        questions, summary = await _generate_questions_for_plan_item(
+            req,
+            plan_item,
+            plan_index=plan_index,
+            avoid_questions=[question.question for question in generated_questions],
+            seen_question_fingerprints=seen_question_fingerprints,
+            context_snapshot=context_snapshot,
+            context_text=context_text,
+            prompt_builder=prompt_builder,
+            llm=llm,
+            requested_by_user_id=requested_by_user_id,
+        )
+        for question in questions:
+            seen_question_fingerprints.add(_question_fingerprint(question.question))
+        generated_questions.extend(questions)
+        summaries.append(summary)
+
+    return QuestionGenerateResponse(
+        status="success",
+        data=generated_questions,
+        summary=summaries,
+    )
+
+
+async def _generate_questions_for_plan_item(
+    req: QuestionGenerateRequest,
+    plan_item: QuestionPlanItem,
+    *,
+    plan_index: int,
+    avoid_questions: list[str],
+    seen_question_fingerprints: set[str],
+    context_snapshot: dict,
+    context_text: str,
+    prompt_builder: PromptBuilder,
+    llm,
+    requested_by_user_id=None,
+) -> tuple[List[GeneratedQuestion], GenerationPlanSummary]:
+    bloom_level = plan_item.bloom_level or req.bloom_level
+    # 2. Xây dựng Prompt thông qua hệ thống file-based cho từng dạng câu hỏi
     full_prompt = prompt_builder.build(
         context=context_text,
-        bloom_level=req.bloom_level.value,
-        question_type=req.question_type.value,
-        num_questions=req.num_questions
+        bloom_level=bloom_level.value,
+        question_type=plan_item.question_type.value,
+        num_questions=plan_item.num_questions,
+        instruction=req.instruction,
+        avoid_questions=avoid_questions,
     )
+    request_snapshot = req.model_dump(mode="json")
+    request_snapshot["active_plan_item"] = {
+        **plan_item.model_dump(mode="json"),
+        "effective_bloom_level": bloom_level.value,
+    }
     generation_run_id = create_generation_run(
         document_id=req.document_id,
         requested_by_user_id=requested_by_user_id,
-        request_snapshot=req.model_dump(mode="json"),
+        request_snapshot=request_snapshot,
         model_snapshot={"provider": req.model_provider},
         rendered_prompt=full_prompt,
         context_text=context_text,
@@ -58,7 +116,6 @@ async def generate_questions_rag(
     )
 
     # 3. Gọi LLM
-    llm = get_llm_service(req.model_provider)
     started_at = time.perf_counter()
     try:
         raw_response = await llm.generate_text(full_prompt)
@@ -77,20 +134,24 @@ async def generate_questions_rag(
     try:
         parsed_data = json.loads(clean_json_str)
         questions_list = _extract_questions_list(parsed_data)
+        parsed_count = len(questions_list)
 
-        if not questions_list:
-            raise ValueError("LLM không trả về danh sách câu hỏi hợp lệ.")
-
-        # Cắt nếu AI sinh thừa
-        questions_list = questions_list[:req.num_questions]
-
-        # Validate và đóng gói
-        validated_data = _validate_and_format(questions_list, req)
+        # Validate và đóng gói. Nếu AI trả dư, phần dư được dùng để bù câu sai format/trùng.
+        validated_data, validation_errors = _validate_and_format(
+            questions_list,
+            question_type=plan_item.question_type.value,
+            bloom_level=bloom_level.value,
+        )
+        deduped_data, duplicate_count = _filter_duplicate_questions(
+            validated_data,
+            seen_question_fingerprints,
+            limit=plan_item.num_questions,
+        )
 
         # 5. Lưu vào DB
-        save_generated_questions(
+        saved_data = save_generated_questions(
             req.document_id,
-            [q.model_dump() for q in validated_data],
+            [q.model_dump() for q in deduped_data],
             generation_run_id=generation_run_id,
             requested_by_user_id=requested_by_user_id,
             source_chunk_ids=[
@@ -99,15 +160,26 @@ async def generate_questions_rag(
                 if result.get("chunk_id")
             ],
         )
+        summary = _build_plan_summary(
+            plan_index=plan_index,
+            question_type=plan_item.question_type.value,
+            bloom_level=bloom_level.value,
+            requested_count=plan_item.num_questions,
+            parsed_count=parsed_count,
+            valid_count=len(validated_data),
+            duplicate_count=duplicate_count,
+            saved_count=len(saved_data),
+            validation_errors=validation_errors,
+        )
         finish_generation_run(
             generation_run_id,
             status="COMPLETED",
             raw_model_response=raw_response,
-            generated_count=len(validated_data),
+            generated_count=len(saved_data),
             latency_ms=int((time.perf_counter() - started_at) * 1000),
         )
 
-        return QuestionGenerateResponse(status="success", data=validated_data)
+        return [GeneratedQuestion(**question) for question in saved_data], summary
 
     except json.JSONDecodeError:
         logger.error(f"Parse JSON lỗi: {clean_json_str}")
@@ -138,6 +210,72 @@ def _clean_llm_output(text: str) -> str:
 def _extract_questions_list(data: dict | list) -> list:
     if isinstance(data, list): return data
     return data.get("questions") or data.get("data") or []
+
+
+def _question_fingerprint(question: str) -> str:
+    normalized = (question or "").lower()
+    normalized = re.sub(r"[_\W]+", " ", normalized, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _filter_duplicate_questions(
+    questions: List[GeneratedQuestion],
+    seen_question_fingerprints: set[str],
+    *,
+    limit: int,
+) -> tuple[List[GeneratedQuestion], int]:
+    kept: List[GeneratedQuestion] = []
+    duplicate_count = 0
+    for question in questions:
+        fingerprint = _question_fingerprint(question.question)
+        if not fingerprint or fingerprint in seen_question_fingerprints:
+            duplicate_count += 1
+            continue
+        seen_question_fingerprints.add(fingerprint)
+        kept.append(question)
+        if len(kept) >= limit:
+            break
+    return kept, duplicate_count
+
+
+def _build_plan_summary(
+    *,
+    plan_index: int,
+    question_type: str,
+    bloom_level: str,
+    requested_count: int,
+    parsed_count: int,
+    valid_count: int,
+    duplicate_count: int,
+    saved_count: int,
+    validation_errors: list[str],
+) -> GenerationPlanSummary:
+    skipped_count = max(0, requested_count - saved_count)
+    warnings = []
+    invalid_count = len(validation_errors)
+    if parsed_count < requested_count:
+        warnings.append(f"LLM chỉ trả {parsed_count}/{requested_count} câu.")
+    if invalid_count:
+        warnings.append(f"Bỏ {invalid_count} câu sai định dạng.")
+    if duplicate_count:
+        warnings.append(f"Bỏ {duplicate_count} câu trùng nội dung.")
+    if skipped_count:
+        warnings.append(f"Lưu thiếu {skipped_count} câu so với yêu cầu.")
+    warnings.extend(validation_errors[:3])
+
+    return GenerationPlanSummary(
+        plan_index=plan_index,
+        question_type=question_type,
+        bloom_level=bloom_level,
+        requested_count=requested_count,
+        parsed_count=parsed_count,
+        valid_count=valid_count,
+        duplicate_count=duplicate_count,
+        saved_count=saved_count,
+        skipped_count=skipped_count,
+        warnings=warnings,
+    )
+
 
 def _check_type_format(item: dict, question_type: str) -> str | None:
     """Kiểm tra cấu trúc bắt buộc theo từng loại câu hỏi (xem app/prompts/question_type/*.txt).
@@ -183,24 +321,33 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
     return None
 
 
-def _validate_and_format(questions: list, req: QuestionGenerateRequest) -> List[GeneratedQuestion]:
+def _validate_and_format(
+    questions: list,
+    *,
+    question_type: str,
+    bloom_level: str,
+) -> tuple[List[GeneratedQuestion], list[str]]:
     """Validate dữ liệu và ép kiểu về model chuẩn. Loại bỏ các câu hỏi không đúng
     cấu trúc bắt buộc của question_type thay vì lưu dữ liệu hỏng vào ngân hàng câu hỏi."""
     formatted = []
+    validation_errors = []
     for item in questions:
-        error = _check_type_format(item, req.question_type.value)
+        error = _check_type_format(item, question_type)
         if error:
-            logger.warning(f"Bỏ qua câu hỏi sai định dạng ({req.question_type.value}): {error} | item={item}")
+            logger.warning(f"Bỏ qua câu hỏi sai định dạng ({question_type}): {error} | item={item}")
+            validation_errors.append(error)
             continue
 
         # Cập nhật metadata đảm bảo nhất quán
         item.update({
-            "question_type": req.question_type.value,
-            "bloom_level": req.bloom_level.value
+            "question_type": question_type,
+            "bloom_level": bloom_level
         })
-        formatted.append(GeneratedQuestion(**item))
+        try:
+            formatted.append(GeneratedQuestion(**item))
+        except Exception as exc:
+            error_message = f"{question_type} không khớp schema GeneratedQuestion: {exc}"
+            logger.warning("Bỏ qua câu hỏi lỗi schema: %s | item=%s", error_message, item)
+            validation_errors.append(error_message)
 
-    if not formatted:
-        raise ValueError("Tất cả câu hỏi LLM sinh ra đều không đúng định dạng yêu cầu, vui lòng thử lại.")
-
-    return formatted
+    return formatted, validation_errors

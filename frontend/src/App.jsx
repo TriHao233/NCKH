@@ -1,3 +1,4 @@
+import { useContext } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
@@ -10,6 +11,15 @@ import RegisterPage from './pages/RegisterPage';
 import GuidePage from './pages/GuidePage';
 import ContactPage from './pages/ContactPage';
 import UserProfile from './pages/UserProfile';
+import { AuthContext } from './context/AuthContext';
+
+function RequireRole({ roles, children }) {
+    const { user, loading } = useContext(AuthContext);
+    if (loading) return null;
+    if (!user) return <Navigate to="/dang-nhap" replace />;
+    if (!roles.includes(user.role)) return <Navigate to="/trang-chu" replace />;
+    return children;
+}
 
 function App() {
     return (
@@ -18,9 +28,30 @@ function App() {
                 <Route path="/" element={<Navigate to="/trang-chu" replace />} />
                 <Route path="/trang-chu" element={<HomePage />} />
                 <Route path="/gioi-thieu" element={<AboutPage />} />
-                <Route path="/sinh-cau-hoi" element={<GeneratePage />} />
-                <Route path="/quan-ly" element={<ManagePage />} />
-                <Route path="/quan-ly-nguoi-dung" element={<UsersAdminPage />} />
+                <Route
+                    path="/sinh-cau-hoi"
+                    element={(
+                        <RequireRole roles={['Admin', 'Teacher']}>
+                            <GeneratePage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/quan-ly"
+                    element={(
+                        <RequireRole roles={['Admin', 'Teacher', 'Reviewer']}>
+                            <ManagePage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/quan-ly-nguoi-dung"
+                    element={(
+                        <RequireRole roles={['Admin']}>
+                            <UsersAdminPage />
+                        </RequireRole>
+                    )}
+                />
                 <Route path="/huong-dan" element={<GuidePage />} />
                 <Route path="/lien-he" element={<ContactPage />} />
                 <Route path="/ho-so" element={<UserProfile />} />

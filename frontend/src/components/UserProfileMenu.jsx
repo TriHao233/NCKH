@@ -40,6 +40,7 @@ const UserProfileMenu = () => {
   // Trích xuất thông tin hiển thị (Dựa trên cấu trúc UserInfo trả về từ MongoDB)
   const displayName = user.display_name || 'Giảng viên';
   const displayRole = user.role || 'Giảng viên';
+  const canOpenSettings = user.role === 'Admin';
   
   // Tự động generate avatar dựa trên tên người dùng
   const avatarUrl = user.profile?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0c78d4&color=fff`;
@@ -69,10 +70,12 @@ const UserProfileMenu = () => {
             Hồ sơ cá nhân
           </Link>
           
-          <Link to="/cai-dat" className="dropdown-item" onClick={() => setIsOpen(false)}>
-            <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
-            Cài đặt hệ thống
-          </Link>
+          {canOpenSettings && (
+            <Link to="/cai-dat" className="dropdown-item" onClick={() => setIsOpen(false)}>
+              <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
+              Cài đặt hệ thống
+            </Link>
+          )}
           
           <div className="dropdown-divider"></div>
           

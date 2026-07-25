@@ -74,3 +74,5 @@ def require_roles(*roles: str) -> Callable:
 
 require_admin = require_roles("Admin")
 require_teacher_or_admin = require_roles("Admin", "Teacher")
+require_reviewer_or_admin = require_roles("Admin", "Reviewer")
+require_teacher_reviewer_or_admin = require_roles("Admin", "Teacher", "Reviewer")

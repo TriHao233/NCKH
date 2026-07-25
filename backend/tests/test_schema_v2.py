@@ -8,6 +8,13 @@ from core.bootstrap import VALIDATORS
 from core.config import settings
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
+from modules.generation.schemas import (
+    BloomLevel,
+    GeneratedQuestion,
+    GenerationPlanSummary,
+    QuestionGenerateRequest,
+    QuestionType,
+)
 from modules.questions.schemas import QuestionCreateRequest, QuestionUpdateRequest
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import ReviewOverride
@@ -15,8 +22,8 @@ from modules.users.schemas import PublicRegisterRequest, RoleEnum
 
 
 class SchemaV2Tests(unittest.TestCase):
-    def test_only_admin_and_teacher_roles_exist(self):
-        self.assertEqual({role.value for role in RoleEnum}, {"Admin", "Teacher"})
+    def test_only_admin_teacher_and_reviewer_roles_exist(self):
+        self.assertEqual({role.value for role in RoleEnum}, {"Admin", "Teacher", "Reviewer"})
 
     def test_public_register_cannot_choose_role(self):
         with self.assertRaises(ValidationError):
@@ -61,10 +68,77 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(settings.rag_db_name, "rag_database")
         self.assertNotEqual(settings.auth_db_name, settings.rag_db_name)
 
+    def test_generation_request_accepts_question_plan(self):
+        req = QuestionGenerateRequest(
+            document_id="507f1f77bcf86cd799439011",
+            bloom_level=BloomLevel.HIEU,
+            question_plan=[
+                {"question_type": QuestionType.TRAC_NGHIEM, "bloom_level": BloomLevel.HIEU, "num_questions": 3},
+                {"question_type": QuestionType.DUNG_SAI, "bloom_level": BloomLevel.PHAN_TICH, "num_questions": 2},
+            ],
+            instruction="Tập trung vào cây nhị phân tìm kiếm.",
+        )
+
+        self.assertEqual(sum(item.num_questions for item in req.effective_plan()), 5)
+        self.assertEqual(req.effective_plan()[1].bloom_level, BloomLevel.PHAN_TICH)
+        self.assertEqual(req.instruction, "Tập trung vào cây nhị phân tìm kiếm.")
+
+    def test_generation_request_rejects_oversized_plan(self):
+        with self.assertRaises(ValidationError):
+            QuestionGenerateRequest(
+                document_id="507f1f77bcf86cd799439011",
+                bloom_level=BloomLevel.HIEU,
+                question_plan=[
+                    {"question_type": QuestionType.TRAC_NGHIEM, "num_questions": 10},
+                    {"question_type": QuestionType.DUNG_SAI, "num_questions": 10},
+                    {"question_type": QuestionType.DIEN_KHUYET, "num_questions": 1},
+                ],
+            )
+
+    def test_generated_question_can_return_persisted_metadata(self):
+        question = GeneratedQuestion(
+            question="Cấu trúc dữ liệu nào dùng nguyên tắc FIFO?",
+            options={"A": "Stack", "B": "Queue", "C": "Tree", "D": "Graph"},
+            correct_answer="B",
+            explanation="Queue xử lý phần tử vào trước ra trước.",
+            question_type="trac_nghiem",
+            bloom_level="hieu",
+            source_context="Queue là hàng đợi FIFO.",
+            question_id="507f1f77bcf86cd799439011",
+            question_code="Q-507F1F77BCF86CD799439011",
+            current_version=1,
+            current_version_id="507f1f77bcf86cd799439012",
+        )
+
+        self.assertEqual(question.question_id, "507f1f77bcf86cd799439011")
+        self.assertEqual(question.current_version, 1)
+
+    def test_generation_plan_summary_reports_shortfall(self):
+        summary = GenerationPlanSummary(
+            plan_index=2,
+            question_type="trac_nghiem",
+            bloom_level="phan_tich",
+            requested_count=5,
+            parsed_count=5,
+            valid_count=4,
+            duplicate_count=1,
+            saved_count=3,
+            skipped_count=2,
+            warnings=["Bỏ 1 câu trùng nội dung.", "Lưu thiếu 2 câu so với yêu cầu."],
+        )
+
+        self.assertEqual(summary.plan_index, 2)
+        self.assertEqual(summary.skipped_count, 2)
+        self.assertIn("Lưu thiếu 2 câu so với yêu cầu.", summary.warnings)
+
     def test_key_validators_require_schema_version(self):
         for collection in ("users", "documents", "questions", "question_versions"):
             required = VALIDATORS[collection]["$jsonSchema"]["required"]
             self.assertIn("schema_version", required)
+
+    def test_user_validator_accepts_reviewer_role(self):
+        role_enum = set(VALIDATORS["users"]["$jsonSchema"]["properties"]["role"]["enum"])
+        self.assertEqual(role_enum, {role.value for role in RoleEnum})
 
     def test_auth_user_is_minimal_uid_and_token_link(self):
         schema = VALIDATORS["User"]["$jsonSchema"]

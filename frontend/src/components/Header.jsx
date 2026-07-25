@@ -11,13 +11,17 @@ const Header = () => {
   
   // Lấy trạng thái user từ AuthContext thay vì tự check localStorage
   const { user } = useContext(AuthContext);
+  const role = user?.role;
+  const canGenerate = ['Admin', 'Teacher'].includes(role);
+  const canManage = ['Admin', 'Teacher', 'Reviewer'].includes(role);
+  const canManageUsers = role === 'Admin';
 
   const navLinks = [
     { path: '/gioi-thieu', label: 'Giới thiệu' },
     { path: '/trang-chu', label: 'Trang Chủ' },
-    { path: '/sinh-cau-hoi', label: 'Sinh Câu Hỏi' },
-    { path: '/quan-ly', label: 'Quản Lý' },
-    ...(user?.role === 'Admin' ? [{ path: '/quan-ly-nguoi-dung', label: 'Người Dùng' }] : []),
+    ...(canGenerate ? [{ path: '/sinh-cau-hoi', label: 'Sinh Câu Hỏi' }] : []),
+    ...(canManage ? [{ path: '/quan-ly', label: 'Quản Lý' }] : []),
+    ...(canManageUsers ? [{ path: '/quan-ly-nguoi-dung', label: 'Người Dùng' }] : []),
     { path: '/huong-dan', label: 'Hướng Dẫn' },
     { path: '/lien-he', label: 'Liên Hệ' },
   ];

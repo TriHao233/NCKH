@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import (
+    CurrentUser,
+    require_reviewer_or_admin,
+    require_teacher_reviewer_or_admin,
+)
 from modules.questions.workflow_schemas import EvaluationCreateRequest, ReviewCreateRequest
 from modules.questions.workflow_service import QuestionWorkflowService, get_workflow_service
 
@@ -22,7 +26,7 @@ def _translate_workflow_error(exc: Exception):
 def evaluate_question(
     question_id: str,
     payload: EvaluationCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -34,7 +38,7 @@ def evaluate_question(
 @router.get("/{question_id}/evaluations")
 def evaluation_history(
     question_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -47,7 +51,7 @@ def evaluation_history(
 def review_question(
     question_id: str,
     payload: ReviewCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -59,7 +63,7 @@ def review_question(
 @router.get("/{question_id}/reviews")
 def review_history(
     question_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:

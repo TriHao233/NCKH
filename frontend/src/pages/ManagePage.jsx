@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { deleteQuestion, listQuestions, updateQuestion } from '../api/questions';
 import { deleteDocument, listDocuments } from '../api/documents';
 import { QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import { AuthContext } from '../context/AuthContext';
 import '../css/ManagePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -29,6 +30,9 @@ const DOC_STATUS_LABEL = {
 
 function ManagePage() {
   const navigate = useNavigate();
+  const { user } = useContext(AuthContext);
+  const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
+  const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
 
   const [questions, setQuestions] = useState([]);
   const [questionsLoading, setQuestionsLoading] = useState(true);
@@ -71,6 +75,12 @@ function ManagePage() {
   };
 
   const fetchDocuments = async () => {
+    if (!canManageDocuments) {
+      setDocuments([]);
+      setDocumentsLoading(false);
+      setDocumentsError('');
+      return;
+    }
     setDocumentsLoading(true);
     setDocumentsError('');
     try {
@@ -90,7 +100,7 @@ function ManagePage() {
 
   useEffect(() => {
     fetchDocuments();
-  }, []);
+  }, [canManageDocuments]);
 
   const counts = useMemo(() => ({
     all: questions.length,
@@ -275,21 +285,23 @@ function ManagePage() {
                         <span className={`status-badge ${REVIEW_STATUS_CLASS[item.review_status] || ''}`}>
                           {REVIEW_STATUS_LABEL[item.review_status] || item.review_status}
                         </span>
-                        <div className="question-actions">
-                          <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-btn icon-btn--danger"
-                            title="Xoá"
-                            disabled={deletingId === item.id}
-                            onClick={() => handleDelete(item)}
-                          >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-                          </button>
-                        </div>
-                      </div>
+	                        {canEditQuestions && (
+	                          <div className="question-actions">
+	                            <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
+	                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+	                            </button>
+	                            <button
+	                              type="button"
+	                              className="icon-btn icon-btn--danger"
+	                              title="Xoá"
+	                              disabled={deletingId === item.id}
+	                              onClick={() => handleDelete(item)}
+	                            >
+	                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+	                            </button>
+	                          </div>
+	                        )}
+	                      </div>
                     </article>
                   ))}
                   {filtered.length === 0 && (
@@ -302,42 +314,44 @@ function ManagePage() {
 
           {/* Sidebar */}
           <aside className="manage-side">
-            <div className="card side-card">
-              <h3>Tài liệu nguồn</h3>
-              {documentsError && <p className="manage-error">{documentsError}</p>}
-              {documentsLoading ? (
-                <p className="side-note">Đang tải danh sách tài liệu...</p>
-              ) : (
-                <div className="doc-list">
-                  {documents.map((d) => (
-                    <div className="doc-item" key={d.id}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
-                      <div className="doc-info">
-                        <span className="doc-name">{d.title}</span>
-                        <span className="doc-meta">
-                          {d.page_count ? `${d.page_count} trang · ` : ''}{DOC_STATUS_LABEL[d.status] || d.status}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn--danger doc-delete-btn"
-                        title="Xoá tài liệu"
-                        disabled={deletingDocId === d.id}
-                        onClick={() => handleDeleteDocument(d)}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-                      </button>
-                    </div>
-                  ))}
-                  {documents.length === 0 && (
-                    <p className="empty-note">Chưa có tài liệu nào.</p>
-                  )}
-                </div>
-              )}
-              <button type="button" className="btn btn--outline doc-upload-btn" onClick={() => navigate('/sinh-cau-hoi')}>
-                + Tải tài liệu mới
-              </button>
-            </div>
+	            {canManageDocuments && (
+	              <div className="card side-card">
+	                <h3>Tài liệu nguồn</h3>
+	                {documentsError && <p className="manage-error">{documentsError}</p>}
+	                {documentsLoading ? (
+	                  <p className="side-note">Đang tải danh sách tài liệu...</p>
+	                ) : (
+	                  <div className="doc-list">
+	                    {documents.map((d) => (
+	                      <div className="doc-item" key={d.id}>
+	                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
+	                        <div className="doc-info">
+	                          <span className="doc-name">{d.title}</span>
+	                          <span className="doc-meta">
+	                            {d.page_count ? `${d.page_count} trang · ` : ''}{DOC_STATUS_LABEL[d.status] || d.status}
+	                          </span>
+	                        </div>
+	                        <button
+	                          type="button"
+	                          className="icon-btn icon-btn--danger doc-delete-btn"
+	                          title="Xoá tài liệu"
+	                          disabled={deletingDocId === d.id}
+	                          onClick={() => handleDeleteDocument(d)}
+	                        >
+	                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+	                        </button>
+	                      </div>
+	                    ))}
+	                    {documents.length === 0 && (
+	                      <p className="empty-note">Chưa có tài liệu nào.</p>
+	                    )}
+	                  </div>
+	                )}
+	                <button type="button" className="btn btn--outline doc-upload-btn" onClick={() => navigate('/sinh-cau-hoi')}>
+	                  + Tải tài liệu mới
+	                </button>
+	              </div>
+	            )}
 
             <div className="card side-card">
               <h3>Trạng thái Moodle</h3>

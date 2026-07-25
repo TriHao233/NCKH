@@ -1,6 +1,11 @@
 import { bloomLevelLabel, questionTypeLabel } from '../constants/generationEnums';
 
-function formatChoices(options, correctAnswer) {
+export function formatChoices(options, correctAnswer) {
+  const correctValues = String(correctAnswer || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
   if (!options) {
     return [{ text: correctAnswer, isCorrect: true }];
   }
@@ -16,6 +21,9 @@ function formatChoices(options, correctAnswer) {
     return Object.entries(options).map(([key, value]) => {
       const text = `${key}. ${value}`;
       const isCorrect =
+        correctValues.includes(String(key)) ||
+        correctValues.includes(String(value)) ||
+        correctValues.includes(text) ||
         String(correctAnswer) === String(key) ||
         String(correctAnswer) === String(value) ||
         String(correctAnswer) === text;
@@ -28,11 +36,20 @@ function formatChoices(options, correctAnswer) {
 
 export function mapGeneratedQuestions(questions = []) {
   return questions.map((question, index) => ({
-    id: `Q-${index + 1}`,
+    id: question.question_id || question.id || `Q-${index + 1}`,
+    persistedId: question.question_id || question.id || null,
+    questionCode: question.question_code || `Q-${index + 1}`,
+    currentVersion: question.current_version || 1,
+    currentVersionId: question.current_version_id || null,
+    questionType: question.question_type,
+    bloomLevel: question.bloom_level,
     type: questionTypeLabel(question.question_type),
     bloom: bloomLevelLabel(question.bloom_level),
     text: question.question,
+    rawOptions: question.options,
+    correctAnswer: question.correct_answer,
     choices: formatChoices(question.options, question.correct_answer),
     explanation: question.explanation,
+    sourceContext: question.source_context,
   }));
 }

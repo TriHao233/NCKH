@@ -14,6 +14,7 @@ from modules.generation.question import generate_questions_rag
 from modules.generation.schemas import (
     GenerationJobStatus,
     GenerationJobStatusResponse,
+    GenerationPlanSummary,
     GeneratedQuestion,
     JobAcceptedResponse,
     QuestionGenerateRequest,
@@ -45,6 +46,7 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
                 result={
                     "status": result.status,
                     "data": [item.model_dump() for item in result.data],
+                    "summary": [item.model_dump() for item in result.summary],
                 },
             )
             logger.info("Job [%s] hoàn tất thành công", job_id)
@@ -101,6 +103,8 @@ async def get_generation_job_status(job_id: str):
     if job["status"] == GenerationJobStatus.COMPLETED.value and job.get("result"):
         result_data = job["result"].get("data", [])
         response_kwargs["data"] = [GeneratedQuestion(**item) for item in result_data]
+        result_summary = job["result"].get("summary", [])
+        response_kwargs["summary"] = [GenerationPlanSummary(**item) for item in result_summary]
 
     if job["status"] == GenerationJobStatus.FAILED.value and job.get("error_message"):
         response_kwargs["error_message"] = job["error_message"]

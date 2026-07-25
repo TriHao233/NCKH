@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class RoleEnum(str, Enum):
     ADMIN = "Admin"
     TEACHER = "Teacher"
+    REVIEWER = "Reviewer"
 
 
 class UserProfile(BaseModel):

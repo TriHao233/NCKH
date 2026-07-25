@@ -2,12 +2,20 @@ import json
 import logging
 
 import httpx
+from bson import ObjectId
 
 from core.config import settings
 from core.database import get_rag_db
 from modules.dictionary.mongodb import add_pending_keywords
 
 logger = logging.getLogger(__name__)
+
+
+def _document_page_query(document_id: str) -> dict:
+    try:
+        return {"document_id": ObjectId(document_id)}
+    except Exception:
+        return {"document_id": document_id}
 
 
 def run_dictionary_auto_learning(document_id: str, course_id: str = "it_fundamentals"):
@@ -18,13 +26,16 @@ def run_dictionary_auto_learning(document_id: str, course_id: str = "it_fundamen
     logger.info(f"==> Bắt đầu tiến trình Auto-Learning cho Document: {document_id}")
     db = get_rag_db()
 
-    # 1. Lấy ra tối đa 15 trang có mật độ chữ tốt hoặc có cấu trúc phức tạp để làm mẫu học toán
-    # Sắp xếp theo thứ tự trang tăng dần để bảo toàn mạch kiến thức giáo trình
-    pages_cursor = db["pages"].find({"document_id": str(document_id)}).sort("page_number", 1).limit(15)
+    # 1. Lấy tối đa 15 trang V2 để làm mẫu học từ khóa.
+    pages_cursor = (
+        db.document_pages.find(_document_page_query(document_id))
+        .sort("page_number", 1)
+        .limit(15)
+    )
 
     sample_texts = []
     for page in pages_cursor:
-        text = page.get("text", "").strip()
+        text = (page.get("cleaned_text") or page.get("raw_text") or "").strip()
         if len(text) > 200:  # Bỏ qua trang quá ngắn như trang bìa, mục lục trống
             sample_texts.append(text[:1500])  # Giới hạn ký tự mỗi trang để tránh tràn Context Window bừa bãi
 

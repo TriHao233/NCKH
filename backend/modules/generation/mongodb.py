@@ -136,11 +136,12 @@ def save_generated_questions(
     generation_run_id: str,
     requested_by_user_id,
     source_chunk_ids: list[str],
-) -> int:
+) -> list[dict]:
     service = get_question_service()
     run_oid = object_id(generation_run_id, "generation_run_id")
+    saved_questions = []
     for question in questions:
-        service.create(
+        saved_question = service.create(
             QuestionCreateRequest(
                 content=question["question"],
                 question_type=question["question_type"],
@@ -158,7 +159,16 @@ def save_generated_questions(
             origin="AI",
             generation_run_id=run_oid,
         )
-    return len(questions)
+        saved_questions.append(
+            {
+                **question,
+                "question_id": saved_question["id"],
+                "question_code": saved_question["question_code"],
+                "current_version": saved_question["current_version"],
+                "current_version_id": saved_question["current_version_id"],
+            }
+        )
+    return saved_questions
 
 
 def create_generation_job(request: dict, requested_by_user_id=None) -> str:

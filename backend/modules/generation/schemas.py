@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.config import settings
 
@@ -22,15 +22,58 @@ class QuestionType(str, Enum):
     SAP_XEP = "sap_xep"
     NHIEU_LUA_CHON = "nhieu_lua_chon"
 
+
+class QuestionPlanItem(BaseModel):
+    question_type: QuestionType
+    bloom_level: Optional[BloomLevel] = None
+    num_questions: int = Field(default=1, ge=1, le=10)
+
+
 class QuestionGenerateRequest(BaseModel):
     # Xóa context: str, thay bằng document_id để gọi ChromaDB
     document_id: str = Field(..., description="ID của giáo trình trong DB")
     collection_name: str = settings.chromadb_collection_name
     target_heading: Optional[str] = Field(None, description="Tên mục lục muốn giới hạn sinh câu hỏi")
+    instruction: Optional[str] = Field(
+        None,
+        max_length=1200,
+        description="Yêu cầu/chủ đề cụ thể từ giảng viên khi sinh câu hỏi",
+    )
     bloom_level: BloomLevel
     question_type: QuestionType = QuestionType.TRAC_NGHIEM
     num_questions: int = Field(default=1, ge=1, le=10)
     model_provider: str = Field(default_factory=lambda: settings.model_provider)
+    question_plan: Optional[List[QuestionPlanItem]] = Field(
+        None,
+        min_length=1,
+        max_length=7,
+        description="Cơ cấu số lượng câu hỏi theo từng dạng",
+    )
+
+    @field_validator("instruction")
+    @classmethod
+    def normalize_instruction(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def validate_total_questions(self):
+        total = sum(item.num_questions for item in self.question_plan) if self.question_plan else self.num_questions
+        if total < 1 or total > 20:
+            raise ValueError("Tổng số câu hỏi phải từ 1 đến 20.")
+        return self
+
+    def effective_plan(self) -> List[QuestionPlanItem]:
+        if self.question_plan:
+            return self.question_plan
+        return [
+            QuestionPlanItem(
+                question_type=self.question_type,
+                num_questions=self.num_questions,
+            )
+        ]
 
 class GeneratedQuestion(BaseModel):
     question: str
@@ -41,10 +84,29 @@ class GeneratedQuestion(BaseModel):
     question_type: str
     bloom_level: str
     source_context: str
+    question_id: Optional[str] = None
+    question_code: Optional[str] = None
+    current_version: Optional[int] = None
+    current_version_id: Optional[str] = None
+
+
+class GenerationPlanSummary(BaseModel):
+    plan_index: int
+    question_type: str
+    bloom_level: str
+    requested_count: int
+    parsed_count: int = 0
+    valid_count: int = 0
+    duplicate_count: int = 0
+    saved_count: int = 0
+    skipped_count: int = 0
+    warnings: List[str] = Field(default_factory=list)
+
 
 class QuestionGenerateResponse(BaseModel):
     status: str
     data: List[GeneratedQuestion]
+    summary: List[GenerationPlanSummary] = Field(default_factory=list)
 
 
 class GenerationJobStatus(str, Enum):
@@ -64,6 +126,7 @@ class GenerationJobStatusResponse(BaseModel):
     job_id: str
     status: GenerationJobStatus
     data: Optional[List[GeneratedQuestion]] = None
+    summary: Optional[List[GenerationPlanSummary]] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

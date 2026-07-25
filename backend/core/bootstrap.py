@@ -25,6 +25,7 @@ RAG_COLLECTIONS = (
     "ai_models",
     "prompt_templates",
     "evaluation_policies",
+    "generation_jobs",
     "generation_runs",
     "questions",
     "question_versions",
@@ -69,8 +70,30 @@ VALIDATORS = {
                 "firebase_uid": {"bsonType": "string", "minLength": 1},
                 "email": {"bsonType": "string", "minLength": 3},
                 "display_name": {"bsonType": "string", "minLength": 1},
-                "role": {"enum": ["Admin", "Teacher"]},
+                "role": {"enum": ["Admin", "Teacher", "Reviewer"]},
                 "is_active": {"bsonType": "bool"},
+                "created_at": {"bsonType": "date"},
+                "updated_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "generation_jobs": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "request",
+                "status",
+                "created_at",
+                "updated_at",
+            ],
+            "properties": {
+                "request": {"bsonType": "object"},
+                "requested_by_user_id": {"bsonType": ["objectId", "null"]},
+                "status": {
+                    "enum": ["queued", "processing", "completed", "failed"]
+                },
+                "result": {"bsonType": ["object", "null"]},
+                "error_message": {"bsonType": ["string", "null"]},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
             },
@@ -295,6 +318,12 @@ def _ensure_indexes() -> None:
                 unique=True,
                 name="uq_external_vector",
             ),
+        ]
+    )
+    rag_db.generation_jobs.create_indexes(
+        [
+            IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
+            IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_jobs_requester"),
         ]
     )
     rag_db.generation_runs.create_indexes(

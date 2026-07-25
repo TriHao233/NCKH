@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import (
+    CurrentUser,
+    require_teacher_or_admin,
+    require_teacher_reviewer_or_admin,
+)
 from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionListResponse,
@@ -20,7 +24,7 @@ def list_questions(
     page_size: int = Query(20, ge=1, le=100),
     review_status: str | None = None,
     search: str | None = None,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
     return service.list(page, page_size, review_status, search)
@@ -41,7 +45,7 @@ def create_question(
 @router.get("/{question_id}", response_model=QuestionResponse)
 def get_question(
     question_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -56,7 +60,7 @@ def get_question(
 @router.get("/{question_id}/versions", response_model=list[QuestionVersionResponse])
 def list_question_versions(
     question_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
