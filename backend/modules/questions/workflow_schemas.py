@@ -35,7 +35,8 @@ class ReviewOverride(BaseModel):
 
 class AutoEvaluationRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
-    evaluator_model_code: str = "local-heuristic-evaluator-v1"
+    evaluator_model_code: str = Field("qwen", min_length=1, max_length=80)
+    fallback_to_heuristic: bool = True
 
 
 class ReviewCreateRequest(BaseModel):

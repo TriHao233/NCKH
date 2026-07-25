@@ -49,6 +49,7 @@ def serialize_question(question: dict, version: dict) -> dict:
             "content": version["content"],
             "question_data": version["question_data"],
             "classification": version["classification"],
+            "clos": version.get("clos") or [],
             "sources": version.get("sources") or [],
             "content_hash": version["content_hash"],
             "quality_summary": question.get("quality_summary") or {},

@@ -112,6 +112,37 @@ class QuestionService:
         if chapter_oid not in chapter_ids:
             raise ValueError("Chương không thuộc học phần đã chọn")
 
+    def _clo_snapshots(
+        self,
+        subject_id: str | ObjectId | None,
+        clo_ids: list[str] | None,
+    ) -> list[dict]:
+        if not clo_ids:
+            return []
+        subject = self._validate_subject(subject_id)
+        if subject is None:
+            raise ValueError("CLO phải thuộc một học phần")
+        requested = {object_id(clo_id, "clo_id") for clo_id in clo_ids}
+        snapshots = []
+        for outcome in subject.get("learning_outcomes", []):
+            outcome_id = outcome.get("_id") or outcome.get("id")
+            if not outcome_id:
+                continue
+            outcome_oid = object_id(outcome_id, "clo_id")
+            if outcome_oid not in requested:
+                continue
+            snapshots.append(
+                {
+                    "id": outcome_oid,
+                    "code": outcome.get("clo_code") or outcome.get("code"),
+                    "description": outcome.get("description", ""),
+                    "target_weight": outcome.get("target_weight", 1.0),
+                }
+            )
+        if len(snapshots) != len(requested):
+            raise ValueError("Một hoặc nhiều CLO không thuộc học phần đã chọn")
+        return snapshots
+
     @staticmethod
     def _validate_active_sources(sources: list[dict], document: dict | None) -> None:
         if not sources or not document:
@@ -193,11 +224,13 @@ class QuestionService:
             subject_id=subject_id,
             chapter_id=chapter_id,
         )
+        clos = self._clo_snapshots(subject_id, payload.clo_ids)
         content_hash = stable_hash(
             {
                 "content": payload.content,
                 "question_data": payload.question_data,
                 "classification": classification,
+                "clos": clos,
                 "sources": sources,
             }
         )
@@ -229,7 +262,7 @@ class QuestionService:
             "created_by_user_id": created_by_user_id,
             "generated_by_model_id": None,
             "classification": classification,
-            "clos": [],
+            "clos": clos,
             "content": payload.content,
             "question_data": payload.question_data,
             "sources": sources,
@@ -358,6 +391,15 @@ class QuestionService:
             if payload.question_data is not None
             else current["question_data"]
         )
+        if payload.clo_ids is not None:
+            clos = self._clo_snapshots(
+                classification["subject"].get("id"),
+                payload.clo_ids,
+            )
+        elif payload.subject_id is not None:
+            clos = []
+        else:
+            clos = current.get("clos", [])
         current_document_id = current.get("document_id")
         resolved_document_id = current_document_id
         if payload.source_chunk_ids is not None:
@@ -407,6 +449,7 @@ class QuestionService:
                 "content": content,
                 "question_data": question_data,
                 "classification": classification,
+                "clos": clos,
                 "sources": sources,
             }
         )
@@ -418,6 +461,7 @@ class QuestionService:
                 "created_by_user_id": created_by_user_id,
                 "document_id": resolved_document_id,
                 "classification": classification,
+                "clos": clos,
                 "content": content,
                 "question_data": question_data,
                 "sources": sources,

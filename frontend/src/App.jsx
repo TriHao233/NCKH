@@ -5,6 +5,8 @@ import HomePage from './pages/HomePage';
 import AboutPage from './pages/AboutPage';
 import GeneratePage from './pages/GeneratePage';
 import ManagePage from './pages/ManagePage';
+import ReviewQueuePage from './pages/ReviewQueuePage';
+import CatalogAdminPage from './pages/CatalogAdminPage';
 import UsersAdminPage from './pages/UsersAdminPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -41,6 +43,22 @@ function App() {
                     element={(
                         <RequireRole roles={['Admin', 'Teacher', 'Reviewer']}>
                             <ManagePage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/kiem-duyet"
+                    element={(
+                        <RequireRole roles={['Admin', 'Reviewer']}>
+                            <ReviewQueuePage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/danh-muc"
+                    element={(
+                        <RequireRole roles={['Admin']}>
+                            <CatalogAdminPage />
                         </RequireRole>
                     )}
                 />

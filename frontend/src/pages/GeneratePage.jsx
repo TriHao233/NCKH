@@ -14,6 +14,15 @@ import {
 } from '../constants/generationEnums';
 import { pollJob } from '../hooks/useJobPoll';
 import { formatChoices, mapGeneratedQuestions } from '../utils/mapGeneratedQuestion';
+import {
+  SINGLE_CHOICE_TYPES,
+  MULTI_CHOICE_TYPES,
+  correctAnswerValues,
+  entriesToOptions,
+  joinCorrectValues,
+  optionEntriesForQuestion as optionEntriesForDraft,
+  validateQuestionAnswer,
+} from '../utils/questionOptions';
 import '../css/GeneratePage.css';
 
 const PHASE_LABELS = {
@@ -29,17 +38,6 @@ const PHASE_LABELS = {
 };
 
 const MAX_TOTAL_QUESTIONS = 20;
-const DEFAULT_OPTION_KEYS = ['A', 'B', 'C', 'D'];
-const SINGLE_CHOICE_TYPES = new Set(['trac_nghiem', 'tinh_huong', 'dung_sai']);
-const MULTI_CHOICE_TYPES = new Set(['nhieu_lua_chon']);
-const STRUCTURED_OPTION_TYPES = new Set([
-  'trac_nghiem',
-  'tinh_huong',
-  'dung_sai',
-  'nhieu_lua_chon',
-  'ghep_cot',
-  'sap_xep',
-]);
 
 function shortId(id) {
   if (!id) return '';
@@ -104,62 +102,12 @@ function reusableDocumentLabel(document) {
   return `${document.title} (${pages}, ${state})`;
 }
 
-function correctAnswerValues(correctAnswer) {
-  return String(correctAnswer || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function optionEntriesForDraft(draft) {
-  const questionType = draft.questionType;
-  const rawOptions = draft.rawOptions;
-  if (!STRUCTURED_OPTION_TYPES.has(questionType)) return [];
-  if (rawOptions && typeof rawOptions === 'object' && !Array.isArray(rawOptions)) {
-    return Object.entries(rawOptions).map(([key, value]) => ({ key, value: String(value ?? '') }));
-  }
-  if (Array.isArray(rawOptions)) {
-    return rawOptions.map((value, index) => ({
-      key: DEFAULT_OPTION_KEYS[index] || String(index + 1),
-      value: String(value ?? ''),
-    }));
-  }
-  if (questionType === 'dung_sai') {
-    return [
-      { key: 'A', value: 'Đúng' },
-      { key: 'B', value: 'Sai' },
-    ];
-  }
-  if (['trac_nghiem', 'tinh_huong', 'nhieu_lua_chon'].includes(questionType)) {
-    return DEFAULT_OPTION_KEYS.map((key) => ({ key, value: '' }));
-  }
-  return [];
-}
-
-function entriesToOptions(entries) {
-  return Object.fromEntries(entries.map((entry) => [entry.key, entry.value]));
-}
-
-function joinCorrectValues(values, entries) {
-  const selected = new Set(values);
-  const ordered = entries
-    .map((entry) => entry.key)
-    .filter((key) => selected.has(key));
-  return ordered.join(', ');
-}
-
 function validateDraftBeforeSave(draft) {
-  if (!String(draft.correctAnswer || '').trim()) {
-    return 'Đáp án đúng không được để trống.';
-  }
-  if (MULTI_CHOICE_TYPES.has(draft.questionType) && correctAnswerValues(draft.correctAnswer).length < 2) {
-    return 'Câu nhiều lựa chọn cần ít nhất 2 đáp án đúng.';
-  }
-  const entries = optionEntriesForDraft(draft);
-  if (entries.some((entry) => !entry.value.trim())) {
-    return 'Các lựa chọn không được để trống.';
-  }
-  return null;
+  return validateQuestionAnswer({
+    questionType: draft.questionType,
+    rawOptions: draft.rawOptions,
+    correctAnswer: draft.correctAnswer,
+  });
 }
 
 function mergeUpdatedDraft(draft, updatedQuestion) {

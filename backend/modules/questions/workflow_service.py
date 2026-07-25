@@ -1,10 +1,12 @@
 import hashlib
+import json
 import re
 
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database, mongo_transaction
+from modules.generation.llm.factory import get_llm_service
 from modules.questions.repository import MongoQuestionRepository, json_safe, utc_now
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
@@ -47,6 +49,25 @@ class QuestionWorkflowService:
             "thresholds": DEFAULT_THRESHOLDS,
         }
 
+    def _model_snapshot(self, model_code: str) -> dict:
+        model = self.db.ai_models.find_one({"model_code": model_code, "is_active": True})
+        if not model:
+            return {
+                "id": None,
+                "model_code": model_code,
+                "model_name": model_code,
+                "config": {},
+            }
+        return {
+            "id": model["_id"],
+            "model_code": model["model_code"],
+            "model_name": model.get("model_name"),
+            "runtime": model.get("runtime"),
+            "revision": model.get("revision"),
+            "capabilities": model.get("capabilities") or [],
+            "config": model.get("config") or {},
+        }
+
     @staticmethod
     def _tokens(text: str) -> set[str]:
         normalized = (text or "").lower()
@@ -70,14 +91,89 @@ class QuestionWorkflowService:
     def _clamp(score: float) -> float:
         return round(max(0.0, min(1.0, score)), 4)
 
-    def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
-        question_data = version.get("question_data") or {}
+    @staticmethod
+    def _clean_json(text: str) -> str:
+        cleaned = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL)
+        cleaned = re.sub(r"```json|```", "", cleaned).strip()
+        match = re.search(r"(\{.*\})", cleaned, flags=re.DOTALL)
+        return match.group(1) if match else cleaned
+
+    @staticmethod
+    def _source_context(version: dict) -> str:
         sources = version.get("sources") or []
-        source_context = "\n\n".join(
+        return "\n\n".join(
             str(source.get("context_excerpt") or "")
             for source in sources
             if source.get("context_excerpt")
         )
+
+    @staticmethod
+    def _evaluation_prompt(question: dict, version: dict) -> str:
+        question_data = version.get("question_data") or {}
+        classification = version.get("classification") or {}
+        context = QuestionWorkflowService._source_context(version)[:6000]
+        payload = {
+            "question_code": question.get("question_code"),
+            "question": version.get("content"),
+            "answer": question_data.get("correct_answer"),
+            "explanation": question_data.get("explanation"),
+            "bloom": classification.get("bloom"),
+            "clos": version.get("clos") or [],
+            "source_context": context,
+        }
+        return f"""
+You are a strict local evaluator for a question bank system.
+Evaluate the generated question using only SOURCE_CONTEXT.
+
+Return JSON only with this exact shape:
+{{
+  "scores": {{
+    "faithfulness": 0.0,
+    "contextual_relevancy": 0.0,
+    "answer_relevancy": 0.0,
+    "bloom_alignment": 0.0,
+    "clo_alignment": 0.0
+  }},
+  "feedback": {{
+    "summary": "short Vietnamese assessment",
+    "missing": ["short issue"]
+  }},
+  "evidence": {{
+    "supporting_excerpt": "short quote/paraphrase from context",
+    "reasoning": "short Vietnamese reason"
+  }}
+}}
+
+Rules:
+- Every score must be in [0, 1].
+- Faithfulness is low if the question or answer is not grounded in SOURCE_CONTEXT.
+- Contextual relevancy is low if SOURCE_CONTEXT does not contain enough information.
+- Answer relevancy is low if the answer/explanation does not directly answer the question.
+- Bloom/CLO alignment must consider the provided metadata; lower CLO score when no CLO exists.
+
+INPUT:
+{json.dumps(payload, ensure_ascii=False, default=str)}
+"""
+
+    @classmethod
+    def _parse_llm_evaluation(cls, raw_response: str) -> tuple[EvaluationScores, dict, dict]:
+        parsed = json.loads(cls._clean_json(raw_response))
+        raw_scores = parsed.get("scores") or {}
+        scores = EvaluationScores(
+            faithfulness=cls._clamp(float(raw_scores.get("faithfulness", 0))),
+            contextual_relevancy=cls._clamp(float(raw_scores.get("contextual_relevancy", 0))),
+            answer_relevancy=cls._clamp(float(raw_scores.get("answer_relevancy", 0))),
+            bloom_alignment=cls._clamp(float(raw_scores.get("bloom_alignment", 0))),
+            clo_alignment=cls._clamp(float(raw_scores.get("clo_alignment", 0))),
+        )
+        feedback = parsed.get("feedback") if isinstance(parsed.get("feedback"), dict) else {}
+        evidence = parsed.get("evidence") if isinstance(parsed.get("evidence"), dict) else {}
+        return scores, feedback, evidence
+
+    def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
+        question_data = version.get("question_data") or {}
+        sources = version.get("sources") or []
+        source_context = self._source_context(version)
         content = version.get("content") or ""
         answer = str(question_data.get("correct_answer") or "")
         explanation = str(question_data.get("explanation") or "")
@@ -157,12 +253,7 @@ class QuestionWorkflowService:
             "question_version": version["version"],
             "question_snapshot_hash": version["content_hash"],
             "generation_run_id": version.get("generation_run_id"),
-            "evaluator_model": {
-                "id": None,
-                "model_code": payload.evaluator_model_code,
-                "model_name": payload.evaluator_model_code,
-                "config": {},
-            },
+            "evaluator_model": self._model_snapshot(payload.evaluator_model_code),
             "requested_by_user_id": user_id,
             "policy": {
                 "id": policy.get("_id"),
@@ -178,6 +269,39 @@ class QuestionWorkflowService:
             "evidence": payload.evidence,
             "raw_model_response": payload.raw_model_response,
             "parser_version": "evaluation-json-v1",
+            "created_at": now,
+        }
+        audit = {
+            "schema_version": SCHEMA_VERSION,
+            "actor": {
+                "type": "USER",
+                "user_id": user_id,
+                "model_id": evaluation["evaluator_model"].get("id"),
+                "service_name": "question_evaluation",
+            },
+            "entity": {
+                "type": "QUESTION",
+                "id": question["_id"],
+                "version_id": version["_id"],
+            },
+            "action": "QUESTION_EVALUATED",
+            "changes": [
+                {
+                    "path": "quality_summary",
+                    "old_value": question.get("quality_summary") or {},
+                    "new_value": {
+                        "latest_evaluation_id": evaluation["_id"],
+                        "overall_score": overall,
+                        "color": color,
+                    },
+                }
+            ],
+            "before_hash": version["content_hash"],
+            "after_hash": version["content_hash"],
+            "metadata": {
+                "evaluation_id": evaluation["_id"],
+                "correlation_id": str(evaluation["_id"]),
+            },
             "created_at": now,
         }
         with mongo_transaction() as session:
@@ -205,13 +329,41 @@ class QuestionWorkflowService:
             )
             if not result.matched_count:
                 raise RuntimeError("VERSION_CONFLICT")
+            self.db.audit_logs.insert_one(audit, session=session)
         return json_safe(evaluation)
 
-    def auto_evaluate(self, question_id: str, payload: AutoEvaluationRequest, user_id) -> dict:
+    async def auto_evaluate(self, question_id: str, payload: AutoEvaluationRequest, user_id) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
-        scores, feedback, evidence = self._auto_scores(question, version)
+        raw_model_response = None
+        evaluator_code = payload.evaluator_model_code.strip()
+        if evaluator_code.lower() in {"local-heuristic-evaluator-v1", "heuristic"}:
+            scores, feedback, evidence = self._auto_scores(question, version)
+            evidence["mode"] = "heuristic"
+        else:
+            try:
+                llm = get_llm_service(evaluator_code)
+                raw_model_response = await llm.generate_text(self._evaluation_prompt(question, version))
+                scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                evidence["mode"] = "local_llm"
+            except Exception as exc:
+                if not payload.fallback_to_heuristic:
+                    raise ValueError(f"Local evaluator failed: {exc}") from exc
+                scores, feedback, evidence = self._auto_scores(question, version)
+                feedback = {
+                    **feedback,
+                    "summary": (
+                        "Local evaluator không chạy hoặc trả JSON không hợp lệ; "
+                        "đã fallback sang heuristic nội bộ."
+                    ),
+                }
+                evidence = {
+                    **evidence,
+                    "mode": "heuristic_fallback",
+                    "fallback_reason": str(exc),
+                    "raw_model_response": raw_model_response,
+                }
         return self.evaluate(
             question_id,
             EvaluationCreateRequest(
@@ -219,8 +371,8 @@ class QuestionWorkflowService:
                 scores=scores,
                 feedback=feedback,
                 evidence=evidence,
-                evaluator_model_code=payload.evaluator_model_code,
-                raw_model_response=None,
+                evaluator_model_code=evaluator_code,
+                raw_model_response=raw_model_response,
             ),
             user_id,
         )

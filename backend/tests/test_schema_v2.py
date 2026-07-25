@@ -58,7 +58,8 @@ class SchemaV2Tests(unittest.TestCase):
             AutoEvaluationRequest()
 
         payload = AutoEvaluationRequest(expected_version=1)
-        self.assertEqual(payload.evaluator_model_code, "local-heuristic-evaluator-v1")
+        self.assertEqual(payload.evaluator_model_code, "qwen")
+        self.assertTrue(payload.fallback_to_heuristic)
 
     def test_moodle_publication_request_has_demo_defaults(self):
         payload = MoodlePublicationRequest(expected_version=1)

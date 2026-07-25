@@ -21,6 +21,7 @@ class QuestionCreateRequest(BaseModel):
     document_id: str | None = None
     chunk_id: str | None = None
     source_chunk_ids: list[str] = Field(default_factory=list)
+    clo_ids: list[str] = Field(default_factory=list)
 
 
 class QuestionUpdateRequest(BaseModel):
@@ -33,6 +34,7 @@ class QuestionUpdateRequest(BaseModel):
     chapter_id: str | None = None
     chunk_id: str | None = None
     source_chunk_ids: list[str] | None = None
+    clo_ids: list[str] | None = None
     change_note: str = Field("Question edited", min_length=1, max_length=500)
 
 
@@ -49,6 +51,7 @@ class QuestionResponse(BaseModel):
     content: str
     question_data: dict[str, Any]
     classification: dict[str, Any]
+    clos: list[Any]
     sources: list[dict[str, Any]]
     content_hash: str
     quality_summary: dict[str, Any]

@@ -24,6 +24,22 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
+def _model_snapshot(database, provider: str, fallback: dict | None = None) -> dict:
+    model = database.ai_models.find_one({"model_code": provider, "is_active": True})
+    if not model:
+        return fallback or {"provider": provider}
+    return {
+        "id": model["_id"],
+        "model_code": model["model_code"],
+        "model_name": model.get("model_name"),
+        "runtime": model.get("runtime"),
+        "revision": model.get("revision"),
+        "capabilities": model.get("capabilities") or [],
+        "is_local": model.get("is_local", True),
+        "config": model.get("config") or {},
+    }
+
+
 def create_generation_run(
     *,
     document_id: str,
@@ -38,6 +54,9 @@ def create_generation_run(
 ) -> str:
     document_oid = object_id(document_id, "document_id")
     db = get_database()
+    provider = model_snapshot.get("provider") or model_snapshot.get("model_code") or ""
+    if provider:
+        model_snapshot = _model_snapshot(db, provider, model_snapshot)
     document = db.documents.find_one({"_id": document_oid, "archived_at": None})
     if not document:
         raise ValueError("Không tìm thấy tài liệu")

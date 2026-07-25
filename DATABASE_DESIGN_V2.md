@@ -1829,17 +1829,17 @@ Backend hiện dùng PyMongo nhưng tách dữ liệu thành hai database:
 | Chroma collection `chunks` + file `data/chunk_outputs` | Chunk text và metadata | `chunk_sets`, `document_chunks`, `vector_collections`, `chunk_embeddings` | MongoDB trở thành source of truth; chuẩn hóa ID/mapping |
 | `rag_database.dictionaries` | `core_keywords[]`, `learned_keywords[]`, `pending_keywords[]` theo `course_id` | `keywords` | Explode thành một keyword/document, map subject và trạng thái |
 | `rag_database.questions` | content/options/answer/explanation/type/Bloom/source_context/status | `questions` + `question_versions` | Tạo aggregate/version; chuẩn hóa 7 discriminator; source cũ có thể chưa xác minh |
-| `backend/prompts/*.txt` | system, Bloom, question type, example, output format | `prompt_templates` | Import nội dung file, version 1, hash và scope; code hiện tại không dùng prompt constant |
-| LLM factory | `qwen`, `deepseek`, `gemini` do client chọn | `ai_models` + routing capability | Production chỉ bật local; Gemini là provider thử nghiệm |
+| `backend/prompts/*.txt` | system, Bloom, question type, example, output format | `prompt_templates` | Bootstrap P1 seed nội dung file version 1; runtime ưu tiên đọc DB và fallback file |
+| LLM factory | `qwen`, `deepseek`, `gemini` do client chọn | `ai_models` + routing capability | Bootstrap P1 seed `qwen`/`deepseek`; production chỉ bật local, Gemini là provider thử nghiệm |
 
-Hiện backend đã có bootstrap V2, `users`, `documents`, `document_jobs`, `document_pages`, `chunk_sets`, `document_chunks`, `vector_collections`, `chunk_embeddings`, `generation_jobs`, `generation_runs`, `questions`, `question_versions`, `question_evaluations`, `question_reviews` và audit khi review. Các phần đã thực hiện, còn thiếu hoặc chưa nên claim hoàn tất được tách riêng trong file `DATABASE_DESIGN_V2_GAP_PRIORITY.md`.
+Hiện backend đã có bootstrap V2, `users`, `documents`, `document_jobs`, `document_pages`, `chunk_sets`, `document_chunks`, `vector_collections`, `chunk_embeddings`, `generation_jobs`, `generation_runs`, `questions`, `question_versions`, `question_evaluations`, `question_reviews`, catalog APIs và audit khi review/evaluation. Các phần đã thực hiện, còn thiếu hoặc chưa nên claim hoàn tất được tách riêng trong file `DATABASE_DESIGN_V2_GAP_PRIORITY.md`.
 
 ### 12.2. Chênh lệch code cần xử lý trước cutover
 
 1. `dictionaries` vẫn là compatibility collection; cần migrate hoặc đồng bộ sang `keywords`.
-2. `ai_models` và `prompt_templates` đã có collection nhưng generation vẫn đọc prompt từ file và nhận provider từ request; cần đồng bộ catalog DB hoặc ghi rõ đây là cấu hình file-based trong release đầu.
-3. AI evaluation đã có endpoint nhận scores/feedback và endpoint P0 tự chấm bằng heuristic nội bộ; production vẫn cần worker/model local evaluator thật.
-4. Subject/chapter/CLO mới có seed subject mặc định; chưa có CRUD/catalog đầy đủ và chưa bắt buộc CLO trong câu hỏi.
+2. `ai_models`, `prompt_templates` và `evaluation_policies` đã có collection, seed/runtime DB fallback và UI quản trị demo; còn thiếu workflow promote/rollback version có kiểm duyệt.
+3. AI evaluation đã có endpoint nhận scores/feedback và endpoint tự chấm ưu tiên local LLM `qwen`, fallback heuristic khi model local lỗi; production vẫn cần benchmark/hardening evaluator.
+4. Subject/chapter/CLO đã có catalog API/UI và câu hỏi đã lưu snapshot CLO khi gắn `clo_ids`; còn thiếu backfill dữ liệu thật, deactivate/sửa sâu và rule bắt buộc CLO theo từng học phần.
 5. `moodle_publications` đã có API P0 ghi nhận mock publication; chưa có worker/API gọi Moodle thật.
 6. Endpoint upload hiện chỉ nhận PDF; DOC/DOCX phải thêm converter/sanitizer hoặc công bố PDF-only cho release đầu.
 7. Production cần MongoDB replica set để transaction thật sự chạy; code có fallback khi standalone nên cần ghi rõ giới hạn môi trường dev.
@@ -1856,12 +1856,12 @@ Hiện backend đã có bootstrap V2, `users`, `documents`, `document_jobs`, `do
 ### 12.4. Các bước migration dữ liệu
 
 1. Bật single-node replica set cho môi trường local/dev/prod; chạy `bootstrap_database()` để tạo/cập nhật `NCKH.User` và các collection V2 trong `rag_database`.
-2. Seed `subjects` tối thiểu cho học phần Cấu trúc dữ liệu; seed `evaluation_policies`; nếu dùng catalog DB thì import prompt files thành `prompt_templates` version 1 và seed `ai_models`.
+2. Seed `subjects` tối thiểu cho học phần Cấu trúc dữ liệu; seed `evaluation_policies`; bootstrap hiện import prompt files thành `prompt_templates` version 1 và seed `ai_models` cho model local.
 3. Migrate `NCKH.UserInfo` sang `users`: chuẩn hóa field, map `uid`, email và `Giảng viên → Teacher`; danh sách `Admin` và `Reviewer` phải được xác nhận cấu hình/thủ công.
 4. Migrate `rag_database.documents` với `current_version = 1`. Vì prototype chưa lưu subject/uploader, `subject_id` và `uploaded_by_user_id` phải lấy từ mapping đã xác nhận hoặc các biến migration bắt buộc `MIGRATION_SUBJECT_ID`, `MIGRATION_OWNER_USER_ID`; không tự lấy record đầu tiên. Nếu PDF gốc đã bị prototype xóa thì ghi lỗi `SOURCE_ARTIFACT_MISSING` và yêu cầu re-upload; không giả lập URI.
 5. Với mỗi document có page, tạo OCR `document_job` tổng hợp trạng thái terminal rồi migrate `pages` sang `document_pages` và tính `content_hash`.
 6. Tạo `chunk_set` version 1 từ config hiện tại; ưu tiên import chunk từ file export/Chroma metadata. Nếu không đủ text/hash/page provenance thì chạy chunking lại từ page authoritative.
-7. Tạo `vector_collections` cho embedding config hiện tại và `chunk_embeddings`. Sau đó rebuild ChromaDB từ `document_chunks`, không mặc định tin vector cũ.
+7. Tạo `vector_collections` cho embedding config hiện tại và `chunk_embeddings`. Sau đó rebuild ChromaDB từ `document_chunks` bằng `backend/scripts/rebuild_chromadb.py`, không mặc định tin vector cũ.
 8. Explode các mảng `dictionaries` thành `keywords`, deduplicate theo `(subject_id, normalized)` và giữ trạng thái `CORE | LEARNED | PENDING`, hoặc giữ `dictionaries` là compatibility collection có document rõ ràng.
 9. Migrate mỗi question cũ thành một `questions` aggregate và một `question_versions` version 1. Chuẩn hóa Bloom/type và `question_data` qua adapter. CLO không có trong nguồn phải vào staging chờ mapping; không tự gán `CLO1`.
 10. Với câu hỏi chỉ có `source_context` nhưng không map được chunk, dùng marker migration sau; bản ghi không được xem là câu AI đủ provenance để publish cho tới khi re-ground/review:
@@ -1877,7 +1877,7 @@ Hiện backend đã có bootstrap V2, `users`, `documents`, `document_jobs`, `do
 ```
 
 11. Chạy integrity report: duplicate unique key, orphan reference, hash mismatch, document/page/chunk/question count và validator failures.
-12. Rebuild ChromaDB, chạy retrieval/generation smoke test, rồi giữ `AUTH_DB_NAME`/`RAG_DB_NAME` đúng với cấu hình hiện tại hoặc lập kế hoạch cutover riêng nếu muốn gom database.
+12. Chạy `python scripts/rebuild_chromadb.py --dry-run` rồi rebuild thật khi số lượng khớp, chạy retrieval/generation smoke test, sau đó giữ `AUTH_DB_NAME`/`RAG_DB_NAME` đúng với cấu hình hiện tại hoặc lập kế hoạch cutover riêng nếu muốn gom database.
 13. Giữ database cũ read-only qua ít nhất một chu kỳ backup/nghiệm thu; chỉ archive sau khi rollback window kết thúc.
 
 ### 12.5. Mapping enum hiện tại
@@ -1964,7 +1964,7 @@ Bootstrap phải có version và chạy lại an toàn:
 
 - Mọi input/output HTTP dùng string ID; boundary layer chuyển và validate sang `ObjectId` trước khi gọi MongoDB.
 - Router không ghi Mongo/Chroma trực tiếp. Theo cấu trúc hiện tại, logic và hàm truy cập dữ liệu đặt trong module tương ứng (`mongodb.py` khi cần), dùng helper chung từ `core`.
-- Tạo thêm module theo nghiệp vụ còn thiếu: catalog/subject, AI evaluator worker production, audit mở rộng và Moodle publication worker thật; router mới chỉ include tại `backend/main.py`.
+- Module catalog/subject đã có API nền; các module còn thiếu sau demo gồm AI evaluator worker production, audit mở rộng và Moodle publication worker thật; router mới chỉ include tại `backend/main.py`.
 - Worker convert/extract/OCR/chunk/index/evaluation/publication phải claim job nguyên tử, cập nhật heartbeat và hỗ trợ retry idempotent.
 - List API của question bank phải lấy `questions` làm aggregate gốc rồi join/batch-load `current_version_id`; không suy ra current version bằng sort tự do.
 - Mọi write tạo version/evaluation/review/publication phải kiểm tra quyền, status và invariant trước transaction, sau đó kiểm tra lại điều kiện compare-and-set trong transaction.

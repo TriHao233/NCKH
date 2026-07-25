@@ -14,6 +14,8 @@ const Header = () => {
   const role = user?.role;
   const canGenerate = ['Admin', 'Teacher'].includes(role);
   const canManage = ['Admin', 'Teacher', 'Reviewer'].includes(role);
+  const canReview = ['Admin', 'Reviewer'].includes(role);
+  const canManageCatalog = role === 'Admin';
   const canManageUsers = role === 'Admin';
 
   const navLinks = [
@@ -21,6 +23,8 @@ const Header = () => {
     { path: '/trang-chu', label: 'Trang Chủ' },
     ...(canGenerate ? [{ path: '/sinh-cau-hoi', label: 'Sinh Câu Hỏi' }] : []),
     ...(canManage ? [{ path: '/quan-ly', label: 'Quản Lý' }] : []),
+    ...(canReview ? [{ path: '/kiem-duyet', label: 'Kiểm Duyệt' }] : []),
+    ...(canManageCatalog ? [{ path: '/danh-muc', label: 'Danh Mục' }] : []),
     ...(canManageUsers ? [{ path: '/quan-ly-nguoi-dung', label: 'Người Dùng' }] : []),
     { path: '/huong-dan', label: 'Hướng Dẫn' },
     { path: '/lien-he', label: 'Liên Hệ' },

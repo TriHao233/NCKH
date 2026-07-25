@@ -5,7 +5,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 from pymongo.errors import CollectionInvalid
 
 from core.database import get_auth_db, get_rag_db
-from core.config import settings
+from core.config import resolve_path, settings
 
 SCHEMA_VERSION = 2
 
@@ -415,6 +415,76 @@ def _seed_reference_data() -> None:
         },
         upsert=True,
     )
+    for model in (
+        {
+            "model_code": "qwen",
+            "model_name": "qwen2.5:7b",
+            "runtime": "OLLAMA",
+            "kind": "CHAT",
+            "capabilities": ["QUESTION_GENERATION", "QUESTION_EVALUATION"],
+            "priority": 10,
+        },
+        {
+            "model_code": "deepseek",
+            "model_name": "deepseek-r1:8b",
+            "runtime": "OLLAMA",
+            "kind": "REASONING",
+            "capabilities": ["QUESTION_EVALUATION", "QUESTION_GENERATION"],
+            "priority": 20,
+        },
+    ):
+        db.ai_models.update_one(
+            {"model_code": model["model_code"]},
+            {
+                "$setOnInsert": {
+                    "schema_version": SCHEMA_VERSION,
+                    **model,
+                    "revision": "local",
+                    "config": {"endpoint": "http://localhost:11434/api/generate"},
+                    "is_local": True,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            },
+            upsert=True,
+        )
+    _seed_prompt_templates(db, now)
+
+
+def _seed_prompt_templates(db, now: datetime) -> None:
+    prompt_root = resolve_path(settings.prompts_dir)
+    specs = [
+        ("system", "SYSTEM", "System prompt", prompt_root / "system.txt"),
+        ("output_format", "OUTPUT_FORMAT", "Output format", prompt_root / "output_format.txt"),
+    ]
+    for folder, kind in (("bloom", "BLOOM"), ("question_type", "QUESTION_TYPE")):
+        folder_path = prompt_root / folder
+        if folder_path.exists():
+            for path in folder_path.glob("*.txt"):
+                specs.append((f"{folder}:{path.stem}", kind, path.stem, path))
+    for template_key, kind, name, path in specs:
+        if not path.exists():
+            continue
+        prompt_body = path.read_text(encoding="utf-8")
+        db.prompt_templates.update_one(
+            {"template_key": template_key, "version": 1},
+            {
+                "$setOnInsert": {
+                    "schema_version": SCHEMA_VERSION,
+                    "template_key": template_key,
+                    "version": 1,
+                    "kind": kind,
+                    "name": name,
+                    "prompt_body": prompt_body,
+                    "content_hash": hashlib.sha256(prompt_body.encode("utf-8")).hexdigest(),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            },
+            upsert=True,
+        )
 
 
 def bootstrap_database() -> None:

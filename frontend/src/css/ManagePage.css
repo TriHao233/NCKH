@@ -120,6 +120,7 @@
 .manage-page .q-id { font-size: 0.75rem; font-weight: 700; color: var(--navy, #003a75); }
 .manage-page .q-tag { font-size: 0.68rem; font-weight: 700; color: #fff; background: var(--primary, #0c78d4); border-radius: 5px; padding: 2px 8px; }
 .manage-page .bloom-tag { font-size: 0.7rem; font-weight: 600; border-radius: 6px; padding: 2px 9px; background: #FFF4E0; color: #B36500; }
+.manage-page .clo-tag { font-size: 0.7rem; font-weight: 700; border-radius: 6px; padding: 2px 8px; background: #E8FFF0; color: #15803D; }
 .manage-page .source-tag { font-size: 0.7rem; font-weight: 500; color: var(--text-muted, #5c6f89); }
 .manage-page .question-main p { font-size: 0.9rem; color: var(--text, #13253f); line-height: 1.5; }
 .manage-page .question-workflow-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
@@ -211,6 +212,50 @@
 .manage-page .modal-card textarea.field-input { resize: vertical; font-family: inherit; }
 .manage-page .modal-card .profile-card-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy, #003a75); }
 .manage-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.manage-page .draft-option-editor { display: flex; flex-direction: column; gap: 9px; }
+.manage-page .draft-option-row {
+  display: grid;
+  grid-template-columns: 18px 30px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.manage-page .draft-option-row--plain { grid-template-columns: 30px minmax(0, 1fr); }
+.manage-page .draft-option-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: #eaf4ff;
+  color: var(--primary, #0c78d4);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+.manage-page .draft-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 4px;
+}
+.manage-page .draft-edit-field span { font-size: 0.78rem; font-weight: 700; color: var(--text, #13253f); }
+.manage-page .clo-option-list { display: flex; flex-direction: column; gap: 8px; }
+.manage-page .clo-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid #EAF3FC;
+  border-radius: 8px;
+  background: #FAFCFF;
+  padding: 9px 10px;
+  font-size: 0.78rem;
+  color: var(--text, #13253f);
+}
+.manage-page .clo-option input { margin-top: 2px; }
+.manage-page .clo-option span { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.manage-page .clo-option b { color: #15803D; }
+.manage-page .clo-empty { margin: 0; color: var(--text-muted, #5c6f89); font-size: 0.82rem; }
 
 /* ─── Sidebar ────────────────────────────────────────────────── */
 .manage-page .manage-side { display: flex; flex-direction: column; gap: 20px; }
@@ -242,6 +287,9 @@
 }
 .manage-page .workflow-status-grid span { font-size: 0.72rem; color: var(--text-muted, #5c6f89); font-weight: 700; }
 .manage-page .workflow-status-grid b { font-size: 0.78rem; color: var(--text, #13253f); }
+.manage-page .workflow-clo-list { display: flex; flex-direction: column; gap: 7px; margin: 12px 0; }
+.manage-page .workflow-clo-list span { border-radius: 8px; background: #FAFCFF; border: 1px solid #EAF3FC; padding: 8px 10px; color: var(--text-muted, #5c6f89); font-size: 0.78rem; line-height: 1.45; }
+.manage-page .workflow-clo-list b { color: #15803D; }
 .manage-page .workflow-message {
   border-radius: 8px;
   background: #E8FFF0;

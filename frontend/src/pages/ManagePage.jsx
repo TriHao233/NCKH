@@ -12,8 +12,19 @@ import {
   updateQuestion,
 } from '../api/questions';
 import { deleteDocument, listDocuments } from '../api/documents';
+import { listSubjects } from '../api/catalog';
 import { QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
+import {
+  SINGLE_CHOICE_TYPES,
+  MULTI_CHOICE_TYPES,
+  correctAnswerValues,
+  entriesToOptions,
+  joinCorrectValues,
+  normalizeQuestionType,
+  optionEntriesForQuestion,
+  validateQuestionAnswer,
+} from '../utils/questionOptions';
 import '../css/ManagePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -70,6 +81,24 @@ function latestEvaluationText(item) {
   return `${formatScore(quality.overall_score)} · ${quality.color || 'N/A'}`;
 }
 
+function questionAssessmentType(item) {
+  return normalizeQuestionType(item?.classification?.assessment_type);
+}
+
+function refId(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  return value.id || value._id || '';
+}
+
+function questionSubjectId(item) {
+  return refId(item?.classification?.subject?.id || item?.classification?.subject);
+}
+
+function questionCloIds(item) {
+  return (item?.clos || []).map((clo) => refId(clo.id || clo)).filter(Boolean);
+}
+
 function ManagePage() {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
@@ -84,6 +113,8 @@ function ManagePage() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [documentsError, setDocumentsError] = useState('');
+  const [subjects, setSubjects] = useState([]);
+  const [subjectsError, setSubjectsError] = useState('');
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all-type');
@@ -92,8 +123,10 @@ function ManagePage() {
 
   const [editing, setEditing] = useState(null);
   const [editContent, setEditContent] = useState('');
+  const [editRawOptions, setEditRawOptions] = useState(null);
   const [editCorrectAnswer, setEditCorrectAnswer] = useState('');
   const [editExplanation, setEditExplanation] = useState('');
+  const [editCloIds, setEditCloIds] = useState([]);
   const [editChangeNote, setEditChangeNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
@@ -143,6 +176,16 @@ function ManagePage() {
     }
   };
 
+  const fetchSubjects = async () => {
+    setSubjectsError('');
+    try {
+      const result = await listSubjects();
+      setSubjects(result || []);
+    } catch (error) {
+      setSubjectsError(error.message || 'Không tải được danh mục CLO');
+    }
+  };
+
   const loadWorkflowHistory = async (question, { keepMessage = false } = {}) => {
     if (!question) return;
     setHistoryLoading(true);
@@ -174,6 +217,11 @@ function ManagePage() {
   }, [canManageDocuments]);
 
   useEffect(() => {
+    fetchSubjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (!selectedQuestion) return;
     const fresh = questions.find((question) => question.id === selectedQuestion.id);
     if (fresh && fresh !== selectedQuestion) {
@@ -193,7 +241,7 @@ function ManagePage() {
     return questions.filter((q) => {
       if (statusFilter !== 'all' && q.review_status !== statusFilter) return false;
       if (typeFilter !== 'all-type') {
-        const assessmentType = (q.classification?.assessment_type || '').toLowerCase();
+        const assessmentType = questionAssessmentType(q);
         if (assessmentType !== typeFilter) return false;
       }
       return true;
@@ -204,17 +252,29 @@ function ManagePage() {
     q.review_status === 'APPROVED' && q.publication_status !== 'PUBLISHED'
   ));
 
+  const subjectById = useMemo(() => {
+    const items = new Map();
+    subjects.forEach((subject) => items.set(refId(subject), subject));
+    return items;
+  }, [subjects]);
+
+  const editSubject = editing ? subjectById.get(questionSubjectId(editing)) : null;
+  const editLearningOutcomes = (editSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
+
   const openEdit = (item) => {
     setEditing(item);
     setEditContent(item.content || '');
+    setEditRawOptions(item.question_data?.options ?? null);
     setEditCorrectAnswer(item.question_data?.correct_answer ?? '');
     setEditExplanation(item.question_data?.explanation ?? '');
+    setEditCloIds(questionCloIds(item));
     setEditChangeNote('');
   };
 
   const closeEdit = () => {
     if (saving) return;
     setEditing(null);
+    setEditCloIds([]);
   };
 
   const handleSaveEdit = async (e) => {
@@ -224,6 +284,15 @@ function ManagePage() {
       alert('Nội dung câu hỏi không được để trống.');
       return;
     }
+    const answerValidationError = validateQuestionAnswer({
+      questionType: questionAssessmentType(editing),
+      rawOptions: editRawOptions,
+      correctAnswer: editCorrectAnswer,
+    });
+    if (answerValidationError) {
+      alert(answerValidationError);
+      return;
+    }
     setSaving(true);
     try {
       await updateQuestion(editing.id, {
@@ -231,9 +300,11 @@ function ManagePage() {
         content: editContent,
         question_data: {
           ...editing.question_data,
+          options: editRawOptions,
           correct_answer: editCorrectAnswer,
           explanation: editExplanation,
         },
+        clo_ids: editCloIds,
         change_note: editChangeNote.trim() || 'Question edited',
       });
       setEditing(null);
@@ -351,6 +422,129 @@ function ManagePage() {
     }
   };
 
+  const updateEditOption = (optionKey, optionValue) => {
+    const entries = optionEntriesForQuestion({
+      questionType: questionAssessmentType(editing),
+      rawOptions: editRawOptions,
+    });
+    const nextEntries = entries.map((entry) => (
+      entry.key === optionKey ? { ...entry, value: optionValue } : entry
+    ));
+    setEditRawOptions(entriesToOptions(nextEntries));
+  };
+
+  const toggleEditCorrectAnswer = (optionKey) => {
+    const entries = optionEntriesForQuestion({
+      questionType: questionAssessmentType(editing),
+      rawOptions: editRawOptions,
+    });
+    const currentValues = correctAnswerValues(editCorrectAnswer);
+    const hasValue = currentValues.includes(optionKey);
+    const nextValues = hasValue
+      ? currentValues.filter((value) => value !== optionKey)
+      : [...currentValues, optionKey];
+    setEditCorrectAnswer(joinCorrectValues(nextValues, entries));
+  };
+
+  const toggleEditClo = (cloId) => {
+    setEditCloIds((current) => (
+      current.includes(cloId)
+        ? current.filter((value) => value !== cloId)
+        : [...current, cloId]
+    ));
+  };
+
+  const renderEditAnswerEditor = () => {
+    if (!editing) return null;
+    const questionType = questionAssessmentType(editing);
+    const entries = optionEntriesForQuestion({
+      questionType,
+      rawOptions: editRawOptions,
+    });
+
+    if (SINGLE_CHOICE_TYPES.has(questionType)) {
+      return (
+        <div className="draft-option-editor">
+          {entries.map((entry) => (
+            <label className="draft-option-row" key={entry.key}>
+              <input
+                type="radio"
+                name={`edit-answer-${editing.id}`}
+                checked={editCorrectAnswer === entry.key}
+                onChange={() => setEditCorrectAnswer(entry.key)}
+              />
+              <span className="draft-option-key">{entry.key}</span>
+              <input
+                className="field-input"
+                value={entry.value}
+                onChange={(event) => updateEditOption(entry.key, event.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    if (MULTI_CHOICE_TYPES.has(questionType)) {
+      const selectedAnswers = correctAnswerValues(editCorrectAnswer);
+      return (
+        <div className="draft-option-editor">
+          {entries.map((entry) => (
+            <label className="draft-option-row" key={entry.key}>
+              <input
+                type="checkbox"
+                checked={selectedAnswers.includes(entry.key)}
+                onChange={() => toggleEditCorrectAnswer(entry.key)}
+              />
+              <span className="draft-option-key">{entry.key}</span>
+              <input
+                className="field-input"
+                value={entry.value}
+                onChange={(event) => updateEditOption(entry.key, event.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    if (entries.length > 0) {
+      return (
+        <div className="draft-option-editor">
+          {entries.map((entry) => (
+            <label className="draft-option-row draft-option-row--plain" key={entry.key}>
+              <span className="draft-option-key">{entry.key}</span>
+              <input
+                className="field-input"
+                value={entry.value}
+                onChange={(event) => updateEditOption(entry.key, event.target.value)}
+              />
+            </label>
+          ))}
+          <label className="draft-edit-field">
+            <span>Đáp án đúng</span>
+            <input
+              className="field-input"
+              value={editCorrectAnswer}
+              onChange={(event) => setEditCorrectAnswer(event.target.value)}
+            />
+          </label>
+        </div>
+      );
+    }
+
+    return (
+      <label className="draft-edit-field">
+        <span>Đáp án đúng</span>
+        <input
+          className="field-input"
+          value={editCorrectAnswer}
+          onChange={(event) => setEditCorrectAnswer(event.target.value)}
+        />
+      </label>
+    );
+  };
+
   return (
     <main className="manage-page">
       <section className="page-hero">
@@ -446,6 +640,14 @@ function ManagePage() {
                           <span className="q-id">{item.question_code}</span>
                           <span className="q-tag">{questionTypeLabel((item.classification?.assessment_type || '').toLowerCase())}</span>
                           <span className="bloom-tag">{item.classification?.bloom?.name || '—'}</span>
+                          {(item.clos || []).slice(0, 2).map((clo) => (
+                            <span className="clo-tag" key={refId(clo.id || clo)}>
+                              {clo.code || clo.clo_code || 'CLO'}
+                            </span>
+                          ))}
+                          {(item.clos || []).length > 2 && (
+                            <span className="source-tag">+{item.clos.length - 2} CLO</span>
+                          )}
                           <span className="source-tag">v{item.current_version}</span>
                         </div>
                         <p>{item.content}</p>
@@ -594,6 +796,16 @@ function ManagePage() {
                     <span>Moodle</span>
                     <b>{PUBLICATION_STATUS_LABEL[selectedQuestion.publication_status] || selectedQuestion.publication_status}</b>
                   </div>
+                  {(selectedQuestion.clos || []).length > 0 && (
+                    <div className="workflow-clo-list">
+                      {selectedQuestion.clos.map((clo) => (
+                        <span key={refId(clo.id || clo)}>
+                          <b>{clo.code || clo.clo_code || 'CLO'}</b>
+                          {clo.description ? ` - ${clo.description}` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {workflowMessage && <p className="workflow-message">{workflowMessage}</p>}
                   {historyLoading ? (
                     <p className="side-note">Đang tải lịch sử...</p>
@@ -665,12 +877,35 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Đáp án đúng</label>
-              <input
-                className="field-input"
-                value={editCorrectAnswer}
-                onChange={(e) => setEditCorrectAnswer(e.target.value)}
-              />
+              <label className="field-label">Lựa chọn và đáp án</label>
+              {renderEditAnswerEditor()}
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Chuẩn đầu ra (CLO)</label>
+              {subjectsError && <p className="manage-error">{subjectsError}</p>}
+              {editLearningOutcomes.length > 0 ? (
+                <div className="clo-option-list">
+                  {editLearningOutcomes.map((clo) => {
+                    const cloId = refId(clo);
+                    return (
+                      <label className="clo-option" key={cloId}>
+                        <input
+                          type="checkbox"
+                          checked={editCloIds.includes(cloId)}
+                          onChange={() => toggleEditClo(cloId)}
+                        />
+                        <span>
+                          <b>{clo.clo_code || clo.code}</b>
+                          {clo.description}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="clo-empty">Môn hiện tại chưa có CLO trong danh mục.</p>
+              )}
             </div>
 
             <div className="field-group">

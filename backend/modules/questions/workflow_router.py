@@ -41,14 +41,14 @@ def evaluate_question(
 
 
 @router.post("/{question_id}/evaluations/auto", status_code=201)
-def auto_evaluate_question(
+async def auto_evaluate_question(
     question_id: str,
     payload: AutoEvaluationRequest,
     current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        return service.auto_evaluate(question_id, payload, current_user.id)
+        return await service.auto_evaluate(question_id, payload, current_user.id)
     except Exception as exc:
         _translate_workflow_error(exc)
 
