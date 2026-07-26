@@ -61,7 +61,7 @@ function UserProfile() {
     <main className="profile-page">
       <section className="page-hero">
         <div className="container profile-hero-row">
-          <img src={avatarUrl} alt="Ảnh đại diện" className="profile-avatar" />
+          <img src={avatarUrl} alt="Ảnh đại diện" className="profile-avatar" referrerPolicy="no-referrer" />
           <div className="profile-hero-text">
             <span className="profile-role-badge">{displayRole}</span>
             <h1 className="page-hero-title">{displayName}</h1>

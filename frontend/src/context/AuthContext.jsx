@@ -6,7 +6,10 @@ import { apiRequest } from '../services/apiClient';
 
 export const AuthContext = createContext();
 
-const sessionSyncs = new WeakMap();
+// Keyed by uid (not object reference) so the explicit login() call and the
+// onIdTokenChanged listener dedupe onto the same in-flight request, even
+// when Firebase hands them different User object instances.
+const sessionSyncs = new Map();
 
 function readCachedUser() {
     const cachedUser = localStorage.getItem("userInfo");
@@ -19,11 +22,11 @@ function readCachedUser() {
     }
 }
 
-function syncBackendSession(firebaseUser) {
-    const existing = sessionSyncs.get(firebaseUser);
-    if (existing) return existing;
+function syncBackendSession(firebaseUser, { forceRefresh = false } = {}) {
+    const existing = sessionSyncs.get(firebaseUser.uid);
+    if (existing && !forceRefresh) return existing;
 
-    const syncPromise = firebaseUser.getIdToken()
+    const syncPromise = firebaseUser.getIdToken(forceRefresh)
         .then((idToken) =>
             apiRequest("/auth/login", {
                 method: "POST",
@@ -31,8 +34,12 @@ function syncBackendSession(firebaseUser) {
                 authRequired: false,
             }).then((data) => data.user)
         )
-        .finally(() => sessionSyncs.delete(firebaseUser));
-    sessionSyncs.set(firebaseUser, syncPromise);
+        .finally(() => {
+            if (sessionSyncs.get(firebaseUser.uid) === syncPromise) {
+                sessionSyncs.delete(firebaseUser.uid);
+            }
+        });
+    sessionSyncs.set(firebaseUser.uid, syncPromise);
     return syncPromise;
 }
 
@@ -79,8 +86,26 @@ export const AuthProvider = ({ children }) => {
             } catch (error) {
                 if (!active || generation !== authGeneration.current) return;
                 if (error?.status === 401 || error?.status === 403) {
-                    await signOut(auth);
-                    return;
+                    // A single 401 can be a transient race (stale cached token from a
+                    // concurrent sync); retry once with a forced token refresh before
+                    // treating it as a real auth failure.
+                    try {
+                        const syncedUser = await syncBackendSession(firebaseUser, { forceRefresh: true });
+                        if (
+                            active
+                            && generation === authGeneration.current
+                            && auth.currentUser?.uid === firebaseUser.uid
+                        ) {
+                            persistUser(syncedUser);
+                        }
+                        return;
+                    } catch (retryError) {
+                        if (!active || generation !== authGeneration.current) return;
+                        if (retryError?.status === 401 || retryError?.status === 403) {
+                            await signOut(auth);
+                        }
+                        return;
+                    }
                 }
                 const fallbackUser = readCachedUser();
                 if (fallbackUser?.firebase_uid === firebaseUser.uid) {

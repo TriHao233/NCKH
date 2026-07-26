@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -12,6 +13,12 @@ from modules.auth.session_repository import get_firebase_session_repository
 from modules.users.service import get_user_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Tolerate small clock drift between this host and Google's servers when
+# checking token iat/exp/auth_time, to avoid intermittent 401s on otherwise
+# valid tokens.
+TOKEN_CLOCK_SKEW_SECONDS = 10
 
 
 class TokenRequest(BaseModel):
@@ -100,8 +107,12 @@ def demo_login(request: DemoLoginRequest):
 def login_user(request: TokenRequest):
     """Verify Firebase identity and synchronize the MongoDB application profile."""
     try:
-        claims = auth.verify_id_token(request.id_token)
+        claims = auth.verify_id_token(
+            request.id_token,
+            clock_skew_seconds=TOKEN_CLOCK_SKEW_SECONDS,
+        )
     except Exception as exc:
+        logger.warning("Firebase ID token verification failed on /auth/login: %s", exc)
         raise HTTPException(
             status_code=401,
             detail="Firebase ID token không hợp lệ hoặc đã hết hạn",

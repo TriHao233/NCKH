@@ -22,13 +22,23 @@ def object_id(value: str | ObjectId) -> ObjectId:
 
 
 def serialize_user(user: dict) -> dict:
+    # Some documents predate the nested `profile` schema and still carry
+    # school/address/avatar as top-level legacy fields (see
+    # scripts/database/migrate_v2.py). Fall back to those so already-stored
+    # data isn't silently dropped for users that haven't been migrated.
+    profile = user.get("profile") or {}
+    profile = {
+        "school": profile.get("school") or user.get("School", ""),
+        "address": profile.get("address") or user.get("Địa Chỉ", ""),
+        "avatar": profile.get("avatar") or user.get("avatar", ""),
+    }
     return {
         "id": str(user["_id"]),
         "firebase_uid": user["firebase_uid"],
         "email": user["email"],
         "display_name": user["display_name"],
         "role": user["role"],
-        "profile": user.get("profile") or {"school": "", "address": "", "avatar": ""},
+        "profile": profile,
         "is_active": user.get("is_active", True),
         "created_at": user["created_at"],
         "updated_at": user["updated_at"],
