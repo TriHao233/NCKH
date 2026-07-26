@@ -13,6 +13,9 @@ import RegisterPage from './pages/RegisterPage';
 import GuidePage from './pages/GuidePage';
 import ContactPage from './pages/ContactPage';
 import UserProfile from './pages/UserProfile';
+import TaskCalendarPage from './pages/TaskCalendarPage';
+import ExamListPage from './pages/ExamListPage';
+import ExamBuilderPage from './pages/ExamBuilderPage';
 import { AuthContext } from './context/AuthContext';
 
 function RequireRole({ roles, children }) {
@@ -48,6 +51,22 @@ function App() {
                     )}
                 />
                 <Route
+                    path="/lam-de-thi"
+                    element={(
+                        <RequireRole roles={['Teacher']}>
+                            <ExamListPage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/lam-de-thi/:examId"
+                    element={(
+                        <RequireRole roles={['Teacher']}>
+                            <ExamBuilderPage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
                     path="/kiem-duyet"
                     element={(
                         <RequireRole roles={['Reviewer']}>
@@ -68,6 +87,14 @@ function App() {
                     element={(
                         <RequireRole roles={['Admin']}>
                             <UsersAdminPage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/lich-cong-viec"
+                    element={(
+                        <RequireRole roles={['Teacher']}>
+                            <TaskCalendarPage />
                         </RequireRole>
                     )}
                 />

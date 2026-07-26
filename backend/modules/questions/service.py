@@ -201,6 +201,7 @@ class QuestionService:
         bloom_level: int | None,
         subject_id: str | None,
         chapter_id: str | None,
+        difficulty: str | None = None,
     ) -> dict:
         bloom_code, bloom_name = BLOOM_LEVELS.get(bloom_level, ("", ""))
         return {
@@ -212,6 +213,7 @@ class QuestionService:
                 "code": bloom_code,
                 "name": bloom_name,
             },
+            "difficulty": difficulty,
         }
 
     def create(
@@ -270,6 +272,7 @@ class QuestionService:
             bloom_level=payload.bloom_level,
             subject_id=subject_id,
             chapter_id=chapter_id,
+            difficulty=payload.difficulty.value if payload.difficulty else None,
         )
         clos = self._clo_snapshots(subject_id, payload.clo_ids)
         content_hash = stable_hash(
@@ -341,6 +344,9 @@ class QuestionService:
         question_type: str | None = None,
         bloom_level: int | None = None,
         document_id: str | None = None,
+        subject_id: str | None = None,
+        chapter_id: str | None = None,
+        difficulty: str | None = None,
         quality_color: str | None = None,
         min_score: float | None = None,
         publication_status: str | None = None,
@@ -360,6 +366,9 @@ class QuestionService:
             question_type=question_type,
             bloom_level=bloom_level,
             document_id=document_id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
+            difficulty=difficulty,
             quality_color=quality_color,
             min_score=min_score,
             publication_status=publication_status,
@@ -429,7 +438,13 @@ class QuestionService:
         classification = current["classification"]
         if any(
             value is not None
-            for value in (payload.question_type, payload.bloom_level, payload.subject_id, payload.chapter_id)
+            for value in (
+                payload.question_type,
+                payload.bloom_level,
+                payload.subject_id,
+                payload.chapter_id,
+                payload.difficulty,
+            )
         ):
             next_subject_id = (
                 payload.subject_id
@@ -478,6 +493,11 @@ class QuestionService:
                     payload.chapter_id
                     if payload.chapter_id is not None
                     else classification["chapter"].get("id")
+                ),
+                difficulty=(
+                    payload.difficulty.value
+                    if payload.difficulty is not None
+                    else classification.get("difficulty")
                 ),
             )
         content = payload.content or current["content"]
@@ -535,6 +555,7 @@ class QuestionService:
                 bloom_level=classification["bloom"]["level"],
                 subject_id=next_subject_id,
                 chapter_id=next_chapter_id,
+                difficulty=classification.get("difficulty"),
             )
         if payload.source_chunk_ids is not None or payload.chunk_id is not None:
             document = self._document(resolved_document_id)

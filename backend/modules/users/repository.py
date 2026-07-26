@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -60,10 +62,30 @@ class UserRepository(Protocol):
 
     def delete_by_id(self, user_id: str | ObjectId) -> None: ...
 
+    def get_stats(self, user_id: str | ObjectId) -> dict: ...
+
 
 class MongoUserRepository:
     def __init__(self, database: Database):
+        self.db = database
         self.collection = database.users
+
+    def get_stats(self, user_id: str | ObjectId) -> dict:
+        oid = object_id(user_id)
+        documents_count = self.db.documents.count_documents(
+            {"uploaded_by_user_id": oid, "status": {"$ne": "ARCHIVED"}}
+        )
+        questions_count = self.db.questions.count_documents(
+            {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
+        )
+        pending_questions_count = self.db.questions.count_documents(
+            {"created_by_user_id": oid, "review_status": "PENDING"}
+        )
+        return {
+            "documents_count": documents_count,
+            "questions_count": questions_count,
+            "pending_questions_count": pending_questions_count,
+        }
 
     def find_by_id(self, user_id: str | ObjectId) -> dict | None:
         return self.collection.find_one({"_id": object_id(user_id)})
@@ -156,3 +178,28 @@ class MongoUserRepository:
 
     def delete_by_id(self, user_id: str | ObjectId) -> None:
         self.collection.delete_one({"_id": object_id(user_id)})
+
+    def get_calendar_documents(self, user_id: str | ObjectId) -> list[dict]:
+        oid = object_id(user_id)
+        return list(
+            self.db.documents.find(
+                {"uploaded_by_user_id": oid, "status": {"$ne": "ARCHIVED"}}
+            )
+        )
+
+    def get_calendar_questions(self, user_id: str | ObjectId) -> list[dict]:
+        oid = object_id(user_id)
+        return list(
+            self.db.questions.find(
+                {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
+            )
+        )
+
+    def get_document_ids_with_questions(self, document_ids: list[ObjectId]) -> set[str]:
+        if not document_ids:
+            return set()
+        cursor = self.db.questions.find(
+            {"document_id": {"$in": document_ids}, "lifecycle_status": {"$ne": "ARCHIVED"}},
+            {"document_id": 1},
+        )
+        return {str(doc["document_id"]) for doc in cursor if doc.get("document_id")}

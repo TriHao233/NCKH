@@ -1,0 +1,170 @@
+/* ═══════════════════════════════════════════════════════════════
+   TaskCalendarPage.css | QBankCTU — Lịch công việc (Teacher)
+   ═══════════════════════════════════════════════════════════════ */
+
+.task-calendar-page { width: 100%; }
+.task-calendar-page .container { width: 100%; max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+
+.task-calendar-page .page-hero {
+  padding: 48px 0 28px;
+  background: linear-gradient(160deg, #F0F8FF 0%, #E8F4FD 55%, #F5FAFF 100%);
+}
+.task-calendar-page .page-hero-title { font-family: 'Fraunces', serif; font-size: clamp(1.7rem, 3vw, 2.3rem); font-weight: 700; color: var(--navy, #003a75); margin-bottom: 10px; }
+.task-calendar-page .page-hero-desc { font-size: 0.95rem; color: var(--text-muted, #5c6f89); max-width: 620px; line-height: 1.6; margin-bottom: 20px; }
+
+.task-calendar-page .calendar-tabs { display: flex; gap: 6px; }
+.task-calendar-page .calendar-tab {
+  border: 1.5px solid var(--border, #d9e6f2);
+  background: #fff;
+  color: var(--text-muted, #5c6f89);
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+.task-calendar-page .calendar-tab--active,
+.task-calendar-page .calendar-tab:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
+
+.task-calendar-page .calendar-body { padding: 32px 0 96px; background: #fafcff; }
+
+.task-calendar-page .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: inherit; font-weight: 600; font-size: 0.88rem; border-radius: 8px;
+  padding: 10px 18px; transition: all 0.25s; cursor: pointer; border: none; white-space: nowrap;
+}
+.task-calendar-page .btn--small { padding: 6px 12px; font-size: 0.78rem; }
+.task-calendar-page .btn--primary { color: #fff; background: var(--primary, #0c78d4); box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3); }
+.task-calendar-page .btn--primary:hover { background: var(--primary-strong, #03539a); }
+.task-calendar-page .btn--outline { color: var(--secondary, #005bac); border: 1.5px solid var(--border, #d9e6f2); background: #fff; }
+.task-calendar-page .btn--outline:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
+.task-calendar-page .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.task-calendar-page .card {
+  background: #fff; border: 1px solid #EAF3FC; border-radius: 16px; padding: 24px;
+  box-shadow: 0 6px 24px rgba(5, 40, 90, 0.04);
+}
+
+.task-calendar-page .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 22px; }
+.task-calendar-page .stat-card {
+  background: #fff; border: 1.5px solid #EAF3FC; border-radius: 12px; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer;
+  font-family: inherit; transition: all 0.2s;
+}
+.task-calendar-page .stat-card:hover { border-color: var(--primary, #0c78d4); }
+.task-calendar-page .stat-card--active { border-color: var(--primary, #0c78d4); background: #f0f8ff; }
+.task-calendar-page .stat-card b { font-family: 'Fraunces', serif; font-size: 1.6rem; color: var(--navy, #003a75); }
+.task-calendar-page .stat-card span { font-size: 0.8rem; color: var(--text-muted, #5c6f89); font-weight: 500; }
+
+.task-calendar-page .calendar-grid { display: grid; grid-template-columns: 1fr 300px; gap: 24px; align-items: start; }
+.task-calendar-page .calendar-side { display: flex; flex-direction: column; gap: 20px; }
+.task-calendar-page .side-card h3 { font-family: 'Fraunces', serif; font-size: 1.02rem; font-weight: 700; color: var(--navy, #003a75); margin-bottom: 14px; }
+.task-calendar-page .side-note { font-size: 0.84rem; color: var(--text-muted, #5c6f89); line-height: 1.6; }
+
+.task-calendar-page .side-mini-item {
+  display: flex; justify-content: space-between; gap: 8px; padding: 8px 0;
+  border-bottom: 1px solid #EAF3FC; font-size: 0.82rem; cursor: pointer;
+}
+.task-calendar-page .side-mini-item:last-child { border-bottom: none; }
+.task-calendar-page .side-mini-item span:first-child { color: var(--text, #13253f); font-weight: 600; }
+.task-calendar-page .side-mini-item--overdue span:first-child { color: #DC2626; }
+.task-calendar-page .side-mini-date { color: var(--text-muted, #5c6f89); font-size: 0.76rem; white-space: nowrap; }
+
+.task-calendar-page .list-card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.task-calendar-page .list-card-header h3 { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; color: var(--navy, #003a75); }
+.task-calendar-page .list-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.task-calendar-page .field-select,
+.task-calendar-page .field-input {
+  padding: 8px 12px; border: 1.5px solid var(--border, #d9e6f2); border-radius: 8px;
+  background: #fafcff; font-size: 0.82rem; font-family: inherit; color: var(--text, #13253f); outline: none;
+}
+.task-calendar-page .field-select:focus, .task-calendar-page .field-input:focus { border-color: var(--primary, #0c78d4); }
+
+.task-calendar-page .calendar-list { display: flex; flex-direction: column; gap: 12px; }
+.task-calendar-page .calendar-item {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  background: #fafcff; border: 1px solid #EAF3FC; border-radius: 12px; padding: 16px 18px;
+  transition: box-shadow 0.2s; cursor: pointer;
+}
+.task-calendar-page .calendar-item:hover { box-shadow: 0 6px 18px rgba(5, 40, 90, 0.06); }
+.task-calendar-page .calendar-item--overdue { border-color: #FECACA; background: #FFFAFA; }
+.task-calendar-page .calendar-item-main { flex: 1; }
+.task-calendar-page .calendar-item-meta-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.task-calendar-page .calendar-item-title { font-size: 0.92rem; font-weight: 600; color: var(--text, #13253f); }
+.task-calendar-page .calendar-item-desc { font-size: 0.82rem; color: var(--text-muted, #5c6f89); margin-top: 4px; }
+.task-calendar-page .calendar-item-side { flex-shrink: 0; text-align: right; }
+.task-calendar-page .calendar-item-date { font-size: 0.78rem; color: var(--text-muted, #5c6f89); font-weight: 600; white-space: nowrap; }
+
+.task-calendar-page .status-badge { font-size: 0.72rem; font-weight: 700; border-radius: 20px; padding: 4px 12px; white-space: nowrap; }
+.task-calendar-page .status--todo { background: #EAF4FF; color: var(--primary, #0c78d4); }
+.task-calendar-page .status--done { background: #E8FFF0; color: #16A34A; }
+.task-calendar-page .status--overdue { background: #FFF0F0; color: #DC2626; }
+
+.task-calendar-page .priority-pill { font-size: 0.7rem; font-weight: 700; border-radius: 6px; padding: 3px 9px; }
+.task-calendar-page .priority--high { background: #FFF0F0; color: #DC2626; }
+.task-calendar-page .priority--medium { background: #FFF4E0; color: #B36500; }
+.task-calendar-page .priority--low { background: #F3F6FA; color: var(--text-muted, #5c6f89); }
+
+.task-calendar-page .source-tag { font-size: 0.7rem; font-weight: 600; color: var(--text-muted, #5c6f89); background: #F3F6FA; border-radius: 6px; padding: 3px 9px; }
+
+.task-calendar-page .empty-note { text-align: center; color: var(--text-muted, #5c6f89); font-size: 0.88rem; padding: 24px 0; }
+.task-calendar-page .manage-error { color: #DC2626; font-size: 0.85rem; margin-bottom: 12px; }
+
+/* ─── Week / Month views ─────────────────────────────────────── */
+.task-calendar-page .week-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; font-weight: 700; color: var(--navy, #003a75); font-size: 0.9rem; }
+.task-calendar-page .week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.task-calendar-page .week-day { border: 1px solid #EAF3FC; border-radius: 10px; padding: 8px; min-height: 140px; background: #fafcff; }
+.task-calendar-page .week-day-label { font-size: 0.74rem; font-weight: 700; color: var(--text-muted, #5c6f89); margin-bottom: 8px; }
+.task-calendar-page .week-day-event {
+  font-size: 0.72rem; border-radius: 6px; padding: 4px 6px; margin-bottom: 4px; cursor: pointer;
+  background: #EAF4FF; color: var(--primary, #0c78d4); overflow-wrap: anywhere;
+}
+.task-calendar-page .week-day-event--overdue { background: #FFF0F0; color: #DC2626; }
+.task-calendar-page .week-day-event--done { background: #E8FFF0; color: #16A34A; }
+
+.task-calendar-page .month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.task-calendar-page .month-cell { border: 1px solid #EAF3FC; border-radius: 8px; padding: 6px; min-height: 90px; background: #fafcff; }
+.task-calendar-page .month-cell--muted { opacity: 0.4; }
+.task-calendar-page .month-cell-date { font-size: 0.72rem; font-weight: 700; color: var(--navy, #003a75); margin-bottom: 4px; }
+.task-calendar-page .month-cell-event {
+  font-size: 0.68rem; border-radius: 5px; padding: 2px 5px; margin-bottom: 3px; cursor: pointer;
+  background: #EAF4FF; color: var(--primary, #0c78d4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.task-calendar-page .month-cell-event--overdue { background: #FFF0F0; color: #DC2626; }
+.task-calendar-page .month-cell-event--done { background: #E8FFF0; color: #16A34A; }
+.task-calendar-page .month-cell-more { font-size: 0.66rem; color: var(--text-muted, #5c6f89); }
+
+/* ─── Modal ──────────────────────────────────────────────────── */
+.task-calendar-page .modal-overlay {
+  position: fixed; inset: 0; background: rgba(5, 20, 45, 0.45);
+  display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 100;
+}
+.task-calendar-page .modal-card {
+  background: #fff; border-radius: 16px; padding: 28px; width: 100%; max-width: 480px;
+  max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(5, 40, 90, 0.25);
+  display: flex; flex-direction: column; gap: 16px;
+}
+.task-calendar-page .modal-card .field-group { margin: 0; }
+.task-calendar-page .modal-card .field-label { display: block; font-size: 0.84rem; font-weight: 600; color: var(--text, #13253f); margin-bottom: 7px; }
+.task-calendar-page .modal-card .field-input,
+.task-calendar-page .modal-card .field-select { width: 100%; }
+.task-calendar-page .modal-card textarea.field-input { resize: vertical; font-family: inherit; }
+.task-calendar-page .profile-card-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy, #003a75); }
+.task-calendar-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.task-calendar-page .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.task-calendar-page .profile-banner { border-radius: 8px; padding: 10px 14px; font-size: 0.84rem; font-weight: 600; }
+.task-calendar-page .profile-banner--error { background: #FFF0F0; color: #DC2626; }
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 960px) {
+  .task-calendar-page .calendar-grid { grid-template-columns: 1fr; }
+  .task-calendar-page .stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .task-calendar-page .calendar-item { flex-direction: column; }
+  .task-calendar-page .field-row-2 { grid-template-columns: 1fr; }
+  .task-calendar-page .week-grid { grid-template-columns: repeat(2, 1fr); }
+  .task-calendar-page .month-grid { grid-template-columns: repeat(7, minmax(30px, 1fr)); font-size: 0.6rem; }
+}

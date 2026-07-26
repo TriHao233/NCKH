@@ -32,6 +32,7 @@ const Header = () => {
       items: [
         { path: '/sinh-cau-hoi', label: 'Sinh câu hỏi' },
         { path: '/quan-ly', label: 'Quản lý câu hỏi' },
+        { path: '/lam-de-thi', label: 'Làm đề thi' },
       ],
     },
     {

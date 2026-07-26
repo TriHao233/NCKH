@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<style>
+  @page {
+    size: A4;
+    margin: 2cm 2cm 2cm 3cm;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 13pt;
+    line-height: 1.5;
+    color: #000;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid #000;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+  }
+  .header-left, .header-right {
+    width: 48%;
+  }
+  .header-left p, .header-right p {
+    margin: 0 0 2px 0;
+    text-align: center;
+  }
+  .header-left .school { font-weight: bold; text-transform: uppercase; }
+  .header-right { text-align: right; }
+  .title {
+    text-align: center;
+    margin: 10px 0 4px 0;
+  }
+  .title h1 {
+    font-size: 15pt;
+    font-weight: bold;
+    margin: 0;
+    text-transform: uppercase;
+  }
+  .title .subject {
+    font-weight: bold;
+    margin-top: 2px;
+  }
+  .exam-code {
+    text-align: right;
+    font-weight: bold;
+    margin: 6px 0;
+  }
+  .candidate-info {
+    display: flex;
+    gap: 24px;
+    margin: 10px 0 16px 0;
+  }
+  .candidate-info .field {
+    flex: 1;
+    border-bottom: 1px dotted #000;
+  }
+  .question {
+    page-break-inside: avoid;
+    margin-bottom: 10px;
+  }
+  .question .q-content {
+    font-weight: bold;
+  }
+  .options {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+  }
+  .options .option {
+    display: block;
+  }
+  .options .option.correct {
+    font-weight: bold;
+    text-decoration: underline;
+  }
+  .answer-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+  }
+  .answer-table td, .answer-table th {
+    border: 1px solid #000;
+    padding: 4px 8px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <p class="school">{{ header.school_name }}</p>
+      <p>{{ header.faculty_name }}</p>
+    </div>
+    <div class="header-right">
+      <p>{{ header.exam_name }}</p>
+      <p>Thời gian làm bài: {{ header.duration_minutes }} phút</p>
+      {% if header.exam_date %}<p>Ngày thi: {{ header.exam_date }}</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="title">
+    <h1>Đề thi</h1>
+    <div class="subject">Môn: {{ header.subject_name }}</div>
+  </div>
+  <div class="exam-code">Mã đề: {{ exam_code }}</div>
+
+  <div class="candidate-info">
+    <div class="field">Họ và tên: ..................................................</div>
+    <div class="field">MSSV/MHS: ..................................................</div>
+    {% if header.class_name %}<div class="field">Lớp: {{ header.class_name }}</div>{% endif %}
+  </div>
+
+  {% if show_questions %}
+  {% for q in questions %}
+  <div class="question">
+    <div class="q-content">Câu {{ q.number }}. {{ q.content }}</div>
+    {% if q.options %}
+    <div class="options">
+      {% for opt in q.options %}
+      <span class="option{% if show_answers and opt.correct %} correct{% endif %}">{{ opt.label }}. {{ opt.text }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if show_answer_table %}
+  <table class="answer-table">
+    <thead>
+      <tr>
+        <th>Câu</th>
+        <th>Đáp án</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in answer_rows %}
+      <tr>
+        <td>{{ row.number }}</td>
+        <td>{{ row.answer }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</body>
+</html>

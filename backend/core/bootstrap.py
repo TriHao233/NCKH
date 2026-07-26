@@ -34,6 +34,8 @@ RAG_COLLECTIONS = (
     "question_reviews",
     "audit_logs",
     "moodle_publications",
+    "exams",
+    "exam_variants",
     "schema_meta",
     "migration_id_map",
 )

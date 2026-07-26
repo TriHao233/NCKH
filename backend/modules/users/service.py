@@ -11,16 +11,20 @@ from modules.auth.session_repository import (
     FirebaseSessionRepository,
     get_firebase_session_repository,
 )
+from modules.users import calendar_service
 from modules.users.repository import MongoUserRepository, UserRepository, serialize_user
 from modules.users.schemas import (
     PublicRegisterRequest,
     GenerationPresetPayload,
+    TaskCalendarPayload,
+    TaskCalendarUpdateRequest,
     UserAdminUpdateRequest,
     UserCreateRequest,
     UserSelfUpdateRequest,
 )
 
 MAX_GENERATION_PRESETS = 12
+MAX_TASK_CALENDAR_ITEMS = 500
 
 
 def utc_now() -> datetime:
@@ -118,6 +122,12 @@ class UserService:
         user = self.repository.find_by_id(user_id)
         return serialize_user(user) if user else None
 
+    def get_stats(self, user_id: str) -> dict | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        return self.repository.get_stats(user_id)
+
     def get_by_firebase_uid(self, firebase_uid: str) -> dict | None:
         user = self.repository.find_by_firebase_uid(firebase_uid)
         return serialize_user(user) if user else None
@@ -193,6 +203,96 @@ class UserService:
             user_id,
             {"generation_presets": next_presets},
         )
+        return updated is not None
+
+    @staticmethod
+    def _task_calendar(user: dict) -> list[dict]:
+        tasks = user.get("task_calendar") or []
+        return tasks if isinstance(tasks, list) else []
+
+    def get_calendar(
+        self,
+        user_id: str,
+        *,
+        date_from=None,
+        date_to=None,
+        status: str | None = None,
+        priority: str | None = None,
+    ) -> dict | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        manual_tasks = self._task_calendar(user)
+        documents = self.repository.get_calendar_documents(user_id)
+        questions = self.repository.get_calendar_questions(user_id)
+        document_ids = [document["_id"] for document in documents]
+        document_ids_with_questions = self.repository.get_document_ids_with_questions(document_ids)
+        return calendar_service.build_calendar(
+            manual_tasks=manual_tasks,
+            documents=documents,
+            questions=questions,
+            document_ids_with_questions=document_ids_with_questions,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+            priority=priority,
+        )
+
+    def create_task(self, user_id: str, payload: TaskCalendarPayload) -> dict | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        now = utc_now()
+        task = {
+            "id": str(ObjectId()),
+            **payload.model_dump(),
+            "status": "todo",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
+        existing = self._task_calendar(user)
+        next_tasks = [task, *existing][:MAX_TASK_CALENDAR_ITEMS]
+        updated = self.repository.update(user_id, {"task_calendar": next_tasks})
+        if not updated:
+            return None
+        return task
+
+    def update_task(
+        self,
+        user_id: str,
+        task_id: str,
+        payload: TaskCalendarUpdateRequest,
+    ) -> dict | None | bool:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        existing = self._task_calendar(user)
+        target = next((task for task in existing if task.get("id") == task_id), None)
+        if target is None:
+            return False
+        fields = payload.model_dump(exclude_unset=True)
+        now = utc_now()
+        updated_task = {**target, **fields, "updated_at": now}
+        if fields.get("status") == "done" and target.get("status") != "done":
+            updated_task["completed_at"] = now
+        elif fields.get("status") == "todo":
+            updated_task["completed_at"] = None
+        next_tasks = [updated_task if task.get("id") == task_id else task for task in existing]
+        updated = self.repository.update(user_id, {"task_calendar": next_tasks})
+        if not updated:
+            return None
+        return updated_task
+
+    def delete_task(self, user_id: str, task_id: str) -> bool | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        existing = self._task_calendar(user)
+        next_tasks = [task for task in existing if task.get("id") != task_id]
+        if len(next_tasks) == len(existing):
+            return False
+        updated = self.repository.update(user_id, {"task_calendar": next_tasks})
         return updated is not None
 
     def update_admin(self, user_id: str, payload: UserAdminUpdateRequest) -> dict | None:

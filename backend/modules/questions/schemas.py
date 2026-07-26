@@ -11,10 +11,17 @@ class QuestionOrigin(str, Enum):
     IMPORT = "IMPORT"
 
 
+class QuestionDifficulty(str, Enum):
+    DE = "de"
+    TRUNG_BINH = "trung_binh"
+    KHO = "kho"
+
+
 class QuestionCreateRequest(BaseModel):
     content: str = Field(..., min_length=1)
     question_type: str = Field("trac_nghiem", min_length=1)
     bloom_level: int | None = Field(None, ge=1, le=6)
+    difficulty: QuestionDifficulty | None = None
     question_data: dict[str, Any] = Field(default_factory=dict)
     subject_id: str | None = None
     chapter_id: str | None = None
@@ -29,6 +36,7 @@ class QuestionUpdateRequest(BaseModel):
     content: str | None = Field(None, min_length=1)
     question_type: str | None = Field(None, min_length=1)
     bloom_level: int | None = Field(None, ge=1, le=6)
+    difficulty: QuestionDifficulty | None = None
     question_data: dict[str, Any] | None = None
     subject_id: str | None = None
     chapter_id: str | None = None

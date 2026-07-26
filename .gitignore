@@ -1,6 +1,7 @@
 firebase-service-account.json
 source_dump.txt
 .claude/launch.json
+.claude/settings.local.json
 frontend/.claude/launch.json
 /rag-ocr-pipeline/
 /docs/

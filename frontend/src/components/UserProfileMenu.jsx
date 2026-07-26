@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { 
-  faUser, 
-  faCog, 
-  faSignOutAlt, 
-  faChevronDown 
+import {
+  faUser,
+  faCalendarCheck,
+  faCog,
+  faSignOutAlt,
+  faChevronDown
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import './UserProfileMenu.css';
@@ -69,7 +70,14 @@ const UserProfileMenu = () => {
             <FontAwesomeIcon icon={faUser} className="dropdown-icon" />
             Hồ sơ cá nhân
           </Link>
-          
+
+          {user.role === 'Teacher' && (
+            <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
+              <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
+              Lịch công việc
+            </Link>
+          )}
+
           {canOpenSettings && (
             <Link to="/cai-dat" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCog} className="dropdown-icon" />

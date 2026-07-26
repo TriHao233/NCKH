@@ -1,5 +1,17 @@
 import { apiRequest } from '../services/apiClient';
 
+export function getMe() {
+  return apiRequest('/users/me');
+}
+
+export function updateMe(payload) {
+  return apiRequest('/users/me', { method: 'PATCH', body: payload });
+}
+
+export function getMyStats() {
+  return apiRequest('/users/me/stats');
+}
+
 export function listUsers({ page = 1, pageSize = 20, role, search } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -35,4 +47,25 @@ export function saveGenerationPreset(payload) {
 
 export function deleteGenerationPreset(id) {
   return apiRequest(`/users/me/generation-presets/${id}`, { method: 'DELETE' });
+}
+
+export function getMyCalendar({ from, to, status = 'all', priority = 'all' } = {}) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  params.set('status', status);
+  params.set('priority', priority);
+  return apiRequest(`/users/me/calendar?${params.toString()}`);
+}
+
+export function createCalendarTask(payload) {
+  return apiRequest('/users/me/calendar', { method: 'POST', body: payload });
+}
+
+export function updateCalendarTask(id, payload) {
+  return apiRequest(`/users/me/calendar/${id}`, { method: 'PATCH', body: payload });
+}
+
+export function deleteCalendarTask(id) {
+  return apiRequest(`/users/me/calendar/${id}`, { method: 'DELETE' });
 }

@@ -17,6 +17,8 @@ class ProfileUpdate(BaseModel):
 
 @router.put("/profile")
 def update_profile(
+    # Deprecated: kept only for backward compatibility with clients that
+    # haven't migrated yet. New UI code must use PATCH /users/me instead.
     payload: ProfileUpdate,
     current_user: CurrentUser = Depends(get_current_user),
 ):

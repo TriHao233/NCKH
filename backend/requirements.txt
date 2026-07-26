@@ -46,6 +46,12 @@ pymongo==4.6.3
 certifi>=2024.2.2
 
 # =========================
+# Exam PDF export
+# =========================
+jinja2>=3.1.0
+playwright>=1.40.0
+
+# =========================
 # PyTorch CUDA 12.4
 # =========================
 --extra-index-url https://download.pytorch.org/whl/cu124
