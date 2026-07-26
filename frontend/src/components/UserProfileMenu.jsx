@@ -51,7 +51,7 @@ const UserProfileMenu = () => {
         className={`user-menu-trigger ${isOpen ? 'active' : ''}`}
         onClick={() => setIsOpen(!isOpen)}
       >
-        <img src={avatarUrl} alt="Avatar" className="user-avatar" />
+        <img src={avatarUrl} alt="Avatar" className="user-avatar" referrerPolicy="no-referrer" />
         <span className="user-name">{displayName}</span>
         <FontAwesomeIcon icon={faChevronDown} className="user-chevron" />
       </button>

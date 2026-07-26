@@ -73,37 +73,60 @@ def migrate_users(apply: bool) -> tuple[int, int]:
                 if str(legacy.get("role", "")).lower() in {"admin", "quản trị"}
                 else "Teacher"
             )
+            legacy_email = (
+                legacy.get("email") or legacy.get("Email") or f"{uid}@firebase.local"
+            ).lower()
+            legacy_display_name = (
+                legacy.get("display_name") or legacy.get("Full name") or "Teacher"
+            )
+            legacy_is_active = legacy.get(
+                "is_active", legacy.get("status", "active") == "active"
+            )
+            legacy_profile = legacy.get("profile") or {}
+            legacy_school = legacy_profile.get("school") or legacy.get("School", "")
+            legacy_address = legacy_profile.get("address") or legacy.get("Địa Chỉ", "")
+            legacy_avatar = legacy_profile.get("avatar") or legacy.get("avatar", "")
+            legacy_created_at = legacy.get("created_at") or now
+
+            def fallback_to_legacy(field_path: str, legacy_value):
+                # Only fill from legacy data when the existing document's field is
+                # missing or blank, so a doc created via normal signup/login never
+                # gets its already-populated data clobbered by a stale import.
+                return {
+                    "$cond": [
+                        {"$in": [{"$ifNull": [f"${field_path}", ""]}, ["", None]]},
+                        legacy_value,
+                        f"${field_path}",
+                    ]
+                }
+
             target = rag_db.users.find_one_and_update(
                 {"firebase_uid": uid},
-                {
-                    "$setOnInsert": {
-                        "schema_version": SCHEMA_VERSION,
-                        "firebase_uid": uid,
-                        "email": (
-                            legacy.get("email")
-                            or legacy.get("Email")
-                            or f"{uid}@firebase.local"
-                        ).lower(),
-                        "display_name": (
-                            legacy.get("display_name")
-                            or legacy.get("Full name")
-                            or "Teacher"
-                        ),
-                        "role": role,
-                        "profile": legacy.get("profile")
-                        or {
-                            "school": legacy.get("School", ""),
-                            "address": legacy.get("Địa Chỉ", ""),
-                            "avatar": legacy.get("avatar", ""),
-                        },
-                        "is_active": legacy.get(
-                            "is_active",
-                            legacy.get("status", "active") == "active",
-                        ),
-                        "created_at": legacy.get("created_at") or now,
-                        "updated_at": now,
+                [
+                    {
+                        "$set": {
+                            "schema_version": {"$ifNull": ["$schema_version", SCHEMA_VERSION]},
+                            "firebase_uid": uid,
+                            "email": fallback_to_legacy("email", legacy_email),
+                            "display_name": fallback_to_legacy("display_name", legacy_display_name),
+                            "role": {"$ifNull": ["$role", role]},
+                            "profile": {
+                                "$mergeObjects": [
+                                    {"school": "", "address": "", "avatar": ""},
+                                    {"$ifNull": ["$profile", {}]},
+                                    {
+                                        "school": fallback_to_legacy("profile.school", legacy_school),
+                                        "address": fallback_to_legacy("profile.address", legacy_address),
+                                        "avatar": fallback_to_legacy("profile.avatar", legacy_avatar),
+                                    },
+                                ]
+                            },
+                            "is_active": {"$ifNull": ["$is_active", legacy_is_active]},
+                            "created_at": {"$ifNull": ["$created_at", legacy_created_at]},
+                            "updated_at": now,
+                        }
                     }
-                },
+                ],
                 upsert=True,
                 return_document=ReturnDocument.AFTER,
             )

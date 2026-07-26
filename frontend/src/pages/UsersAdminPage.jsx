@@ -199,6 +199,7 @@ function UsersAdminPage() {
                       className="user-avatar-sm"
                       src={u.profile?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.display_name)}&background=0c78d4&color=fff`}
                       alt=""
+                      referrerPolicy="no-referrer"
                     />
                     <div className="user-main">
                       <div className="user-meta-row">

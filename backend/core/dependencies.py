@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -10,6 +11,10 @@ from core.database import get_rag_db
 from modules.auth.session_repository import get_firebase_session_repository
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
+
+# Keep in sync with modules/auth/login.py's TOKEN_CLOCK_SKEW_SECONDS.
+TOKEN_CLOCK_SKEW_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -30,8 +35,12 @@ def get_current_user(
             detail="Thiếu Firebase ID token",
         )
     try:
-        claims = auth.verify_id_token(credentials.credentials)
+        claims = auth.verify_id_token(
+            credentials.credentials,
+            clock_skew_seconds=TOKEN_CLOCK_SKEW_SECONDS,
+        )
     except Exception as exc:
+        logger.warning("Firebase ID token verification failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Firebase ID token không hợp lệ hoặc đã hết hạn",
