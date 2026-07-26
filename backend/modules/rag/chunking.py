@@ -5,10 +5,12 @@ import unicodedata
 from collections import Counter
 from typing import Iterable
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.concurrency import run_in_threadpool
 
 from core.config import settings
+from core.dependencies import CurrentUser, require_teacher_or_admin
+from modules.documents.service import DocumentService, get_document_service
 from modules.dictionary.dictionary import run_dictionary_auto_learning
 from modules.dictionary.mongodb import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
@@ -51,10 +53,19 @@ DEFINITION_PATTERN = re.compile(r"\b(định nghĩa|khái niệm|là gì)\b", re
 # API: Chunk tài liệu OCR và lưu vào ChromaDB
 # -------------------------------------------------------------
 @router.post("/document", response_model=DocumentChunkResponse, summary="Chunk OCR document and store to ChromaDB")
-async def chunk_document(req: DocumentChunkRequest, background_tasks: BackgroundTasks):
+async def chunk_document(
+    req: DocumentChunkRequest,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    document_service: DocumentService = Depends(get_document_service),
+):
     doc = get_document_record(req.document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        document_service.can_use(req.document_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     try:
         result = await run_in_threadpool(

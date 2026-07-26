@@ -6,11 +6,12 @@ import shutil
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from core.config import resolve_path, settings
 from core.dependencies import CurrentUser, require_teacher_or_admin
+from modules.documents.service import DocumentService, get_document_service
 from modules.ocr.mongodb import (
     attach_original_artifact,
     create_document_record,
@@ -62,12 +63,14 @@ async def process_ocr_background(
         )
 
 
-@router.post("/upload", summary="Upload PDF and queue an OCR job")
-async def upload_pdf(
+async def queue_pdf_ocr_upload(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
-):
+    file: UploadFile,
+    current_user: CurrentUser,
+    *,
+    subject_id: str | None = None,
+    chapter_id: str | None = None,
+) -> dict:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file PDF")
 
@@ -82,6 +85,8 @@ async def upload_pdf(
         filename=file.filename,
         title=title,
         uploaded_by_user_id=current_user.id,
+        subject_id=subject_id,
+        chapter_id=chapter_id,
     )
     job_id = create_ocr_job(document_id)
     upload_path = _UPLOAD_DIR / f"{document_id}_{file.filename}"
@@ -126,15 +131,41 @@ async def upload_pdf(
         "status": "QUEUED",
     }
 
+@router.post("/upload", summary="Compatibility upload route; prefer /documents/upload")
+async def upload_pdf(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    subject_id: str | None = Form(None),
+    chapter_id: str | None = Form(None),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+):
+    return await queue_pdf_ocr_upload(
+        background_tasks,
+        file,
+        current_user,
+        subject_id=subject_id,
+        chapter_id=chapter_id,
+    )
+
 
 @router.get("/status/{job_id}", summary="Get OCR job status")
-def check_job_status(job_id: str):
+def check_job_status(
+    job_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    document_service: DocumentService = Depends(get_document_service),
+):
     try:
         result = get_document_status(job_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not result:
         raise HTTPException(status_code=404, detail="Không tìm thấy OCR job")
+    document = result.get("document")
+    if document:
+        try:
+            document_service.can_use(document["id"], current_user)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
     job = result["job"]
     return {
         "job_id": job["_id"],

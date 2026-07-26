@@ -77,7 +77,7 @@ function CatalogAdminPage() {
       setCatalog(result);
       if (!activeSubjectId && result.subjects?.[0]) setActiveSubjectId(result.subjects[0].id);
     } catch (err) {
-      setError(err.message || 'Không tải được catalog');
+      setError(err.message || 'Không tải được dữ liệu nền');
     } finally {
       setLoading(false);
     }
@@ -95,7 +95,7 @@ function CatalogAdminPage() {
       await action();
       await loadCatalog();
     } catch (err) {
-      setError(err.message || 'Lưu catalog thất bại');
+      setError(err.message || 'Lưu dữ liệu nền thất bại');
     } finally {
       setSaving(false);
     }
@@ -172,18 +172,18 @@ function CatalogAdminPage() {
     <main className="catalog-page">
       <section className="catalog-header">
         <div>
-          <span>Admin catalog</span>
+          <span>Khu vực quản trị</span>
           <h1>Cấu hình dữ liệu nền</h1>
         </div>
         <button type="button" onClick={loadCatalog} disabled={loading || saving}>Làm mới</button>
       </section>
       {error && <p className="catalog-error">{error}</p>}
       {loading ? (
-        <p className="catalog-empty">Đang tải catalog...</p>
+        <p className="catalog-empty">Đang tải dữ liệu nền...</p>
       ) : (
         <section className="catalog-grid">
           <div className="catalog-card catalog-card--wide">
-            <h2>Subject / Chapter / CLO</h2>
+            <h2>Môn học / Chương / CLO</h2>
             <form className="catalog-form catalog-form--inline" onSubmit={handleSaveSubject}>
               <input placeholder="Mã môn" value={subjectForm.subject_code} onChange={(e) => setSubjectForm({ ...subjectForm, subject_code: e.target.value })} />
               <input placeholder="Tên môn" value={subjectForm.subject_name} onChange={(e) => setSubjectForm({ ...subjectForm, subject_name: e.target.value })} />
@@ -235,13 +235,13 @@ function CatalogAdminPage() {
           </div>
 
           <div className="catalog-card">
-            <h2>AI models</h2>
+            <h2>Mô hình AI</h2>
             <form className="catalog-form" onSubmit={handleSaveModel}>
-              <input placeholder="model_code" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
-              <input placeholder="model_name" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
-              <input placeholder="capabilities" value={modelForm.capabilities} onChange={(e) => setModelForm({ ...modelForm, capabilities: e.target.value })} />
+              <input placeholder="Mã mô hình" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
+              <input placeholder="Tên mô hình" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
+              <input placeholder="Năng lực mô hình" value={modelForm.capabilities} onChange={(e) => setModelForm({ ...modelForm, capabilities: e.target.value })} />
               <input type="number" min="0" value={modelForm.priority} onChange={(e) => setModelForm({ ...modelForm, priority: e.target.value })} />
-              <button type="submit" disabled={saving}>Lưu model</button>
+              <button type="submit" disabled={saving}>Lưu mô hình</button>
             </form>
             <div className="catalog-list">
               {catalog.ai_models.map((model) => (
@@ -251,37 +251,37 @@ function CatalogAdminPage() {
           </div>
 
           <div className="catalog-card catalog-card--wide">
-            <h2>Prompt templates</h2>
+            <h2>Mẫu prompt</h2>
             <div className="prompt-layout">
               <select value={selectedPromptKey} onChange={(e) => handleSelectPrompt(e.target.value)}>
                 <option value="">Chọn prompt</option>
                 {promptOptions.map((template) => (
                   <option key={template.template_key} value={template.template_key}>
-                    {template.template_key} v{template.version}
+                    {template.name || template.template_key} - phiên bản {template.version}
                   </option>
                 ))}
               </select>
               <form className="catalog-form" onSubmit={handleSavePrompt}>
-                <input placeholder="template_key" value={promptForm.template_key} onChange={(e) => setPromptForm({ ...promptForm, template_key: e.target.value })} />
-                <input placeholder="kind" value={promptForm.kind} onChange={(e) => setPromptForm({ ...promptForm, kind: e.target.value })} />
-                <input placeholder="name" value={promptForm.name} onChange={(e) => setPromptForm({ ...promptForm, name: e.target.value })} />
+                <input placeholder="Mã prompt" value={promptForm.template_key} onChange={(e) => setPromptForm({ ...promptForm, template_key: e.target.value })} />
+                <input placeholder="Nhóm prompt" value={promptForm.kind} onChange={(e) => setPromptForm({ ...promptForm, kind: e.target.value })} />
+                <input placeholder="Tên prompt" value={promptForm.name} onChange={(e) => setPromptForm({ ...promptForm, name: e.target.value })} />
                 <textarea rows={9} value={promptForm.prompt_body} onChange={(e) => setPromptForm({ ...promptForm, prompt_body: e.target.value })} />
-                <button type="submit" disabled={saving}>Lưu version mới</button>
+                <button type="submit" disabled={saving}>Lưu phiên bản mới</button>
               </form>
             </div>
           </div>
 
           <div className="catalog-card">
-            <h2>Evaluation policy</h2>
+            <h2>Bộ tiêu chí đánh giá</h2>
             <form className="catalog-form" onSubmit={handleSavePolicy}>
               <input value={policyForm.policy_name} onChange={(e) => setPolicyForm({ ...policyForm, policy_name: e.target.value })} />
               <textarea rows={7} value={policyForm.weights} onChange={(e) => setPolicyForm({ ...policyForm, weights: e.target.value })} />
               <textarea rows={5} value={policyForm.thresholds} onChange={(e) => setPolicyForm({ ...policyForm, thresholds: e.target.value })} />
-              <button type="submit" disabled={saving}>Lưu policy version</button>
+              <button type="submit" disabled={saving}>Lưu phiên bản tiêu chí</button>
             </form>
             <div className="catalog-list">
               {catalog.evaluation_policies.map((policy) => (
-                <span key={policy._id}>{policy.policy_name} v{policy.version} {policy.is_active ? '(active)' : ''}</span>
+                <span key={policy._id}>{policy.policy_name} - phiên bản {policy.version} {policy.is_active ? '(đang dùng)' : ''}</span>
               ))}
             </div>
           </div>

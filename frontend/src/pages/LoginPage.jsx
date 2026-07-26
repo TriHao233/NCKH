@@ -1,13 +1,54 @@
-import React, { useState, useContext } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import React, { useState, useContext, useEffect } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import "../css/LoginPage.css";
 import { AuthContext } from "../context/AuthContext";
-import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
+import { signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
+import { apiRequest } from "../services/apiClient";
+
+const PROTECTED_ROUTE_ROLES = {
+  "/sinh-cau-hoi": ["Teacher"],
+  "/quan-ly": ["Teacher"],
+  "/kiem-duyet": ["Reviewer"],
+  "/danh-muc": ["Admin"],
+  "/quan-ly-nguoi-dung": ["Admin"],
+  "/ho-so": ["Admin", "Teacher", "Reviewer"],
+};
+
+const DEMO_LOGIN_ALIASES = {
+  admin: "admin",
+  "admin@qbankctu.edu.vn": "admin",
+  reviewer: "reviewer",
+  "reviewer@qbankctu.edu.vn": "reviewer",
+};
+
+function demoUsernameFor(value) {
+  const identifier = value.trim().toLowerCase();
+  return DEMO_LOGIN_ALIASES[identifier] || null;
+}
+
+function normalizeLoginEmail(value) {
+  return value.trim().toLowerCase();
+}
+
+function landingPathForRole(role, requestedPath) {
+  const requestedPathname = typeof requestedPath === "string"
+    ? requestedPath.split("?")[0]
+    : null;
+  if (requestedPathname && PROTECTED_ROUTE_ROLES[requestedPathname]?.includes(role)) {
+    return requestedPath;
+  }
+  if (role === "Reviewer") return "/kiem-duyet";
+  if (role === "Admin") return "/danh-muc";
+  if (role === "Teacher") return "/sinh-cau-hoi";
+  return "/trang-chu";
+}
 
 function LoginPage() {
   const navigate = useNavigate();
-  const { login } = useContext(AuthContext);
+  const location = useLocation();
+  const { login, user, loading } = useContext(AuthContext);
+  const requestedPath = location.state?.from;
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -29,14 +70,21 @@ function LoginPage() {
     setShowPassword(!showPassword);
   };
 
+  useEffect(() => {
+    if (!loading && user) {
+      navigate(landingPathForRole(user.role, requestedPath), { replace: true });
+    }
+  }, [loading, navigate, requestedPath, user]);
+
   // Xử lý đăng nhập bằng Google
   const handleGoogleAuth = async () => {
     setIsLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      await login(result.user);
-      navigate("/trang-chu");
+      const appUser = await login(result.user);
+      navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
+      await signOut(auth).catch(() => {});
       alert("Đăng nhập Google thất bại: " + error.message);
     } finally {
       setIsLoading(false);
@@ -54,16 +102,27 @@ function LoginPage() {
     setIsLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        formData.email,
-        formData.password
-      );
+      const demoUsername = demoUsernameFor(formData.email);
+      const userCredential = demoUsername
+        ? await apiRequest("/auth/demo-login", {
+            method: "POST",
+            body: {
+              username: demoUsername,
+              password: formData.password,
+            },
+            authRequired: false,
+          }).then((data) => signInWithCustomToken(auth, data.custom_token))
+        : await signInWithEmailAndPassword(
+            auth,
+            normalizeLoginEmail(formData.email),
+            formData.password
+          );
       const firebaseUser = userCredential.user;
-      await login(firebaseUser);
+      const appUser = await login(firebaseUser);
       alert("Đăng nhập thành công!");
-      navigate("/trang-chu");
+      navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
+      await signOut(auth).catch(() => {});
       if (
         error.code === "auth/invalid-credential" ||
         error.code === "auth/user-not-found" ||
@@ -171,25 +230,25 @@ function LoginPage() {
               </button>
 
               <div className="divider">
-                <span>hoặc đăng nhập bằng email</span>
+                <span>hoặc đăng nhập bằng tài khoản demo/email</span>
               </div>
 
               <form className="auth-form" onSubmit={handleSubmit} noValidate>
                 <div className="field-group">
                   <label className="field-label" htmlFor="email">
-                    Email
+                    Tài khoản hoặc email
                   </label>
                   <div className="field-wrap">
                     <i className="fa-regular fa-envelope field-icon"></i>
                     <input
-                      type="email"
+                      type="text"
                       id="email"
                       name="email"
                       value={formData.email}
                       onChange={handleChange}
                       className="field-input"
-                      placeholder="example@ctu.edu.vn"
-                      autoComplete="email"
+                      placeholder="admin, reviewer hoặc example@ctu.edu.vn"
+                      autoComplete="username"
                     />
                   </div>
                 </div>

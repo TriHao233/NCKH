@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   autoEvaluateQuestion,
+  exportQuestionMoodle,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
   listQuestionReviews,
@@ -20,14 +21,100 @@ const REVIEW_STATUS_LABEL = {
 };
 
 const COLOR_LABEL = {
-  all: 'Mọi màu',
-  GREEN: 'GREEN',
-  YELLOW: 'YELLOW',
-  RED: 'RED',
+  all: 'Mọi mức chất lượng',
+  GREEN: 'Đạt tốt',
+  YELLOW: 'Cần xem lại',
+  RED: 'Rủi ro cao',
 };
+
+const EVALUATION_STATUS_LABEL = {
+  NOT_STARTED: 'Chưa đánh giá',
+  QUEUED: 'Chờ AI đánh giá',
+  PROCESSING: 'Đang đánh giá',
+  RUNNING: 'Đang đánh giá',
+  PASSED: 'Đạt AI',
+  FAILED: 'Chưa đạt AI',
+  ERROR: 'AI lỗi',
+  STALE: 'Cần đánh giá lại',
+};
+
+const PUBLICATION_STATUS_LABEL = {
+  NOT_PUBLISHED: 'Chưa đồng bộ',
+  PENDING: 'Đang chờ',
+  PUBLISHED: 'Đã đồng bộ',
+  FAILED: 'Đồng bộ lỗi',
+};
+
+const PAGE_SIZE = 20;
+
+const SCORE_COMPONENTS = [
+  {
+    key: 'faithfulness',
+    label: 'Bám sát nguồn',
+  },
+  {
+    key: 'contextual_relevancy',
+    label: 'Phù hợp ngữ cảnh',
+  },
+  {
+    key: 'answer_relevancy',
+    label: 'Đáp án phù hợp',
+  },
+  {
+    key: 'bloom_alignment',
+    label: 'Đúng Bloom',
+  },
+  {
+    key: 'clo_alignment',
+    label: 'Đúng CLO',
+  },
+];
 
 function score(value) {
   return typeof value === 'number' ? value.toFixed(2) : '--';
+}
+
+function percent(value) {
+  return typeof value === 'number' ? `${Math.round(value * 100)}%` : '--';
+}
+
+function formatDate(value) {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleString('vi-VN');
+}
+
+function evaluationModeLabel(mode) {
+  if (mode === 'local_llm') return 'AI cục bộ';
+  if (mode === 'heuristic_fallback') return 'Đánh giá dự phòng';
+  if (mode === 'heuristic') return 'Chấm nhanh nội bộ';
+  return mode || '--';
+}
+
+function qualityColorLabel(value) {
+  return COLOR_LABEL[value] || value || '--';
+}
+
+function evaluationStatusLabel(value) {
+  return EVALUATION_STATUS_LABEL[value] || value || '--';
+}
+
+function isEvaluationBusy(question) {
+  return ['QUEUED', 'PROCESSING', 'RUNNING'].includes(question?.evaluation_status);
+}
+
+function canQueueEvaluation(question) {
+  return question && !isEvaluationBusy(question) && question.evaluation_status !== 'PASSED';
+}
+
+function publicationStatusLabel(value) {
+  return PUBLICATION_STATUS_LABEL[value] || value || '--';
+}
+
+function evaluatorModelLabel(model = {}) {
+  if (model.model_name) return model.model_name;
+  return model.model_code || '--';
 }
 
 function assessmentType(question) {
@@ -40,6 +127,20 @@ function refId(value) {
   return value.id || value._id || '';
 }
 
+function downloadMoodleExport(question, format, content) {
+  const extension = format === 'xml' ? 'xml' : 'gift';
+  const mimeType = format === 'xml' ? 'application/xml' : 'text/plain';
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${question.question_code || 'moodle-question'}.${extension}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function ReviewQueuePage() {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +151,9 @@ function ReviewQueuePage() {
   const [colorFilter, setColorFilter] = useState('all');
   const [minScore, setMinScore] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -62,10 +166,26 @@ function ReviewQueuePage() {
     setLoading(true);
     setError('');
     try {
-      const result = await listQuestions({ page: 1, pageSize: 200 });
-      setQuestions(result.items || []);
+      const numericMinScore = minScore === '' ? undefined : Number(minScore);
+      const result = await listQuestions({
+        page,
+        pageSize: PAGE_SIZE,
+        reviewStatus: statusFilter === 'all' ? undefined : statusFilter,
+        questionType: typeFilter === 'all' ? undefined : typeFilter,
+        bloomLevel: bloomFilter === 'all' ? undefined : bloomFilter,
+        qualityColor: colorFilter === 'all' ? undefined : colorFilter,
+        minScore: Number.isFinite(numericMinScore) ? numericMinScore : undefined,
+        search: searchTerm || undefined,
+      });
+      const items = result.items || [];
+      setQuestions(items);
+      setTotal(result.total || 0);
+      return items;
     } catch (err) {
       setError(err.message || 'Không tải được hàng đợi kiểm duyệt');
+      setQuestions([]);
+      setTotal(0);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -91,28 +211,30 @@ function ReviewQueuePage() {
   };
 
   useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearchTerm(searchInput.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  useEffect(() => {
     fetchQuestions();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, statusFilter, typeFilter, bloomFilter, colorFilter, minScore, searchTerm]);
 
   useEffect(() => {
     if (!selected) return;
     const fresh = questions.find((item) => item.id === selected.id);
-    if (fresh) setSelected(fresh);
+    if (fresh) {
+      setSelected(fresh);
+      return;
+    }
+    setSelected(null);
+    setEvaluations([]);
+    setReviews([]);
+    setPublications([]);
   }, [questions, selected]);
-
-  const filteredQuestions = useMemo(() => {
-    const search = searchInput.trim().toLowerCase();
-    const min = minScore === '' ? null : Number(minScore);
-    return questions.filter((question) => {
-      if (statusFilter !== 'all' && question.review_status !== statusFilter) return false;
-      if (typeFilter !== 'all' && assessmentType(question) !== typeFilter) return false;
-      if (bloomFilter !== 'all' && question.classification?.bloom?.level !== Number(bloomFilter)) return false;
-      if (colorFilter !== 'all' && question.quality_summary?.color !== colorFilter) return false;
-      if (min !== null && Number.isFinite(min) && (question.quality_summary?.overall_score ?? -1) < min) return false;
-      if (search && !`${question.question_code} ${question.content}`.toLowerCase().includes(search)) return false;
-      return true;
-    });
-  }, [questions, statusFilter, typeFilter, bloomFilter, colorFilter, minScore, searchInput]);
 
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,
@@ -121,9 +243,21 @@ function ReviewQueuePage() {
     publishable: questions.filter((item) => item.review_status === 'APPROVED' && item.publication_status !== 'PUBLISHED').length,
   }), [questions]);
 
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const pageEnd = Math.min(page * PAGE_SIZE, total);
+
+  const updateFilter = (setter) => (value) => {
+    setter(value);
+    setPage(1);
+  };
+
   const refreshAfterAction = async (question) => {
-    await fetchQuestions();
-    await loadHistory(question);
+    const items = await fetchQuestions();
+    const fresh = items.find((item) => item.id === question.id);
+    if (fresh) {
+      await loadHistory(fresh);
+    }
   };
 
   const runEvaluation = async (question) => {
@@ -131,12 +265,11 @@ function ReviewQueuePage() {
     try {
       await autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
-        evaluator_model_code: 'qwen',
-        fallback_to_heuristic: true,
+        fallback_to_heuristic: false,
       });
       await refreshAfterAction(question);
     } catch (err) {
-      alert('AI evaluation thất bại: ' + err.message);
+      alert('Đánh giá AI thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -151,14 +284,18 @@ function ReviewQueuePage() {
       note,
     };
     if (decision === 'APPROVED' && question.evaluation_status !== 'PASSED') {
-      const reason = window.prompt('Câu hỏi chưa pass AI evaluation. Nhập lý do override:', '');
+      const reason = window.prompt('Câu hỏi chưa đạt đánh giá AI. Nhập lý do duyệt thủ công:', '');
       if (!reason?.trim()) return;
       payload.override = {
         applied: true,
-        score: question.quality_summary?.overall_score ?? 0.8,
-        color: question.quality_summary?.color || 'YELLOW',
         reason: reason.trim(),
       };
+      if (typeof question.quality_summary?.overall_score === 'number') {
+        payload.override.score = question.quality_summary.overall_score;
+      }
+      if (question.quality_summary?.color) {
+        payload.override.color = question.quality_summary.color;
+      }
     }
     setBusyId(question.id);
     try {
@@ -176,6 +313,7 @@ function ReviewQueuePage() {
     try {
       await publishQuestionToMoodle(question.id, {
         expected_version: question.current_version,
+        export_format: 'BOTH',
         mock: true,
       });
       await refreshAfterAction(question);
@@ -186,33 +324,44 @@ function ReviewQueuePage() {
     }
   };
 
+  const exportMoodle = async (question, format) => {
+    setBusyId(question.id);
+    try {
+      const content = await exportQuestionMoodle(question.id, format);
+      downloadMoodleExport(question, format, content);
+    } catch (err) {
+      alert('Export Moodle thất bại: ' + err.message);
+    } finally {
+      setBusyId('');
+    }
+  };
+
   const runBulkEvaluate = async () => {
-    const targets = filteredQuestions.filter((question) => question.evaluation_status !== 'PASSED').slice(0, 10);
+    const targets = questions.filter((question) => canQueueEvaluation(question)).slice(0, 10);
     if (targets.length === 0) return;
-    if (!window.confirm(`Chạy AI evaluation cho ${targets.length} câu đang lọc?`)) return;
+    if (!window.confirm(`Đưa ${targets.length} câu đang lọc vào hàng đợi AI đánh giá?`)) return;
     setBulkBusy(true);
     try {
       for (const question of targets) {
         await autoEvaluateQuestion(question.id, {
           expected_version: question.current_version,
-          evaluator_model_code: 'qwen',
-          fallback_to_heuristic: true,
+          fallback_to_heuristic: false,
         });
       }
       await fetchQuestions();
     } catch (err) {
-      alert('Batch evaluation dừng lại: ' + err.message);
+      alert('Đánh giá hàng loạt dừng lại: ' + err.message);
     } finally {
       setBulkBusy(false);
     }
   };
 
   const runBulkApproveGreen = async () => {
-    const targets = filteredQuestions
+    const targets = questions
       .filter((question) => question.evaluation_status === 'PASSED' && question.quality_summary?.color === 'GREEN')
       .slice(0, 10);
     if (targets.length === 0) return;
-    const note = window.prompt(`Duyệt ${targets.length} câu GREEN đang lọc. Ghi chú chung:`, 'Batch approve GREEN questions');
+    const note = window.prompt(`Duyệt ${targets.length} câu đạt tốt đang lọc. Ghi chú chung:`, 'Duyệt tự động các câu đạt tốt');
     if (note === null) return;
     setBulkBusy(true);
     try {
@@ -225,7 +374,7 @@ function ReviewQueuePage() {
       }
       await fetchQuestions();
     } catch (err) {
-      alert('Batch approve dừng lại: ' + err.message);
+      alert('Duyệt hàng loạt dừng lại: ' + err.message);
     } finally {
       setBulkBusy(false);
     }
@@ -234,64 +383,69 @@ function ReviewQueuePage() {
   const latestEvaluation = evaluations[0];
   const latestEvidence = latestEvaluation?.evidence || {};
   const latestScores = latestEvaluation?.scores || {};
+  const latestWeights = latestEvaluation?.policy?.weights || {};
+  const qualitySummary = selected?.quality_summary || {};
+  const overallScore = latestScores.overall ?? qualitySummary.overall_score;
+  const evaluationColor = latestEvaluation?.color || qualitySummary.color;
+  const latestModel = latestEvaluation?.evaluator_model || {};
 
   return (
     <main className="review-page">
       <section className="review-toolbar">
         <div className="review-toolbar__title">
-          <span>Reviewer queue</span>
+          <span>Hàng đợi kiểm duyệt</span>
           <h1>Kiểm duyệt câu hỏi</h1>
         </div>
         <div className="review-actions">
           <button type="button" className="btn btn--outline" disabled={bulkBusy} onClick={runBulkEvaluate}>
-            AI đánh giá hàng loạt
+            Xếp hàng AI
           </button>
           <button type="button" className="btn btn--primary" disabled={bulkBusy} onClick={runBulkApproveGreen}>
-            Duyệt GREEN
+            Duyệt câu đạt tốt
           </button>
         </div>
       </section>
 
       <section className="review-summary">
-        <button type="button" onClick={() => setStatusFilter('PENDING')}>
-          <b>{summary.pending}</b>
+        <button type="button" onClick={() => updateFilter(setStatusFilter)('PENDING')}>
+          <b>{statusFilter === 'PENDING' ? total : summary.pending}</b>
           <span>Chờ duyệt</span>
         </button>
-        <button type="button" onClick={() => setColorFilter('GREEN')}>
-          <b>{summary.green}</b>
-          <span>GREEN</span>
+        <button type="button" onClick={() => updateFilter(setColorFilter)('GREEN')}>
+          <b>{colorFilter === 'GREEN' ? total : summary.green}</b>
+          <span>Đạt tốt</span>
         </button>
-        <button type="button" onClick={() => setMinScore('0.8')}>
-          <b>{summary.passed}</b>
+        <button type="button" onClick={() => updateFilter(setMinScore)('0.8')}>
+          <b>{minScore === '0.8' ? total : summary.passed}</b>
           <span>AI đạt</span>
         </button>
-        <button type="button" onClick={() => setStatusFilter('APPROVED')}>
-          <b>{summary.publishable}</b>
-          <span>Chờ Moodle</span>
+        <button type="button" onClick={() => updateFilter(setStatusFilter)('APPROVED')}>
+          <b>{statusFilter === 'APPROVED' ? total : summary.publishable}</b>
+          <span>Đã duyệt</span>
         </button>
       </section>
 
       <section className="review-layout">
         <div className="review-list-panel">
           <div className="review-filters">
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <select value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
               {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+            <select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
               <option value="all">Mọi dạng câu hỏi</option>
               {QUESTION_TYPES.map((type) => (
                 <option key={type.backend} value={type.backend}>{type.label}</option>
               ))}
             </select>
-            <select value={bloomFilter} onChange={(event) => setBloomFilter(event.target.value)}>
+            <select value={bloomFilter} onChange={(event) => updateFilter(setBloomFilter)(event.target.value)}>
               <option value="all">Mọi Bloom</option>
               {BLOOM_LEVELS.map((level) => (
                 <option key={level.level} value={level.level}>{level.label}</option>
               ))}
             </select>
-            <select value={colorFilter} onChange={(event) => setColorFilter(event.target.value)}>
+            <select value={colorFilter} onChange={(event) => updateFilter(setColorFilter)(event.target.value)}>
               {Object.entries(COLOR_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
@@ -301,9 +455,9 @@ function ReviewQueuePage() {
               min="0"
               max="1"
               step="0.05"
-              placeholder="Score tối thiểu"
+              placeholder="Điểm tối thiểu"
               value={minScore}
-              onChange={(event) => setMinScore(event.target.value)}
+              onChange={(event) => updateFilter(setMinScore)(event.target.value)}
             />
             <input
               placeholder="Tìm mã hoặc nội dung..."
@@ -317,7 +471,7 @@ function ReviewQueuePage() {
             <p className="review-empty">Đang tải hàng đợi...</p>
           ) : (
             <div className="review-list">
-              {filteredQuestions.map((question) => (
+              {questions.map((question) => (
                 <article
                   key={question.id}
                   className={`review-row ${selected?.id === question.id ? 'review-row--active' : ''}`}
@@ -340,19 +494,44 @@ function ReviewQueuePage() {
                     <b className={`quality-${question.quality_summary?.color || 'NONE'}`}>
                       {score(question.quality_summary?.overall_score)}
                     </b>
-                    <span>{question.quality_summary?.color || question.evaluation_status}</span>
+                    <span>
+                      {question.quality_summary?.color
+                        ? qualityColorLabel(question.quality_summary.color)
+                        : evaluationStatusLabel(question.evaluation_status)}
+                    </span>
                     <small>{REVIEW_STATUS_LABEL[question.review_status] || question.review_status}</small>
                   </div>
                 </article>
               ))}
-              {filteredQuestions.length === 0 && <p className="review-empty">Không có câu hỏi phù hợp bộ lọc.</p>}
+              {questions.length === 0 && <p className="review-empty">Không có câu hỏi phù hợp bộ lọc.</p>}
+              <div className="review-pagination">
+                <span>
+                  {pageStart}-{pageEnd} / {total} kết quả
+                </span>
+                <div>
+                  <button
+                    type="button"
+                    disabled={loading || page <= 1}
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  >
+                    Trước
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading || page >= totalPages}
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  >
+                    Sau
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
         <aside className="review-detail-panel">
           {!selected ? (
-            <p className="review-empty">Chọn một câu hỏi để xem evidence, source và lịch sử.</p>
+            <p className="review-empty">Chọn một câu hỏi để xem minh chứng, tài liệu nguồn và lịch sử.</p>
           ) : (
             <>
               <div className="detail-head">
@@ -370,8 +549,12 @@ function ReviewQueuePage() {
                 )}
               </div>
               <div className="detail-actions">
-                <button type="button" disabled={busyId === selected.id} onClick={() => runEvaluation(selected)}>AI đánh giá</button>
-                <button type="button" disabled={busyId === selected.id} onClick={() => submitReview(selected, 'APPROVED')}>Duyệt</button>
+                <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
+                  {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
+                    ? 'Thử lại AI'
+                    : 'AI đánh giá'}
+                </button>
+                <button type="button" disabled={busyId === selected.id || isEvaluationBusy(selected)} onClick={() => submitReview(selected, 'APPROVED')}>Duyệt</button>
                 <button type="button" disabled={busyId === selected.id} onClick={() => submitReview(selected, 'NEEDS_REVISION')}>Cần sửa</button>
                 <button type="button" disabled={busyId === selected.id} onClick={() => submitReview(selected, 'REJECTED')}>Từ chối</button>
                 <button
@@ -381,50 +564,108 @@ function ReviewQueuePage() {
                 >
                   Moodle
                 </button>
+                <button
+                  type="button"
+                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED'}
+                  onClick={() => exportMoodle(selected, 'gift')}
+                >
+                  GIFT
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED'}
+                  onClick={() => exportMoodle(selected, 'xml')}
+                >
+                  XML
+                </button>
               </div>
 
               {historyLoading ? (
-                <p className="review-empty">Đang tải evidence...</p>
+                <p className="review-empty">Đang tải minh chứng...</p>
               ) : (
                 <>
-                  <section className="score-grid">
-                    {['faithfulness', 'contextual_relevancy', 'answer_relevancy', 'bloom_alignment', 'clo_alignment'].map((key) => (
-                      <div key={key}>
-                        <span>{key}</span>
-                        <b>{score(latestScores[key])}</b>
+                  <section className="evaluation-panel">
+                    <div className="evaluation-total">
+                      <div>
+                        <span>Tổng điểm</span>
+                        <b className={`quality-${evaluationColor || 'NONE'}`}>{score(overallScore)}</b>
                       </div>
-                    ))}
+                      <div>
+                        <span>Kết luận</span>
+                        <strong>
+                          {latestEvaluation
+                            ? (latestEvaluation.passed ? 'Đạt' : 'Chưa đạt')
+                            : evaluationStatusLabel(selected.evaluation_status)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Mức chất lượng</span>
+                        <strong className={`quality-${evaluationColor || 'NONE'}`}>{qualityColorLabel(evaluationColor)}</strong>
+                      </div>
+                      <div>
+                        <span>Cách đánh giá</span>
+                        <strong>{evaluationModeLabel(latestEvidence.mode)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="score-grid">
+                      {SCORE_COMPONENTS.map((component) => (
+                        <div key={component.key}>
+                          <span>{component.label}</span>
+                          <b>{score(latestScores[component.key])}</b>
+                          <small>
+                            Trọng số {percent(latestWeights[component.key])}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="evaluation-meta">
+                      <span>
+                        Mô hình: <b>{evaluatorModelLabel(latestModel)}</b>
+                      </span>
+                      <span>Bộ tiêu chí: <b>{latestEvaluation?.policy?.name || '--'}</b></span>
+                      <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
+                    </div>
+                    {!latestEvaluation && (
+                      <p className="evaluation-note">
+                        Chưa có kết quả đánh giá AI cho câu hỏi này.
+                      </p>
+                    )}
                   </section>
 
                   <section className="evidence-block">
-                    <h3>Evidence</h3>
-                    <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có evidence.'}</p>
+                    <h3>Minh chứng đánh giá</h3>
+                    <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có minh chứng.'}</p>
                     {latestEvidence.reasoning && <span>{latestEvidence.reasoning}</span>}
-                    {latestEvidence.fallback_reason && <span>Fallback: {latestEvidence.fallback_reason}</span>}
+                    {qualitySummary.error?.message && <span>Lỗi đánh giá AI: {qualitySummary.error.message}</span>}
+                    {latestEvidence.fallback_reason && <span>Lý do dùng đánh giá dự phòng: {latestEvidence.fallback_reason}</span>}
                   </section>
 
                   <section className="evidence-block">
-                    <h3>Source chunks</h3>
+                    <h3>Đoạn tài liệu nguồn</h3>
                     {(selected.sources || []).slice(0, 3).map((source, index) => (
-                      <p key={source.chunk_id || index}>{source.context_excerpt || source.chunk_id}</p>
+                      <p key={source.chunk_id || index}>{source.context_excerpt || `Đoạn tài liệu #${index + 1}`}</p>
                     ))}
-                    {(selected.sources || []).length === 0 && <p>Không có source chunk.</p>}
+                    {(selected.sources || []).length === 0 && <p>Không có đoạn tài liệu nguồn.</p>}
                   </section>
 
                   <section className="history-grid">
                     <div>
-                      <h3>Review history</h3>
+                      <h3>Lịch sử kiểm duyệt</h3>
                       {reviews.slice(0, 4).map((review) => (
-                        <p key={review.id || review._id}><b>{review.decision}</b> {review.note || ''}</p>
+                        <p key={review.id || review._id}><b>{REVIEW_STATUS_LABEL[review.decision] || review.decision}</b> {review.note || ''}</p>
                       ))}
-                      {reviews.length === 0 && <p>Chưa có review.</p>}
+                      {reviews.length === 0 && <p>Chưa có lượt kiểm duyệt.</p>}
                     </div>
                     <div>
-                      <h3>Moodle</h3>
+                      <h3>Đồng bộ Moodle</h3>
                       {publications.slice(0, 4).map((publication) => (
-                        <p key={publication.id || publication._id}><b>{publication.status}</b> {publication.moodle_question_ref_id}</p>
+                        <p key={publication.id || publication._id}>
+                          <b>{publicationStatusLabel(publication.status)}</b> {publication.moodle_question_ref_id || ''}
+                        </p>
                       ))}
-                      {publications.length === 0 && <p>Chưa publish.</p>}
+                      {publications.length === 0 && <p>Chưa đồng bộ.</p>}
                     </div>
                   </section>
                 </>

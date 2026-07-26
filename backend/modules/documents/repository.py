@@ -60,7 +60,15 @@ class DocumentRepository(Protocol):
 
     def find_by_id(self, document_id: str | ObjectId) -> dict | None: ...
 
-    def list(self, page: int, page_size: int, status: str | None, search: str | None) -> tuple[list[dict], int]: ...
+    def list(
+        self,
+        page: int,
+        page_size: int,
+        status: str | None,
+        search: str | None,
+        *,
+        uploaded_by_user_id: ObjectId | None = None,
+    ) -> tuple[list[dict], int]: ...
 
     def update(self, document_id: str | ObjectId, fields: dict) -> dict | None: ...
 
@@ -167,8 +175,12 @@ class MongoDocumentRepository:
         page_size: int,
         status: str | None,
         search: str | None,
+        *,
+        uploaded_by_user_id: ObjectId | None = None,
     ) -> tuple[list[dict], int]:
         query: dict = {"schema_version": SCHEMA_VERSION, "archived_at": None}
+        if uploaded_by_user_id is not None:
+            query["uploaded_by_user_id"] = uploaded_by_user_id
         if status:
             query["status"] = status
         if search:

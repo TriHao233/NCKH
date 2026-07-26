@@ -29,6 +29,15 @@ class QuestionPlanItem(BaseModel):
     num_questions: int = Field(default=1, ge=1, le=10)
 
 
+class GenerationClientTelemetry(BaseModel):
+    source_mode: Optional[str] = None
+    document_reused: bool = False
+    upload_ms: Optional[int] = Field(None, ge=0)
+    ocr_ms: Optional[int] = Field(None, ge=0)
+    chunk_ms: Optional[int] = Field(None, ge=0)
+    elapsed_before_generate_ms: Optional[int] = Field(None, ge=0)
+
+
 class QuestionGenerateRequest(BaseModel):
     # Xóa context: str, thay bằng document_id để gọi ChromaDB
     document_id: str = Field(..., description="ID của giáo trình trong DB")
@@ -48,6 +57,10 @@ class QuestionGenerateRequest(BaseModel):
         min_length=1,
         max_length=7,
         description="Cơ cấu số lượng câu hỏi theo từng dạng",
+    )
+    client_telemetry: Optional[GenerationClientTelemetry] = Field(
+        None,
+        description="Timing đo ở frontend trước khi enqueue job sinh câu hỏi",
     )
 
     @field_validator("instruction")
@@ -110,6 +123,12 @@ class QuestionGenerateResponse(BaseModel):
     summary: List[GenerationPlanSummary] = Field(default_factory=list)
 
 
+class GenerationJobMetrics(BaseModel):
+    server: dict[str, Any] = Field(default_factory=dict)
+    client: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class GenerationJobStatus(str, Enum):
     QUEUED = "queued"
     PROCESSING = "processing"
@@ -128,6 +147,7 @@ class GenerationJobStatusResponse(BaseModel):
     status: GenerationJobStatus
     data: Optional[List[GeneratedQuestion]] = None
     summary: Optional[List[GenerationPlanSummary]] = None
+    metrics: Optional[GenerationJobMetrics] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

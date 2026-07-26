@@ -70,6 +70,15 @@ class QuestionRepository(Protocol):
         page_size: int,
         review_status: str | None,
         search: str | None,
+        *,
+        question_type: str | None = None,
+        bloom_level: int | None = None,
+        document_id: str | None = None,
+        quality_color: str | None = None,
+        min_score: float | None = None,
+        publication_status: str | None = None,
+        evaluation_status: str | None = None,
+        owner_user_id: ObjectId | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]: ...
 
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]: ...
@@ -146,10 +155,27 @@ class MongoQuestionRepository:
         page_size: int,
         review_status: str | None,
         search: str | None,
+        *,
+        question_type: str | None = None,
+        bloom_level: int | None = None,
+        document_id: str | None = None,
+        quality_color: str | None = None,
+        min_score: float | None = None,
+        publication_status: str | None = None,
+        evaluation_status: str | None = None,
+        owner_user_id: ObjectId | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
         if review_status:
             match["review_status"] = review_status
+        if publication_status:
+            match["publication_status"] = publication_status
+        if evaluation_status:
+            match["evaluation_status"] = evaluation_status
+        if quality_color:
+            match["quality_summary.color"] = quality_color.upper()
+        if min_score is not None:
+            match["quality_summary.overall_score"] = {"$gte": float(min_score)}
         pipeline: list[dict] = [
             {"$match": match},
             {
@@ -162,8 +188,37 @@ class MongoQuestionRepository:
             },
             {"$unwind": "$version"},
         ]
+        if owner_user_id is not None:
+            pipeline.append(
+                {
+                    "$match": {
+                        "$or": [
+                            {"created_by_user_id": owner_user_id},
+                            {"version.created_by_user_id": owner_user_id},
+                        ]
+                    }
+                }
+            )
+        version_match: dict = {}
+        if question_type:
+            version_match["version.classification.assessment_type"] = question_type.upper()
+        if bloom_level is not None:
+            version_match["version.classification.bloom.level"] = int(bloom_level)
+        if document_id:
+            version_match["version.document_id"] = object_id(document_id, "document_id")
+        if version_match:
+            pipeline.append({"$match": version_match})
         if search:
-            pipeline.append({"$match": {"version.content": {"$regex": search, "$options": "i"}}})
+            pipeline.append(
+                {
+                    "$match": {
+                        "$or": [
+                            {"question_code": {"$regex": search, "$options": "i"}},
+                            {"version.content": {"$regex": search, "$options": "i"}},
+                        ]
+                    }
+                }
+            )
         pipeline.extend(
             [
                 {"$sort": {"updated_at": -1}},

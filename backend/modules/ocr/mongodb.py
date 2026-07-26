@@ -15,13 +15,15 @@ def create_document_record(
     title: str,
     *,
     uploaded_by_user_id=None,
+    subject_id: str | None = None,
+    chapter_id: str | None = None,
 ) -> str:
     document = _repository().create(
         {
             "original_filename": filename,
             "title": title,
-            "subject_id": None,
-            "chapter_id": None,
+            "subject_id": subject_id,
+            "chapter_id": chapter_id,
         },
         uploaded_by_user_id,
     )

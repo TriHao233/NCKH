@@ -9,7 +9,7 @@
 * **🤖 Kiến trúc LLM Factory:** Dễ dàng chuyển đổi linh hoạt giữa các mô hình ngôn ngữ:
     * Google Gemini (Cloud)
     * Qwen (Local via Ollama)
-    * DeepSeek-R1 (Local via Ollama)
+    * Ollama local models for evaluation (DeepSeek-R1 is the demo default)
 * **⛓️ Chuỗi Prompt Tự động (Programmatic Prompt Chains):** Điều khiển LLM hoàn toàn bằng code backend, hỗ trợ 7 loại câu hỏi và 6 cấp độ tư duy Bloom.
 
 ## 🛠️ Tech Stack
@@ -49,10 +49,16 @@ cd NCKH/backend/rag-ocr-pipeline
 
 ### 3. Cài đặt mô hình AI (Chạy cục bộ)
 
-Hệ thống sử dụng DeepSeek-R1:8B làm mô hình local mặc định:
+Hệ thống dùng Ollama cho local model. Model evaluator mặc định là `deepseek-r1`, nhưng có thể đổi bằng biến môi trường:
 
 ```bash
 ollama pull deepseek-r1:8b
+```
+
+Ví dụ đổi evaluator sang model Ollama khác:
+
+```env
+EVALUATION_MODEL_PROVIDER=ollama:qwen2.5:7b
 ```
 
 ### 4. Cài đặt dependencies
@@ -124,8 +130,8 @@ Khi server đã chạy thành công, truy cập vào giao diện tương tác AP
 
 ## Flow chạy thử nghiệm (Happy Path)
 
-* `POST /api/v1/ocr/upload`: Upload file PDF để hệ thống làm sạch và nhận diện công thức.
-* `POST /api/v1/rag/chunking`: Băm tài liệu và lưu vào kho ChromaDB.
+* `POST /api/v1/documents/upload`: Upload file PDF, tạo document, lưu artifact gốc và enqueue OCR. Route cũ `POST /api/v1/ocr/upload` vẫn giữ để tương thích client/script cũ.
+* `POST /api/v1/chunk/document`: Băm tài liệu đã OCR và lưu vào MongoDB + ChromaDB.
 * `POST /api/v1/generate/questions`: Gọi API sinh câu hỏi với body mẫu:
 
 ```json

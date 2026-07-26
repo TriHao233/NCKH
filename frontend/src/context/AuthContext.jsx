@@ -8,6 +8,17 @@ export const AuthContext = createContext();
 
 const sessionSyncs = new WeakMap();
 
+function readCachedUser() {
+    const cachedUser = localStorage.getItem("userInfo");
+    if (!cachedUser) return null;
+    try {
+        return JSON.parse(cachedUser);
+    } catch {
+        localStorage.removeItem("userInfo");
+        return null;
+    }
+}
+
 function syncBackendSession(firebaseUser) {
     const existing = sessionSyncs.get(firebaseUser);
     if (existing) return existing;
@@ -26,7 +37,7 @@ function syncBackendSession(firebaseUser) {
 }
 
 export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(null);
+    const [user, setUser] = useState(() => readCachedUser());
     const [loading, setLoading] = useState(true);
     const authGeneration = useRef(0);
 
@@ -50,7 +61,12 @@ export const AuthProvider = ({ children }) => {
             }
 
             setLoading(true);
-            setUser(null);
+            const cachedUser = readCachedUser();
+            if (cachedUser?.firebase_uid === firebaseUser.uid) {
+                setUser(cachedUser);
+            } else {
+                setUser(null);
+            }
             try {
                 const syncedUser = await syncBackendSession(firebaseUser);
                 if (
@@ -66,19 +82,11 @@ export const AuthProvider = ({ children }) => {
                     await signOut(auth);
                     return;
                 }
-                const cachedUser = localStorage.getItem("userInfo");
-                if (cachedUser) {
-                    try {
-                        const parsedUser = JSON.parse(cachedUser);
-                        if (parsedUser.firebase_uid === firebaseUser.uid) {
-                            setUser(parsedUser);
-                        } else {
-                            localStorage.removeItem("userInfo");
-                        }
-                    } catch {
-                        localStorage.removeItem("userInfo");
-                        setUser(null);
-                    }
+                const fallbackUser = readCachedUser();
+                if (fallbackUser?.firebase_uid === firebaseUser.uid) {
+                    setUser(fallbackUser);
+                } else if (fallbackUser) {
+                    localStorage.removeItem("userInfo");
                 }
             } finally {
                 if (active && generation === authGeneration.current) {

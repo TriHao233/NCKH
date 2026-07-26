@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, get_current_user, require_admin
+from core.dependencies import CurrentUser, get_current_user, require_admin, require_teacher_or_admin
 from modules.users.schemas import (
+    GenerationPresetListResponse,
+    GenerationPresetPayload,
+    GenerationPresetResponse,
     RoleEnum,
     UserAdminUpdateRequest,
     UserCreateRequest,
@@ -36,6 +39,46 @@ def update_me(
     if not user:
         raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
     return user
+
+
+@router.get("/me/generation-presets", response_model=GenerationPresetListResponse)
+def list_my_generation_presets(
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: UserService = Depends(get_user_service),
+):
+    result = service.list_generation_presets(str(current_user.id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+    return result
+
+
+@router.post(
+    "/me/generation-presets",
+    response_model=GenerationPresetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def save_my_generation_preset(
+    payload: GenerationPresetPayload,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: UserService = Depends(get_user_service),
+):
+    preset = service.save_generation_preset(str(current_user.id), payload)
+    if preset is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+    return preset
+
+
+@router.delete("/me/generation-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_my_generation_preset(
+    preset_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: UserService = Depends(get_user_service),
+):
+    deleted = service.delete_generation_preset(str(current_user.id), preset_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Không tìm thấy mẫu cấu hình")
 
 
 @router.get("", response_model=UserListResponse)

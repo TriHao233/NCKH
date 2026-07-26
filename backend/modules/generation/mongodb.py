@@ -201,6 +201,7 @@ def create_generation_job(request: dict, requested_by_user_id=None) -> str:
         "requested_by_user_id": requested_by_user_id,
         "status": "queued",
         "result": None,
+        "metrics": None,
         "error_message": None,
         "created_at": now,
         "updated_at": now,
@@ -213,6 +214,7 @@ def update_generation_job(
     job_id: str,
     status: str,
     result: dict | None = None,
+    metrics: dict | None = None,
     error_message: str | None = None,
 ):
     """Cập nhật trạng thái job sinh câu hỏi."""
@@ -223,6 +225,8 @@ def update_generation_job(
     }
     if result is not None:
         update_data["result"] = result
+    if metrics is not None:
+        update_data["metrics"] = metrics
     if error_message is not None:
         update_data["error_message"] = error_message
 

@@ -1,7 +1,7 @@
 import { useState, useContext } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
 import { apiRequest } from "../services/apiClient";
 
@@ -20,6 +20,13 @@ import {
 } from "@fortawesome/free-regular-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import "../css/RegisterPage.css";
+
+function landingPathForRole(role) {
+  if (role === "Reviewer") return "/kiem-duyet";
+  if (role === "Admin") return "/danh-muc";
+  if (role === "Teacher") return "/sinh-cau-hoi";
+  return "/trang-chu";
+}
 
 function DangKy() {
   const navigate = useNavigate();
@@ -64,9 +71,10 @@ function DangKy() {
     setLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      await login(result.user);
-      navigate("/trang-chu");
+      const appUser = await login(result.user);
+      navigate(landingPathForRole(appUser.role), { replace: true });
     } catch (error) {
+      await signOut(auth).catch(() => {});
       alert("Đăng nhập/Đăng ký Google thất bại: " + error.message);
     } finally {
       setLoading(false);

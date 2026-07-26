@@ -16,6 +16,14 @@ for env_file in ENV_CANDIDATES:
         load_dotenv(env_file, override=False)
 
 
+def _env_first(names: tuple[str, ...], default: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
+    return default
+
+
 class Settings(BaseModel):
     app_name: str = os.getenv("APP_NAME", "QBankCTU API")
     app_version: str = os.getenv("APP_VERSION", "0.1.0")
@@ -57,6 +65,15 @@ class Settings(BaseModel):
 
     # Provider LLM mặc định (qwen chạy local qua Ollama)
     model_provider: str = os.getenv("MODEL_PROVIDER", "qwen")
+    evaluation_model_provider: str = _env_first(
+        ("EVALUATION_MODEL_PROVIDER", "EVALUATOR_MODEL_CODE"),
+        "deepseek-r1",
+    )
+    ollama_generate_url: str = os.getenv("OLLAMA_GENERATE_URL", "http://localhost:11434/api/generate")
+    deepseek_model_name: str = _env_first(("DEEPSEEK_MODEL_NAME",), "deepseek-r1")
+    deepseek_timeout_seconds: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "180"))
+    deepseek_num_predict: int = int(os.getenv("DEEPSEEK_NUM_PREDICT", "900"))
+    deepseek_temperature: float = float(os.getenv("DEEPSEEK_TEMPERATURE", "0"))
 
     chunk_size_default: int = int(os.getenv("CHUNK_SIZE_DEFAULT", "1000"))
     chunk_size_min: int = int(os.getenv("CHUNK_SIZE_MIN", "200"))

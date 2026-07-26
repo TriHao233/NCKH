@@ -49,6 +49,7 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
     return str(chunk_set_id), str(vector_collection_id)
 
 def _strip_accents(text: str) -> str:
+    text = (text or "").replace("đ", "d").replace("Đ", "D")
     normalized = unicodedata.normalize("NFKD", text)
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
@@ -83,6 +84,22 @@ def _build_heading_label(meta: dict) -> str:
     if isinstance(heading, str) and heading.strip():
         return heading.strip()
     return ""
+
+
+def _heading_matches_target(meta: dict, normalized_target: str) -> bool:
+    if not normalized_target:
+        return True
+    heading_candidates = []
+    heading = meta.get("heading", "") or ""
+    if heading:
+        heading_candidates.append(_normalize_heading_text(heading))
+    heading_path_text = meta.get("heading_path_text", "") or ""
+    if heading_path_text:
+        heading_candidates.append(_normalize_heading_text(heading_path_text))
+    heading_path = _coerce_heading_path(meta)
+    if heading_path:
+        heading_candidates.append(_normalize_heading_text(" > ".join(heading_path)))
+    return any(normalized_target in candidate for candidate in heading_candidates if candidate)
 
 
 def get_context_snapshot(
@@ -152,7 +169,8 @@ def get_context_snapshot(
             raise ValueError("Không tìm thấy đoạn văn nào hợp lệ để sinh câu hỏi.")
 
         chunks_with_meta = list(zip(raw_docs, raw_metas))
-        filtered_chunks: list[tuple[str, dict]] = []
+        candidate_chunks: list[tuple[str, dict]] = []
+        heading_matched_chunks: list[tuple[str, dict]] = []
         for doc, meta in chunks_with_meta:
             if not doc:
                 continue
@@ -160,25 +178,17 @@ def get_context_snapshot(
             if density < min_density:
                 continue
 
-            if normalized_target:
-                heading_candidates = []
-                heading = meta.get("heading", "") or ""
-                if heading:
-                    heading_candidates.append(_normalize_heading_text(heading))
-                heading_path_text = meta.get("heading_path_text", "") or ""
-                if heading_path_text:
-                    heading_candidates.append(_normalize_heading_text(heading_path_text))
-                heading_path = _coerce_heading_path(meta)
-                if heading_path:
-                    heading_candidates.append(_normalize_heading_text(" > ".join(heading_path)))
+            candidate_chunks.append((doc, meta))
+            if _heading_matches_target(meta, normalized_target):
+                heading_matched_chunks.append((doc, meta))
 
-                if not any(normalized_target in cand for cand in heading_candidates if cand):
-                    continue
-
-            filtered_chunks.append((doc, meta))
-
+        filtered_chunks = heading_matched_chunks or candidate_chunks
         if not filtered_chunks:
             raise ValueError("Không tìm thấy đoạn văn nào hợp lệ theo tiêu chí đã chọn.")
+        if normalized_target and not heading_matched_chunks:
+            logger.info(
+                "Không có heading khớp target_heading; dùng kết quả vector query làm fallback."
+            )
 
         filtered_chunks.sort(
             key=lambda x: (-(x[1].get("information_density") or 0.0), x[1].get("page_start") or 0)

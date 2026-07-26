@@ -11,7 +11,7 @@ const team = [
   {
     name: 'Trần Hải Thiên',
     role: 'Thành viên nghiên cứu',
-    tasks: 'Phối hợp nghiên cứu kỹ thuật RAG và xử lý tài liệu · Hỗ trợ lập trình giao diện Admin Dashboard · Soạn thảo tài liệu kỹ thuật',
+    tasks: 'Phối hợp nghiên cứu kỹ thuật RAG và xử lý tài liệu · Hỗ trợ lập trình giao diện quản trị · Soạn thảo tài liệu kỹ thuật',
   },
   {
     name: 'Tiêu Lê Gia Linh',

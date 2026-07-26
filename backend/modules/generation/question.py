@@ -21,6 +21,17 @@ from modules.generation.mongodb import (
 )
 
 logger = logging.getLogger(__name__)
+MAX_FORMAT_RETRY_ATTEMPTS = 1
+
+QUESTION_TYPE_RETRY_RULES = {
+    "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
+    "tinh_huong": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
+    "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; correct_answer must be "A" or "B".',
+    "nhieu_lua_chon": 'options must contain exactly "A", "B", "C", "D"; correct_answer must contain at least two comma-separated keys.',
+    "dien_khuyet": 'options must be null; question text must contain "_____".',
+    "ghep_cot": "options must be a matching object with numbered keys and extra lettered distractors.",
+    "sap_xep": "options must contain ordered step keys; correct_answer must list every key in the correct order.",
+}
 
 async def generate_questions_rag(
     req: QuestionGenerateRequest,
@@ -147,6 +158,53 @@ async def _generate_questions_for_plan_item(
             seen_question_fingerprints,
             limit=plan_item.num_questions,
         )
+        if len(deduped_data) < plan_item.num_questions:
+            missing_count = plan_item.num_questions - len(deduped_data)
+            for retry_index in range(1, MAX_FORMAT_RETRY_ATTEMPTS + 1):
+                retry_started_at = time.perf_counter()
+                retry_prompt = _build_retry_prompt(
+                    original_prompt=full_prompt,
+                    question_type=plan_item.question_type.value,
+                    bloom_level=bloom_level.value,
+                    missing_count=missing_count,
+                    validation_errors=validation_errors,
+                    avoid_questions=[
+                        *avoid_questions,
+                        *(question.question for question in deduped_data),
+                    ],
+                )
+                try:
+                    retry_raw_response = await llm.generate_text(retry_prompt)
+                    raw_response = (
+                        f"{raw_response}\n\n--- FORMAT RETRY {retry_index} ---\n"
+                        f"{retry_raw_response}"
+                    )
+                    retry_data = json.loads(_clean_llm_output(retry_raw_response))
+                    retry_questions = _extract_questions_list(retry_data)
+                    parsed_count += len(retry_questions)
+                    retry_validated, retry_errors = _validate_and_format(
+                        retry_questions,
+                        question_type=plan_item.question_type.value,
+                        bloom_level=bloom_level.value,
+                    )
+                    retry_deduped, retry_duplicate_count = _filter_duplicate_questions(
+                        retry_validated,
+                        seen_question_fingerprints,
+                        limit=missing_count,
+                    )
+                    deduped_data.extend(retry_deduped)
+                    validation_errors.extend(retry_errors)
+                    duplicate_count += retry_duplicate_count
+                    missing_count = plan_item.num_questions - len(deduped_data)
+                    if missing_count <= 0:
+                        break
+                except Exception as retry_exc:
+                    validation_errors.append(
+                        f"Retry {retry_index} failed after "
+                        f"{int((time.perf_counter() - retry_started_at) * 1000)}ms: "
+                        f"{retry_exc}"
+                    )
+                    break
 
         # 5. Lưu vào DB
         saved_data = save_generated_questions(
@@ -236,6 +294,49 @@ def _filter_duplicate_questions(
         if len(kept) >= limit:
             break
     return kept, duplicate_count
+
+
+def _build_retry_prompt(
+    *,
+    original_prompt: str,
+    question_type: str,
+    bloom_level: str,
+    missing_count: int,
+    validation_errors: list[str],
+    avoid_questions: list[str],
+) -> str:
+    errors = "\n".join(
+        f"- {error}"
+        for error in validation_errors[-5:]
+        if error
+    ) or "- Not enough valid questions were produced."
+    avoid_list = "\n".join(
+        f"- {question.strip()}"
+        for question in avoid_questions[-12:]
+        if question and question.strip()
+    ) or "- None"
+    type_rule = QUESTION_TYPE_RETRY_RULES.get(question_type, "Follow the QUESTION TYPE rules exactly.")
+    return f"""
+{original_prompt}
+
+FORMAT REPAIR REQUEST:
+The previous response did not produce enough valid questions.
+Generate exactly {missing_count} additional questions.
+
+STRICT TARGET:
+- question_type: {question_type}
+- bloom_level: {bloom_level}
+- required structure: {type_rule}
+
+RECENT VALIDATION ERRORS TO FIX:
+{errors}
+
+DO NOT DUPLICATE THESE ACCEPTED/PREVIOUS QUESTIONS:
+{avoid_list}
+
+Return ONLY the same raw JSON object shape:
+{{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "source_context": "..."}}]}}
+"""
 
 
 def _build_plan_summary(
