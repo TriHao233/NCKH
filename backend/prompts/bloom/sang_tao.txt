@@ -6,3 +6,5 @@ KEY VERBS TO TARGET: Design, propose, construct, combine, plan, invent, develop,
 RULE: 
 - The question should challenge the student to synthesize ideas into a new structure, plan, or alternative solution.
 - The student must go beyond the basic text, applying principles to construct a solution that meets specific constraints.
+- Require the learner to assemble multiple ideas, steps, rules, or components from the context into a coherent plan, design, algorithm, outline, or improvement.
+- The expected answer must still be bounded by the context; do not ask for open-ended invention that cannot be judged from the provided evidence.

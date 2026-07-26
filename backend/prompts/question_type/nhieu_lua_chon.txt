@@ -1,8 +1,10 @@
 QUESTION TYPE: nhieu_lua_chon (Multiple Choice - Multiple Correct Answers)
 
 RULES:
-1. Generate exactly 4 options: A, B, C, D.
-2. AT LEAST TWO options must be correct.
-3. Distractors must be plausible and challenge the student's deep understanding.
-4. The `options` field in JSON must be an object with keys "A", "B", "C", "D".
-5. The `correct_answer` field MUST contain all correct keys separated by a comma and a space (e.g., "A, C", "B, C, D").
+1. Generate 4 or 5 options. Use keys A, B, C, D for 4 options, or A, B, C, D, E for 5 options.
+2. AT LEAST TWO options must be correct, but not all options should be correct.
+3. Each correct option must be independently supported by the context; do not mark an option correct because it sounds generally true.
+4. Distractors must be plausible, same-domain, and designed to challenge deep understanding without relying on external facts.
+5. The `options` field in JSON must be an object with exactly the generated option keys.
+6. The `correct_answer` field MUST contain all correct keys separated by a comma and a space (e.g., "A, C", "B, C, D", "A, C, E").
+7. Do not use source-reference phrasing such as "Theo tài liệu", "Theo chương", "Theo mô tả", or similar wording.

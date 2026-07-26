@@ -27,7 +27,7 @@ QUESTION_TYPE_RETRY_RULES = {
     "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
     "tinh_huong": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
     "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; correct_answer must be "A" or "B".',
-    "nhieu_lua_chon": 'options must contain exactly "A", "B", "C", "D"; correct_answer must contain at least two comma-separated keys.',
+    "nhieu_lua_chon": 'options must contain either "A", "B", "C", "D" or "A", "B", "C", "D", "E"; correct_answer must contain at least two comma-separated keys but not every option key.',
     "dien_khuyet": 'options must be null; question text must contain "_____".',
     "ghep_cot": "options must be a matching object with numbered keys and extra lettered distractors.",
     "sap_xep": "options must contain ordered step keys; correct_answer must list every key in the correct order.",
@@ -394,13 +394,21 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
         if not isinstance(options, dict) or set(options.keys()) != {"A", "B"}:
             return "dung_sai phải có đúng 2 lựa chọn A/B"
 
-    elif question_type in ("trac_nghiem", "tinh_huong", "nhieu_lua_chon"):
+    elif question_type in ("trac_nghiem", "tinh_huong"):
         if not isinstance(options, dict) or set(options.keys()) != {"A", "B", "C", "D"}:
             return f"{question_type} phải có đúng 4 lựa chọn A/B/C/D"
-        if question_type == "nhieu_lua_chon":
-            correct_keys = [c.strip() for c in correct_answer.split(",") if c.strip()]
-            if len(correct_keys) < 2:
-                return "nhieu_lua_chon phải có ít nhất 2 đáp án đúng"
+
+    elif question_type == "nhieu_lua_chon":
+        valid_option_sets = ({"A", "B", "C", "D"}, {"A", "B", "C", "D", "E"})
+        if not isinstance(options, dict) or set(options.keys()) not in valid_option_sets:
+            return "nhieu_lua_chon phải có 4 hoặc 5 lựa chọn liên tiếp A/B/C/D(/E)"
+        correct_keys = [c.strip() for c in correct_answer.split(",") if c.strip()]
+        if len(correct_keys) < 2:
+            return "nhieu_lua_chon phải có ít nhất 2 đáp án đúng"
+        if len(correct_keys) >= len(options):
+            return "nhieu_lua_chon không được chọn tất cả lựa chọn làm đáp án đúng"
+        if any(key not in options for key in correct_keys):
+            return "nhieu_lua_chon có đáp án đúng không tồn tại trong options"
 
     elif question_type == "ghep_cot":
         if not isinstance(options, dict):

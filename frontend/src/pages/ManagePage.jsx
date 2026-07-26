@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   autoEvaluateQuestion,
+  createQuestion,
   deleteQuestion,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
@@ -12,7 +13,7 @@ import {
   submitQuestionForReview,
   updateQuestion,
 } from '../api/questions';
-import { deleteDocument, listDocuments } from '../api/documents';
+import { deleteDocument, listDocuments, updateDocument } from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
@@ -130,6 +131,100 @@ function questionCloIds(item) {
   return (item?.clos || []).map((clo) => refId(clo.id || clo)).filter(Boolean);
 }
 
+function renderChoiceEditor({
+  questionType,
+  rawOptions,
+  correctAnswer,
+  onOptionChange,
+  onCorrectAnswerChange,
+  onToggleCorrectAnswer,
+  keyPrefix,
+}) {
+  const entries = optionEntriesForQuestion({ questionType, rawOptions });
+
+  if (SINGLE_CHOICE_TYPES.has(questionType)) {
+    return (
+      <div className="draft-option-editor">
+        {entries.map((entry) => (
+          <label className="draft-option-row" key={entry.key}>
+            <input
+              type="radio"
+              name={`${keyPrefix}-answer`}
+              checked={correctAnswer === entry.key}
+              onChange={() => onCorrectAnswerChange(entry.key)}
+            />
+            <span className="draft-option-key">{entry.key}</span>
+            <input
+              className="field-input"
+              value={entry.value}
+              onChange={(event) => onOptionChange(entry.key, event.target.value)}
+            />
+          </label>
+        ))}
+      </div>
+    );
+  }
+
+  if (MULTI_CHOICE_TYPES.has(questionType)) {
+    const selectedAnswers = correctAnswerValues(correctAnswer);
+    return (
+      <div className="draft-option-editor">
+        {entries.map((entry) => (
+          <label className="draft-option-row" key={entry.key}>
+            <input
+              type="checkbox"
+              checked={selectedAnswers.includes(entry.key)}
+              onChange={() => onToggleCorrectAnswer(entry.key)}
+            />
+            <span className="draft-option-key">{entry.key}</span>
+            <input
+              className="field-input"
+              value={entry.value}
+              onChange={(event) => onOptionChange(entry.key, event.target.value)}
+            />
+          </label>
+        ))}
+      </div>
+    );
+  }
+
+  if (entries.length > 0) {
+    return (
+      <div className="draft-option-editor">
+        {entries.map((entry) => (
+          <label className="draft-option-row draft-option-row--plain" key={entry.key}>
+            <span className="draft-option-key">{entry.key}</span>
+            <input
+              className="field-input"
+              value={entry.value}
+              onChange={(event) => onOptionChange(entry.key, event.target.value)}
+            />
+          </label>
+        ))}
+        <label className="draft-edit-field">
+          <span>Đáp án đúng</span>
+          <input
+            className="field-input"
+            value={correctAnswer}
+            onChange={(event) => onCorrectAnswerChange(event.target.value)}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  return (
+    <label className="draft-edit-field">
+      <span>Đáp án đúng</span>
+      <input
+        className="field-input"
+        value={correctAnswer}
+        onChange={(event) => onCorrectAnswerChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
 function ManagePage() {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
@@ -171,6 +266,22 @@ function ManagePage() {
   const [publicationHistory, setPublicationHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
+
+  const [creatingQuestion, setCreatingQuestion] = useState(false);
+  const [newQuestionType, setNewQuestionType] = useState(QUESTION_TYPES[0]?.backend || '');
+  const [newContent, setNewContent] = useState('');
+  const [newRawOptions, setNewRawOptions] = useState(null);
+  const [newCorrectAnswer, setNewCorrectAnswer] = useState('');
+  const [newExplanation, setNewExplanation] = useState('');
+  const [newSubjectId, setNewSubjectId] = useState('');
+  const [newDocumentId, setNewDocumentId] = useState('');
+  const [newCloIds, setNewCloIds] = useState([]);
+  const [creatingSaving, setCreatingSaving] = useState(false);
+
+  const [editingDoc, setEditingDoc] = useState(null);
+  const [editDocTitle, setEditDocTitle] = useState('');
+  const [editDocSubjectId, setEditDocSubjectId] = useState('');
+  const [savingDoc, setSavingDoc] = useState(false);
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
@@ -399,6 +510,103 @@ function ManagePage() {
     }
   };
 
+  const newSubject = newSubjectId ? subjectById.get(newSubjectId) : null;
+  const newLearningOutcomes = (newSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
+
+  const openCreateQuestion = () => {
+    setNewQuestionType(QUESTION_TYPES[0]?.backend || '');
+    setNewContent('');
+    setNewRawOptions(null);
+    setNewCorrectAnswer('');
+    setNewExplanation('');
+    setNewSubjectId('');
+    setNewDocumentId('');
+    setNewCloIds([]);
+    setCreatingQuestion(true);
+  };
+
+  const closeCreateQuestion = () => {
+    if (creatingSaving) return;
+    setCreatingQuestion(false);
+  };
+
+  const toggleNewClo = (cloId) => {
+    setNewCloIds((current) => (
+      current.includes(cloId) ? current.filter((value) => value !== cloId) : [...current, cloId]
+    ));
+  };
+
+  const handleCreateQuestion = async (e) => {
+    e.preventDefault();
+    if (!newContent.trim()) {
+      alert('Nội dung câu hỏi không được để trống.');
+      return;
+    }
+    const answerValidationError = validateQuestionAnswer({
+      questionType: newQuestionType,
+      rawOptions: newRawOptions,
+      correctAnswer: newCorrectAnswer,
+    });
+    if (answerValidationError) {
+      alert(answerValidationError);
+      return;
+    }
+    setCreatingSaving(true);
+    try {
+      await createQuestion({
+        content: newContent.trim(),
+        question_type: newQuestionType,
+        question_data: {
+          options: newRawOptions,
+          correct_answer: newCorrectAnswer,
+          explanation: newExplanation,
+        },
+        subject_id: newSubjectId || null,
+        document_id: newDocumentId || null,
+        clo_ids: newCloIds,
+      });
+      setCreatingQuestion(false);
+      await fetchQuestions(searchTerm);
+    } catch (error) {
+      alert('Tạo câu hỏi thất bại: ' + error.message);
+    } finally {
+      setCreatingSaving(false);
+    }
+  };
+
+  const openEditDocument = (doc) => {
+    setEditingDoc(doc);
+    setEditDocTitle(doc.title || '');
+    setEditDocSubjectId(refId(doc.subject_id || doc.subject) || '');
+  };
+
+  const closeEditDocument = () => {
+    if (savingDoc) return;
+    setEditingDoc(null);
+  };
+
+  const handleSaveDocument = async (e) => {
+    e.preventDefault();
+    if (!editingDoc) return;
+    if (!editDocTitle.trim()) {
+      alert('Tên tài liệu không được để trống.');
+      return;
+    }
+    setSavingDoc(true);
+    try {
+      await updateDocument(editingDoc.id, {
+        title: editDocTitle.trim(),
+        subject_id: editDocSubjectId || null,
+      });
+      setEditingDoc(null);
+      await fetchDocuments();
+    } catch (error) {
+      alert('Cập nhật tài liệu thất bại: ' + error.message);
+    } finally {
+      setSavingDoc(false);
+    }
+  };
+
   const refreshAfterWorkflow = async (message, item) => {
     setWorkflowMessage(message);
     await fetchQuestions(searchTerm);
@@ -515,93 +723,15 @@ function ManagePage() {
 
   const renderEditAnswerEditor = () => {
     if (!editing) return null;
-    const questionType = questionAssessmentType(editing);
-    const entries = optionEntriesForQuestion({
-      questionType,
+    return renderChoiceEditor({
+      questionType: questionAssessmentType(editing),
       rawOptions: editRawOptions,
+      correctAnswer: editCorrectAnswer,
+      onOptionChange: updateEditOption,
+      onCorrectAnswerChange: setEditCorrectAnswer,
+      onToggleCorrectAnswer: toggleEditCorrectAnswer,
+      keyPrefix: `edit-${editing.id}`,
     });
-
-    if (SINGLE_CHOICE_TYPES.has(questionType)) {
-      return (
-        <div className="draft-option-editor">
-          {entries.map((entry) => (
-            <label className="draft-option-row" key={entry.key}>
-              <input
-                type="radio"
-                name={`edit-answer-${editing.id}`}
-                checked={editCorrectAnswer === entry.key}
-                onChange={() => setEditCorrectAnswer(entry.key)}
-              />
-              <span className="draft-option-key">{entry.key}</span>
-              <input
-                className="field-input"
-                value={entry.value}
-                onChange={(event) => updateEditOption(entry.key, event.target.value)}
-              />
-            </label>
-          ))}
-        </div>
-      );
-    }
-
-    if (MULTI_CHOICE_TYPES.has(questionType)) {
-      const selectedAnswers = correctAnswerValues(editCorrectAnswer);
-      return (
-        <div className="draft-option-editor">
-          {entries.map((entry) => (
-            <label className="draft-option-row" key={entry.key}>
-              <input
-                type="checkbox"
-                checked={selectedAnswers.includes(entry.key)}
-                onChange={() => toggleEditCorrectAnswer(entry.key)}
-              />
-              <span className="draft-option-key">{entry.key}</span>
-              <input
-                className="field-input"
-                value={entry.value}
-                onChange={(event) => updateEditOption(entry.key, event.target.value)}
-              />
-            </label>
-          ))}
-        </div>
-      );
-    }
-
-    if (entries.length > 0) {
-      return (
-        <div className="draft-option-editor">
-          {entries.map((entry) => (
-            <label className="draft-option-row draft-option-row--plain" key={entry.key}>
-              <span className="draft-option-key">{entry.key}</span>
-              <input
-                className="field-input"
-                value={entry.value}
-                onChange={(event) => updateEditOption(entry.key, event.target.value)}
-              />
-            </label>
-          ))}
-          <label className="draft-edit-field">
-            <span>Đáp án đúng</span>
-            <input
-              className="field-input"
-              value={editCorrectAnswer}
-              onChange={(event) => setEditCorrectAnswer(event.target.value)}
-            />
-          </label>
-        </div>
-      );
-    }
-
-    return (
-      <label className="draft-edit-field">
-        <span>Đáp án đúng</span>
-        <input
-          className="field-input"
-          value={editCorrectAnswer}
-          onChange={(event) => setEditCorrectAnswer(event.target.value)}
-        />
-      </label>
-    );
   };
 
   return (
@@ -668,6 +798,11 @@ function ManagePage() {
               <div className="list-card-header">
                 <h3>Danh sách câu hỏi</h3>
                 <div className="list-toolbar">
+                  {canEditQuestions && (
+                    <button type="button" className="btn btn--primary" onClick={openCreateQuestion}>
+                      + Thêm câu hỏi
+                    </button>
+                  )}
                   <select className="field-select" defaultValue="ctdl">
                     <option value="ctdl">Cấu trúc dữ liệu</option>
                   </select>
@@ -860,6 +995,14 @@ function ManagePage() {
 	                        </div>
 	                        <button
 	                          type="button"
+	                          className="icon-btn doc-edit-btn"
+	                          title="Sửa tài liệu"
+	                          onClick={() => openEditDocument(d)}
+	                        >
+	                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+	                        </button>
+	                        <button
+	                          type="button"
 	                          className="icon-btn icon-btn--danger doc-delete-btn"
 	                          title="Xoá tài liệu"
 	                          disabled={deletingDocId === d.id}
@@ -1033,6 +1176,185 @@ function ManagePage() {
               </button>
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {creatingQuestion && (
+        <div className="modal-overlay" onClick={closeCreateQuestion}>
+          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreateQuestion}>
+            <h3 className="profile-card-title">Thêm câu hỏi thủ công</h3>
+
+            <div className="field-group">
+              <label className="field-label">Loại câu hỏi</label>
+              <select
+                className="field-select"
+                value={newQuestionType}
+                onChange={(e) => {
+                  setNewQuestionType(e.target.value);
+                  setNewRawOptions(null);
+                  setNewCorrectAnswer('');
+                }}
+              >
+                {QUESTION_TYPES.map((type) => (
+                  <option key={type.backend} value={type.backend}>{type.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Nội dung câu hỏi</label>
+              <textarea
+                className="field-input"
+                rows={3}
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Lựa chọn và đáp án</label>
+              {renderChoiceEditor({
+                questionType: newQuestionType,
+                rawOptions: newRawOptions,
+                correctAnswer: newCorrectAnswer,
+                onOptionChange: (key, value) => {
+                  const entries = optionEntriesForQuestion({ questionType: newQuestionType, rawOptions: newRawOptions });
+                  const nextEntries = entries.map((entry) => (entry.key === key ? { ...entry, value } : entry));
+                  setNewRawOptions(entriesToOptions(nextEntries));
+                },
+                onCorrectAnswerChange: setNewCorrectAnswer,
+                onToggleCorrectAnswer: (key) => {
+                  const entries = optionEntriesForQuestion({ questionType: newQuestionType, rawOptions: newRawOptions });
+                  const currentValues = correctAnswerValues(newCorrectAnswer);
+                  const nextValues = currentValues.includes(key)
+                    ? currentValues.filter((value) => value !== key)
+                    : [...currentValues, key];
+                  setNewCorrectAnswer(joinCorrectValues(nextValues, entries));
+                },
+                keyPrefix: 'new',
+              })}
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Môn học</label>
+              <select
+                className="field-select"
+                value={newSubjectId}
+                onChange={(e) => {
+                  setNewSubjectId(e.target.value);
+                  setNewCloIds([]);
+                }}
+              >
+                <option value="">Không chọn</option>
+                {subjects.map((subject) => (
+                  <option key={refId(subject)} value={refId(subject)}>{subject.name || subject.title || refId(subject)}</option>
+                ))}
+              </select>
+            </div>
+
+            {newSubjectId && (
+              <div className="field-group">
+                <label className="field-label">Chuẩn đầu ra (CLO)</label>
+                {newLearningOutcomes.length > 0 ? (
+                  <div className="clo-option-list">
+                    {newLearningOutcomes.map((clo) => {
+                      const cloId = refId(clo);
+                      return (
+                        <label className="clo-option" key={cloId}>
+                          <input
+                            type="checkbox"
+                            checked={newCloIds.includes(cloId)}
+                            onChange={() => toggleNewClo(cloId)}
+                          />
+                          <span>
+                            <b>{clo.clo_code || clo.code}</b>
+                            {clo.description}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="clo-empty">Môn này chưa có CLO trong danh mục.</p>
+                )}
+              </div>
+            )}
+
+            {canManageDocuments && (
+              <div className="field-group">
+                <label className="field-label">Tài liệu nguồn (tuỳ chọn)</label>
+                <select
+                  className="field-select"
+                  value={newDocumentId}
+                  onChange={(e) => setNewDocumentId(e.target.value)}
+                >
+                  <option value="">Không chọn</option>
+                  {documents.map((doc) => (
+                    <option key={doc.id} value={doc.id}>{doc.title}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="field-group">
+              <label className="field-label">Giải thích</label>
+              <textarea
+                className="field-input"
+                rows={2}
+                value={newExplanation}
+                onChange={(e) => setNewExplanation(e.target.value)}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={closeCreateQuestion} disabled={creatingSaving}>
+                Huỷ
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={creatingSaving}>
+                {creatingSaving ? 'Đang tạo...' : 'Tạo câu hỏi'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {editingDoc && (
+        <div className="modal-overlay" onClick={closeEditDocument}>
+          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveDocument}>
+            <h3 className="profile-card-title">Sửa tài liệu</h3>
+
+            <div className="field-group">
+              <label className="field-label">Tên tài liệu</label>
+              <input
+                className="field-input"
+                value={editDocTitle}
+                onChange={(e) => setEditDocTitle(e.target.value)}
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Môn học</label>
+              <select
+                className="field-select"
+                value={editDocSubjectId}
+                onChange={(e) => setEditDocSubjectId(e.target.value)}
+              >
+                <option value="">Không chọn</option>
+                {subjects.map((subject) => (
+                  <option key={refId(subject)} value={refId(subject)}>{subject.name || subject.title || refId(subject)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={closeEditDocument} disabled={savingDoc}>
+                Huỷ
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={savingDoc}>
+                {savingDoc ? 'Đang lưu...' : 'Lưu thay đổi'}
               </button>
             </div>
           </form>

@@ -18,6 +18,7 @@ from modules.generation.schemas import (
 )
 from modules.generation.llm.deepseek import DeepseekProvider
 from modules.generation.llm.factory import get_llm_service
+from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.question import _build_retry_prompt, _check_type_format
 from modules.questions.schemas import QuestionCreateRequest, QuestionUpdateRequest
 from modules.questions.repository import MongoQuestionRepository
@@ -257,6 +258,18 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("dung_sai", output_format)
         self.assertIn('"A": "Đúng", "B": "Sai"', output_format)
 
+    def test_question_rule_is_loaded_into_generation_prompt(self):
+        prompt = PromptBuilder().build(
+            context="Stack hoạt động theo nguyên tắc LIFO.",
+            bloom_level="hieu",
+            question_type="trac_nghiem",
+            num_questions=1,
+        )
+
+        self.assertIn("FORBIDDEN QUESTION RULES", prompt)
+        self.assertIn("Do not create source-referencing questions", prompt)
+        self.assertIn("If any rule is violated, reject the item and generate a replacement", prompt)
+
     def test_mcq_validation_rejects_two_option_shape(self):
         error = _check_type_format(
             {
@@ -290,6 +303,47 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertIn('exactly "A", "B", "C", "D"', prompt)
         self.assertIn("Generate exactly 2 additional questions", prompt)
+
+    def test_multi_answer_validation_allows_five_options(self):
+        self.assertIsNone(
+            _check_type_format(
+                {
+                    "question": "Câu hỏi mẫu?",
+                    "options": {
+                        "A": "Một",
+                        "B": "Hai",
+                        "C": "Ba",
+                        "D": "Bốn",
+                        "E": "Năm",
+                    },
+                    "correct_answer": "A, C, E",
+                },
+                "nhieu_lua_chon",
+            )
+        )
+
+    def test_multi_answer_validation_rejects_all_options_correct(self):
+        error = _check_type_format(
+            {
+                "question": "Câu hỏi mẫu?",
+                "options": {"A": "Một", "B": "Hai", "C": "Ba", "D": "Bốn", "E": "Năm"},
+                "correct_answer": "A, B, C, D, E",
+            },
+            "nhieu_lua_chon",
+        )
+        self.assertIn("không được chọn tất cả", error)
+
+    def test_retry_prompt_allows_five_option_multi_answer_shape(self):
+        prompt = _build_retry_prompt(
+            original_prompt="ORIGINAL",
+            question_type="nhieu_lua_chon",
+            bloom_level="phan_tich",
+            missing_count=3,
+            validation_errors=["nhieu_lua_chon phải có 4 hoặc 5 lựa chọn"],
+            avoid_questions=[],
+        )
+        self.assertIn('"A", "B", "C", "D", "E"', prompt)
+        self.assertIn("Generate exactly 3 additional questions", prompt)
 
     def test_generation_preset_payload_limits_plan_rows(self):
         payload = GenerationPresetPayload(

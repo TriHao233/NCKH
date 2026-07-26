@@ -6,3 +6,5 @@ RULES:
 3. There is only ONE precise correct answer (the exact text that fills the blank).
 4. The `options` field in JSON MUST be set to `null`.
 5. The `correct_answer` field MUST contain the exact word/phrase to fill in the blank.
+6. The sentence must be meaningful as a standalone academic statement without saying "Theo tài liệu", "Theo mô tả", or similar wording.
+7. Do not blank out a phrase that requires outside knowledge or has multiple valid synonyms not anchored in the context.

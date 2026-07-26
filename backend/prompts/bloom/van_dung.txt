@@ -6,3 +6,5 @@ KEY VERBS TO TARGET: Apply, calculate, manipulate, operate, solve, use, practice
 RULE: 
 - Present a concrete, practical scenario or a new condition based on the context. 
 - The student must select the correct application of a learned concept, formula, or theory to solve the given problem.
+- The scenario may change surface details, but the rule, method, syntax, constraint, or procedure being applied must come from the context.
+- The correct answer should require choosing what to do next, which rule to use, or which result follows from applying the learned knowledge.

@@ -44,7 +44,13 @@ export async function apiRequest(
   const isJson = response.headers
     .get("content-type")
     ?.includes("application/json");
-  const payload = isJson ? await response.json() : await response.text();
+  const rawText = response.status === 204 ? "" : await response.text();
+  let payload = rawText;
+  if (isJson && rawText) {
+    payload = JSON.parse(rawText);
+  } else if (isJson) {
+    payload = null;
+  }
   if (!response.ok) {
     throw new ApiError(
       payload?.detail || payload?.message || "Yêu cầu API thất bại",

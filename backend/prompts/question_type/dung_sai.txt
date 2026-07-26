@@ -5,3 +5,5 @@ RULES:
 2. The statement must be unambiguously true or unambiguously false.
 3. The `options` field in JSON MUST be exactly: {"A": "Đúng", "B": "Sai"}.
 4. The `correct_answer` field MUST be either "A" or "B".
+5. Avoid trick wording, double negatives, and source-reference phrases such as "Theo tài liệu" or "Theo chương".
+6. If writing a false statement, make it false by changing one meaningful concept, condition, relation, or consequence from the context, not by adding unrelated outside information.

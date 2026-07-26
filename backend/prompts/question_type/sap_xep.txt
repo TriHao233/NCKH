@@ -7,3 +7,6 @@ RULES:
 4. The `options` field in JSON must list the shuffled steps. Example:
    "options": {"1": "Step X", "2": "Step Y", "3": "Step Z", "4": "Step W"}
 5. The `correct_answer` field MUST provide the correct chronological sequence of the keys, separated by commas. Example: "3, 1, 4, 2".
+6. Use this type only when the context contains a genuine order, workflow, algorithm, lifecycle, priority sequence, or dependency chain.
+7. Each step must be concise, atomic, and uniquely placeable. Do not split one action into duplicate micro-steps just to reach 4 items.
+8. The stem should ask students to arrange the process itself, not to arrange sentences "from the document".

@@ -32,6 +32,10 @@ export function getQuestion(id) {
   return apiRequest(`/questions/${id}`);
 }
 
+export function createQuestion(payload) {
+  return apiRequest('/questions', { method: 'POST', body: payload });
+}
+
 export function updateQuestion(id, payload) {
   return apiRequest(`/questions/${id}`, { method: 'PATCH', body: payload });
 }

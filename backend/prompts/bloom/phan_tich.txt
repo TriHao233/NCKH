@@ -6,3 +6,5 @@ KEY VERBS TO TARGET: Analyze, break down, compare, contrast, deduce, differentia
 RULE: 
 - The question must require identifying relationships, underlying structures, or root causes.
 - The student must demonstrate understanding of how different parts of the knowledge interact with each other.
+- Ask about why one component affects another, how steps depend on each other, how concepts differ under specific conditions, or what cause leads to a stated effect.
+- Avoid questions that can be answered by naming a single definition; the learner must separate parts, compare alternatives, or infer a relationship grounded in the context.

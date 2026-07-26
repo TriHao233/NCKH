@@ -13,6 +13,10 @@ export function getDocument(id) {
   return apiRequest(`/documents/${id}`);
 }
 
+export function updateDocument(id, payload) {
+  return apiRequest(`/documents/${id}`, { method: 'PATCH', body: payload });
+}
+
 export function deleteDocument(id) {
   return apiRequest(`/documents/${id}`, { method: 'DELETE' });
 }

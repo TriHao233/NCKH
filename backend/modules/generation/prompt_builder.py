@@ -34,6 +34,7 @@ class PromptBuilder:
         avoid_questions: list[str] | None = None,
     ):
         system = self._load_template("system", "system.txt")
+        question_rule = self._load_template("question_rule", "question_rule.txt")
         bloom = self._load_template(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
         qtype = self._load_template(f"question_type:{question_type}", f"question_type/{question_type}.txt")
         output = self._load_template("output_format", "output_format.txt")
@@ -61,6 +62,7 @@ Do not repeat or paraphrase the following previously generated questions:
         # Ráp lại với cấu trúc tối ưu hóa
         return f"""
 {system}
+{question_rule}
 {bloom}
 {qtype}
 

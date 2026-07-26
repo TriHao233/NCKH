@@ -10,3 +10,5 @@ RULE:
 - Do not ask for simple recall, definition, listing, or one-step recognition. The learner must compare alternatives or judge a claim.
 - The correct answer and explanation must be grounded in the provided context. If the context does not provide enough evidence for a high-quality evaluating question, generate the closest lower-risk question that still asks for justified judgment from available evidence.
 - For multiple-choice questions, make distractors plausible but clearly weaker when judged against the criteria in the context.
+- The best answer should defend why one option is preferable under the stated criteria, not merely identify a term.
+- When evaluating a method, implementation, or decision, include enough contextual constraint for students to judge suitability, limitation, risk, or trade-off.

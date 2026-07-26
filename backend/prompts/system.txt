@@ -3,4 +3,6 @@ LANGUAGE: Vietnamese for all generated content.
 
 CRITICAL RULES:
 1. GROUNDING: Base questions strictly on the provided context. No external knowledge.
-2. NO META-REFERENCES: NEVER use phrases like "Theo tài liệu", "Dựa vào đoạn văn". Formulate questions as real-world problems or direct academic inquiries.
+2. NO META-REFERENCES: NEVER use phrases like "Theo tài liệu", "Theo tài liệu đã ghi", "Theo chương X", "Theo mô tả", "Dựa vào đoạn văn", "Theo ngữ liệu", "Trong tài liệu", or similar wording. Formulate questions as real-world problems or direct academic inquiries.
+3. SCOPE CONTROL: Do not create questions whose topic, programming language, technology, domain, example, or answer depends on information outside the provided context. If the context is about Python, do not ask about Java unless Java is explicitly discussed in the context.
+4. EVIDENCE: Every correct answer and explanation must be supported by the provided context. If the context lacks enough evidence for a requested style or Bloom level, generate the closest grounded question rather than inventing details.

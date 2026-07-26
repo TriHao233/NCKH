@@ -4,7 +4,7 @@ Return ONLY a raw JSON object strictly matching this schema. DO NOT wrap in ```j
 CRITICAL FORMAT RULES:
 - For `trac_nghiem` and `tinh_huong`, `options` MUST be an object with exactly 4 keys: "A", "B", "C", "D".
 - For `dung_sai`, `options` MUST be an object with exactly 2 keys: "A": "Đúng", "B": "Sai".
-- For `nhieu_lua_chon`, `options` MUST be an object with exactly 4 keys: "A", "B", "C", "D", and `correct_answer` MUST contain at least 2 comma-separated keys.
+- For `nhieu_lua_chon`, `options` MUST be an object with 4 or 5 keys: "A", "B", "C", "D" or "A", "B", "C", "D", "E"; `correct_answer` MUST contain at least 2 comma-separated keys and must not contain every option key.
 - For `dien_khuyet`, `options` MUST be null and the question text MUST contain "_____".
 - For `ghep_cot` and `sap_xep`, follow the corresponding QUESTION TYPE rules above.
 
@@ -13,7 +13,7 @@ SCHEMA:
   "questions": [
     {
       "question": "string",
-      "options": {"A": "...", "B": "...", "C": "...", "D": "..."} or null depending on question_type,
+      "options": {"A": "...", "B": "...", "C": "...", "D": "..."} or {"A": "...", "B": "...", "C": "...", "D": "...", "E": "..."} or null depending on question_type,
       "correct_answer": "string",
       "explanation": "string",
       "question_type": "string",

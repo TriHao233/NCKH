@@ -6,3 +6,5 @@ KEY VERBS TO TARGET: Explain, distinguish, interpret, summarize, illustrate, par
 RULE: 
 - Test the student's ability to interpret, paraphrase, or summarize ideas. 
 - The question should require the student to explain "WHY" or "HOW" a concept works, rather than just recognizing its name.
+- Ask students to connect a concept with its purpose, behavior, condition, consequence, or category using the meaning stated in the context.
+- Distractors should reflect common misunderstandings of the concept, not unrelated facts or keyword swaps.

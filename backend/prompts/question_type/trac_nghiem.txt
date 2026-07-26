@@ -6,3 +6,5 @@ RULES:
 3. Distractors (incorrect options) must be plausible and related to the context, avoiding obviously wrong choices.
 4. Strictly AVOID using lazy options like "Tất cả các ý trên đều đúng" (All of the above) or "Không có ý nào đúng" (None of the above).
 5. The `options` field in JSON must be an object with keys "A", "B", "C", "D".
+6. The stem must ask the subject matter directly; do not start with "Theo tài liệu", "Theo chương", "Theo mô tả", or similar source-reference phrases.
+7. Keep every option within the same topic and domain as the context. Do not introduce outside languages, technologies, or facts unless the context explicitly includes them.

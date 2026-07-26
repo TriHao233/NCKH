@@ -547,6 +547,7 @@ def _seed_prompt_templates(db, now: datetime) -> None:
     prompt_root = resolve_path(settings.prompts_dir)
     specs = [
         ("system", "SYSTEM", "System prompt", prompt_root / "system.txt"),
+        ("question_rule", "QUESTION_RULE", "Forbidden question rules", prompt_root / "question_rule.txt"),
         ("output_format", "OUTPUT_FORMAT", "Output format", prompt_root / "output_format.txt"),
     ]
     for folder, kind in (

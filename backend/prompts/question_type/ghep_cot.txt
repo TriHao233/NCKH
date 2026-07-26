@@ -13,3 +13,7 @@ RULES:
      "a": "Definition X", "b": "Definition Y", "c": "Definition Z", "d": "Definition W", "e": "Distractor Definition (does not match any term)"
    }
 5. The `correct_answer` field MUST follow the exact format of pairs separated by commas, covering every numbered item (the distractor letter is NOT included). Example: "1-b, 2-a, 3-c, 4-d".
+6. Group 1 should contain comparable items such as terms, commands, steps, components, concepts, or problem cases from the same topic.
+7. Group 2 should contain precise descriptions, functions, outcomes, constraints, or examples that can be matched by meaning, not by obvious keyword repetition.
+8. The distractor must be plausible and same-domain, but unsupported or mismatched for every numbered item.
+9. Do not create matching pairs from topics outside the context, and do not introduce unrelated technologies or subjects.

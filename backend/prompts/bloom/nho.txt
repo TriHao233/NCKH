@@ -6,4 +6,6 @@ KEY VERBS TO TARGET: Define, describe, list, name, identify, present, state, rel
 RULE: 
 - Ask directly about terms, facts, or concepts. 
 - The question must test if the student can recall specific information directly from the learned material.
+- Focus on precise identifiers, definitions, properties, commands, syntax, roles, or steps that appear in the context.
+- Avoid vague memory checks; each answer must be a specific item that can be verified from the context.
 - Do not ask for deep explanations or complex problem-solving.
