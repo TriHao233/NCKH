@@ -29,6 +29,7 @@ RAG_COLLECTIONS = (
     "generation_runs",
     "questions",
     "question_versions",
+    "evaluation_jobs",
     "question_evaluations",
     "question_reviews",
     "audit_logs",
@@ -71,6 +72,7 @@ VALIDATORS = {
                 "email": {"bsonType": "string", "minLength": 3},
                 "display_name": {"bsonType": "string", "minLength": 1},
                 "role": {"enum": ["Admin", "Teacher", "Reviewer"]},
+                "generation_presets": {"bsonType": "array"},
                 "is_active": {"bsonType": "bool"},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
@@ -93,6 +95,7 @@ VALIDATORS = {
                     "enum": ["queued", "processing", "completed", "failed"]
                 },
                 "result": {"bsonType": ["object", "null"]},
+                "metrics": {"bsonType": ["object", "null"]},
                 "error_message": {"bsonType": ["string", "null"]},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
@@ -154,14 +157,29 @@ VALIDATORS = {
             "properties": {
                 "schema_version": {"bsonType": "int", "minimum": 2},
                 "question_code": {"bsonType": "string", "minLength": 1},
+                "created_by_user_id": {"bsonType": ["objectId", "null"]},
                 "current_version": {"bsonType": "int", "minimum": 1},
                 "current_version_id": {"bsonType": "objectId"},
                 "lifecycle_status": {"enum": ["ACTIVE", "ARCHIVED"]},
                 "evaluation_status": {
-                    "enum": ["NOT_STARTED", "PROCESSING", "PASSED", "FAILED"]
+                    "enum": [
+                        "NOT_STARTED",
+                        "QUEUED",
+                        "PROCESSING",
+                        "PASSED",
+                        "FAILED",
+                        "ERROR",
+                        "STALE",
+                    ]
                 },
                 "review_status": {
-                    "enum": ["PENDING", "APPROVED", "REJECTED", "NEEDS_REVISION"]
+                    "enum": [
+                        "DRAFT",
+                        "PENDING",
+                        "APPROVED",
+                        "REJECTED",
+                        "NEEDS_REVISION",
+                    ]
                 },
                 "publication_status": {
                     "enum": ["NOT_PUBLISHED", "PUBLISHED", "STALE", "FAILED"]
@@ -197,6 +215,56 @@ VALIDATORS = {
                 "sources": {"bsonType": "array"},
                 "content_hash": {"bsonType": "string", "minLength": 1},
                 "created_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "evaluation_jobs": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "schema_version",
+                "question_id",
+                "question_version_id",
+                "question_version",
+                "status",
+                "evaluator_model_code",
+                "trigger",
+                "attempt_no",
+                "queued_at",
+                "updated_at",
+            ],
+            "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
+                "question_id": {"bsonType": "objectId"},
+                "question_version_id": {"bsonType": "objectId"},
+                "question_version": {"bsonType": "int", "minimum": 1},
+                "question_snapshot_hash": {"bsonType": ["string", "null"]},
+                "dedupe_key": {"bsonType": "string", "minLength": 1},
+                "status": {
+                    "enum": [
+                        "QUEUED",
+                        "PROCESSING",
+                        "COMPLETED",
+                        "ERROR",
+                        "STALE",
+                        "CANCELLED",
+                    ]
+                },
+                "trigger": {"bsonType": "string", "minLength": 1},
+                "requested_by_user_id": {"bsonType": ["objectId", "null"]},
+                "evaluator_model_code": {"bsonType": "string", "minLength": 1},
+                "policy_snapshot": {"bsonType": "object"},
+                "prompt_snapshot": {"bsonType": "object"},
+                "source_snapshot": {"bsonType": "array"},
+                "attempt_no": {"bsonType": "int", "minimum": 1},
+                "max_attempts": {"bsonType": "int", "minimum": 1},
+                "result": {"bsonType": ["object", "null"]},
+                "error": {"bsonType": ["object", "null"]},
+                "queued_at": {"bsonType": "date"},
+                "started_at": {"bsonType": ["date", "null"]},
+                "finished_at": {"bsonType": ["date", "null"]},
+                "duration_ms": {"bsonType": ["int", "null"]},
+                "updated_at": {"bsonType": "date"},
             },
         }
     },
@@ -335,6 +403,7 @@ def _ensure_indexes() -> None:
     rag_db.questions.create_indexes(
         [
             IndexModel([("question_code", ASCENDING)], unique=True, name="uq_question_code"),
+            IndexModel([("created_by_user_id", ASCENDING), ("updated_at", DESCENDING)], name="ix_questions_owner"),
             IndexModel(
                 [
                     ("review_status", ASCENDING),
@@ -349,6 +418,20 @@ def _ensure_indexes() -> None:
         [
             IndexModel([("question_id", ASCENDING), ("version", ASCENDING)], unique=True, name="uq_question_version"),
             IndexModel([("sources.chunk_id", ASCENDING)], name="ix_question_sources"),
+        ]
+    )
+    rag_db.evaluation_jobs.create_indexes(
+        [
+            IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_evaluation_jobs_queue"),
+            IndexModel([("question_version_id", ASCENDING), ("created_at", DESCENDING)], name="ix_evaluation_jobs_version"),
+            IndexModel(
+                [("dedupe_key", ASCENDING)],
+                unique=True,
+                name="uq_active_evaluation_job",
+                partialFilterExpression={
+                    "$or": [{"status": "QUEUED"}, {"status": "PROCESSING"}],
+                },
+            ),
         ]
     )
     rag_db.question_evaluations.create_index(
@@ -426,11 +509,19 @@ def _seed_reference_data() -> None:
         },
         {
             "model_code": "deepseek",
-            "model_name": "deepseek-r1:8b",
+            "model_name": "deepseek-r1",
             "runtime": "OLLAMA",
             "kind": "REASONING",
             "capabilities": ["QUESTION_EVALUATION", "QUESTION_GENERATION"],
             "priority": 20,
+        },
+        {
+            "model_code": "deepseek-r1",
+            "model_name": "deepseek-r1",
+            "runtime": "OLLAMA",
+            "kind": "REASONING",
+            "capabilities": ["QUESTION_EVALUATION"],
+            "priority": 15,
         },
     ):
         db.ai_models.update_one(
@@ -458,7 +549,11 @@ def _seed_prompt_templates(db, now: datetime) -> None:
         ("system", "SYSTEM", "System prompt", prompt_root / "system.txt"),
         ("output_format", "OUTPUT_FORMAT", "Output format", prompt_root / "output_format.txt"),
     ]
-    for folder, kind in (("bloom", "BLOOM"), ("question_type", "QUESTION_TYPE")):
+    for folder, kind in (
+        ("bloom", "BLOOM"),
+        ("question_type", "QUESTION_TYPE"),
+        ("evaluation", "EVALUATION"),
+    ):
         folder_path = prompt_root / folder
         if folder_path.exists():
             for path in folder_path.glob("*.txt"):

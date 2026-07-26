@@ -323,7 +323,7 @@ function HomePage() {
                 </svg>
               </div>
               <h3 className="fc-title">Quản lý trực quan</h3>
-              <p className="fc-desc">Admin Dashboard dễ sử dụng, phân quyền rõ ràng, hỗ trợ giảng viên tinh chỉnh ngân hàng câu hỏi linh hoạt.</p>
+              <p className="fc-desc">Bảng quản trị dễ sử dụng, phân quyền rõ ràng, hỗ trợ giảng viên tinh chỉnh ngân hàng câu hỏi linh hoạt.</p>
             </div>
 
             <div className="feature-card">

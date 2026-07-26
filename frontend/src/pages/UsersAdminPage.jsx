@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createUser, deleteUser, listUsers, updateUser } from '../api/users';
 import '../css/UsersAdminPage.css';
 
-const ROLE_LABEL = { Admin: 'Quản trị viên', Teacher: 'Giảng viên' };
+const ROLE_LABEL = {
+  Admin: 'Quản trị viên',
+  Teacher: 'Giảng viên',
+  Reviewer: 'Người duyệt',
+};
 
 const emptyCreateForm = {
   email: '',
@@ -65,6 +69,7 @@ function UsersAdminPage() {
       all: users.length,
       Admin: users.filter((u) => u.role === 'Admin').length,
       Teacher: users.filter((u) => u.role === 'Teacher').length,
+      Reviewer: users.filter((u) => u.role === 'Reviewer').length,
     }),
     [users],
   );
@@ -143,10 +148,10 @@ function UsersAdminPage() {
       <section className="page-hero">
         <div className="container users-hero-row">
           <div>
-            <div className="page-hero-badge">Admin Dashboard</div>
+            <div className="page-hero-badge">Khu vực quản trị</div>
             <h1 className="page-hero-title">Quản lý người dùng</h1>
             <p className="page-hero-desc">
-              Quản lý tài khoản giảng viên và quản trị viên trong hệ thống ngân hàng câu hỏi.
+              Quản lý tài khoản giảng viên, người duyệt và quản trị viên trong hệ thống ngân hàng câu hỏi.
             </p>
           </div>
           <div className="users-hero-actions">
@@ -171,6 +176,10 @@ function UsersAdminPage() {
             <button type="button" className={`stat-card ${roleFilter === 'Teacher' ? 'stat-card--active' : ''}`} onClick={() => setRoleFilter('Teacher')}>
               <b>{counts.Teacher}</b>
               <span>Giảng viên</span>
+            </button>
+            <button type="button" className={`stat-card ${roleFilter === 'Reviewer' ? 'stat-card--active' : ''}`} onClick={() => setRoleFilter('Reviewer')}>
+              <b>{counts.Reviewer}</b>
+              <span>Người duyệt</span>
             </button>
           </div>
 
@@ -276,6 +285,7 @@ function UsersAdminPage() {
                 onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
               >
                 <option value="Teacher">Giảng viên</option>
+                <option value="Reviewer">Người duyệt</option>
                 <option value="Admin">Quản trị viên</option>
               </select>
             </div>
@@ -315,6 +325,7 @@ function UsersAdminPage() {
               <label className="field-label">Vai trò</label>
               <select className="field-select" value={editRole} onChange={(e) => setEditRole(e.target.value)}>
                 <option value="Teacher">Giảng viên</option>
+                <option value="Reviewer">Người duyệt</option>
                 <option value="Admin">Quản trị viên</option>
               </select>
             </div>

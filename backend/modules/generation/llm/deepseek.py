@@ -1,22 +1,29 @@
 import httpx
 import logging
 
+from core.config import settings
+
 logger = logging.getLogger(__name__)
 
 class DeepseekProvider:
-    def __init__(self):
-        self.url = "http://localhost:11434/api/generate"
-        self.model_name = "deepseek-r1:8b"
+    def __init__(self, model_name: str | None = None):
+        self.url = settings.ollama_generate_url
+        self.model_name = (model_name or settings.deepseek_model_name).strip()
 
     async def generate_text(self, prompt: str) -> str:
         payload = {
             "model": self.model_name,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": settings.deepseek_temperature,
+                "num_predict": settings.deepseek_num_predict,
+            },
         }
 
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with httpx.AsyncClient(timeout=settings.deepseek_timeout_seconds) as client:
                 response = await client.post(self.url, json=payload)
                 response.raise_for_status()
                 result = response.json()

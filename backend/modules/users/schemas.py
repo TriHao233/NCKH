@@ -53,6 +53,33 @@ class UserAdminUpdateRequest(UserSelfUpdateRequest):
     is_active: Optional[bool] = None
 
 
+class GenerationPresetPlanItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    questionTypeId: str = Field(..., min_length=1, max_length=50)
+    bloomId: str = Field(..., min_length=1, max_length=50)
+    count: int = Field(..., ge=1, le=10)
+
+
+class GenerationPresetPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=80)
+    planItems: list[GenerationPresetPlanItem] = Field(..., min_length=1, max_length=10)
+    instruction: str = Field("", max_length=1200)
+    targetHeading: Optional[str] = Field(None, max_length=300)
+
+
+class GenerationPresetResponse(GenerationPresetPayload):
+    id: str
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class GenerationPresetListResponse(BaseModel):
+    items: list[GenerationPresetResponse]
+
+
 class UserResponse(BaseModel):
     id: str
     firebase_uid: str

@@ -4,6 +4,7 @@ import { listDocuments } from '../api/documents';
 import { enqueueGenerateQuestions, getGenerateStatus } from '../api/generate';
 import { getOcrStatus, uploadOcrPdf } from '../api/ocr';
 import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
+import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
 import {
   BLOOM_LEVELS,
   QUESTION_TYPES,
@@ -66,6 +67,19 @@ function formatDateTime(value) {
   return date.toLocaleString('vi-VN');
 }
 
+function nowMs() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function formatDuration(value) {
+  if (!Number.isFinite(value) || value < 0) return '';
+  const totalSeconds = Math.max(1, Math.round(value / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
 function normalizeCount(value) {
   const parsed = Number(value);
   if (Number.isNaN(parsed)) return 1;
@@ -106,6 +120,19 @@ function presetInstructionValue(preset) {
     .map((item) => String(item || '').trim())
     .filter(Boolean);
   return [...new Set(parts)].join('\n');
+}
+
+function presetApiPayload(preset) {
+  return {
+    name: String(preset.name || '').trim(),
+    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, count }) => ({
+      questionTypeId,
+      bloomId,
+      count: normalizeCount(count),
+    })),
+    instruction: String(preset.instruction || '').trim(),
+    targetHeading: preset.targetHeading || null,
+  };
 }
 
 function documentPipeline(document) {
@@ -195,6 +222,7 @@ function canSubmitDraft(draft) {
 
 function GeneratePage() {
   const abortRef = useRef(null);
+  const timingRef = useRef({});
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const [statusDetail, setStatusDetail] = useState('');
@@ -217,6 +245,7 @@ function GeneratePage() {
   const [generationInfo, setGenerationInfo] = useState(null);
   const [drafts, setDrafts] = useState([]);
   const [generationSummary, setGenerationSummary] = useState([]);
+  const [timings, setTimings] = useState({});
   const [chunkReady, setChunkReady] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState(null);
   const [draftEditSnapshot, setDraftEditSnapshot] = useState(null);
@@ -240,6 +269,34 @@ function GeneratePage() {
     item.skipped_count > 0 || item.duplicate_count > 0 || (item.warnings || []).length > 0
   ));
   const submittableDraftCount = drafts.filter(canSubmitDraft).length;
+  const serverMetrics = generationInfo?.metrics?.server || {};
+  const hasServerMetrics = Number.isFinite(serverMetrics.processing_ms);
+  const hasTimings = Object.values(timings).some((value) => (
+    value === 'reused' || Number.isFinite(value)
+  )) || hasServerMetrics;
+  const timingItems = [
+    timings.documentMs === 'reused'
+      ? { label: 'Tài liệu', value: 'Đã OCR/index sẵn' }
+      : null,
+    Number.isFinite(timings.uploadMs)
+      ? { label: 'Upload', value: formatDuration(timings.uploadMs) }
+      : null,
+    Number.isFinite(timings.ocrMs)
+      ? { label: 'OCR', value: formatDuration(timings.ocrMs) }
+      : null,
+    Number.isFinite(timings.chunkMs)
+      ? { label: 'Chunk/Index', value: formatDuration(timings.chunkMs) }
+      : null,
+    Number.isFinite(timings.generateMs)
+      ? { label: 'Sinh câu hỏi', value: formatDuration(timings.generateMs) }
+      : null,
+    Number.isFinite(serverMetrics.processing_ms)
+      ? { label: 'Backend job', value: formatDuration(serverMetrics.processing_ms) }
+      : null,
+    Number.isFinite(timings.totalMs)
+      ? { label: 'Tổng', value: formatDuration(timings.totalMs) }
+      : null,
+  ].filter(Boolean);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -247,6 +304,23 @@ function GeneratePage() {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     return abortRef.current;
+  };
+
+  const setTimingValues = (patch) => {
+    timingRef.current = { ...timingRef.current, ...patch };
+    setTimings(timingRef.current);
+    return timingRef.current;
+  };
+
+  const resetTimings = (nextTimings = {}) => {
+    timingRef.current = nextTimings;
+    setTimings(nextTimings);
+  };
+
+  const markTiming = (key, startedAt) => {
+    const duration = Math.round(nowMs() - startedAt);
+    setTimingValues({ [key]: duration });
+    return duration;
   };
 
   const fetchReusableDocuments = async () => {
@@ -262,8 +336,34 @@ function GeneratePage() {
     }
   };
 
+  const syncGenerationPresets = async () => {
+    try {
+      const result = await listGenerationPresets();
+      const localPresets = loadStoredPresets();
+      const serverPresets = Array.isArray(result.items) ? result.items : [];
+      if (serverPresets.length === 0 && localPresets.length > 0) {
+        const migratedPresets = [];
+        for (const preset of localPresets.slice(0, 12)) {
+          const payload = presetApiPayload(preset);
+          if (!payload.name || payload.planItems.length === 0) continue;
+          migratedPresets.push(await saveGenerationPreset(payload));
+        }
+        if (migratedPresets.length > 0) {
+          setPresets(migratedPresets);
+          storePresets(migratedPresets);
+          return;
+        }
+      }
+      setPresets(serverPresets);
+      storePresets(serverPresets);
+    } catch {
+      setPresets(loadStoredPresets());
+    }
+  };
+
   useEffect(() => {
     fetchReusableDocuments();
+    syncGenerationPresets();
   }, []);
 
   const validateForm = () => {
@@ -321,15 +421,14 @@ function GeneratePage() {
     setPresetError('');
   };
 
-  const savePreset = (event) => {
+  const savePreset = async (event) => {
     event?.preventDefault();
     const name = presetName.trim();
     if (!name) {
       setPresetError('Vui lòng nhập tên mẫu.');
       return;
     }
-    const nextPreset = {
-      id: globalThis.crypto?.randomUUID?.() || `preset-${Date.now()}`,
+    const presetPayload = {
       name,
       planItems: planItems.map(({ questionTypeId, bloomId, count }) => ({
         questionTypeId,
@@ -337,34 +436,57 @@ function GeneratePage() {
         count: normalizeCount(count),
       })),
       instruction: teacherInstruction.trim(),
-      createdAt: new Date().toISOString(),
     };
-    const nextPresets = [nextPreset, ...presets].slice(0, 12);
     try {
+      const nextPreset = await saveGenerationPreset(presetPayload);
+      const nextPresets = [nextPreset, ...presets.filter((preset) => preset.id !== nextPreset.id)].slice(0, 12);
       storePresets(nextPresets);
       setPresets(nextPresets);
       setSelectedPresetId(nextPreset.id);
       closePresetDialog();
       setStatusDetail(`Đã lưu mẫu "${nextPreset.name}"`);
     } catch (err) {
-      setPresetError(`Lưu mẫu thất bại: ${err.message}`);
+      const fallbackPreset = {
+        id: globalThis.crypto?.randomUUID?.() || `preset-${Date.now()}`,
+        ...presetPayload,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const nextPresets = [fallbackPreset, ...presets].slice(0, 12);
+      try {
+        storePresets(nextPresets);
+        setPresets(nextPresets);
+        setSelectedPresetId(fallbackPreset.id);
+        closePresetDialog();
+        setStatusDetail(`Đã lưu mẫu "${fallbackPreset.name}" trên trình duyệt; chưa đồng bộ server.`);
+      } catch (storageError) {
+        setPresetError(`Lưu mẫu thất bại: ${storageError.message || err.message}`);
+      }
     }
   };
 
-  const deleteSelectedPreset = () => {
+  const deleteSelectedPreset = async () => {
     const preset = presets.find((item) => item.id === selectedPresetId);
     if (!preset) return;
-    if (!window.confirm(`Xóa mẫu cấu hình "${preset.name}" khỏi trình duyệt này?`)) {
+    if (!window.confirm(`Xóa mẫu cấu hình "${preset.name}"?`)) {
       return;
     }
     const nextPresets = presets.filter((item) => item.id !== selectedPresetId);
     try {
+      await deleteGenerationPreset(preset.id);
       storePresets(nextPresets);
       setPresets(nextPresets);
       setSelectedPresetId('');
       setStatusDetail(`Đã xóa mẫu "${preset.name}"`);
     } catch (err) {
-      alert(`Xóa mẫu thất bại: ${err.message}`);
+      try {
+        storePresets(nextPresets);
+        setPresets(nextPresets);
+        setSelectedPresetId('');
+        setStatusDetail(`Đã xóa mẫu "${preset.name}" trên trình duyệt; server chưa xác nhận.`);
+      } catch (storageError) {
+        alert(`Xóa mẫu thất bại: ${storageError.message || err.message}`);
+      }
     }
   };
 
@@ -630,6 +752,7 @@ function GeneratePage() {
     setBulkSubmittingDrafts(false);
     setActiveJobId('');
     setGenerationInfo(null);
+    resetTimings();
     if (mode === 'upload') {
       setSelectedDocumentId('');
       setDocumentId(null);
@@ -655,17 +778,21 @@ function GeneratePage() {
     setBulkSubmittingDrafts(false);
     setActiveJobId('');
     setGenerationInfo(null);
+    resetTimings();
   };
 
   const runOcrPipeline = async (pdfFile, signal) => {
     setPhase('uploading');
     setStatusDetail('Đang upload file PDF...');
+    const uploadStartedAt = nowMs();
     const uploadResult = await uploadOcrPdf(pdfFile);
+    markTiming('uploadMs', uploadStartedAt);
     const ocrJobId = uploadResult.job_id;
     const docId = uploadResult.document_id;
     setActiveJobId(ocrJobId);
     setDocumentId(docId);
 
+    const ocrStartedAt = nowMs();
     const ocrResult = await pollJob(getOcrStatus, ocrJobId, {
       signal,
       timeoutMs: 45 * 60 * 1000,
@@ -679,6 +806,7 @@ function GeneratePage() {
     if (ocrResult.status === 'failed') {
       throw new Error(ocrResult.error_message || 'OCR thất bại');
     }
+    markTiming('ocrMs', ocrStartedAt);
 
     return docId;
   };
@@ -686,13 +814,16 @@ function GeneratePage() {
   const runChunk = async (docId) => {
     setPhase('chunking');
     setStatusDetail('Đang chunk và lưu vector...');
+    const chunkStartedAt = nowMs();
     await chunkDocument(docId);
+    markTiming('chunkMs', chunkStartedAt);
     setChunkReady(true);
   };
 
-  const runGenerate = async (docId, signal) => {
+  const runGenerate = async (docId, signal, pipelineStartedAt) => {
     setPhase('generate_queued');
     setStatusDetail('Đang đưa yêu cầu sinh câu hỏi vào hàng đợi...');
+    const generateStartedAt = nowMs();
 
     const payload = {
       document_id: docId,
@@ -703,6 +834,14 @@ function GeneratePage() {
       question_plan: questionPlan,
       target_heading: teacherInstruction.trim() || undefined,
       instruction: teacherInstruction.trim() || undefined,
+      client_telemetry: {
+        source_mode: sourceMode,
+        document_reused: timingRef.current.documentMs === 'reused',
+        upload_ms: timingRef.current.uploadMs,
+        ocr_ms: timingRef.current.ocrMs,
+        chunk_ms: timingRef.current.chunkMs,
+        elapsed_before_generate_ms: Math.round(nowMs() - pipelineStartedAt),
+      },
     };
 
     const enqueueResult = await enqueueGenerateQuestions(payload);
@@ -722,6 +861,7 @@ function GeneratePage() {
     if (genResult.status === 'failed') {
       throw new Error(genResult.error_message || 'Sinh câu hỏi thất bại');
     }
+    markTiming('generateMs', generateStartedAt);
 
     setEditingDraftId(null);
     setDraftEditSnapshot(null);
@@ -734,6 +874,7 @@ function GeneratePage() {
       generatedCount: (genResult.data || []).length,
       createdAt: genResult.created_at,
       updatedAt: genResult.updated_at,
+      metrics: genResult.metrics,
     });
     setPhase('completed');
     setStatusDetail(`Đã sinh ${(genResult.data || []).length}/${totalQuestions} câu hỏi`);
@@ -747,12 +888,19 @@ function GeneratePage() {
     }
 
     setError('');
+    const pipelineStartedAt = nowMs();
     if (!fromGenerateOnly) {
       setDrafts([]);
       setGenerationSummary([]);
       setGenerationInfo(null);
+      resetTimings();
       setEditingDraftId(null);
       setDraftEditSnapshot(null);
+    } else {
+      setTimingValues({
+        generateMs: undefined,
+        totalMs: undefined,
+      });
     }
 
     const signal = resetPoll().signal;
@@ -776,6 +924,7 @@ function GeneratePage() {
         setDocumentId(docId);
         if (isDocumentIndexed(selectedDocument)) {
           setChunkReady(true);
+          setTimingValues({ documentMs: 'reused' });
           setStatusDetail('Sử dụng tài liệu đã OCR và index trước đó');
         } else {
           await runChunk(docId);
@@ -783,7 +932,8 @@ function GeneratePage() {
         }
       }
 
-      await runGenerate(docId, signal);
+      await runGenerate(docId, signal, pipelineStartedAt);
+      markTiming('totalMs', pipelineStartedAt);
     } catch (err) {
       if (err.name === 'AbortError') return;
       setPhase('failed');
@@ -820,6 +970,7 @@ function GeneratePage() {
     setDocumentId(null);
     setActiveJobId('');
     setGenerationInfo(null);
+    resetTimings();
     setDrafts([]);
     setGenerationSummary([]);
     setEditingDraftId(null);
@@ -888,6 +1039,16 @@ function GeneratePage() {
                       {generationInfo.generatedCount}/{generationInfo.requestedCount} câu
                       {generationInfo.updatedAt ? ` · ${formatDateTime(generationInfo.updatedAt)}` : ''}
                     </span>
+                  )}
+                  {phase === 'completed' && hasTimings && (
+                    <div className="gen-timing-grid">
+                      {timingItems.map((item) => (
+                        <span className="gen-timing-chip" key={item.label}>
+                          <b>{item.label}</b>
+                          {item.value}
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1233,7 +1394,7 @@ function GeneratePage() {
                         <span className="q-tag">{question.type}</span>
                         <span className="bloom-tag">{question.bloom}</span>
                         <span className="draft-status" title={question.questionCode}>
-                          {shortCode(question.questionCode)} · v{question.currentVersion || 1} · {reviewStatusLabel}
+                          {shortCode(question.questionCode)} · Phiên bản {question.currentVersion || 1} · {reviewStatusLabel}
                         </span>
                       </div>
 

@@ -2,6 +2,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.config import settings
+
 
 class EvaluationScores(BaseModel):
     faithfulness: float = Field(..., ge=0, le=1)
@@ -18,6 +20,11 @@ class EvaluationCreateRequest(BaseModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
     evaluator_model_code: str = "manual-or-external-evaluator"
     raw_model_response: str | None = None
+    policy_snapshot: dict[str, Any] = Field(default_factory=dict)
+    prompt_snapshot: dict[str, Any] = Field(default_factory=dict)
+    duration_ms: int | None = Field(None, ge=0)
+    evaluation_job_id: str | None = None
+    trigger: str | None = None
 
 
 class ReviewOverride(BaseModel):
@@ -35,8 +42,12 @@ class ReviewOverride(BaseModel):
 
 class AutoEvaluationRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
-    evaluator_model_code: str = Field("qwen", min_length=1, max_length=80)
-    fallback_to_heuristic: bool = True
+    evaluator_model_code: str = Field(
+        default_factory=lambda: settings.evaluation_model_provider,
+        min_length=1,
+        max_length=80,
+    )
+    fallback_to_heuristic: bool = False
 
 
 class ReviewCreateRequest(BaseModel):
@@ -51,4 +62,5 @@ class MoodlePublicationRequest(BaseModel):
     moodle_site_id: str = Field("demo-moodle", min_length=1, max_length=120)
     course_id: str = Field("ctdl-demo", min_length=1, max_length=120)
     category_id: str = Field("qbank-demo", min_length=1, max_length=120)
+    export_format: Literal["GIFT", "XML", "BOTH"] = "BOTH"
     mock: bool = True

@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from typing import Protocol
 
+from bson import ObjectId
 from firebase_admin import auth
 
 from core.database import get_rag_db
@@ -10,10 +14,17 @@ from modules.auth.session_repository import (
 from modules.users.repository import MongoUserRepository, UserRepository, serialize_user
 from modules.users.schemas import (
     PublicRegisterRequest,
+    GenerationPresetPayload,
     UserAdminUpdateRequest,
     UserCreateRequest,
     UserSelfUpdateRequest,
 )
+
+MAX_GENERATION_PRESETS = 12
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class IdentityGateway(Protocol):
@@ -133,6 +144,56 @@ class UserService:
             self.identity.update_user(user["firebase_uid"], display_name=payload.display_name)
         updated = self.repository.update(user_id, fields)
         return serialize_user(updated) if updated else None
+
+    @staticmethod
+    def _generation_presets(user: dict) -> list[dict]:
+        presets = user.get("generation_presets") or []
+        return presets if isinstance(presets, list) else []
+
+    def list_generation_presets(self, user_id: str) -> dict | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        return {"items": self._generation_presets(user)}
+
+    def save_generation_preset(
+        self,
+        user_id: str,
+        payload: GenerationPresetPayload,
+    ) -> dict | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        now = utc_now()
+        preset = {
+            "id": str(ObjectId()),
+            **payload.model_dump(),
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        existing = self._generation_presets(user)
+        next_presets = [preset, *existing][:MAX_GENERATION_PRESETS]
+        updated = self.repository.update(
+            user_id,
+            {"generation_presets": next_presets},
+        )
+        if not updated:
+            return None
+        return preset
+
+    def delete_generation_preset(self, user_id: str, preset_id: str) -> bool | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        existing = self._generation_presets(user)
+        next_presets = [preset for preset in existing if preset.get("id") != preset_id]
+        if len(next_presets) == len(existing):
+            return False
+        updated = self.repository.update(
+            user_id,
+            {"generation_presets": next_presets},
+        )
+        return updated is not None
 
     def update_admin(self, user_id: str, payload: UserAdminUpdateRequest) -> dict | None:
         fields = payload.model_dump(exclude_none=True)

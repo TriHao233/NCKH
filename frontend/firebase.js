@@ -15,3 +15,4 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider(); // Thêm dòng này
+googleProvider.setCustomParameters({ prompt: "select_account" });

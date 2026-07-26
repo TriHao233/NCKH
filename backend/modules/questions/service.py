@@ -7,6 +7,7 @@ from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database
+from core.dependencies import CurrentUser
 from modules.questions.repository import (
     MongoQuestionRepository,
     MongoQuestionReferenceRepository,
@@ -45,6 +46,38 @@ class QuestionService:
     ):
         self.repository = repository
         self.references = references
+
+    def _owns_question(self, question: dict, version: dict, user_id: ObjectId) -> bool:
+        if question.get("created_by_user_id") == user_id:
+            return True
+        if version.get("created_by_user_id") == user_id:
+            return True
+        document_id = version.get("document_id")
+        if document_id:
+            document = self.references.find_document(document_id)
+            if document and document.get("uploaded_by_user_id") == user_id:
+                return True
+        return False
+
+    def _ensure_read_access(
+        self,
+        pair: tuple[dict, dict] | None,
+        current_user: CurrentUser | None,
+    ) -> None:
+        if not pair or not current_user or current_user.role in {"Admin", "Reviewer"}:
+            return
+        if not self._owns_question(pair[0], pair[1], current_user.id):
+            raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
+
+    def _ensure_write_access(
+        self,
+        pair: tuple[dict, dict] | None,
+        current_user: CurrentUser | None,
+    ) -> None:
+        if not pair or not current_user or current_user.role == "Admin":
+            return
+        if not self._owns_question(pair[0], pair[1], current_user.id):
+            raise PermissionError("Bạn không có quyền chỉnh sửa câu hỏi này")
 
     def _sources(
         self,
@@ -186,6 +219,7 @@ class QuestionService:
         payload: QuestionCreateRequest,
         created_by_user_id,
         *,
+        actor_role: str | None = None,
         origin: str = "MANUAL",
         generation_run_id: ObjectId | None = None,
         initial_review_status: str = "PENDING",
@@ -207,6 +241,12 @@ class QuestionService:
         )
         if resolved_document_id and document is None:
             document = self._document(resolved_document_id)
+        if (
+            actor_role == "Teacher"
+            and document
+            and document.get("uploaded_by_user_id") != created_by_user_id
+        ):
+            raise PermissionError("Bạn không có quyền dùng tài liệu này để tạo câu hỏi")
         self._validate_active_sources(sources, document)
         document_subject_id = document.get("subject_id") if document else None
         document_chapter_id = document.get("chapter_id") if document else None
@@ -254,6 +294,7 @@ class QuestionService:
             "publication_status": "NOT_PUBLISHED",
             "quality_summary": {},
             "latest_review_id": None,
+            "created_by_user_id": created_by_user_id,
             "created_at": now,
             "updated_at": now,
             "archived_at": None,
@@ -281,8 +322,13 @@ class QuestionService:
         question, current = self.repository.create(aggregate, version)
         return serialize_question(question, current)
 
-    def get(self, question_id: str) -> dict | None:
+    def get(
+        self,
+        question_id: str,
+        current_user: CurrentUser | None = None,
+    ) -> dict | None:
         pair = self.repository.find_pair(question_id)
+        self._ensure_read_access(pair, current_user)
         return serialize_question(*pair) if pair else None
 
     def list(
@@ -291,8 +337,35 @@ class QuestionService:
         page_size: int,
         review_status: str | None,
         search: str | None,
+        *,
+        question_type: str | None = None,
+        bloom_level: int | None = None,
+        document_id: str | None = None,
+        quality_color: str | None = None,
+        min_score: float | None = None,
+        publication_status: str | None = None,
+        evaluation_status: str | None = None,
+        current_user: CurrentUser | None = None,
     ) -> dict:
-        pairs, total = self.repository.list(page, page_size, review_status, search)
+        owner_user_id = (
+            current_user.id
+            if current_user and current_user.role == "Teacher"
+            else None
+        )
+        pairs, total = self.repository.list(
+            page,
+            page_size,
+            review_status,
+            search,
+            question_type=question_type,
+            bloom_level=bloom_level,
+            document_id=document_id,
+            quality_color=quality_color,
+            min_score=min_score,
+            publication_status=publication_status,
+            evaluation_status=evaluation_status,
+            owner_user_id=owner_user_id,
+        )
         return {
             "items": [serialize_question(question, version) for question, version in pairs],
             "total": total,
@@ -300,7 +373,15 @@ class QuestionService:
             "page_size": page_size,
         }
 
-    def versions(self, question_id: str) -> list[dict] | None:
+    def versions(
+        self,
+        question_id: str,
+        current_user: CurrentUser | None = None,
+    ) -> list[dict] | None:
+        pair = self.repository.find_pair(question_id)
+        self._ensure_read_access(pair, current_user)
+        if not pair:
+            return None
         versions = self.repository.list_versions(question_id)
         if not versions:
             return None
@@ -333,10 +414,17 @@ class QuestionService:
         question_id: str,
         payload: QuestionUpdateRequest,
         created_by_user_id,
+        actor_role: str | None = None,
     ) -> dict | None:
         pair = self.repository.find_pair(question_id)
         if not pair:
             return None
+        if actor_role and actor_role != "Admin" and not self._owns_question(
+            pair[0],
+            pair[1],
+            created_by_user_id,
+        ):
+            raise PermissionError("Bạn không có quyền chỉnh sửa câu hỏi này")
         _, current = pair
         classification = current["classification"]
         if any(
@@ -450,6 +538,12 @@ class QuestionService:
             )
         if payload.source_chunk_ids is not None or payload.chunk_id is not None:
             document = self._document(resolved_document_id)
+            if (
+                actor_role == "Teacher"
+                and document
+                and document.get("uploaded_by_user_id") != created_by_user_id
+            ):
+                raise PermissionError("Bạn không có quyền dùng tài liệu này để cập nhật câu hỏi")
             self._validate_active_sources(sources, document)
         content_hash = stable_hash(
             {
@@ -479,10 +573,15 @@ class QuestionService:
         )
         return serialize_question(*updated) if updated else None
 
-    def submit_for_review(self, question_id: str) -> dict | None:
+    def submit_for_review(
+        self,
+        question_id: str,
+        current_user: CurrentUser | None = None,
+    ) -> dict | None:
         pair = self.repository.find_pair(question_id)
         if not pair:
             return None
+        self._ensure_write_access(pair, current_user)
         question, version = pair
         review_status = question.get("review_status")
         if review_status == "PENDING":
@@ -499,7 +598,15 @@ class QuestionService:
             raise RuntimeError("VERSION_CONFLICT")
         return serialize_question(*updated)
 
-    def archive(self, question_id: str) -> bool:
+    def archive(
+        self,
+        question_id: str,
+        current_user: CurrentUser | None = None,
+    ) -> bool:
+        pair = self.repository.find_pair(question_id)
+        if not pair:
+            return False
+        self._ensure_write_access(pair, current_user)
         return self.repository.archive(question_id)
 
 

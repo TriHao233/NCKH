@@ -54,22 +54,31 @@ const DOC_STATUS_LABEL = {
 
 const EVALUATION_STATUS_LABEL = {
   NOT_STARTED: 'Chưa đánh giá',
+  QUEUED: 'Chờ AI đánh giá',
   PROCESSING: 'Đang đánh giá',
   PASSED: 'Đạt',
   FAILED: 'Không đạt',
+  ERROR: 'AI lỗi',
+  STALE: 'Cần đánh giá lại',
 };
 
 const PUBLICATION_STATUS_LABEL = {
-  NOT_PUBLISHED: 'Chưa xuất',
-  PUBLISHED: 'Đã xuất Moodle',
-  STALE: 'Cần xuất lại',
-  FAILED: 'Xuất lỗi',
+  NOT_PUBLISHED: 'Chưa đồng bộ',
+  PUBLISHED: 'Đã đồng bộ Moodle',
+  STALE: 'Cần đồng bộ lại',
+  FAILED: 'Đồng bộ lỗi',
 };
 
 const QUALITY_COLOR_CLASS = {
   GREEN: 'quality--green',
   YELLOW: 'quality--yellow',
   RED: 'quality--red',
+};
+
+const QUALITY_COLOR_LABEL = {
+  GREEN: 'Đạt tốt',
+  YELLOW: 'Cần xem lại',
+  RED: 'Rủi ro cao',
 };
 
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
@@ -83,7 +92,15 @@ function latestEvaluationText(item) {
   if (!quality.overall_score && quality.overall_score !== 0) {
     return EVALUATION_STATUS_LABEL[item.evaluation_status] || item.evaluation_status;
   }
-  return `${formatScore(quality.overall_score)} · ${quality.color || 'N/A'}`;
+  return `${formatScore(quality.overall_score)} · ${QUALITY_COLOR_LABEL[quality.color] || 'Chưa phân mức'}`;
+}
+
+function isEvaluationBusy(item) {
+  return ['QUEUED', 'PROCESSING', 'RUNNING'].includes(item?.evaluation_status);
+}
+
+function canQueueEvaluation(item) {
+  return item && !isEvaluationBusy(item) && item.evaluation_status !== 'PASSED';
 }
 
 function questionAssessmentType(item) {
@@ -359,7 +376,7 @@ function ManagePage() {
     setWorkflowBusyId(item.id);
     try {
       await submitQuestionForReview(item.id);
-      await refreshAfterWorkflow('Đã gửi câu hỏi sang hàng đợi duyệt.', item);
+      await refreshAfterWorkflow('Đã gửi duyệt và đưa vào hàng đợi AI đánh giá.', item);
     } catch (error) {
       alert('Gửi duyệt thất bại: ' + error.message);
     } finally {
@@ -393,10 +410,11 @@ function ManagePage() {
     try {
       await autoEvaluateQuestion(item.id, {
         expected_version: item.current_version,
+        fallback_to_heuristic: false,
       });
-      await refreshAfterWorkflow('Đã chạy AI evaluation cho câu hỏi.', item);
+      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá.', item);
     } catch (error) {
-      alert('AI evaluation thất bại: ' + error.message);
+      alert('Đánh giá AI thất bại: ' + error.message);
     } finally {
       setWorkflowBusyId(null);
     }
@@ -416,14 +434,18 @@ function ManagePage() {
       note,
     };
     if (decision === 'APPROVED' && item.evaluation_status !== 'PASSED') {
-      const reason = window.prompt('Câu hỏi chưa đạt AI evaluation. Nhập lý do override để vẫn duyệt:', '');
+      const reason = window.prompt('Câu hỏi chưa đạt đánh giá AI. Nhập lý do duyệt thủ công:', '');
       if (!reason?.trim()) return;
       payload.override = {
         applied: true,
-        score: item.quality_summary?.overall_score ?? 0.8,
-        color: item.quality_summary?.color || 'YELLOW',
         reason: reason.trim(),
       };
+      if (typeof item.quality_summary?.overall_score === 'number') {
+        payload.override.score = item.quality_summary.overall_score;
+      }
+      if (item.quality_summary?.color) {
+        payload.override.color = item.quality_summary.color;
+      }
     }
     setWorkflowBusyId(item.id);
     try {
@@ -448,9 +470,10 @@ function ManagePage() {
     try {
       await publishQuestionToMoodle(item.id, {
         expected_version: item.current_version,
+        export_format: 'BOTH',
         mock: true,
       });
-      await refreshAfterWorkflow('Đã ghi nhận mock Moodle publication.', item);
+      await refreshAfterWorkflow('Đã ghi nhận đồng bộ Moodle.', item);
     } catch (error) {
       alert('Đồng bộ Moodle thất bại: ' + error.message);
     } finally {
@@ -586,7 +609,7 @@ function ManagePage() {
       <section className="page-hero">
         <div className="container manage-hero-row">
           <div>
-            <div className="page-hero-badge">Admin Dashboard</div>
+            <div className="page-hero-badge">Khu vực quản lý</div>
             <h1 className="page-hero-title">Quản lý ngân hàng câu hỏi</h1>
             <p className="page-hero-desc">
               Theo dõi, chỉnh sửa và phê duyệt câu hỏi trước khi đồng bộ vào ngân hàng đề thi trên Moodle.
@@ -712,7 +735,7 @@ function ManagePage() {
                           {(item.clos || []).length > 2 && (
                             <span className="source-tag">+{item.clos.length - 2} CLO</span>
                           )}
-                          <span className="source-tag">v{item.current_version}</span>
+                          <span className="source-tag">Phiên bản {item.current_version}</span>
                         </div>
                         <p>{item.content}</p>
                         <div className="question-workflow-row">
@@ -747,15 +770,17 @@ function ManagePage() {
                               <button
                                 type="button"
                                 className="mini-action"
-                                disabled={workflowBusyId === item.id}
+                                disabled={workflowBusyId === item.id || !canQueueEvaluation(item)}
                                 onClick={() => handleAutoEvaluate(item)}
                               >
-                                AI đánh giá
+                                {item.evaluation_status === 'ERROR' || item.evaluation_status === 'FAILED' || item.evaluation_status === 'STALE'
+                                  ? 'Thử lại AI'
+                                  : 'AI đánh giá'}
                               </button>
                               <button
                                 type="button"
                                 className="mini-action mini-action--approve"
-                                disabled={workflowBusyId === item.id}
+                                disabled={workflowBusyId === item.id || isEvaluationBusy(item)}
                                 onClick={() => handleReview(item, 'APPROVED')}
                               >
                                 Duyệt
@@ -858,14 +883,14 @@ function ManagePage() {
             <div className="card side-card workflow-card">
               <h3>Luồng kiểm duyệt</h3>
               {!selectedQuestion ? (
-                <p className="side-note">Chọn "Chi tiết" trên một câu hỏi để xem evaluation, review và Moodle publication.</p>
+                <p className="side-note">Chọn "Chi tiết" trên một câu hỏi để xem kết quả đánh giá, kiểm duyệt và đồng bộ Moodle.</p>
               ) : (
                 <>
                   <div className="workflow-question-code">{selectedQuestion.question_code}</div>
                   <div className="workflow-status-grid">
-                    <span>AI</span>
+                    <span>Đánh giá AI</span>
                     <b>{latestEvaluationText(selectedQuestion)}</b>
-                    <span>Review</span>
+                    <span>Kiểm duyệt</span>
                     <b>{REVIEW_STATUS_LABEL[selectedQuestion.review_status] || selectedQuestion.review_status}</b>
                     <span>Moodle</span>
                     <b>{PUBLICATION_STATUS_LABEL[selectedQuestion.publication_status] || selectedQuestion.publication_status}</b>
@@ -886,34 +911,34 @@ function ManagePage() {
                   ) : (
                     <>
                       <div className="history-block">
-                        <h4>AI evaluation</h4>
+                        <h4>Đánh giá AI</h4>
                         {evaluationHistory.slice(0, 2).map((item) => (
                           <div className="history-item" key={item.id || item._id}>
-                            <b>{formatScore(item.scores?.overall)} · {item.color}</b>
+                            <b>{formatScore(item.scores?.overall)} · {QUALITY_COLOR_LABEL[item.color] || 'Chưa phân mức'}</b>
                             <span>{item.feedback?.summary || 'Không có nhận xét'}</span>
                           </div>
                         ))}
-                        {evaluationHistory.length === 0 && <span className="history-empty">Chưa có evaluation.</span>}
+                        {evaluationHistory.length === 0 && <span className="history-empty">Chưa có kết quả đánh giá.</span>}
                       </div>
                       <div className="history-block">
-                        <h4>Reviewer</h4>
+                        <h4>Kiểm duyệt</h4>
                         {reviewHistory.slice(0, 2).map((item) => (
                           <div className="history-item" key={item.id || item._id}>
                             <b>{REVIEW_STATUS_LABEL[item.decision] || item.decision}</b>
                             <span>{item.note || 'Không có ghi chú'}</span>
                           </div>
                         ))}
-                        {reviewHistory.length === 0 && <span className="history-empty">Chưa có review.</span>}
+                        {reviewHistory.length === 0 && <span className="history-empty">Chưa có lượt kiểm duyệt.</span>}
                       </div>
                       <div className="history-block">
                         <h4>Moodle</h4>
                         {publicationHistory.slice(0, 2).map((item) => (
                           <div className="history-item" key={item.id || item._id}>
-                            <b>{item.status}</b>
-                            <span>{item.moodle_question_ref_id || item.idempotency_key}</span>
+                            <b>{PUBLICATION_STATUS_LABEL[item.status] || item.status}</b>
+                            <span>{item.moodle_question_ref_id || 'Đã ghi nhận trong hệ thống'}</span>
                           </div>
                         ))}
-                        {publicationHistory.length === 0 && <span className="history-empty">Chưa xuất Moodle.</span>}
+                        {publicationHistory.length === 0 && <span className="history-empty">Chưa đồng bộ Moodle.</span>}
                       </div>
                     </>
                   )}
@@ -924,11 +949,11 @@ function ManagePage() {
             <div className="card side-card">
               <h3>Trạng thái Moodle</h3>
               <p className="side-note">
-                Câu hỏi đã duyệt có thể được ghi nhận publication mock vào `moodle_publications` để demo luồng xuất bản.
+                Câu hỏi đã duyệt có thể được ghi nhận đồng bộ Moodle trong môi trường demo.
               </p>
               <div className="moodle-status">
                 <span className="moodle-dot" />
-                Mock Moodle: sẵn sàng ghi nhận
+                Moodle demo: sẵn sàng ghi nhận
               </div>
             </div>
           </aside>

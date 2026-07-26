@@ -50,3 +50,12 @@ a {
     color: var(--primary);
     text-decoration: none;
 }
+
+.route-loading {
+    min-height: calc(100vh - 72px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-weight: 700;
+}

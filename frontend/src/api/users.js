@@ -24,3 +24,15 @@ export function updateUser(id, payload) {
 export function deleteUser(id) {
   return apiRequest(`/users/${id}`, { method: 'DELETE' });
 }
+
+export function listGenerationPresets() {
+  return apiRequest('/users/me/generation-presets');
+}
+
+export function saveGenerationPreset(payload) {
+  return apiRequest('/users/me/generation-presets', { method: 'POST', body: payload });
+}
+
+export function deleteGenerationPreset(id) {
+  return apiRequest(`/users/me/generation-presets/${id}`, { method: 'DELETE' });
+}

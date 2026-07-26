@@ -1,13 +1,21 @@
+import asyncio
 import hashlib
 import json
 import re
+import time
+from html import escape
 
 from bson import ObjectId
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database, mongo_transaction
+from core.dependencies import CurrentUser
 from modules.generation.llm.factory import get_llm_service
-from modules.questions.repository import MongoQuestionRepository, json_safe, utc_now
+from modules.generation.prompt_builder import PromptBuilder
+from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, utc_now
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     EvaluationCreateRequest,
@@ -24,6 +32,14 @@ DEFAULT_WEIGHTS = {
     "clo_alignment": 0.15,
 }
 DEFAULT_THRESHOLDS = {"yellow_min": 0.60, "green_min": 0.80, "pass_min": 0.80}
+EVALUATION_PROMPT_KEY = "evaluation:question_quality"
+EVALUATION_PROMPT_PATH = "evaluation/question_quality.txt"
+DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
+EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
+EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
+EVALUATION_SOURCE_LIMIT = 3
+EVALUATION_SOURCE_EXCERPT_CHARS = 700
+evaluation_semaphore = asyncio.Semaphore(1)
 
 
 class QuestionWorkflowService:
@@ -36,6 +52,36 @@ class QuestionWorkflowService:
         if not pair:
             raise LookupError("Không tìm thấy câu hỏi")
         return pair
+
+    def _owns_question(self, question: dict, version: dict, user_id: ObjectId) -> bool:
+        if question.get("created_by_user_id") == user_id:
+            return True
+        if version.get("created_by_user_id") == user_id:
+            return True
+        document_id = version.get("document_id")
+        if document_id:
+            document = self.db.documents.find_one(
+                {
+                    "_id": document_id,
+                    "schema_version": SCHEMA_VERSION,
+                    "archived_at": None,
+                },
+                {"uploaded_by_user_id": 1},
+            )
+            if document and document.get("uploaded_by_user_id") == user_id:
+                return True
+        return False
+
+    def _ensure_read_access(
+        self,
+        question: dict,
+        version: dict,
+        current_user: CurrentUser | None,
+    ) -> None:
+        if not current_user or current_user.role in {"Admin", "Reviewer"}:
+            return
+        if not self._owns_question(question, version, current_user.id):
+            raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _policy(self) -> dict:
         return self.db.evaluation_policies.find_one(
@@ -99,61 +145,110 @@ class QuestionWorkflowService:
         return match.group(1) if match else cleaned
 
     @staticmethod
-    def _source_context(version: dict) -> str:
-        sources = version.get("sources") or []
-        return "\n\n".join(
-            str(source.get("context_excerpt") or "")
-            for source in sources
-            if source.get("context_excerpt")
+    def _compact_text(text: str, limit: int) -> str:
+        compacted = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(compacted) <= limit:
+            return compacted
+        return compacted[: max(0, limit - 3)].rstrip() + "..."
+
+    @classmethod
+    def _compact_sources(
+        cls,
+        version: dict,
+        *,
+        max_sources: int = EVALUATION_SOURCE_LIMIT,
+        excerpt_chars: int = EVALUATION_SOURCE_EXCERPT_CHARS,
+    ) -> list[dict]:
+        sources = sorted(
+            version.get("sources") or [],
+            key=lambda source: source.get("citation_order") or 999,
         )
+        compacted = []
+        for index, source in enumerate(sources[:max_sources], start=1):
+            excerpt = cls._compact_text(source.get("context_excerpt") or "", excerpt_chars)
+            compacted.append(
+                {
+                    "label": f"S{index}",
+                    "chunk_id": source.get("chunk_id"),
+                    "content_hash": source.get("chunk_content_hash"),
+                    "citation_order": source.get("citation_order") or index,
+                    "is_primary": bool(source.get("is_primary")),
+                    "excerpt": excerpt,
+                    "excerpt_hash": hashlib.sha256(excerpt.encode("utf-8")).hexdigest(),
+                }
+            )
+        return compacted
 
     @staticmethod
-    def _evaluation_prompt(question: dict, version: dict) -> str:
+    def _source_context(version: dict) -> str:
+        return "\n\n".join(
+            f"[{source['label']}] {source['excerpt']}"
+            for source in QuestionWorkflowService._compact_sources(version)
+            if source.get("excerpt")
+        )
+
+    def _evaluation_prompt_template(self) -> str:
+        return PromptBuilder._load_template(
+            EVALUATION_PROMPT_KEY,
+            EVALUATION_PROMPT_PATH,
+        )
+
+    def _build_evaluation_prompt(
+        self,
+        question: dict,
+        version: dict,
+        policy: dict | None = None,
+    ) -> tuple[str, dict, list[dict]]:
         question_data = version.get("question_data") or {}
         classification = version.get("classification") or {}
-        context = QuestionWorkflowService._source_context(version)[:6000]
+        source_chunks = self._compact_sources(version)
+        policy = policy or self._policy()
+        clos = [
+            {
+                "code": clo.get("code") or clo.get("clo_code"),
+                "description": self._compact_text(clo.get("description") or "", 300),
+            }
+            for clo in (version.get("clos") or [])
+        ]
         payload = {
             "question_code": question.get("question_code"),
+            "question_id": question.get("_id"),
+            "question_version_id": version.get("_id"),
+            "document_id": version.get("document_id"),
+            "question_type": classification.get("assessment_type"),
             "question": version.get("content"),
-            "answer": question_data.get("correct_answer"),
+            "options": question_data.get("options"),
+            "correct_answer": question_data.get("correct_answer"),
             "explanation": question_data.get("explanation"),
-            "bloom": classification.get("bloom"),
-            "clos": version.get("clos") or [],
-            "source_context": context,
+            "requested_bloom": classification.get("bloom"),
+            "clos": clos,
+            "source_chunks": source_chunks,
         }
-        return f"""
-You are a strict local evaluator for a question bank system.
-Evaluate the generated question using only SOURCE_CONTEXT.
+        policy_payload = {
+            "name": policy.get("policy_name") or policy.get("name"),
+            "version": policy.get("version"),
+            "weights": policy.get("weights") or DEFAULT_WEIGHTS,
+            "thresholds": policy.get("thresholds") or DEFAULT_THRESHOLDS,
+        }
+        template = self._evaluation_prompt_template()
+        prompt = template.format(
+            evaluation_policy=json.dumps(policy_payload, ensure_ascii=False, default=str),
+            question_payload=json.dumps(payload, ensure_ascii=False, default=str),
+        )
+        prompt_snapshot = {
+            "template_key": EVALUATION_PROMPT_KEY,
+            "template_path": EVALUATION_PROMPT_PATH,
+            "template_hash": hashlib.sha256(template.encode("utf-8")).hexdigest(),
+            "rendered_prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "rendered_prompt_chars": len(prompt),
+            "source_limit": EVALUATION_SOURCE_LIMIT,
+            "source_excerpt_chars": EVALUATION_SOURCE_EXCERPT_CHARS,
+        }
+        return prompt, prompt_snapshot, source_chunks
 
-Return JSON only with this exact shape:
-{{
-  "scores": {{
-    "faithfulness": 0.0,
-    "contextual_relevancy": 0.0,
-    "answer_relevancy": 0.0,
-    "bloom_alignment": 0.0,
-    "clo_alignment": 0.0
-  }},
-  "feedback": {{
-    "summary": "short Vietnamese assessment",
-    "missing": ["short issue"]
-  }},
-  "evidence": {{
-    "supporting_excerpt": "short quote/paraphrase from context",
-    "reasoning": "short Vietnamese reason"
-  }}
-}}
-
-Rules:
-- Every score must be in [0, 1].
-- Faithfulness is low if the question or answer is not grounded in SOURCE_CONTEXT.
-- Contextual relevancy is low if SOURCE_CONTEXT does not contain enough information.
-- Answer relevancy is low if the answer/explanation does not directly answer the question.
-- Bloom/CLO alignment must consider the provided metadata; lower CLO score when no CLO exists.
-
-INPUT:
-{json.dumps(payload, ensure_ascii=False, default=str)}
-"""
+    def _evaluation_prompt(self, question: dict, version: dict, policy: dict | None = None) -> str:
+        prompt, _, _ = self._build_evaluation_prompt(question, version, policy)
+        return prompt
 
     @classmethod
     def _parse_llm_evaluation(cls, raw_response: str) -> tuple[EvaluationScores, dict, dict]:
@@ -229,7 +324,7 @@ INPUT:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
-        policy = self._policy()
+        policy = payload.policy_snapshot or self._policy()
         scores = payload.scores.model_dump()
         overall = round(
             sum(scores[key] * policy["weights"][key] for key in DEFAULT_WEIGHTS),
@@ -245,6 +340,11 @@ INPUT:
         )
         passed = overall >= thresholds["pass_min"]
         now = utc_now()
+        evaluation_job_id = (
+            object_id(payload.evaluation_job_id, "evaluation_job_id")
+            if payload.evaluation_job_id
+            else None
+        )
         evaluation = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
@@ -256,8 +356,8 @@ INPUT:
             "evaluator_model": self._model_snapshot(payload.evaluator_model_code),
             "requested_by_user_id": user_id,
             "policy": {
-                "id": policy.get("_id"),
-                "name": policy.get("policy_name"),
+                "id": policy.get("_id") or policy.get("id"),
+                "name": policy.get("policy_name") or policy.get("name"),
                 "version": policy["version"],
                 "weights": policy["weights"],
                 "thresholds": thresholds,
@@ -268,6 +368,10 @@ INPUT:
             "feedback": payload.feedback,
             "evidence": payload.evidence,
             "raw_model_response": payload.raw_model_response,
+            "prompt_snapshot": payload.prompt_snapshot,
+            "duration_ms": payload.duration_ms,
+            "evaluation_job_id": evaluation_job_id,
+            "trigger": payload.trigger,
             "parser_version": "evaluation-json-v1",
             "created_at": now,
         }
@@ -317,10 +421,12 @@ INPUT:
                         "evaluation_status": "PASSED" if passed else "FAILED",
                         "quality_summary": {
                             "latest_evaluation_id": evaluation["_id"],
+                            "latest_evaluation_job_id": evaluation_job_id,
                             "evaluated_version_id": version["_id"],
                             "overall_score": overall,
                             "color": color,
                             "evaluated_at": now,
+                            "evaluator_model_code": evaluation["evaluator_model"].get("model_code"),
                         },
                         "updated_at": now,
                     }
@@ -338,19 +444,29 @@ INPUT:
             raise RuntimeError("VERSION_CONFLICT")
         raw_model_response = None
         evaluator_code = payload.evaluator_model_code.strip()
+        prompt_snapshot: dict = {}
+        policy_snapshot: dict = {}
+        duration_ms = None
         if evaluator_code.lower() in {"local-heuristic-evaluator-v1", "heuristic"}:
             scores, feedback, evidence = self._auto_scores(question, version)
             evidence["mode"] = "heuristic"
+            evaluator_code = "local-heuristic-evaluator-v1"
         else:
             try:
                 llm = get_llm_service(evaluator_code)
-                raw_model_response = await llm.generate_text(self._evaluation_prompt(question, version))
+                policy = self._policy()
+                policy_snapshot = self._policy_snapshot(policy)
+                prompt, prompt_snapshot, _ = self._build_evaluation_prompt(question, version, policy)
+                started = time.perf_counter()
+                raw_model_response = await llm.generate_text(prompt)
+                duration_ms = int((time.perf_counter() - started) * 1000)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
                 evidence["mode"] = "local_llm"
             except Exception as exc:
                 if not payload.fallback_to_heuristic:
                     raise ValueError(f"Local evaluator failed: {exc}") from exc
                 scores, feedback, evidence = self._auto_scores(question, version)
+                evaluator_code = "local-heuristic-evaluator-v1"
                 feedback = {
                     **feedback,
                     "summary": (
@@ -373,9 +489,328 @@ INPUT:
                 evidence=evidence,
                 evaluator_model_code=evaluator_code,
                 raw_model_response=raw_model_response,
+                policy_snapshot=policy_snapshot,
+                prompt_snapshot=prompt_snapshot,
+                duration_ms=duration_ms,
+                trigger="DIRECT_AUTO_EVALUATION",
             ),
             user_id,
         )
+
+    @staticmethod
+    def _policy_snapshot(policy: dict) -> dict:
+        return {
+            "id": policy.get("_id"),
+            "name": policy.get("policy_name"),
+            "version": policy.get("version"),
+            "weights": policy.get("weights") or DEFAULT_WEIGHTS,
+            "thresholds": policy.get("thresholds") or DEFAULT_THRESHOLDS,
+        }
+
+    @staticmethod
+    def _evaluation_dedupe_key(version: dict, evaluator_model_code: str) -> str:
+        material = "|".join(
+            [
+                str(version.get("_id")),
+                str(version.get("content_hash") or ""),
+                evaluator_model_code.strip().lower(),
+            ]
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def enqueue_auto_evaluation(
+        self,
+        question_id: str,
+        *,
+        expected_version: int,
+        requested_by_user_id,
+        evaluator_model_code: str = DEFAULT_EVALUATOR_MODEL_CODE,
+        trigger: str = "REVIEWER_REQUEST",
+    ) -> dict:
+        question, version = self._pair(question_id)
+        if question["current_version"] != expected_version:
+            raise RuntimeError("VERSION_CONFLICT")
+
+        evaluator_model_code = evaluator_model_code.strip() or DEFAULT_EVALUATOR_MODEL_CODE
+        if question.get("evaluation_status") == "PASSED":
+            raise ValueError("Câu hỏi đã có kết quả AI đạt cho phiên bản hiện tại")
+
+        dedupe_key = self._evaluation_dedupe_key(version, evaluator_model_code)
+        active_job = self.db.evaluation_jobs.find_one(
+            {"dedupe_key": dedupe_key, "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)}}
+        )
+        if active_job:
+            return json_safe(active_job)
+
+        policy = self._policy()
+        _, prompt_snapshot, source_chunks = self._build_evaluation_prompt(question, version, policy)
+        now = utc_now()
+        attempt_no = (
+            self.db.evaluation_jobs.count_documents(
+                {
+                    "question_version_id": version["_id"],
+                    "evaluator_model_code": evaluator_model_code,
+                }
+            )
+            + 1
+        )
+        job = {
+            "_id": ObjectId(),
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question["_id"],
+            "question_version_id": version["_id"],
+            "question_version": version["version"],
+            "question_snapshot_hash": version.get("content_hash"),
+            "dedupe_key": dedupe_key,
+            "status": "QUEUED",
+            "trigger": trigger,
+            "requested_by_user_id": requested_by_user_id,
+            "evaluator_model_code": evaluator_model_code,
+            "policy_snapshot": self._policy_snapshot(policy),
+            "prompt_snapshot": prompt_snapshot,
+            "source_snapshot": [
+                {
+                    "label": source.get("label"),
+                    "chunk_id": source.get("chunk_id"),
+                    "content_hash": source.get("content_hash"),
+                    "citation_order": source.get("citation_order"),
+                    "excerpt_hash": source.get("excerpt_hash"),
+                }
+                for source in source_chunks
+            ],
+            "attempt_no": attempt_no,
+            "max_attempts": 1,
+            "result": None,
+            "error": None,
+            "queued_at": now,
+            "created_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "duration_ms": None,
+            "updated_at": now,
+        }
+
+        try:
+            with mongo_transaction() as session:
+                self.db.evaluation_jobs.insert_one(job, session=session)
+                result = self.db.questions.update_one(
+                    {
+                        "_id": question["_id"],
+                        "current_version_id": version["_id"],
+                        "lifecycle_status": "ACTIVE",
+                        "evaluation_status": {"$in": list(EVALUATION_RETRYABLE_STATUSES)},
+                    },
+                    {
+                        "$set": {
+                            "evaluation_status": "QUEUED",
+                            "quality_summary": {
+                                "latest_evaluation_job_id": job["_id"],
+                                "evaluated_version_id": version["_id"],
+                                "evaluation_queued_at": now,
+                                "evaluator_model_code": evaluator_model_code,
+                            },
+                            "updated_at": now,
+                        }
+                    },
+                    session=session,
+                )
+                if not result.matched_count:
+                    self.db.evaluation_jobs.update_one(
+                        {"_id": job["_id"]},
+                        {
+                            "$set": {
+                                "status": "STALE",
+                                "error": {
+                                    "message": "Phiên bản câu hỏi đã đổi trước khi enqueue evaluation",
+                                    "at": utc_now(),
+                                },
+                                "updated_at": utc_now(),
+                            }
+                        },
+                        session=session,
+                    )
+                    raise RuntimeError("VERSION_CONFLICT")
+        except DuplicateKeyError:
+            active_job = self.db.evaluation_jobs.find_one(
+                {"dedupe_key": dedupe_key, "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)}}
+            )
+            if active_job:
+                return json_safe(active_job)
+            raise
+        return json_safe(job)
+
+    def _mark_evaluation_job_error(
+        self,
+        job: dict,
+        message: str,
+        *,
+        status: str = "ERROR",
+        raw_model_response: str | None = None,
+        duration_ms: int | None = None,
+    ) -> dict:
+        now = utc_now()
+        error = {
+            "message": message,
+            "raw_model_response_excerpt": (raw_model_response or "")[:1200] or None,
+            "at": now,
+        }
+        with mongo_transaction() as session:
+            self.db.evaluation_jobs.update_one(
+                {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                {
+                    "$set": {
+                        "status": status,
+                        "error": error,
+                        "finished_at": now,
+                        "duration_ms": duration_ms,
+                        "updated_at": now,
+                    }
+                },
+                session=session,
+            )
+            if status != "STALE":
+                self.db.questions.update_one(
+                    {
+                        "_id": job["question_id"],
+                        "current_version_id": job["question_version_id"],
+                        "lifecycle_status": "ACTIVE",
+                    },
+                    {
+                        "$set": {
+                            "evaluation_status": "ERROR",
+                            "quality_summary": {
+                                "latest_evaluation_job_id": job["_id"],
+                                "evaluated_version_id": job["question_version_id"],
+                                "evaluator_model_code": job.get("evaluator_model_code"),
+                                "error": error,
+                            },
+                            "updated_at": now,
+                        }
+                    },
+                    session=session,
+                )
+        return json_safe({**job, "status": status, "error": error, "finished_at": now})
+
+    async def process_evaluation_job(self, job_id: str) -> dict | None:
+        job_oid = object_id(job_id, "evaluation_job_id")
+        now = utc_now()
+        job = self.db.evaluation_jobs.find_one_and_update(
+            {"_id": job_oid, "status": "QUEUED"},
+            {"$set": {"status": "PROCESSING", "started_at": now, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not job:
+            return None
+
+        question = self.db.questions.find_one(
+            {
+                "_id": job["question_id"],
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+            }
+        )
+        version = self.db.question_versions.find_one({"_id": job["question_version_id"]})
+        if not question or not version or question.get("current_version_id") != job["question_version_id"]:
+            return self._mark_evaluation_job_error(
+                job,
+                "Phiên bản câu hỏi đã thay đổi trước khi AI đánh giá",
+                status="STALE",
+            )
+
+        self.db.questions.update_one(
+            {
+                "_id": question["_id"],
+                "current_version_id": version["_id"],
+                "evaluation_status": "QUEUED",
+            },
+            {
+                "$set": {
+                    "evaluation_status": "PROCESSING",
+                    "quality_summary.latest_evaluation_job_id": job["_id"],
+                    "quality_summary.evaluation_started_at": now,
+                    "updated_at": now,
+                }
+            },
+        )
+
+        raw_model_response = None
+        started = time.perf_counter()
+        try:
+            prompt, prompt_snapshot, _ = self._build_evaluation_prompt(
+                question,
+                version,
+                job.get("policy_snapshot") or self._policy(),
+            )
+            llm = get_llm_service(job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE)
+            raw_model_response = await llm.generate_text(prompt)
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+            evidence = {
+                **evidence,
+                "mode": "local_llm",
+                "evaluation_job_id": str(job["_id"]),
+                "source_snapshot": json_safe(job.get("source_snapshot") or []),
+            }
+            evaluation = self.evaluate(
+                str(question["_id"]),
+                EvaluationCreateRequest(
+                    expected_version=version["version"],
+                    scores=scores,
+                    feedback=feedback,
+                    evidence=evidence,
+                    evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
+                    raw_model_response=raw_model_response,
+                    policy_snapshot=job.get("policy_snapshot") or {},
+                    prompt_snapshot=prompt_snapshot,
+                    duration_ms=duration_ms,
+                    evaluation_job_id=str(job["_id"]),
+                    trigger=job.get("trigger"),
+                ),
+                job.get("requested_by_user_id"),
+            )
+            finished_at = utc_now()
+            self.db.evaluation_jobs.update_one(
+                {"_id": job["_id"], "status": "PROCESSING"},
+                {
+                    "$set": {
+                        "status": "COMPLETED",
+                        "result": {
+                            "evaluation_id": object_id(evaluation.get("_id"), "evaluation_id"),
+                            "passed": evaluation.get("passed"),
+                            "overall_score": (evaluation.get("scores") or {}).get("overall"),
+                            "color": evaluation.get("color"),
+                        },
+                        "duration_ms": duration_ms,
+                        "finished_at": finished_at,
+                        "updated_at": finished_at,
+                    }
+                },
+            )
+            return evaluation
+        except RuntimeError as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            if str(exc) == "VERSION_CONFLICT":
+                return self._mark_evaluation_job_error(
+                    job,
+                    "Phiên bản câu hỏi đã thay đổi trong lúc AI đánh giá",
+                    status="STALE",
+                    raw_model_response=raw_model_response,
+                    duration_ms=duration_ms,
+                )
+            return self._mark_evaluation_job_error(
+                job,
+                str(exc),
+                raw_model_response=raw_model_response,
+                duration_ms=duration_ms,
+            )
+        except Exception as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            return self._mark_evaluation_job_error(
+                job,
+                str(exc),
+                raw_model_response=raw_model_response,
+                duration_ms=duration_ms,
+            )
 
     def review(self, question_id: str, payload: ReviewCreateRequest, user_id) -> dict:
         question, version = self._pair(question_id)
@@ -460,6 +895,209 @@ INPUT:
             self.db.audit_logs.insert_one(audit, session=session)
         return json_safe(review)
 
+    @staticmethod
+    def _question_type(version: dict) -> str:
+        classification = version.get("classification") or {}
+        return str(classification.get("assessment_type") or "").lower()
+
+    @staticmethod
+    def _option_text(options, key: str) -> str:
+        if isinstance(options, dict):
+            return str(options.get(key) or options.get(str(key)) or key)
+        return str(key)
+
+    @staticmethod
+    def _answer_keys(correct_answer: str) -> list[str]:
+        return [
+            item.strip().upper()
+            for item in str(correct_answer or "").split(",")
+            if item.strip()
+        ]
+
+    @staticmethod
+    def _gift_escape(value) -> str:
+        text = str(value or "")
+        for source, replacement in (
+            ("\\", "\\\\"),
+            ("~", "\\~"),
+            ("=", "\\="),
+            ("#", "\\#"),
+            ("{", "\\{"),
+            ("}", "\\}"),
+            (":", "\\:"),
+        ):
+            text = text.replace(source, replacement)
+        return text
+
+    @staticmethod
+    def _xml_text(value) -> str:
+        return escape(str(value or ""), quote=False)
+
+    @classmethod
+    def _moodle_gift(cls, question: dict, version: dict) -> str:
+        question_data = version.get("question_data") or {}
+        options = question_data.get("options")
+        correct_answer = question_data.get("correct_answer")
+        explanation = question_data.get("explanation")
+        qtype = cls._question_type(version)
+        code = cls._gift_escape(question.get("question_code"))
+        content = cls._gift_escape(version.get("content"))
+        feedback = f" # {cls._gift_escape(explanation)}" if explanation else ""
+
+        if qtype == "dung_sai":
+            value = "TRUE" if str(correct_answer).strip().upper() in {"A", "TRUE", "ĐÚNG", "DUNG"} else "FALSE"
+            return f"::{code}:: {content} {{{value}{feedback}}}\n"
+
+        if qtype == "dien_khuyet":
+            answer = cls._gift_escape(correct_answer)
+            if "_____" in content:
+                content = content.replace("_____", f"{{={answer}{feedback}}}", 1)
+                return f"::{code}:: {content}\n"
+            return f"::{code}:: {content} {{={answer}{feedback}}}\n"
+
+        if qtype == "ghep_cot" and isinstance(options, dict):
+            pairs = re.findall(r"([A-Za-z0-9]+)\s*-\s*([A-Za-z0-9]+)", str(correct_answer or ""))
+            answers = [
+                f"={cls._gift_escape(cls._option_text(options, left))} -> {cls._gift_escape(cls._option_text(options, right))}"
+                for left, right in pairs
+            ]
+            if answers:
+                return f"::{code}:: {content} {{{' '.join(answers)}{feedback}}}\n"
+
+        if isinstance(options, dict):
+            correct_keys = set(cls._answer_keys(correct_answer))
+            multiple = qtype == "nhieu_lua_chon" and len(correct_keys) > 1
+            correct_fraction = round(100 / len(correct_keys)) if multiple else 100
+            wrong_fraction = -100 if multiple else None
+            answers = []
+            for key, value in options.items():
+                key_upper = str(key).strip().upper()
+                text = cls._gift_escape(value)
+                if key_upper in correct_keys:
+                    prefix = f"~%{correct_fraction}%" if multiple else "="
+                elif multiple:
+                    prefix = f"~%{wrong_fraction}%"
+                else:
+                    prefix = "~"
+                answers.append(f"{prefix}{text}")
+            return f"::{code}:: {content} {{{' '.join(answers)}{feedback}}}\n"
+
+        return f"::{code}:: {content} {{={cls._gift_escape(correct_answer)}{feedback}}}\n"
+
+    @classmethod
+    def _moodle_xml_question(cls, question: dict, version: dict) -> str:
+        question_data = version.get("question_data") or {}
+        options = question_data.get("options")
+        correct_answer = question_data.get("correct_answer")
+        explanation = cls._xml_text(question_data.get("explanation"))
+        qtype = cls._question_type(version)
+        code = cls._xml_text(question.get("question_code"))
+        content = cls._xml_text(version.get("content"))
+
+        def answer_node(text, fraction):
+            return (
+                f'    <answer fraction="{fraction}">\n'
+                f"      <text>{cls._xml_text(text)}</text>\n"
+                f"      <feedback><text>{explanation}</text></feedback>\n"
+                f"    </answer>"
+            )
+
+        if qtype == "dung_sai":
+            is_true = str(correct_answer).strip().upper() in {"A", "TRUE", "ĐÚNG", "DUNG"}
+            return f"""  <question type="truefalse">
+    <name><text>{code}</text></name>
+    <questiontext format="html"><text>{content}</text></questiontext>
+{answer_node("true", 100 if is_true else 0)}
+{answer_node("false", 0 if is_true else 100)}
+  </question>"""
+
+        if qtype == "dien_khuyet":
+            return f"""  <question type="shortanswer">
+    <name><text>{code}</text></name>
+    <questiontext format="html"><text>{content}</text></questiontext>
+    <usecase>0</usecase>
+{answer_node(correct_answer, 100)}
+  </question>"""
+
+        if qtype == "ghep_cot" and isinstance(options, dict):
+            pairs = re.findall(r"([A-Za-z0-9]+)\s*-\s*([A-Za-z0-9]+)", str(correct_answer or ""))
+            subquestions = "\n".join(
+                f"""    <subquestion format="html">
+      <text>{cls._xml_text(cls._option_text(options, left))}</text>
+      <answer><text>{cls._xml_text(cls._option_text(options, right))}</text></answer>
+    </subquestion>"""
+                for left, right in pairs
+            )
+            if subquestions:
+                return f"""  <question type="matching">
+    <name><text>{code}</text></name>
+    <questiontext format="html"><text>{content}</text></questiontext>
+{subquestions}
+  </question>"""
+
+        if isinstance(options, dict):
+            correct_keys = set(cls._answer_keys(correct_answer))
+            multiple = qtype == "nhieu_lua_chon" and len(correct_keys) > 1
+            correct_fraction = round(100 / len(correct_keys), 4) if multiple else 100
+            answers = "\n".join(
+                answer_node(value, correct_fraction if str(key).strip().upper() in correct_keys else 0)
+                for key, value in options.items()
+            )
+            single = "false" if multiple else "true"
+            return f"""  <question type="multichoice">
+    <name><text>{code}</text></name>
+    <questiontext format="html"><text>{content}</text></questiontext>
+    <single>{single}</single>
+    <shuffleanswers>true</shuffleanswers>
+{answers}
+  </question>"""
+
+        return f"""  <question type="shortanswer">
+    <name><text>{code}</text></name>
+    <questiontext format="html"><text>{content}</text></questiontext>
+    <usecase>0</usecase>
+{answer_node(correct_answer, 100)}
+  </question>"""
+
+    @classmethod
+    def _moodle_xml(cls, question: dict, version: dict) -> str:
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<quiz>
+{cls._moodle_xml_question(question, version)}
+</quiz>
+"""
+
+    @classmethod
+    def _moodle_exports(cls, question: dict, version: dict, export_format: str = "BOTH") -> dict:
+        export_format = (export_format or "BOTH").upper()
+        exports = {}
+        if export_format in {"GIFT", "BOTH"}:
+            exports["gift"] = cls._moodle_gift(question, version)
+        if export_format in {"XML", "BOTH"}:
+            exports["xml"] = cls._moodle_xml(question, version)
+        return exports
+
+    def export_moodle(
+        self,
+        question_id: str,
+        export_format: str = "gift",
+        current_user: CurrentUser | None = None,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        if question["review_status"] != "APPROVED" or question.get("approved_version_id") != version["_id"]:
+            raise ValueError("Chỉ câu hỏi đã được duyệt ở phiên bản hiện tại mới được export Moodle")
+        normalized = export_format.lower()
+        if normalized not in {"gift", "xml"}:
+            raise ValueError("Định dạng export Moodle phải là gift hoặc xml")
+        exports = self._moodle_exports(question, version, normalized.upper())
+        content = exports[normalized]
+        return {
+            "filename": f"{question['question_code']}.{normalized}",
+            "content": content,
+            "media_type": "application/xml" if normalized == "xml" else "text/plain",
+        }
+
     def publish_to_moodle(self, question_id: str, payload: MoodlePublicationRequest, user_id) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
@@ -484,6 +1122,7 @@ INPUT:
         )
         idempotency_key = hashlib.sha256(idempotency_material.encode("utf-8")).hexdigest()
         now = utc_now()
+        exports = self._moodle_exports(question, version, payload.export_format)
         publication = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
@@ -502,11 +1141,14 @@ INPUT:
                 "content": version["content"],
                 "question_data": version.get("question_data") or {},
                 "classification": version.get("classification") or {},
+                "export_format": payload.export_format,
+                "exports": exports,
                 "mock": payload.mock,
             },
             "response_payload": {
                 "mock": payload.mock,
-                "message": "Mock Moodle publication recorded locally",
+                "message": "Mock Moodle publication recorded locally with export payload",
+                "export_formats": list(exports.keys()),
             },
             "error": None,
             "created_at": now,
@@ -540,8 +1182,14 @@ INPUT:
             )
         return json_safe(saved or publication)
 
-    def history(self, question_id: str, kind: str) -> list[dict]:
-        question, _ = self._pair(question_id)
+    def history(
+        self,
+        question_id: str,
+        kind: str,
+        current_user: CurrentUser | None = None,
+    ) -> list[dict]:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
         if kind == "evaluations":
             cursor = self.db.question_evaluations.find(
                 {"question_id": question["_id"]}
@@ -559,3 +1207,8 @@ INPUT:
 
 def get_workflow_service() -> QuestionWorkflowService:
     return QuestionWorkflowService(get_database())
+
+
+async def process_evaluation_job_background(job_id: str) -> None:
+    async with evaluation_semaphore:
+        await get_workflow_service().process_evaluation_job(job_id)

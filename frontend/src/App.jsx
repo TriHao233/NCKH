@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import AboutPage from './pages/AboutPage';
@@ -17,8 +17,9 @@ import { AuthContext } from './context/AuthContext';
 
 function RequireRole({ roles, children }) {
     const { user, loading } = useContext(AuthContext);
-    if (loading) return null;
-    if (!user) return <Navigate to="/dang-nhap" replace />;
+    const location = useLocation();
+    if (loading) return <div className="route-loading">Đang kiểm tra phiên đăng nhập...</div>;
+    if (!user) return <Navigate to="/dang-nhap" replace state={{ from: `${location.pathname}${location.search}` }} />;
     if (!roles.includes(user.role)) return <Navigate to="/trang-chu" replace />;
     return children;
 }
@@ -33,7 +34,7 @@ function App() {
                 <Route
                     path="/sinh-cau-hoi"
                     element={(
-                        <RequireRole roles={['Admin', 'Teacher']}>
+                        <RequireRole roles={['Teacher']}>
                             <GeneratePage />
                         </RequireRole>
                     )}
@@ -41,7 +42,7 @@ function App() {
                 <Route
                     path="/quan-ly"
                     element={(
-                        <RequireRole roles={['Admin', 'Teacher', 'Reviewer']}>
+                        <RequireRole roles={['Teacher']}>
                             <ManagePage />
                         </RequireRole>
                     )}
@@ -49,7 +50,7 @@ function App() {
                 <Route
                     path="/kiem-duyet"
                     element={(
-                        <RequireRole roles={['Admin', 'Reviewer']}>
+                        <RequireRole roles={['Reviewer']}>
                             <ReviewQueuePage />
                         </RequireRole>
                     )}
@@ -72,7 +73,14 @@ function App() {
                 />
                 <Route path="/huong-dan" element={<GuidePage />} />
                 <Route path="/lien-he" element={<ContactPage />} />
-                <Route path="/ho-so" element={<UserProfile />} />
+                <Route
+                    path="/ho-so"
+                    element={(
+                        <RequireRole roles={['Admin', 'Teacher', 'Reviewer']}>
+                            <UserProfile />
+                        </RequireRole>
+                    )}
+                />
             </Route>
 
             <Route path="/dang-nhap" element={<LoginPage />} />
