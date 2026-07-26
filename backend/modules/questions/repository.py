@@ -42,6 +42,7 @@ def serialize_question(question: dict, version: dict) -> dict:
             "current_version": question["current_version"],
             "current_version_id": question["current_version_id"],
             "approved_version_id": question.get("approved_version_id"),
+            "document_id": version.get("document_id"),
             "lifecycle_status": question["lifecycle_status"],
             "evaluation_status": question["evaluation_status"],
             "review_status": question["review_status"],
@@ -78,6 +79,13 @@ class QuestionRepository(Protocol):
         question_id: str | ObjectId,
         expected_version: int,
         version: dict,
+    ) -> tuple[dict, dict] | None: ...
+
+    def update_review_status(
+        self,
+        question_id: str | ObjectId,
+        allowed_statuses: set[str],
+        review_status: str,
     ) -> tuple[dict, dict] | None: ...
 
     def archive(self, question_id: str | ObjectId) -> bool: ...
@@ -198,6 +206,11 @@ class MongoQuestionRepository:
         new_version["question_id"] = question["_id"]
         new_version["version"] = expected_version + 1
         now = utc_now()
+        next_review_status = (
+            question["review_status"]
+            if question["review_status"] in {"DRAFT", "NEEDS_REVISION"}
+            else "PENDING"
+        )
         with mongo_transaction() as session:
             self.db.question_versions.insert_one(new_version, session=session)
             result = self.db.questions.update_one(
@@ -211,7 +224,7 @@ class MongoQuestionRepository:
                         "current_version": expected_version + 1,
                         "current_version_id": new_version["_id"],
                         "evaluation_status": "NOT_STARTED",
-                        "review_status": "PENDING",
+                        "review_status": next_review_status,
                         "publication_status": (
                             "STALE"
                             if question["publication_status"] == "PUBLISHED"
@@ -227,6 +240,32 @@ class MongoQuestionRepository:
                 raise RuntimeError("VERSION_CONFLICT")
         updated = self.db.questions.find_one({"_id": question["_id"]})
         return updated, new_version
+
+    def update_review_status(
+        self,
+        question_id: str | ObjectId,
+        allowed_statuses: set[str],
+        review_status: str,
+    ) -> tuple[dict, dict] | None:
+        question_oid = object_id(question_id, "question_id")
+        now = utc_now()
+        result = self.db.questions.update_one(
+            {
+                "_id": question_oid,
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+                "review_status": {"$in": list(allowed_statuses)},
+            },
+            {
+                "$set": {
+                    "review_status": review_status,
+                    "updated_at": now,
+                }
+            },
+        )
+        if not result.matched_count:
+            return None
+        return self.find_pair(question_oid)
 
     def archive(self, question_id: str | ObjectId) -> bool:
         now = utc_now()

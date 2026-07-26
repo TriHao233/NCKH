@@ -3,3 +3,4 @@ source_dump.txt
 .claude/launch.json
 frontend/.claude/launch.json
 /rag-ocr-pipeline/
+/docs/

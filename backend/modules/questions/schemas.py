@@ -44,6 +44,7 @@ class QuestionResponse(BaseModel):
     current_version: int
     current_version_id: str
     approved_version_id: str | None
+    document_id: str | None
     lifecycle_status: str
     evaluation_status: str
     review_status: str

@@ -41,6 +41,7 @@ export function mapGeneratedQuestions(questions = []) {
     questionCode: question.question_code || `Q-${index + 1}`,
     currentVersion: question.current_version || 1,
     currentVersionId: question.current_version_id || null,
+    reviewStatus: question.review_status || 'DRAFT',
     questionType: question.question_type,
     bloomLevel: question.bloom_level,
     type: questionTypeLabel(question.question_type),

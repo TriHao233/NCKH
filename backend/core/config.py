@@ -82,6 +82,7 @@ class Settings(BaseModel):
     ocr_output_dir: str = os.getenv("OCR_OUTPUT_DIR", "./data/ocr_outputs")
 
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
+    prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()
 
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini-2.0-flash")

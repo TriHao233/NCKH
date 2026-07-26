@@ -92,6 +92,25 @@ def update_question(
     return question
 
 
+@router.post("/{question_id}/submit-review", response_model=QuestionResponse)
+def submit_question_for_review(
+    question_id: str,
+    _current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: QuestionService = Depends(get_question_service),
+):
+    try:
+        question = service.submit_for_review(question_id)
+    except RuntimeError as exc:
+        if str(exc) == "VERSION_CONFLICT":
+            raise HTTPException(status_code=409, detail="Cau hoi da duoc cap nhat boi nguoi khac") from exc
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not question:
+        raise HTTPException(status_code=404, detail="Khong tim thay cau hoi")
+    return question
+
+
 @router.delete("/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_question(
     question_id: str,

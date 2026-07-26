@@ -17,6 +17,10 @@ export function updateQuestion(id, payload) {
   return apiRequest(`/questions/${id}`, { method: 'PATCH', body: payload });
 }
 
+export function submitQuestionForReview(id) {
+  return apiRequest(`/questions/${id}/submit-review`, { method: 'POST' });
+}
+
 export function deleteQuestion(id) {
   return apiRequest(`/questions/${id}`, { method: 'DELETE' });
 }

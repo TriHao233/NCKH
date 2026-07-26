@@ -28,6 +28,9 @@ BLOOM_LEVELS = {
     6: ("CREATE", "Sáng tạo"),
 }
 
+INITIAL_REVIEW_STATUSES = {"DRAFT", "PENDING"}
+SUBMITTABLE_REVIEW_STATUSES = {"DRAFT", "NEEDS_REVISION"}
+
 
 def stable_hash(value: dict) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
@@ -185,7 +188,11 @@ class QuestionService:
         *,
         origin: str = "MANUAL",
         generation_run_id: ObjectId | None = None,
+        initial_review_status: str = "PENDING",
     ) -> dict:
+        initial_review_status = initial_review_status.upper()
+        if initial_review_status not in INITIAL_REVIEW_STATUSES:
+            raise ValueError("Trang thai review khoi tao khong hop le")
         now = utc_now()
         question_id = ObjectId()
         version_id = ObjectId()
@@ -243,7 +250,7 @@ class QuestionService:
             "approved_version_id": None,
             "lifecycle_status": "ACTIVE",
             "evaluation_status": "NOT_STARTED",
-            "review_status": "PENDING",
+            "review_status": initial_review_status,
             "publication_status": "NOT_PUBLISHED",
             "quality_summary": {},
             "latest_review_id": None,
@@ -471,6 +478,26 @@ class QuestionService:
             },
         )
         return serialize_question(*updated) if updated else None
+
+    def submit_for_review(self, question_id: str) -> dict | None:
+        pair = self.repository.find_pair(question_id)
+        if not pair:
+            return None
+        question, version = pair
+        review_status = question.get("review_status")
+        if review_status == "PENDING":
+            return serialize_question(question, version)
+        if review_status not in SUBMITTABLE_REVIEW_STATUSES:
+            raise ValueError("Chi cau hoi nhap hoac can sua moi duoc gui duyet")
+
+        updated = self.repository.update_review_status(
+            question_id,
+            SUBMITTABLE_REVIEW_STATUSES,
+            "PENDING",
+        )
+        if not updated:
+            raise RuntimeError("VERSION_CONFLICT")
+        return serialize_question(*updated)
 
     def archive(self, question_id: str) -> bool:
         return self.repository.archive(question_id)

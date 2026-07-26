@@ -288,7 +288,7 @@ function ReviewQueuePage() {
             <select value={bloomFilter} onChange={(event) => setBloomFilter(event.target.value)}>
               <option value="all">Mọi Bloom</option>
               {BLOOM_LEVELS.map((level) => (
-                <option key={level.level} value={level.level}>{level.level}. {level.label}</option>
+                <option key={level.level} value={level.level}>{level.label}</option>
               ))}
             </select>
             <select value={colorFilter} onChange={(event) => setColorFilter(event.target.value)}>

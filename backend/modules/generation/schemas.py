@@ -88,6 +88,7 @@ class GeneratedQuestion(BaseModel):
     question_code: Optional[str] = None
     current_version: Optional[int] = None
     current_version_id: Optional[str] = None
+    review_status: Optional[str] = None
 
 
 class GenerationPlanSummary(BaseModel):

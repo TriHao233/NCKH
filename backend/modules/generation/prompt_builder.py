@@ -1,9 +1,10 @@
 from modules.generation.prompt_loader import PromptLoader
+from core.config import settings
 from core.database import get_database
 
 class PromptBuilder:
     @staticmethod
-    def _load_template(template_key: str, relative_path: str) -> str:
+    def _load_db_template(template_key: str) -> str | None:
         try:
             template = get_database().prompt_templates.find_one(
                 {"template_key": template_key, "is_active": True},
@@ -13,6 +14,14 @@ class PromptBuilder:
                 return template["prompt_body"]
         except Exception:
             pass
+        return None
+
+    @staticmethod
+    def _load_template(template_key: str, relative_path: str) -> str:
+        if settings.prompt_source == "db":
+            db_template = PromptBuilder._load_db_template(template_key)
+            if db_template:
+                return db_template
         return PromptLoader.load(relative_path)
 
     def build(

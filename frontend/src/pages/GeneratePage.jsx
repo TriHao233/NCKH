@@ -3,7 +3,7 @@ import { chunkDocument } from '../api/chunk';
 import { listDocuments } from '../api/documents';
 import { enqueueGenerateQuestions, getGenerateStatus } from '../api/generate';
 import { getOcrStatus, uploadOcrPdf } from '../api/ocr';
-import { deleteQuestion, updateQuestion } from '../api/questions';
+import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
 import {
   BLOOM_LEVELS,
   QUESTION_TYPES,
@@ -38,6 +38,16 @@ const PHASE_LABELS = {
 };
 
 const MAX_TOTAL_QUESTIONS = 20;
+const PRESET_STORAGE_KEY = 'qbank_generation_presets';
+const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
+
+const REVIEW_STATUS_LABEL = {
+  DRAFT: 'Nháp',
+  PENDING: 'Chờ duyệt',
+  APPROVED: 'Đã duyệt',
+  NEEDS_REVISION: 'Cần sửa',
+  REJECTED: 'Từ chối',
+};
 
 function shortId(id) {
   if (!id) return '';
@@ -47,6 +57,13 @@ function shortId(id) {
 function shortCode(code) {
   if (!code) return 'Q';
   return code.length > 18 ? `${code.slice(0, 12)}...${code.slice(-4)}` : code;
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('vi-VN');
 }
 
 function normalizeCount(value) {
@@ -68,6 +85,27 @@ function createPlanItem(overrides = {}) {
 
 function createInitialPlan() {
   return [createPlanItem({ count: 5 })];
+}
+
+function loadStoredPresets() {
+  try {
+    const rawValue = globalThis.localStorage?.getItem(PRESET_STORAGE_KEY);
+    const parsed = rawValue ? JSON.parse(rawValue) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function storePresets(presets) {
+  globalThis.localStorage?.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+}
+
+function presetInstructionValue(preset) {
+  const parts = [preset.targetHeading, preset.instruction]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  return [...new Set(parts)].join('\n');
 }
 
 function documentPipeline(document) {
@@ -138,6 +176,7 @@ function mergeUpdatedDraft(draft, updatedQuestion) {
     questionCode: updatedQuestion.question_code || draft.questionCode,
     currentVersion: updatedQuestion.current_version || draft.currentVersion,
     currentVersionId: updatedQuestion.current_version_id || draft.currentVersionId,
+    reviewStatus: updatedQuestion.review_status || draft.reviewStatus,
     text: updatedQuestion.content || draft.text,
     rawOptions,
     correctAnswer,
@@ -145,6 +184,13 @@ function mergeUpdatedDraft(draft, updatedQuestion) {
     explanation: questionData.explanation ?? draft.explanation,
     sourceContext: questionData.model_source_context ?? draft.sourceContext,
   };
+}
+
+function canSubmitDraft(draft) {
+  return Boolean(
+    draft.persistedId
+    && SUBMITTABLE_REVIEW_STATUSES.has(String(draft.reviewStatus || '').toUpperCase()),
+  );
 }
 
 function GeneratePage() {
@@ -160,9 +206,15 @@ function GeneratePage() {
   const [documentsError, setDocumentsError] = useState('');
   const [selectedDocumentId, setSelectedDocumentId] = useState('');
   const [planItems, setPlanItems] = useState(createInitialPlan);
+  const [presets, setPresets] = useState(loadStoredPresets);
+  const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [presetDialogOpen, setPresetDialogOpen] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [presetError, setPresetError] = useState('');
   const [teacherInstruction, setTeacherInstruction] = useState('');
   const [documentId, setDocumentId] = useState(null);
   const [activeJobId, setActiveJobId] = useState('');
+  const [generationInfo, setGenerationInfo] = useState(null);
   const [drafts, setDrafts] = useState([]);
   const [generationSummary, setGenerationSummary] = useState([]);
   const [chunkReady, setChunkReady] = useState(false);
@@ -170,6 +222,8 @@ function GeneratePage() {
   const [draftEditSnapshot, setDraftEditSnapshot] = useState(null);
   const [savingDraftId, setSavingDraftId] = useState(null);
   const [removingDraftId, setRemovingDraftId] = useState(null);
+  const [submittingDraftId, setSubmittingDraftId] = useState(null);
+  const [bulkSubmittingDrafts, setBulkSubmittingDrafts] = useState(false);
 
   const isBusy = !['idle', 'completed', 'failed'].includes(phase);
   const questionPlan = planItems
@@ -185,6 +239,7 @@ function GeneratePage() {
   const generationShortfalls = generationSummary.filter((item) => (
     item.skipped_count > 0 || item.duplicate_count > 0 || (item.warnings || []).length > 0
   ));
+  const submittableDraftCount = drafts.filter(canSubmitDraft).length;
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -242,6 +297,75 @@ function GeneratePage() {
       if (current.length === 1) return current;
       return current.filter((item) => item.id !== itemId);
     });
+  };
+
+  const applyPreset = (presetId) => {
+    const preset = presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setSelectedPresetId(presetId);
+    setPlanItems((preset.planItems || []).map((item) => createPlanItem(item)));
+    setTeacherInstruction(presetInstructionValue(preset));
+    setError('');
+    setStatusDetail(`Đã áp dụng mẫu "${preset.name}"`);
+  };
+
+  const openPresetDialog = () => {
+    setPresetName('');
+    setPresetError('');
+    setPresetDialogOpen(true);
+  };
+
+  const closePresetDialog = () => {
+    setPresetDialogOpen(false);
+    setPresetName('');
+    setPresetError('');
+  };
+
+  const savePreset = (event) => {
+    event?.preventDefault();
+    const name = presetName.trim();
+    if (!name) {
+      setPresetError('Vui lòng nhập tên mẫu.');
+      return;
+    }
+    const nextPreset = {
+      id: globalThis.crypto?.randomUUID?.() || `preset-${Date.now()}`,
+      name,
+      planItems: planItems.map(({ questionTypeId, bloomId, count }) => ({
+        questionTypeId,
+        bloomId,
+        count: normalizeCount(count),
+      })),
+      instruction: teacherInstruction.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    const nextPresets = [nextPreset, ...presets].slice(0, 12);
+    try {
+      storePresets(nextPresets);
+      setPresets(nextPresets);
+      setSelectedPresetId(nextPreset.id);
+      closePresetDialog();
+      setStatusDetail(`Đã lưu mẫu "${nextPreset.name}"`);
+    } catch (err) {
+      setPresetError(`Lưu mẫu thất bại: ${err.message}`);
+    }
+  };
+
+  const deleteSelectedPreset = () => {
+    const preset = presets.find((item) => item.id === selectedPresetId);
+    if (!preset) return;
+    if (!window.confirm(`Xóa mẫu cấu hình "${preset.name}" khỏi trình duyệt này?`)) {
+      return;
+    }
+    const nextPresets = presets.filter((item) => item.id !== selectedPresetId);
+    try {
+      storePresets(nextPresets);
+      setPresets(nextPresets);
+      setSelectedPresetId('');
+      setStatusDetail(`Đã xóa mẫu "${preset.name}"`);
+    } catch (err) {
+      alert(`Xóa mẫu thất bại: ${err.message}`);
+    }
   };
 
   const updateDraft = (draftId, patch) => {
@@ -334,6 +458,49 @@ function GeneratePage() {
       alert(`Bỏ câu hỏi thất bại: ${err.message}`);
     } finally {
       setRemovingDraftId(null);
+    }
+  };
+
+  const handleSubmitDraftForReview = async (draft) => {
+    if (!canSubmitDraft(draft)) {
+      alert('Câu hỏi này không còn ở trạng thái có thể gửi duyệt.');
+      return;
+    }
+    setSubmittingDraftId(draft.id);
+    try {
+      const updatedQuestion = await submitQuestionForReview(draft.persistedId);
+      setDrafts((current) => current.map((item) => (
+        item.id === draft.id ? mergeUpdatedDraft(item, updatedQuestion) : item
+      )));
+      setStatusDetail(`Đã gửi ${draft.questionCode || 'câu hỏi nháp'} sang hàng đợi duyệt`);
+    } catch (err) {
+      alert(`Gửi duyệt thất bại: ${err.message}`);
+    } finally {
+      setSubmittingDraftId(null);
+    }
+  };
+
+  const handleSubmitAllDraftsForReview = async () => {
+    const targets = drafts.filter(canSubmitDraft);
+    if (targets.length === 0) return;
+    if (!window.confirm(`Gửi ${targets.length} câu hỏi nháp sang hàng đợi duyệt?`)) {
+      return;
+    }
+    setBulkSubmittingDrafts(true);
+    try {
+      for (const draft of targets) {
+        setSubmittingDraftId(draft.id);
+        const updatedQuestion = await submitQuestionForReview(draft.persistedId);
+        setDrafts((current) => current.map((item) => (
+          item.id === draft.id ? mergeUpdatedDraft(item, updatedQuestion) : item
+        )));
+      }
+      setStatusDetail(`Đã gửi ${targets.length} câu hỏi sang hàng đợi duyệt`);
+    } catch (err) {
+      alert(`Gửi duyệt thất bại: ${err.message}`);
+    } finally {
+      setSubmittingDraftId(null);
+      setBulkSubmittingDrafts(false);
     }
   };
 
@@ -459,7 +626,10 @@ function GeneratePage() {
     setDraftEditSnapshot(null);
     setSavingDraftId(null);
     setRemovingDraftId(null);
+    setSubmittingDraftId(null);
+    setBulkSubmittingDrafts(false);
     setActiveJobId('');
+    setGenerationInfo(null);
     if (mode === 'upload') {
       setSelectedDocumentId('');
       setDocumentId(null);
@@ -481,7 +651,10 @@ function GeneratePage() {
     setDraftEditSnapshot(null);
     setSavingDraftId(null);
     setRemovingDraftId(null);
+    setSubmittingDraftId(null);
+    setBulkSubmittingDrafts(false);
     setActiveJobId('');
+    setGenerationInfo(null);
   };
 
   const runOcrPipeline = async (pdfFile, signal) => {
@@ -528,6 +701,7 @@ function GeneratePage() {
       question_type: questionPlan[0].question_type,
       num_questions: questionPlan[0].num_questions,
       question_plan: questionPlan,
+      target_heading: teacherInstruction.trim() || undefined,
       instruction: teacherInstruction.trim() || undefined,
     };
 
@@ -553,6 +727,14 @@ function GeneratePage() {
     setDraftEditSnapshot(null);
     setGenerationSummary(genResult.summary || []);
     setDrafts(mapGeneratedQuestions(genResult.data || []));
+    setGenerationInfo({
+      jobId: genJobId,
+      documentId: docId,
+      requestedCount: totalQuestions,
+      generatedCount: (genResult.data || []).length,
+      createdAt: genResult.created_at,
+      updatedAt: genResult.updated_at,
+    });
     setPhase('completed');
     setStatusDetail(`Đã sinh ${(genResult.data || []).length}/${totalQuestions} câu hỏi`);
   };
@@ -568,6 +750,7 @@ function GeneratePage() {
     if (!fromGenerateOnly) {
       setDrafts([]);
       setGenerationSummary([]);
+      setGenerationInfo(null);
       setEditingDraftId(null);
       setDraftEditSnapshot(null);
     }
@@ -632,15 +815,19 @@ function GeneratePage() {
     setFileName('');
     setSelectedDocumentId('');
     setPlanItems(createInitialPlan());
+    setSelectedPresetId('');
     setTeacherInstruction('');
     setDocumentId(null);
     setActiveJobId('');
+    setGenerationInfo(null);
     setDrafts([]);
     setGenerationSummary([]);
     setEditingDraftId(null);
     setDraftEditSnapshot(null);
     setSavingDraftId(null);
     setRemovingDraftId(null);
+    setSubmittingDraftId(null);
+    setBulkSubmittingDrafts(false);
     setChunkReady(false);
   };
 
@@ -695,6 +882,12 @@ function GeneratePage() {
                   {statusDetail && <span>{statusDetail}</span>}
                   {activeJobId && (
                     <span className="job-badge">Job: {shortId(activeJobId)}</span>
+                  )}
+                  {phase === 'completed' && generationInfo && (
+                    <span className="job-badge">
+                      {generationInfo.generatedCount}/{generationInfo.requestedCount} câu
+                      {generationInfo.updatedAt ? ` · ${formatDateTime(generationInfo.updatedAt)}` : ''}
+                    </span>
                   )}
                 </div>
               </div>
@@ -751,6 +944,9 @@ function GeneratePage() {
                       setGenerationSummary([]);
                       setEditingDraftId(null);
                       setDraftEditSnapshot(null);
+                      setSubmittingDraftId(null);
+                      setBulkSubmittingDrafts(false);
+                      setGenerationInfo(null);
                       setChunkReady(false);
                     }}
                     hidden
@@ -818,6 +1014,49 @@ function GeneratePage() {
 
             <div className="field-group">
               <div className="field-label-row">
+                <label className="field-label">Mẫu cấu hình sinh câu hỏi</label>
+                <button
+                  type="button"
+                  className="preset-save-btn"
+                  disabled={isBusy}
+                  onClick={openPresetDialog}
+                >
+                  Lưu mẫu
+                </button>
+              </div>
+              <div className="preset-control-row">
+                <select
+                  className="field-select"
+                  value={selectedPresetId}
+                  disabled={isBusy || presets.length === 0}
+                  onChange={(e) => {
+                    if (!e.target.value) {
+                      setSelectedPresetId('');
+                      return;
+                    }
+                    applyPreset(e.target.value);
+                  }}
+                >
+                  <option value="">
+                    {presets.length ? 'Chọn mẫu cấu hình đã lưu' : 'Chưa có mẫu đã lưu'}
+                  </option>
+                  {presets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>{preset.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="preset-delete-btn"
+                  disabled={isBusy || !selectedPresetId}
+                  onClick={deleteSelectedPreset}
+                >
+                  Xóa mẫu
+                </button>
+              </div>
+            </div>
+
+            <div className="field-group">
+              <div className="field-label-row">
                 <label className="field-label">Ma trận sinh câu hỏi</label>
                 <span className={`plan-total ${totalQuestions > MAX_TOTAL_QUESTIONS ? 'plan-total--error' : ''}`}>
                   {totalQuestions}/{MAX_TOTAL_QUESTIONS}
@@ -865,7 +1104,7 @@ function GeneratePage() {
                           >
                             {BLOOM_LEVELS.map((bloom) => (
                               <option key={bloom.id} value={bloom.id}>
-                                {bloom.level}. {bloom.label}
+                                {bloom.label}
                               </option>
                             ))}
                           </select>
@@ -909,6 +1148,7 @@ function GeneratePage() {
                 maxLength="1200"
                 value={teacherInstruction}
                 disabled={isBusy}
+                placeholder="Ví dụ: Tập trung vào cây nhị phân tìm kiếm, tạo câu hỏi vận dụng, tránh câu hỏi định nghĩa."
                 onChange={(e) => setTeacherInstruction(e.target.value)}
               />
             </div>
@@ -936,7 +1176,19 @@ function GeneratePage() {
           <div className="gen-preview-card">
             <div className="gen-card-title-row">
               <h3 className="gen-card-title">Xem trước câu hỏi nháp</h3>
-              <span className="gen-preview-count">{drafts.length} câu hỏi</span>
+              <div className="gen-preview-actions">
+                <span className="gen-preview-count">{drafts.length} câu hỏi</span>
+                {submittableDraftCount > 0 && (
+                  <button
+                    type="button"
+                    className="mini-submit-btn"
+                    disabled={bulkSubmittingDrafts || Boolean(editingDraftId)}
+                    onClick={handleSubmitAllDraftsForReview}
+                  >
+                    {bulkSubmittingDrafts ? 'Đang gửi...' : `Gửi ${submittableDraftCount} câu`}
+                  </button>
+                )}
+              </div>
             </div>
 
             {generationSummary.length > 0 && (
@@ -964,7 +1216,16 @@ function GeneratePage() {
                   const isEditing = editingDraftId === question.id;
                   const isSaving = savingDraftId === question.id;
                   const isRemoving = removingDraftId === question.id;
-                  const actionBusy = Boolean(savingDraftId || removingDraftId || editingDraftId);
+                  const isSubmitting = submittingDraftId === question.id;
+                  const actionBusy = Boolean(
+                    savingDraftId
+                    || removingDraftId
+                    || editingDraftId
+                    || submittingDraftId
+                    || bulkSubmittingDrafts,
+                  );
+                  const reviewStatus = String(question.reviewStatus || 'DRAFT').toUpperCase();
+                  const reviewStatusLabel = REVIEW_STATUS_LABEL[reviewStatus] || reviewStatus;
 
                   return (
                     <article className={`draft-item ${isEditing ? 'draft-item--editing' : ''}`} key={question.id}>
@@ -972,7 +1233,7 @@ function GeneratePage() {
                         <span className="q-tag">{question.type}</span>
                         <span className="bloom-tag">{question.bloom}</span>
                         <span className="draft-status" title={question.questionCode}>
-                          {shortCode(question.questionCode)} · v{question.currentVersion || 1} · Nháp
+                          {shortCode(question.questionCode)} · v{question.currentVersion || 1} · {reviewStatusLabel}
                         </span>
                       </div>
 
@@ -1042,6 +1303,16 @@ function GeneratePage() {
                           </>
                         ) : (
                           <>
+                            {canSubmitDraft(question) && (
+                              <button
+                                type="button"
+                                className="icon-btn icon-btn--approve"
+                                disabled={actionBusy}
+                                onClick={() => handleSubmitDraftForReview(question)}
+                              >
+                                {isSubmitting ? 'Đang gửi...' : 'Gửi duyệt'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="icon-btn"
@@ -1069,6 +1340,73 @@ function GeneratePage() {
           </div>
         </div>
       </section>
+
+      {presetDialogOpen && (
+        <div className="preset-dialog-backdrop" onClick={closePresetDialog}>
+          <form className="preset-dialog" onSubmit={savePreset} onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3>Lưu mẫu cấu hình sinh câu hỏi</h3>
+              <p>Mẫu sẽ lưu ma trận câu hỏi và yêu cầu sinh câu hỏi hiện tại.</p>
+            </div>
+
+            <label className="draft-edit-field">
+              <span>Tên mẫu</span>
+              <input
+                className="field-input"
+                value={presetName}
+                autoFocus
+                maxLength="80"
+                placeholder="Ví dụ: Ôn tập cây nhị phân - 10 câu"
+                onChange={(e) => {
+                  setPresetName(e.target.value);
+                  setPresetError('');
+                }}
+              />
+            </label>
+
+            <div className="preset-dialog-summary">
+              <div>
+                <strong>{totalQuestions}</strong>
+                <span>Tổng câu hỏi</span>
+              </div>
+              <div>
+                <strong>{planItems.length}</strong>
+                <span>Dòng cấu hình</span>
+              </div>
+            </div>
+
+            <div className="preset-plan-preview">
+              {planItems.map((item, index) => {
+                const type = QUESTION_TYPES.find((entry) => entry.id === item.questionTypeId);
+                const bloom = BLOOM_LEVELS.find((entry) => entry.id === item.bloomId);
+                return (
+                  <div key={item.id}>
+                    <b>Dòng {index + 1}</b>
+                    <span>
+                      {type?.label || item.questionTypeId} · {bloom?.label || item.bloomId} · {normalizeCount(item.count)} câu
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="preset-dialog-context">
+              <span><b>Yêu cầu sinh câu hỏi:</b> {teacherInstruction.trim() || 'Chưa nhập'}</span>
+            </div>
+
+            {presetError && <p className="preset-dialog-error">{presetError}</p>}
+
+            <div className="preset-dialog-actions">
+              <button type="button" className="btn btn--ghost" onClick={closePresetDialog}>
+                Hủy
+              </button>
+              <button type="submit" className="btn btn--primary">
+                Lưu mẫu
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }

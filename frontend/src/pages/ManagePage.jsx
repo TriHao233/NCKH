@@ -9,11 +9,12 @@ import {
   listQuestions,
   publishQuestionToMoodle,
   reviewQuestion,
+  submitQuestionForReview,
   updateQuestion,
 } from '../api/questions';
 import { deleteDocument, listDocuments } from '../api/documents';
 import { listSubjects } from '../api/catalog';
-import { QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
   SINGLE_CHOICE_TYPES,
@@ -28,6 +29,7 @@ import {
 import '../css/ManagePage.css';
 
 const REVIEW_STATUS_LABEL = {
+  DRAFT: 'Nháp',
   PENDING: 'Chờ duyệt',
   APPROVED: 'Đã duyệt',
   NEEDS_REVISION: 'Cần sửa',
@@ -35,6 +37,7 @@ const REVIEW_STATUS_LABEL = {
 };
 
 const REVIEW_STATUS_CLASS = {
+  DRAFT: 'status--draft',
   PENDING: 'status--pending',
   APPROVED: 'status--approved',
   NEEDS_REVISION: 'status--revise',
@@ -69,6 +72,8 @@ const QUALITY_COLOR_CLASS = {
   RED: 'quality--red',
 };
 
+const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
+
 function formatScore(value) {
   return typeof value === 'number' ? value.toFixed(2) : '—';
 }
@@ -95,6 +100,15 @@ function questionSubjectId(item) {
   return refId(item?.classification?.subject?.id || item?.classification?.subject);
 }
 
+function questionDocumentId(item) {
+  return refId(item?.document_id || item?.document?.id || item?.document);
+}
+
+function questionBloomLevel(item) {
+  const level = item?.classification?.bloom?.level;
+  return level ? String(level) : '';
+}
+
 function questionCloIds(item) {
   return (item?.clos || []).map((clo) => refId(clo.id || clo)).filter(Boolean);
 }
@@ -118,6 +132,8 @@ function ManagePage() {
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all-type');
+  const [documentFilter, setDocumentFilter] = useState('all-documents');
+  const [bloomFilter, setBloomFilter] = useState('all-bloom');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -167,7 +183,7 @@ function ManagePage() {
     setDocumentsLoading(true);
     setDocumentsError('');
     try {
-      const result = await listDocuments({ page: 1, pageSize: 20 });
+      const result = await listDocuments({ page: 1, pageSize: 100 });
       setDocuments(result.items || []);
     } catch (error) {
       setDocumentsError(error.message || 'Không tải được danh sách tài liệu');
@@ -232,9 +248,11 @@ function ManagePage() {
 
   const counts = useMemo(() => ({
     all: questions.length,
+    DRAFT: questions.filter((q) => q.review_status === 'DRAFT').length,
     APPROVED: questions.filter((q) => q.review_status === 'APPROVED').length,
     PENDING: questions.filter((q) => q.review_status === 'PENDING').length,
     NEEDS_REVISION: questions.filter((q) => q.review_status === 'NEEDS_REVISION').length,
+    REJECTED: questions.filter((q) => q.review_status === 'REJECTED').length,
   }), [questions]);
 
   const filtered = useMemo(() => {
@@ -244,9 +262,11 @@ function ManagePage() {
         const assessmentType = questionAssessmentType(q);
         if (assessmentType !== typeFilter) return false;
       }
+      if (documentFilter !== 'all-documents' && questionDocumentId(q) !== documentFilter) return false;
+      if (bloomFilter !== 'all-bloom' && questionBloomLevel(q) !== bloomFilter) return false;
       return true;
     });
-  }, [questions, statusFilter, typeFilter]);
+  }, [questions, statusFilter, typeFilter, documentFilter, bloomFilter]);
 
   const approvedForPublication = questions.filter((q) => (
     q.review_status === 'APPROVED' && q.publication_status !== 'PUBLISHED'
@@ -328,6 +348,22 @@ function ManagePage() {
       alert('Xoá câu hỏi thất bại: ' + error.message);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleSubmitForReview = async (item) => {
+    if (!SUBMITTABLE_REVIEW_STATUSES.has(item.review_status)) {
+      alert('Câu hỏi này không còn ở trạng thái có thể gửi duyệt.');
+      return;
+    }
+    setWorkflowBusyId(item.id);
+    try {
+      await submitQuestionForReview(item.id);
+      await refreshAfterWorkflow('Đã gửi câu hỏi sang hàng đợi duyệt.', item);
+    } catch (error) {
+      alert('Gửi duyệt thất bại: ' + error.message);
+    } finally {
+      setWorkflowBusyId(null);
     }
   };
 
@@ -587,6 +623,10 @@ function ManagePage() {
                 <b>{counts.all}</b>
                 <span>Tổng câu hỏi</span>
               </button>
+              <button type="button" className={`stat-card ${statusFilter === 'DRAFT' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('DRAFT')}>
+                <b>{counts.DRAFT}</b>
+                <span>Nháp</span>
+              </button>
               <button type="button" className={`stat-card ${statusFilter === 'APPROVED' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('APPROVED')}>
                 <b>{counts.APPROVED}</b>
                 <span>Đã duyệt</span>
@@ -616,6 +656,30 @@ function ManagePage() {
                     <option value="all-type">Tất cả loại câu hỏi</option>
                     {QUESTION_TYPES.map((type) => (
                       <option key={type.backend} value={type.backend}>{type.label}</option>
+                    ))}
+                  </select>
+                  {canManageDocuments && (
+                    <select
+                      className="field-select"
+                      value={documentFilter}
+                      onChange={(e) => setDocumentFilter(e.target.value)}
+                    >
+                      <option value="all-documents">Tất cả tài liệu</option>
+                      {documents.map((doc) => (
+                        <option key={doc.id} value={doc.id}>{doc.title}</option>
+                      ))}
+                    </select>
+                  )}
+                  <select
+                    className="field-select"
+                    value={bloomFilter}
+                    onChange={(e) => setBloomFilter(e.target.value)}
+                  >
+                    <option value="all-bloom">Tất cả Bloom</option>
+                    {BLOOM_LEVELS.map((bloom) => (
+                      <option key={bloom.level} value={String(bloom.level)}>
+                        {bloom.label}
+                      </option>
                     ))}
                   </select>
                   <input
@@ -668,6 +732,16 @@ function ManagePage() {
                           <button type="button" className="mini-action" onClick={() => loadWorkflowHistory(item)}>
                             Chi tiết
                           </button>
+                          {canEditQuestions && SUBMITTABLE_REVIEW_STATUSES.has(item.review_status) && (
+                            <button
+                              type="button"
+                              className="mini-action mini-action--approve"
+                              disabled={workflowBusyId === item.id}
+                              onClick={() => handleSubmitForReview(item)}
+                            >
+                              Gửi duyệt
+                            </button>
+                          )}
                           {canReviewQuestions && (
                             <>
                               <button

@@ -177,6 +177,7 @@ def save_generated_questions(
             requested_by_user_id,
             origin="AI",
             generation_run_id=run_oid,
+            initial_review_status="DRAFT",
         )
         saved_questions.append(
             {
@@ -185,6 +186,7 @@ def save_generated_questions(
                 "question_code": saved_question["question_code"],
                 "current_version": saved_question["current_version"],
                 "current_version_id": saved_question["current_version_id"],
+                "review_status": saved_question["review_status"],
             }
         )
     return saved_questions

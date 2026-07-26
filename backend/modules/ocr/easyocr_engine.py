@@ -1,8 +1,11 @@
 import os
 import gc
+import shutil
+import sys
 import numpy as np
 import logging
 from threading import Lock
+from pathlib import Path
 
 from typing import Any
 from pdf2image import pdfinfo_from_path, convert_from_path
@@ -12,9 +15,53 @@ logger = logging.getLogger(__name__)
 _readers_cache = {}
 _cache_lock = Lock()
 
+
+def _prepare_easyocr_runtime() -> None:
+    # On Windows/Anaconda, importing cv2 before torch avoids duplicate OpenMP DLL initialization.
+    import cv2  # noqa: F401
+
+
+def _import_easyocr():
+    _prepare_easyocr_runtime()
+    import easyocr
+
+    return easyocr
+
+
+def _resolve_poppler_path(poppler_path: str | None = None) -> str | None:
+    candidates = [
+        poppler_path,
+        os.environ.get("POPPLER_PATH"),
+        r"C:\poppler\Library\bin",
+        str(Path(sys.prefix) / "Library" / "bin"),
+        str(
+            Path.home()
+            / ".cache"
+            / "codex-runtimes"
+            / "codex-primary-runtime"
+            / "dependencies"
+            / "native"
+            / "poppler"
+            / "Library"
+            / "bin"
+        ),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate.strip("\"'"))
+        if (path / "pdfinfo.exe").exists() and (path / "pdftoppm.exe").exists():
+            return str(path)
+
+    pdfinfo = shutil.which("pdfinfo")
+    if pdfinfo and Path(pdfinfo).suffix.lower() == ".exe":
+        return str(Path(pdfinfo).resolve().parent)
+    return None
+
+
 def is_easyocr_available() -> bool:
     try:
-        import easyocr
+        _import_easyocr()
         return True
     except ImportError:
         return False
@@ -22,6 +69,7 @@ def is_easyocr_available() -> bool:
 
 def detect_gpu() -> bool:
     try:
+        _prepare_easyocr_runtime()
         import torch
         return torch.cuda.is_available()
     except Exception:
@@ -49,10 +97,10 @@ def get_reader(languages: list[str], gpu: bool | None = None):
     with _cache_lock:
         reader = _readers_cache.get(cache_key)
         if reader is None:
-            import easyocr
+            easyocr = _import_easyocr()
 
             logger.info(f"⚙️ Khởi tạo mô hình EasyOCR mới vào VRAM: Languages={languages}, GPU={gpu}")
-            reader = easyocr.Reader(languages, gpu=gpu)
+            reader = easyocr.Reader(languages, gpu=gpu, verbose=False)
             _readers_cache[cache_key] = reader
         else:
             logger.info(f"⚡ Sử dụng lại mô hình EasyOCR từ Cache: Languages={languages}, GPU={gpu}")
@@ -64,7 +112,7 @@ def stream_and_ocr_pdf(pdf_path: str, languages: list[str], gpu: bool | None = N
     """
     Đọc PDF và OCR cuốn chiếu từng trang để tối ưu hóa tối đa RAM/VRAM.
     """
-    poppler = poppler_path or os.environ.get("POPPLER_PATH", r"C:\poppler\Library\bin")
+    poppler = _resolve_poppler_path(poppler_path)
 
     # 1. Trích xuất thông tin PDF để lấy tổng số trang (Chỉ tốn vài KB RAM)
     info = pdfinfo_from_path(pdf_path, poppler_path=poppler)
