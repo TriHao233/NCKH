@@ -1,4 +1,6 @@
+import asyncio
 import hashlib
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -6,23 +8,46 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database
 from modules.catalog.schemas import (
+    AiModelActivationPayload,
+    AiModelHealthCheckPayload,
     AiModelPayload,
     ChapterPayload,
     ChapterUpdatePayload,
+    EvaluationPolicyActivationPayload,
     EvaluationPolicyPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
+    PromptTemplateActivationPayload,
     PromptTemplatePayload,
+    PromptTemplateTestPayload,
     SubjectPayload,
     SubjectUpdatePayload,
 )
+from modules.generation.llm.factory import get_llm_service
+from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import json_safe, object_id
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+FALLBACK_EVALUATION_POLICY = {
+    "policy_name": "Default fallback",
+    "version": 1,
+    "weights": {
+        "faithfulness": 0.35,
+        "contextual_relevancy": 0.20,
+        "answer_relevancy": 0.15,
+        "bloom_alignment": 0.15,
+        "clo_alignment": 0.15,
+    },
+    "thresholds": {"yellow_min": 0.60, "green_min": 0.80, "pass_min": 0.80},
+    "is_active": True,
+}
 
 
 def _subdoc_id(item: dict) -> ObjectId | str | None:
@@ -362,7 +387,75 @@ class CatalogService:
         return _subject_response(record, self._usage_counts(record))
 
     def list_ai_models(self) -> list[dict]:
-        return [json_safe(item) for item in self.db.ai_models.find().sort("priority", 1)]
+        return [
+            json_safe({**item, "factory_status": self._model_factory_status(item["model_code"])})
+            for item in self.db.ai_models.find().sort("priority", 1)
+        ]
+
+    @staticmethod
+    def _model_factory_status(model_code: str) -> dict:
+        try:
+            provider = get_llm_service(model_code)
+            runtime = {
+                "provider_class": provider.__class__.__name__,
+                "model_name": getattr(provider, "model_name", None),
+                "url": getattr(provider, "url", None),
+            }
+            return {"supported": True, "runtime": runtime}
+        except Exception as exc:
+            return {"supported": False, "error": str(exc)}
+
+    def _catalog_model(self, model_code: str) -> dict | None:
+        return self.db.ai_models.find_one({"model_code": model_code})
+
+    def runtime_config(self) -> dict:
+        generation_code = settings.model_provider
+        evaluation_code = settings.evaluation_model_provider
+        active_prompt_count = self.db.prompt_templates.count_documents({"is_active": True})
+        active_policy = self.db.evaluation_policies.find_one(
+            {"is_active": True},
+            sort=[("version", -1)],
+        )
+        warnings: list[str] = []
+        if settings.prompt_source != "db" and active_prompt_count:
+            warnings.append(
+                "PROMPT_SOURCE đang là file nên các prompt active trong DB chưa tác động runtime."
+            )
+        if settings.prompt_source == "db" and not active_prompt_count:
+            warnings.append("PROMPT_SOURCE=db nhưng chưa có prompt active trong DB; runtime sẽ fallback file.")
+        if not self._catalog_model(generation_code):
+            warnings.append(f"Model sinh câu hỏi '{generation_code}' chưa có trong catalog DB.")
+        if not self._catalog_model(evaluation_code):
+            warnings.append(f"Model đánh giá '{evaluation_code}' chưa có trong catalog DB.")
+
+        return json_safe(
+            {
+                "app_env": settings.app_env,
+                "prompt_source": settings.prompt_source,
+                "prompts_dir": settings.prompts_dir,
+                "generation_model_provider": generation_code,
+                "evaluation_model_provider": evaluation_code,
+                "ollama_generate_url": settings.ollama_generate_url,
+                "deepseek_model_name": settings.deepseek_model_name,
+                "deepseek_timeout_seconds": settings.deepseek_timeout_seconds,
+                "gemini_default_model": settings.DEFAULT_MODEL,
+                "gemini_api_key_configured": bool(settings.GEMINI_API_KEY),
+                "generation_factory": self._model_factory_status(generation_code),
+                "evaluation_factory": self._model_factory_status(evaluation_code),
+                "generation_catalog_model": self._catalog_model(generation_code),
+                "evaluation_catalog_model": self._catalog_model(evaluation_code),
+                "active_prompt_count": active_prompt_count,
+                "active_evaluation_policy": active_policy or FALLBACK_EVALUATION_POLICY,
+                "warnings": warnings,
+                "supported_provider_patterns": [
+                    "qwen",
+                    "gemini",
+                    "deepseek",
+                    "deepseek-r1",
+                    "ollama:<model-name>",
+                ],
+            }
+        )
 
     def upsert_ai_model(self, payload: AiModelPayload) -> dict:
         now = utc_now()
@@ -379,7 +472,74 @@ class CatalogService:
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
-        return json_safe(record)
+        return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
+
+    def set_ai_model_active(self, payload: AiModelActivationPayload) -> dict:
+        now = utc_now()
+        record = self.db.ai_models.find_one_and_update(
+            {"model_code": payload.model_code},
+            {"$set": {"is_active": payload.is_active, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not record:
+            raise LookupError("Không tìm thấy model")
+        return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
+
+    async def check_ai_model_health(self, payload: AiModelHealthCheckPayload) -> dict:
+        started = time.perf_counter()
+        factory_status = self._model_factory_status(payload.model_code)
+        if not factory_status["supported"]:
+            snapshot = {
+                "status": "UNSUPPORTED",
+                "latency_ms": 0,
+                "response_preview": "",
+                "error": factory_status.get("error"),
+                "checked_at": utc_now(),
+            }
+            if self._catalog_model(payload.model_code):
+                self.db.ai_models.find_one_and_update(
+                    {"model_code": payload.model_code},
+                    {"$set": {"last_health_check": snapshot, "updated_at": snapshot["checked_at"]}},
+                    return_document=ReturnDocument.AFTER,
+                )
+            return json_safe({
+                "model_code": payload.model_code,
+                "factory_status": factory_status,
+                **snapshot,
+            })
+        try:
+            provider = get_llm_service(payload.model_code)
+            response_text = await asyncio.wait_for(
+                provider.generate_text(payload.prompt),
+                timeout=payload.timeout_seconds,
+            )
+            status = "OK"
+            error = None
+        except Exception as exc:
+            response_text = ""
+            status = "FAILED"
+            error = str(exc)
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        snapshot = {
+            "status": status,
+            "latency_ms": latency_ms,
+            "response_preview": response_text[:500],
+            "error": error,
+            "checked_at": utc_now(),
+        }
+        if self._catalog_model(payload.model_code):
+            self.db.ai_models.find_one_and_update(
+                {"model_code": payload.model_code},
+                {"$set": {"last_health_check": snapshot, "updated_at": snapshot["checked_at"]}},
+                return_document=ReturnDocument.AFTER,
+            )
+        return json_safe(
+            {
+                "model_code": payload.model_code,
+                "factory_status": factory_status,
+                **snapshot,
+            }
+        )
 
     def list_prompt_templates(self) -> list[dict]:
         cursor = self.db.prompt_templates.find().sort([("template_key", 1), ("version", -1)])
@@ -419,6 +579,63 @@ class CatalogService:
         )
         return json_safe(record)
 
+    def activate_prompt_template(self, payload: PromptTemplateActivationPayload) -> dict:
+        now = utc_now()
+        query = {"template_key": payload.template_key, "version": payload.version}
+        if not self.db.prompt_templates.find_one(query):
+            raise LookupError("Không tìm thấy prompt version")
+        if payload.is_active:
+            self.db.prompt_templates.update_many(
+                {"template_key": payload.template_key},
+                {"$set": {"is_active": False, "updated_at": now}},
+            )
+        record = self.db.prompt_templates.find_one_and_update(
+            query,
+            {"$set": {"is_active": payload.is_active, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return json_safe(record)
+
+    def test_prompt_template(self, payload: PromptTemplateTestPayload) -> dict:
+        template_keys = [
+            "system",
+            "question_rule",
+            f"bloom:{payload.bloom_level}",
+            f"question_type:{payload.question_type}",
+            "output_format",
+        ]
+        effective_sources = {}
+        for key in template_keys:
+            active_db = self.db.prompt_templates.find_one(
+                {"template_key": key, "is_active": True},
+                sort=[("version", -1)],
+            )
+            effective_sources[key] = (
+                "db"
+                if settings.prompt_source == "db" and active_db
+                else "file"
+            )
+        try:
+            rendered = PromptBuilder().build(
+                context=payload.context,
+                bloom_level=payload.bloom_level,
+                question_type=payload.question_type,
+                num_questions=payload.num_questions,
+                instruction=payload.instruction,
+            )
+        except Exception as exc:
+            raise ValueError(f"Không build được prompt mẫu: {exc}") from exc
+        warnings = []
+        if settings.prompt_source != "db":
+            warnings.append("Prompt DB chưa có hiệu lực vì PROMPT_SOURCE không phải db.")
+        return {
+            "prompt_source": settings.prompt_source,
+            "effective_sources": effective_sources,
+            "rendered_prompt": rendered,
+            "length": len(rendered),
+            "warnings": warnings,
+        }
+
     def list_evaluation_policies(self) -> list[dict]:
         cursor = self.db.evaluation_policies.find().sort([("policy_name", 1), ("version", -1)])
         return [json_safe(item) for item in cursor]
@@ -456,12 +673,30 @@ class CatalogService:
         )
         return json_safe(record)
 
+    def activate_evaluation_policy(self, payload: EvaluationPolicyActivationPayload) -> dict:
+        now = utc_now()
+        query = {"policy_name": payload.policy_name, "version": payload.version}
+        if not self.db.evaluation_policies.find_one(query):
+            raise LookupError("Không tìm thấy policy version")
+        if payload.is_active:
+            self.db.evaluation_policies.update_many(
+                {"policy_name": payload.policy_name},
+                {"$set": {"is_active": False, "updated_at": now}},
+            )
+        record = self.db.evaluation_policies.find_one_and_update(
+            query,
+            {"$set": {"is_active": payload.is_active, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return json_safe(record)
+
     def overview(self) -> dict[str, Any]:
         return {
             "subjects": self.list_subjects(),
             "ai_models": self.list_ai_models(),
             "prompt_templates": self.list_prompt_templates(),
             "evaluation_policies": self.list_evaluation_policies(),
+            "runtime_config": self.runtime_config(),
         }
 
 

@@ -18,10 +18,13 @@ from modules.admin.jobs_service import (
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.catalog.schemas import (
+    AiModelActivationPayload,
     ChapterPayload,
     ChapterUpdatePayload,
+    EvaluationPolicyActivationPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
+    PromptTemplateActivationPayload,
     SubjectUpdatePayload,
 )
 from modules.catalog.service import CatalogService
@@ -346,6 +349,23 @@ class InMemoryCollection:
             record.setdefault(path, []).append(value)
         return record
 
+    def update_many(self, filter_query, update, **_kwargs):
+        matched = 0
+        modified = 0
+        for record in self.records:
+            if not _matches_query(record, filter_query):
+                continue
+            matched += 1
+            for path, value in (update.get("$set") or {}).items():
+                self._set_path(record, path, value, filter_query)
+                modified += 1
+
+        return type(
+            "Result",
+            (),
+            {"matched_count": matched, "modified_count": modified},
+        )()
+
 
 class FakeCatalogDatabase:
     def __init__(
@@ -356,12 +376,18 @@ class FakeCatalogDatabase:
         question_versions=None,
         questions=None,
         exams=None,
+        ai_models=None,
+        prompt_templates=None,
+        evaluation_policies=None,
     ):
         self.subjects = InMemoryCollection(subjects)
         self.documents = InMemoryCollection(documents)
         self.question_versions = InMemoryCollection(question_versions)
         self.questions = InMemoryCollection(questions)
         self.exams = InMemoryCollection(exams)
+        self.ai_models = InMemoryCollection(ai_models)
+        self.prompt_templates = InMemoryCollection(prompt_templates)
+        self.evaluation_policies = InMemoryCollection(evaluation_policies)
 
 
 class SchemaV2Tests(unittest.TestCase):
@@ -927,6 +953,102 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertEqual(updated["learning_outcomes"][0]["target_weight"], 0.75)
         self.assertFalse(updated["learning_outcomes"][0]["is_active"])
+
+    def test_catalog_runtime_controls_prompt_policy_and_model_state(self):
+        db = FakeCatalogDatabase(
+            ai_models=[
+                {
+                    "_id": ObjectId(),
+                    "model_code": "qwen",
+                    "model_name": "Qwen local",
+                    "runtime": "OLLAMA",
+                    "kind": "CHAT",
+                    "revision": "local",
+                    "capabilities": ["QUESTION_GENERATION"],
+                    "priority": 1,
+                    "is_local": True,
+                    "is_active": True,
+                    "config": {},
+                },
+                {
+                    "_id": ObjectId(),
+                    "model_code": "unknown-provider",
+                    "model_name": "Unknown",
+                    "runtime": "CUSTOM",
+                    "kind": "CHAT",
+                    "revision": "local",
+                    "capabilities": [],
+                    "priority": 2,
+                    "is_local": True,
+                    "is_active": True,
+                    "config": {},
+                },
+            ],
+            prompt_templates=[
+                {
+                    "_id": ObjectId(),
+                    "template_key": "system",
+                    "version": 1,
+                    "kind": "SYSTEM",
+                    "name": "System v1",
+                    "prompt_body": "v1",
+                    "is_active": False,
+                },
+                {
+                    "_id": ObjectId(),
+                    "template_key": "system",
+                    "version": 2,
+                    "kind": "SYSTEM",
+                    "name": "System v2",
+                    "prompt_body": "v2",
+                    "is_active": True,
+                },
+            ],
+            evaluation_policies=[
+                {
+                    "_id": ObjectId(),
+                    "policy_name": "Default",
+                    "version": 1,
+                    "weights": {"faithfulness": 1},
+                    "thresholds": {"pass_min": 0.7},
+                    "is_active": False,
+                },
+                {
+                    "_id": ObjectId(),
+                    "policy_name": "Default",
+                    "version": 2,
+                    "weights": {"faithfulness": 1},
+                    "thresholds": {"pass_min": 0.8},
+                    "is_active": True,
+                },
+            ],
+        )
+        service = CatalogService(db)
+
+        models = service.list_ai_models()
+        self.assertTrue(models[0]["factory_status"]["supported"])
+        self.assertFalse(models[1]["factory_status"]["supported"])
+
+        model = service.set_ai_model_active(
+            AiModelActivationPayload(model_code="qwen", is_active=False)
+        )
+        self.assertFalse(model["is_active"])
+
+        prompt = service.activate_prompt_template(
+            PromptTemplateActivationPayload(template_key="system", version=1)
+        )
+        self.assertTrue(prompt["is_active"])
+        self.assertFalse(db.prompt_templates.find_one({"template_key": "system", "version": 2})["is_active"])
+
+        policy = service.activate_evaluation_policy(
+            EvaluationPolicyActivationPayload(policy_name="Default", version=1)
+        )
+        self.assertTrue(policy["is_active"])
+        self.assertFalse(db.evaluation_policies.find_one({"policy_name": "Default", "version": 2})["is_active"])
+
+        runtime = service.runtime_config()
+        self.assertIn("prompt_source", runtime)
+        self.assertIn("supported_provider_patterns", runtime)
 
     def test_admin_job_summary_tracks_operational_states(self):
         jobs = [

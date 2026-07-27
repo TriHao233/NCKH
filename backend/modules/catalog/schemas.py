@@ -69,6 +69,21 @@ class AiModelPayload(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class AiModelActivationPayload(BaseModel):
+    model_code: str = Field(..., min_length=1, max_length=80)
+    is_active: bool = True
+
+
+class AiModelHealthCheckPayload(BaseModel):
+    model_code: str = Field(..., min_length=1, max_length=80)
+    prompt: str = Field(
+        'Return JSON only: {"ok": true}',
+        min_length=1,
+        max_length=1000,
+    )
+    timeout_seconds: float = Field(30, ge=1, le=120)
+
+
 class PromptTemplatePayload(BaseModel):
     template_key: str = Field(..., min_length=1, max_length=120)
     kind: str = Field(..., min_length=1, max_length=80)
@@ -78,9 +93,33 @@ class PromptTemplatePayload(BaseModel):
     is_active: bool = True
 
 
+class PromptTemplateActivationPayload(BaseModel):
+    template_key: str = Field(..., min_length=1, max_length=120)
+    version: int = Field(..., ge=1)
+    is_active: bool = True
+
+
+class PromptTemplateTestPayload(BaseModel):
+    context: str = Field(
+        "Stack uses LIFO, queue uses FIFO.",
+        min_length=1,
+        max_length=4000,
+    )
+    bloom_level: str = Field("hieu", min_length=1, max_length=80)
+    question_type: str = Field("trac_nghiem", min_length=1, max_length=80)
+    num_questions: int = Field(1, ge=1, le=10)
+    instruction: str | None = Field(None, max_length=1000)
+
+
 class EvaluationPolicyPayload(BaseModel):
     policy_name: str = Field(..., min_length=1, max_length=160)
     weights: dict[str, float]
     thresholds: dict[str, float]
     create_new_version: bool = True
+    is_active: bool = True
+
+
+class EvaluationPolicyActivationPayload(BaseModel):
+    policy_name: str = Field(..., min_length=1, max_length=160)
+    version: int = Field(..., ge=1)
     is_active: bool = True

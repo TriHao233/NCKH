@@ -3,13 +3,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from core.config import settings
 from core.dependencies import CurrentUser, require_admin, require_teacher_reviewer_or_admin
 from modules.catalog.schemas import (
+    AiModelActivationPayload,
+    AiModelHealthCheckPayload,
     AiModelPayload,
     ChapterPayload,
     ChapterUpdatePayload,
+    EvaluationPolicyActivationPayload,
     EvaluationPolicyPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
+    PromptTemplateActivationPayload,
     PromptTemplatePayload,
+    PromptTemplateTestPayload,
     SubjectPayload,
     SubjectResponse,
     SubjectUpdatePayload,
@@ -33,6 +38,14 @@ def catalog_overview(
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.overview()
+
+
+@router.get("/runtime-config")
+def runtime_config(
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.runtime_config()
 
 
 @router.get("/subjects", response_model=list[SubjectResponse])
@@ -139,6 +152,27 @@ def upsert_ai_model(
     return service.upsert_ai_model(payload)
 
 
+@router.post("/ai-models/active")
+def set_ai_model_active(
+    payload: AiModelActivationPayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.set_ai_model_active(payload)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/ai-models/health-check")
+async def check_ai_model_health(
+    payload: AiModelHealthCheckPayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return await service.check_ai_model_health(payload)
+
+
 @router.get("/prompt-templates")
 def list_prompt_templates(
     _admin: CurrentUser = Depends(require_admin),
@@ -156,6 +190,30 @@ def save_prompt_template(
     return service.save_prompt_template(payload)
 
 
+@router.post("/prompt-templates/active")
+def activate_prompt_template(
+    payload: PromptTemplateActivationPayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.activate_prompt_template(payload)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/prompt-templates/test-build")
+def test_prompt_template(
+    payload: PromptTemplateTestPayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.test_prompt_template(payload)
+    except Exception as exc:
+        _translate(exc)
+
+
 @router.get("/evaluation-policies")
 def list_evaluation_policies(
     _admin: CurrentUser = Depends(require_admin),
@@ -171,3 +229,15 @@ def save_evaluation_policy(
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.save_evaluation_policy(payload)
+
+
+@router.post("/evaluation-policies/active")
+def activate_evaluation_policy(
+    payload: EvaluationPolicyActivationPayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.activate_evaluation_policy(payload)
+    except Exception as exc:
+        _translate(exc)

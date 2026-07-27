@@ -4,6 +4,10 @@ export function getCatalogOverview() {
   return apiRequest('/catalog/overview');
 }
 
+export function getRuntimeConfig() {
+  return apiRequest('/catalog/runtime-config');
+}
+
 export function listSubjects() {
   return apiRequest('/catalog/subjects');
 }
@@ -40,6 +44,14 @@ export function saveAiModel(payload) {
   return apiRequest('/catalog/ai-models', { method: 'POST', body: payload });
 }
 
+export function setAiModelActive(payload) {
+  return apiRequest('/catalog/ai-models/active', { method: 'POST', body: payload });
+}
+
+export function checkAiModelHealth(payload) {
+  return apiRequest('/catalog/ai-models/health-check', { method: 'POST', body: payload });
+}
+
 export function listPromptTemplates() {
   return apiRequest('/catalog/prompt-templates');
 }
@@ -48,10 +60,22 @@ export function savePromptTemplate(payload) {
   return apiRequest('/catalog/prompt-templates', { method: 'POST', body: payload });
 }
 
+export function activatePromptTemplate(payload) {
+  return apiRequest('/catalog/prompt-templates/active', { method: 'POST', body: payload });
+}
+
+export function testPromptTemplate(payload) {
+  return apiRequest('/catalog/prompt-templates/test-build', { method: 'POST', body: payload });
+}
+
 export function listEvaluationPolicies() {
   return apiRequest('/catalog/evaluation-policies');
 }
 
 export function saveEvaluationPolicy(payload) {
   return apiRequest('/catalog/evaluation-policies', { method: 'POST', body: payload });
+}
+
+export function activateEvaluationPolicy(payload) {
+  return apiRequest('/catalog/evaluation-policies/active', { method: 'POST', body: payload });
 }

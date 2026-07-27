@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  activateEvaluationPolicy,
+  activatePromptTemplate,
   addSubjectChapter,
   addSubjectLearningOutcome,
+  checkAiModelHealth,
   getCatalogOverview,
   saveAiModel,
   saveEvaluationPolicy,
   savePromptTemplate,
   saveSubject,
+  setAiModelActive,
+  testPromptTemplate,
   updateSubject,
   updateSubjectChapter,
   updateSubjectLearningOutcome,
@@ -41,6 +46,22 @@ function usageText(counts = {}) {
 
 function childId(item) {
   return item?.id || item?._id || '';
+}
+
+function factoryText(model) {
+  const status = model?.factory_status;
+  if (!status) return 'Chưa kiểm tra factory';
+  if (!status.supported) return status.error || 'Factory chưa hỗ trợ';
+  const runtime = status.runtime || {};
+  return `${runtime.provider_class || 'Provider'}${runtime.model_name ? ` · ${runtime.model_name}` : ''}`;
+}
+
+function healthText(model) {
+  const health = model?.last_health_check;
+  if (!health) return 'Chưa health-check';
+  return health.status === 'OK'
+    ? `OK · ${health.latency_ms || 0}ms`
+    : `${health.status || 'FAILED'}${health.error ? ` · ${health.error}` : ''}`;
 }
 
 function subjectToForm(subject) {
@@ -95,6 +116,7 @@ function CatalogAdminPage() {
     revision: 'local',
     capabilities: 'QUESTION_GENERATION,QUESTION_EVALUATION',
     priority: 10,
+    is_active: true,
   });
   const [selectedPromptKey, setSelectedPromptKey] = useState('');
   const [promptForm, setPromptForm] = useState({ template_key: '', kind: 'QUESTION_TYPE', name: '', prompt_body: '' });
@@ -103,12 +125,17 @@ function CatalogAdminPage() {
     weights: compactJson(DEFAULT_WEIGHTS),
     thresholds: compactJson(DEFAULT_THRESHOLDS),
   });
+  const [healthCheckingCode, setHealthCheckingCode] = useState('');
+  const [modelHealth, setModelHealth] = useState(null);
+  const [promptTesting, setPromptTesting] = useState(false);
+  const [promptPreview, setPromptPreview] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const activeSubject = useMemo(
     () => catalog.subjects.find((subject) => subject.id === activeSubjectId) || catalog.subjects[0],
     [catalog.subjects, activeSubjectId],
   );
+  const runtimeConfig = catalog.runtime_config || {};
 
   const promptOptions = useMemo(() => {
     const latestByKey = new Map();
@@ -255,8 +282,45 @@ function CatalogAdminPage() {
       priority: Number(modelForm.priority) || 0,
       config: { endpoint: 'http://localhost:11434/api/generate' },
       is_local: true,
-      is_active: true,
+      is_active: modelForm.is_active,
     }));
+  };
+
+  const handleSelectModel = (model) => {
+    setModelForm({
+      model_code: model.model_code || '',
+      model_name: model.model_name || '',
+      runtime: model.runtime || 'OLLAMA',
+      kind: model.kind || 'CHAT',
+      revision: model.revision || 'local',
+      capabilities: (model.capabilities || []).join(','),
+      priority: model.priority ?? 10,
+      is_active: model.is_active !== false,
+    });
+  };
+
+  const toggleModelActive = (model) => {
+    runSave(async () => setAiModelActive({
+      model_code: model.model_code,
+      is_active: model.is_active === false,
+    }));
+  };
+
+  const handleCheckModelHealth = async (model) => {
+    setHealthCheckingCode(model.model_code);
+    setError('');
+    try {
+      const result = await checkAiModelHealth({
+        model_code: model.model_code,
+        timeout_seconds: 10,
+      });
+      setModelHealth(result);
+      await loadCatalog();
+    } catch (err) {
+      setError(err.message || 'Health-check model thất bại');
+    } finally {
+      setHealthCheckingCode('');
+    }
   };
 
   const handleSelectPrompt = (templateKey) => {
@@ -272,9 +336,40 @@ function CatalogAdminPage() {
     }
   };
 
+  const handleEditPromptVersion = (template) => {
+    setSelectedPromptKey(template.template_key);
+    setPromptForm({
+      template_key: template.template_key,
+      kind: template.kind,
+      name: template.name,
+      prompt_body: template.prompt_body,
+    });
+  };
+
   const handleSavePrompt = (event) => {
     event.preventDefault();
     runSave(async () => savePromptTemplate({ ...promptForm, create_new_version: true, is_active: true }));
+  };
+
+  const handleActivatePrompt = (template, isActive = true) => {
+    runSave(async () => activatePromptTemplate({
+      template_key: template.template_key,
+      version: template.version,
+      is_active: isActive,
+    }));
+  };
+
+  const handleTestPrompt = async () => {
+    setPromptTesting(true);
+    setError('');
+    try {
+      const result = await testPromptTemplate({});
+      setPromptPreview(result);
+    } catch (err) {
+      setError(err.message || 'Không build được prompt mẫu');
+    } finally {
+      setPromptTesting(false);
+    }
   };
 
   const handleSavePolicy = (event) => {
@@ -285,6 +380,22 @@ function CatalogAdminPage() {
       thresholds: JSON.parse(policyForm.thresholds),
       create_new_version: true,
       is_active: true,
+    }));
+  };
+
+  const handleEditPolicy = (policy) => {
+    setPolicyForm({
+      policy_name: policy.policy_name,
+      weights: compactJson(policy.weights || DEFAULT_WEIGHTS),
+      thresholds: compactJson(policy.thresholds || DEFAULT_THRESHOLDS),
+    });
+  };
+
+  const handleActivatePolicy = (policy, isActive = true) => {
+    runSave(async () => activateEvaluationPolicy({
+      policy_name: policy.policy_name,
+      version: policy.version,
+      is_active: isActive,
     }));
   };
 
@@ -302,6 +413,44 @@ function CatalogAdminPage() {
         <p className="catalog-empty">Đang tải dữ liệu nền...</p>
       ) : (
         <section className="catalog-grid">
+          <div className="catalog-card catalog-card--wide catalog-runtime-panel">
+            <div className="catalog-card-title-row">
+              <h2>Runtime đang dùng</h2>
+              <span className={`catalog-status ${runtimeConfig.prompt_source === 'db' ? 'ok' : 'warn'}`}>
+                PROMPT_SOURCE={runtimeConfig.prompt_source || 'file'}
+              </span>
+            </div>
+            <div className="runtime-grid">
+              <div>
+                <small>Sinh câu hỏi</small>
+                <b>{runtimeConfig.generation_model_provider || '--'}</b>
+                <span>{runtimeConfig.generation_factory?.runtime?.provider_class || factoryText(runtimeConfig.generation_catalog_model)}</span>
+              </div>
+              <div>
+                <small>Đánh giá AI</small>
+                <b>{runtimeConfig.evaluation_model_provider || '--'}</b>
+                <span>{runtimeConfig.evaluation_factory?.runtime?.provider_class || factoryText(runtimeConfig.evaluation_catalog_model)}</span>
+              </div>
+              <div>
+                <small>Prompt DB active</small>
+                <b>{runtimeConfig.active_prompt_count ?? 0}</b>
+                <span>{runtimeConfig.prompt_source === 'db' ? 'Có hiệu lực runtime' : 'Chưa có hiệu lực runtime'}</span>
+              </div>
+              <div>
+                <small>Policy active</small>
+                <b>{runtimeConfig.active_evaluation_policy?.policy_name || '--'}</b>
+                <span>Phiên bản {runtimeConfig.active_evaluation_policy?.version || 1}</span>
+              </div>
+            </div>
+            {(runtimeConfig.warnings || []).length > 0 && (
+              <div className="catalog-warning-list">
+                {runtimeConfig.warnings.map((warning) => (
+                  <span key={warning}>{warning}</span>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="catalog-card catalog-card--wide">
             <div className="catalog-card-title-row">
               <h2>Môn học / Chương / CLO</h2>
@@ -429,17 +578,48 @@ function CatalogAdminPage() {
               <input placeholder="Tên mô hình" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
               <input placeholder="Năng lực mô hình" value={modelForm.capabilities} onChange={(e) => setModelForm({ ...modelForm, capabilities: e.target.value })} />
               <input type="number" min="0" value={modelForm.priority} onChange={(e) => setModelForm({ ...modelForm, priority: e.target.value })} />
+              <label className="catalog-check">
+                <input type="checkbox" checked={modelForm.is_active} onChange={(e) => setModelForm({ ...modelForm, is_active: e.target.checked })} />
+                Đang dùng
+              </label>
               <button type="submit" disabled={saving}>Lưu mô hình</button>
             </form>
             <div className="catalog-list">
               {catalog.ai_models.map((model) => (
-                <span key={model._id}>{model.model_code} - {model.model_name}</span>
+                <article className={`catalog-list-item ${model.is_active === false ? 'inactive' : ''}`} key={model._id || model.model_code}>
+                  <div>
+                    <b>{model.model_code} - {model.model_name}</b>
+                    <span>{factoryText(model)}</span>
+                    <span>{healthText(model)}</span>
+                  </div>
+                  <div className="catalog-item-actions">
+                    <button type="button" className="catalog-ghost-button" onClick={() => handleSelectModel(model)} disabled={saving}>
+                      Sửa
+                    </button>
+                    <button type="button" className="catalog-ghost-button" onClick={() => toggleModelActive(model)} disabled={saving}>
+                      {model.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
+                    </button>
+                    <button type="button" onClick={() => handleCheckModelHealth(model)} disabled={saving || healthCheckingCode === model.model_code}>
+                      {healthCheckingCode === model.model_code ? 'Đang kiểm tra...' : 'Health-check'}
+                    </button>
+                  </div>
+                </article>
               ))}
             </div>
+            {modelHealth && (
+              <p className={`catalog-result ${modelHealth.status === 'OK' ? 'ok' : 'warn'}`}>
+                {modelHealth.model_code}: {modelHealth.status} · {modelHealth.latency_ms || 0}ms
+              </p>
+            )}
           </div>
 
           <div className="catalog-card catalog-card--wide">
-            <h2>Mẫu prompt</h2>
+            <div className="catalog-card-title-row">
+              <h2>Mẫu prompt</h2>
+              <button type="button" className="catalog-ghost-button" onClick={handleTestPrompt} disabled={promptTesting}>
+                {promptTesting ? 'Đang build...' : 'Test prompt mẫu'}
+              </button>
+            </div>
             <div className="prompt-layout">
               <select value={selectedPromptKey} onChange={(e) => handleSelectPrompt(e.target.value)}>
                 <option value="">Chọn prompt</option>
@@ -457,6 +637,35 @@ function CatalogAdminPage() {
                 <button type="submit" disabled={saving}>Lưu phiên bản mới</button>
               </form>
             </div>
+            {promptPreview && (
+              <div className="prompt-preview">
+                <div className="catalog-card-title-row">
+                  <b>Prompt preview · {promptPreview.length} ký tự</b>
+                  <span className={`catalog-status ${promptPreview.prompt_source === 'db' ? 'ok' : 'warn'}`}>
+                    {promptPreview.prompt_source}
+                  </span>
+                </div>
+                <pre>{promptPreview.rendered_prompt}</pre>
+              </div>
+            )}
+            <div className="catalog-list">
+              {catalog.prompt_templates.map((template) => (
+                <article className={`catalog-list-item ${template.is_active ? '' : 'inactive'}`} key={`${template.template_key}-${template.version}`}>
+                  <div>
+                    <b>{template.name || template.template_key}</b>
+                    <span>{template.template_key} · phiên bản {template.version} {template.is_active ? '· đang dùng' : ''}</span>
+                  </div>
+                  <div className="catalog-item-actions">
+                    <button type="button" className="catalog-ghost-button" onClick={() => handleEditPromptVersion(template)} disabled={saving}>
+                      Sửa
+                    </button>
+                    <button type="button" onClick={() => handleActivatePrompt(template, !template.is_active)} disabled={saving}>
+                      {template.is_active ? 'Tắt active' : 'Activate'}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
 
           <div className="catalog-card">
@@ -469,7 +678,20 @@ function CatalogAdminPage() {
             </form>
             <div className="catalog-list">
               {catalog.evaluation_policies.map((policy) => (
-                <span key={policy._id}>{policy.policy_name} - phiên bản {policy.version} {policy.is_active ? '(đang dùng)' : ''}</span>
+                <article className={`catalog-list-item ${policy.is_active ? '' : 'inactive'}`} key={policy._id || `${policy.policy_name}-${policy.version}`}>
+                  <div>
+                    <b>{policy.policy_name}</b>
+                    <span>Phiên bản {policy.version} {policy.is_active ? '· đang dùng' : ''}</span>
+                  </div>
+                  <div className="catalog-item-actions">
+                    <button type="button" className="catalog-ghost-button" onClick={() => handleEditPolicy(policy)} disabled={saving}>
+                      Sửa
+                    </button>
+                    <button type="button" onClick={() => handleActivatePolicy(policy, !policy.is_active)} disabled={saving}>
+                      {policy.is_active ? 'Tắt active' : 'Activate'}
+                    </button>
+                  </div>
+                </article>
               ))}
             </div>
           </div>
