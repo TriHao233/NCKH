@@ -7,12 +7,14 @@ class ChapterPayload(BaseModel):
     chapter_code: str = Field(..., min_length=1, max_length=40)
     chapter_name: str = Field(..., min_length=1, max_length=200)
     sequence_no: int = Field(1, ge=1)
+    is_active: bool = True
 
 
 class LearningOutcomePayload(BaseModel):
     clo_code: str = Field(..., min_length=1, max_length=40)
     description: str = Field(..., min_length=1, max_length=500)
     target_weight: float = Field(1.0, ge=0, le=1)
+    is_active: bool = True
 
 
 class SubjectPayload(BaseModel):
@@ -20,6 +22,27 @@ class SubjectPayload(BaseModel):
     subject_name: str = Field(..., min_length=1, max_length=200)
     description: str = ""
     is_active: bool = True
+
+
+class SubjectUpdatePayload(BaseModel):
+    subject_code: str | None = Field(None, min_length=1, max_length=40)
+    subject_name: str | None = Field(None, min_length=1, max_length=200)
+    description: str | None = None
+    is_active: bool | None = None
+
+
+class ChapterUpdatePayload(BaseModel):
+    chapter_code: str | None = Field(None, min_length=1, max_length=40)
+    chapter_name: str | None = Field(None, min_length=1, max_length=200)
+    sequence_no: int | None = Field(None, ge=1)
+    is_active: bool | None = None
+
+
+class LearningOutcomeUpdatePayload(BaseModel):
+    clo_code: str | None = Field(None, min_length=1, max_length=40)
+    description: str | None = Field(None, min_length=1, max_length=500)
+    target_weight: float | None = Field(None, ge=0, le=1)
+    is_active: bool | None = None
 
 
 class SubjectResponse(BaseModel):
@@ -30,6 +53,7 @@ class SubjectResponse(BaseModel):
     chapters: list[dict[str, Any]] = Field(default_factory=list)
     learning_outcomes: list[dict[str, Any]] = Field(default_factory=list)
     is_active: bool
+    usage_counts: dict[str, Any] = Field(default_factory=dict)
 
 
 class AiModelPayload(BaseModel):

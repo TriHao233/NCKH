@@ -5,11 +5,14 @@ from core.dependencies import CurrentUser, require_admin, require_teacher_review
 from modules.catalog.schemas import (
     AiModelPayload,
     ChapterPayload,
+    ChapterUpdatePayload,
     EvaluationPolicyPayload,
     LearningOutcomePayload,
+    LearningOutcomeUpdatePayload,
     PromptTemplatePayload,
     SubjectPayload,
     SubjectResponse,
+    SubjectUpdatePayload,
 )
 from modules.catalog.service import CatalogService, get_catalog_service
 
@@ -52,6 +55,19 @@ def upsert_subject(
         _translate(exc)
 
 
+@router.patch("/subjects/{subject_id}", response_model=SubjectResponse)
+def update_subject(
+    subject_id: str,
+    payload: SubjectUpdatePayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.update_subject(subject_id, payload)
+    except Exception as exc:
+        _translate(exc)
+
+
 @router.post("/subjects/{subject_id}/chapters", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def add_chapter(
     subject_id: str,
@@ -65,6 +81,20 @@ def add_chapter(
         _translate(exc)
 
 
+@router.patch("/subjects/{subject_id}/chapters/{chapter_id}", response_model=SubjectResponse)
+def update_chapter(
+    subject_id: str,
+    chapter_id: str,
+    payload: ChapterUpdatePayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.update_chapter(subject_id, chapter_id, payload)
+    except Exception as exc:
+        _translate(exc)
+
+
 @router.post("/subjects/{subject_id}/learning-outcomes", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def add_learning_outcome(
     subject_id: str,
@@ -74,6 +104,20 @@ def add_learning_outcome(
 ):
     try:
         return service.add_learning_outcome(subject_id, payload)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.patch("/subjects/{subject_id}/learning-outcomes/{clo_id}", response_model=SubjectResponse)
+def update_learning_outcome(
+    subject_id: str,
+    clo_id: str,
+    payload: LearningOutcomeUpdatePayload,
+    _admin: CurrentUser = Depends(require_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.update_learning_outcome(subject_id, clo_id, payload)
     except Exception as exc:
         _translate(exc)
 

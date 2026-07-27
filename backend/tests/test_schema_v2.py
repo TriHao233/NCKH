@@ -17,6 +17,14 @@ from modules.admin.jobs_service import (
 )
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.catalog.schemas import (
+    ChapterPayload,
+    ChapterUpdatePayload,
+    LearningOutcomePayload,
+    LearningOutcomeUpdatePayload,
+    SubjectUpdatePayload,
+)
+from modules.catalog.service import CatalogService
 from modules.notifications.service import NotificationService
 from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
@@ -233,6 +241,127 @@ class FakeSessions:
 
     def upsert(self, firebase_uid, id_token):
         self.upserts.append((firebase_uid, id_token))
+
+
+def _path_values(record, path):
+    parts = path.split(".")
+
+    def walk(value, remaining):
+        if not remaining:
+            return [value]
+        if isinstance(value, list):
+            results = []
+            for item in value:
+                results.extend(walk(item, remaining))
+            return results
+        if not isinstance(value, dict):
+            return []
+        key = remaining[0]
+        if key not in value:
+            return []
+        return walk(value[key], remaining[1:])
+
+    return walk(record, parts)
+
+
+def _matches_query(record, query):
+    for key, expected in (query or {}).items():
+        values = _path_values(record, key)
+        if isinstance(expected, dict) and "$in" in expected:
+            if not any(value in expected["$in"] for value in values):
+                return False
+        elif expected is None:
+            if values and not any(value is None for value in values):
+                return False
+        elif not any(value == expected for value in values):
+            return False
+    return True
+
+
+class InMemoryCursor(list):
+    def sort(self, key_or_list, direction=1):
+        if isinstance(key_or_list, list):
+            sort_keys = key_or_list
+        else:
+            sort_keys = [(key_or_list, direction)]
+        for key, sort_direction in reversed(sort_keys):
+            self[:] = sorted(
+                self,
+                key=lambda item: (_path_values(item, key) or [None])[0],
+                reverse=sort_direction == -1,
+            )
+        return self
+
+    def skip(self, count):
+        return InMemoryCursor(self[count:])
+
+    def limit(self, count):
+        return InMemoryCursor(self[:count])
+
+
+class InMemoryCollection:
+    def __init__(self, records=None):
+        self.records = [dict(record) for record in (records or [])]
+
+    def count_documents(self, query):
+        return len([record for record in self.records if _matches_query(record, query)])
+
+    def find(self, query=None, *_args, **_kwargs):
+        return InMemoryCursor([record for record in self.records if _matches_query(record, query)])
+
+    def find_one(self, query=None, *_args, **_kwargs):
+        return next((record for record in self.records if _matches_query(record, query)), None)
+
+    @staticmethod
+    def _set_path(record, path, value, filter_query):
+        if ".$." not in path:
+            record[path] = value
+            return
+        collection_key, field_key = path.split(".$.", 1)
+        target_id = filter_query.get(f"{collection_key}._id")
+        for item in record.get(collection_key, []):
+            if item.get("_id") == target_id:
+                item[field_key] = value
+                return
+
+    def find_one_and_update(
+        self,
+        filter_query,
+        update,
+        *,
+        upsert=False,
+        return_document=None,
+        **_kwargs,
+    ):
+        record = self.find_one(filter_query)
+        if record is None and upsert:
+            record = dict((update.get("$setOnInsert") or {}))
+            record.update(update.get("$set") or {})
+            self.records.append(record)
+        if record is None:
+            return None
+        for path, value in (update.get("$set") or {}).items():
+            self._set_path(record, path, value, filter_query)
+        for path, value in (update.get("$push") or {}).items():
+            record.setdefault(path, []).append(value)
+        return record
+
+
+class FakeCatalogDatabase:
+    def __init__(
+        self,
+        *,
+        subjects=None,
+        documents=None,
+        question_versions=None,
+        questions=None,
+        exams=None,
+    ):
+        self.subjects = InMemoryCollection(subjects)
+        self.documents = InMemoryCollection(documents)
+        self.question_versions = InMemoryCollection(question_versions)
+        self.questions = InMemoryCollection(questions)
+        self.exams = InMemoryCollection(exams)
 
 
 class SchemaV2Tests(unittest.TestCase):
@@ -694,6 +823,110 @@ class SchemaV2Tests(unittest.TestCase):
                 actor,
             )
         self.assertEqual(identity.disabled_calls, [])
+
+    def test_catalog_lifecycle_counts_usage_and_blocks_duplicate_codes(self):
+        subject_id = ObjectId()
+        other_subject_id = ObjectId()
+        chapter_id = ObjectId()
+        clo_id = ObjectId()
+        version_id = ObjectId()
+        subject = {
+            "_id": subject_id,
+            "subject_code": "CTDL",
+            "subject_name": "Cấu trúc dữ liệu",
+            "description": "",
+            "is_active": True,
+            "chapters": [
+                {
+                    "_id": chapter_id,
+                    "chapter_code": "CH01",
+                    "chapter_name": "Stack",
+                    "sequence_no": 1,
+                    "is_active": True,
+                }
+            ],
+            "learning_outcomes": [
+                {
+                    "_id": clo_id,
+                    "clo_code": "CLO1",
+                    "description": "Hiểu cấu trúc dữ liệu tuyến tính",
+                    "target_weight": 0.5,
+                    "is_active": True,
+                }
+            ],
+        }
+        db = FakeCatalogDatabase(
+            subjects=[
+                subject,
+                {
+                    "_id": other_subject_id,
+                    "subject_code": "MMT",
+                    "subject_name": "Mạng máy tính",
+                    "chapters": [],
+                    "learning_outcomes": [],
+                    "is_active": True,
+                },
+            ],
+            documents=[{"subject_id": subject_id, "chapter_id": chapter_id, "archived_at": None}],
+            question_versions=[
+                {
+                    "_id": version_id,
+                    "classification": {
+                        "subject": {"id": subject_id},
+                        "chapter": {"id": chapter_id},
+                    },
+                    "clos": [{"id": clo_id}],
+                }
+            ],
+            questions=[
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "lifecycle_status": "ACTIVE",
+                    "current_version_id": version_id,
+                }
+            ],
+            exams=[{"subject_id": subject_id, "matrix": [{"chapter_id": chapter_id}]}],
+        )
+        service = CatalogService(db)
+
+        result = service.list_subjects()[0]
+        self.assertEqual(result["usage_counts"]["documents"], 1)
+        self.assertEqual(result["usage_counts"]["questions"], 1)
+        self.assertEqual(result["usage_counts"]["exams"], 1)
+        self.assertEqual(result["chapters"][0]["usage_counts"]["documents"], 1)
+        self.assertEqual(result["learning_outcomes"][0]["usage_counts"]["questions"], 1)
+
+        with self.assertRaises(ValueError):
+            service.add_chapter(
+                str(subject_id),
+                ChapterPayload(chapter_code="CH01", chapter_name="Duplicate"),
+            )
+        with self.assertRaises(ValueError):
+            service.add_learning_outcome(
+                str(subject_id),
+                LearningOutcomePayload(clo_code="CLO1", description="Duplicate"),
+            )
+        with self.assertRaises(ValueError):
+            service.update_subject(
+                str(subject_id),
+                SubjectUpdatePayload(subject_code="MMT"),
+            )
+
+        updated = service.update_chapter(
+            str(subject_id),
+            str(chapter_id),
+            ChapterUpdatePayload(chapter_code="CH02", is_active=False),
+        )
+        self.assertEqual(updated["chapters"][0]["chapter_code"], "CH02")
+        self.assertFalse(updated["chapters"][0]["is_active"])
+
+        updated = service.update_learning_outcome(
+            str(subject_id),
+            str(clo_id),
+            LearningOutcomeUpdatePayload(target_weight=0.75, is_active=False),
+        )
+        self.assertEqual(updated["learning_outcomes"][0]["target_weight"], 0.75)
+        self.assertFalse(updated["learning_outcomes"][0]["is_active"])
 
     def test_admin_job_summary_tracks_operational_states(self):
         jobs = [

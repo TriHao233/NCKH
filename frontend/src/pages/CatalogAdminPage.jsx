@@ -7,6 +7,9 @@ import {
   saveEvaluationPolicy,
   savePromptTemplate,
   saveSubject,
+  updateSubject,
+  updateSubjectChapter,
+  updateSubjectLearningOutcome,
 } from '../api/catalog';
 import '../css/CatalogAdminPage.css';
 
@@ -19,9 +22,56 @@ const DEFAULT_WEIGHTS = {
 };
 
 const DEFAULT_THRESHOLDS = { yellow_min: 0.6, green_min: 0.8, pass_min: 0.8 };
+const EMPTY_SUBJECT_FORM = { id: '', subject_code: '', subject_name: '', description: '', is_active: true };
+const EMPTY_CHAPTER_FORM = { id: '', chapter_code: '', chapter_name: '', sequence_no: 1, is_active: true };
+const EMPTY_CLO_FORM = { id: '', clo_code: '', description: '', target_weight: 1, is_active: true };
 
 function compactJson(value) {
   return JSON.stringify(value, null, 2);
+}
+
+function usageText(counts = {}) {
+  const parts = [
+    counts.documents ? `${counts.documents} tài liệu` : '',
+    counts.questions ? `${counts.questions} câu hỏi` : '',
+    counts.exams ? `${counts.exams} đề` : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'Chưa được dùng';
+}
+
+function childId(item) {
+  return item?.id || item?._id || '';
+}
+
+function subjectToForm(subject) {
+  if (!subject) return EMPTY_SUBJECT_FORM;
+  return {
+    id: subject.id,
+    subject_code: subject.subject_code || '',
+    subject_name: subject.subject_name || '',
+    description: subject.description || '',
+    is_active: subject.is_active !== false,
+  };
+}
+
+function chapterToForm(chapter) {
+  return {
+    id: childId(chapter),
+    chapter_code: chapter.chapter_code || '',
+    chapter_name: chapter.chapter_name || '',
+    sequence_no: chapter.sequence_no || 1,
+    is_active: chapter.is_active !== false,
+  };
+}
+
+function cloToForm(clo) {
+  return {
+    id: childId(clo),
+    clo_code: clo.clo_code || '',
+    description: clo.description || '',
+    target_weight: clo.target_weight ?? 1,
+    is_active: clo.is_active !== false,
+  };
 }
 
 function CatalogAdminPage() {
@@ -34,9 +84,9 @@ function CatalogAdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeSubjectId, setActiveSubjectId] = useState('');
-  const [subjectForm, setSubjectForm] = useState({ subject_code: 'CTDL', subject_name: 'Cấu trúc dữ liệu', description: '' });
-  const [chapterForm, setChapterForm] = useState({ chapter_code: '', chapter_name: '', sequence_no: 1 });
-  const [cloForm, setCloForm] = useState({ clo_code: '', description: '', target_weight: 1 });
+  const [subjectForm, setSubjectForm] = useState(EMPTY_SUBJECT_FORM);
+  const [chapterForm, setChapterForm] = useState(EMPTY_CHAPTER_FORM);
+  const [cloForm, setCloForm] = useState(EMPTY_CLO_FORM);
   const [modelForm, setModelForm] = useState({
     model_code: 'qwen',
     model_name: 'qwen2.5:7b',
@@ -69,13 +119,21 @@ function CatalogAdminPage() {
     return Array.from(latestByKey.values());
   }, [catalog.prompt_templates]);
 
-  const loadCatalog = async () => {
+  const loadCatalog = async (preferredSubjectId = activeSubjectId) => {
     setLoading(true);
     setError('');
     try {
       const result = await getCatalogOverview();
       setCatalog(result);
-      if (!activeSubjectId && result.subjects?.[0]) setActiveSubjectId(result.subjects[0].id);
+      const nextActive = result.subjects?.find((subject) => subject.id === preferredSubjectId) || result.subjects?.[0];
+      if (nextActive) {
+        setActiveSubjectId(nextActive.id);
+        setSubjectForm((current) => (
+          current.id || (!current.subject_code && !current.subject_name)
+            ? subjectToForm(nextActive)
+            : current
+        ));
+      }
     } catch (err) {
       setError(err.message || 'Không tải được dữ liệu nền');
     } finally {
@@ -92,8 +150,8 @@ function CatalogAdminPage() {
     setSaving(true);
     setError('');
     try {
-      await action();
-      await loadCatalog();
+      const result = await action();
+      await loadCatalog(result?.activeSubjectId);
     } catch (err) {
       setError(err.message || 'Lưu dữ liệu nền thất bại');
     } finally {
@@ -101,30 +159,92 @@ function CatalogAdminPage() {
     }
   };
 
+  const handleSelectSubject = (subject) => {
+    setActiveSubjectId(subject.id);
+    setSubjectForm(subjectToForm(subject));
+    setChapterForm(EMPTY_CHAPTER_FORM);
+    setCloForm(EMPTY_CLO_FORM);
+  };
+
+  const handleNewSubject = () => {
+    setSubjectForm(EMPTY_SUBJECT_FORM);
+    setChapterForm(EMPTY_CHAPTER_FORM);
+    setCloForm(EMPTY_CLO_FORM);
+  };
+
   const handleSaveSubject = (event) => {
     event.preventDefault();
     runSave(async () => {
-      const saved = await saveSubject({ ...subjectForm, is_active: true });
+      const { id, ...payload } = subjectForm;
+      const saved = id
+        ? await updateSubject(id, payload)
+        : await saveSubject(payload);
       setActiveSubjectId(saved.id);
+      setSubjectForm(subjectToForm(saved));
+      return { activeSubjectId: saved.id };
     });
   };
 
-  const handleAddChapter = (event) => {
+  const handleSaveChapter = (event) => {
     event.preventDefault();
     if (!activeSubject) return;
-    runSave(async () => addSubjectChapter(activeSubject.id, {
-      ...chapterForm,
-      sequence_no: Number(chapterForm.sequence_no) || 1,
-    }));
+    runSave(async () => {
+      const { id, ...payload } = chapterForm;
+      const normalized = {
+        ...payload,
+        sequence_no: Number(chapterForm.sequence_no) || 1,
+      };
+      if (id) {
+        await updateSubjectChapter(activeSubject.id, id, normalized);
+      } else {
+        await addSubjectChapter(activeSubject.id, normalized);
+      }
+      setChapterForm(EMPTY_CHAPTER_FORM);
+    });
   };
 
-  const handleAddClo = (event) => {
+  const handleSaveClo = (event) => {
     event.preventDefault();
     if (!activeSubject) return;
-    runSave(async () => addSubjectLearningOutcome(activeSubject.id, {
-      ...cloForm,
-      target_weight: Number(cloForm.target_weight) || 0,
-    }));
+    runSave(async () => {
+      const { id, ...payload } = cloForm;
+      const normalized = {
+        ...payload,
+        target_weight: Number(cloForm.target_weight) || 0,
+      };
+      if (id) {
+        await updateSubjectLearningOutcome(activeSubject.id, id, normalized);
+      } else {
+        await addSubjectLearningOutcome(activeSubject.id, normalized);
+      }
+      setCloForm(EMPTY_CLO_FORM);
+    });
+  };
+
+  const toggleSubjectActive = () => {
+    if (!activeSubject) return;
+    runSave(async () => {
+      const updated = await updateSubject(activeSubject.id, { is_active: !activeSubject.is_active });
+      setSubjectForm(subjectToForm(updated));
+    });
+  };
+
+  const toggleChapterActive = (chapter) => {
+    if (!activeSubject) return;
+    runSave(async () => updateSubjectChapter(
+      activeSubject.id,
+      childId(chapter),
+      { is_active: chapter.is_active === false },
+    ));
+  };
+
+  const toggleCloActive = (clo) => {
+    if (!activeSubject) return;
+    runSave(async () => updateSubjectLearningOutcome(
+      activeSubject.id,
+      childId(clo),
+      { is_active: clo.is_active === false },
+    ));
   };
 
   const handleSaveModel = (event) => {
@@ -175,7 +295,7 @@ function CatalogAdminPage() {
           <span>Khu vực quản trị</span>
           <h1>Cấu hình dữ liệu nền</h1>
         </div>
-        <button type="button" onClick={loadCatalog} disabled={loading || saving}>Làm mới</button>
+        <button type="button" onClick={() => loadCatalog()} disabled={loading || saving}>Làm mới</button>
       </section>
       {error && <p className="catalog-error">{error}</p>}
       {loading ? (
@@ -183,51 +303,119 @@ function CatalogAdminPage() {
       ) : (
         <section className="catalog-grid">
           <div className="catalog-card catalog-card--wide">
-            <h2>Môn học / Chương / CLO</h2>
+            <div className="catalog-card-title-row">
+              <h2>Môn học / Chương / CLO</h2>
+              <button type="button" className="catalog-ghost-button" onClick={handleNewSubject} disabled={saving}>
+                Môn mới
+              </button>
+            </div>
             <form className="catalog-form catalog-form--inline" onSubmit={handleSaveSubject}>
               <input placeholder="Mã môn" value={subjectForm.subject_code} onChange={(e) => setSubjectForm({ ...subjectForm, subject_code: e.target.value })} />
               <input placeholder="Tên môn" value={subjectForm.subject_name} onChange={(e) => setSubjectForm({ ...subjectForm, subject_name: e.target.value })} />
               <input placeholder="Mô tả" value={subjectForm.description} onChange={(e) => setSubjectForm({ ...subjectForm, description: e.target.value })} />
-              <button type="submit" disabled={saving}>Lưu môn</button>
+              <label className="catalog-check">
+                <input type="checkbox" checked={subjectForm.is_active} onChange={(e) => setSubjectForm({ ...subjectForm, is_active: e.target.checked })} />
+                Đang dùng
+              </label>
+              <button type="submit" disabled={saving}>{subjectForm.id ? 'Lưu môn' : 'Tạo môn'}</button>
             </form>
             <div className="subject-layout">
               <div className="subject-list">
                 {catalog.subjects.map((subject) => (
                   <button
                     type="button"
-                    className={activeSubject?.id === subject.id ? 'active' : ''}
+                    className={`${activeSubject?.id === subject.id ? 'active' : ''} ${subject.is_active === false ? 'inactive' : ''}`}
                     key={subject.id}
-                    onClick={() => setActiveSubjectId(subject.id)}
+                    onClick={() => handleSelectSubject(subject)}
                   >
                     <b>{subject.subject_code}</b>
                     <span>{subject.subject_name}</span>
+                    <small>{usageText(subject.usage_counts)}</small>
                   </button>
                 ))}
               </div>
               <div className="subject-detail">
-                <h3>{activeSubject?.subject_name || 'Chưa có môn'}</h3>
+                <div className="catalog-detail-head">
+                  <div>
+                    <h3>{activeSubject?.subject_name || 'Chưa có môn'}</h3>
+                    {activeSubject && <p>{usageText(activeSubject.usage_counts)}</p>}
+                  </div>
+                  {activeSubject && (
+                    <button type="button" className="catalog-ghost-button" onClick={toggleSubjectActive} disabled={saving}>
+                      {activeSubject.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
+                    </button>
+                  )}
+                </div>
                 <div className="catalog-columns">
-                  <form className="catalog-form" onSubmit={handleAddChapter}>
-                    <h4>Thêm chương</h4>
+                  <form className="catalog-form" onSubmit={handleSaveChapter}>
+                    <h4>{chapterForm.id ? 'Sửa chương' : 'Thêm chương'}</h4>
                     <input placeholder="CH01" value={chapterForm.chapter_code} onChange={(e) => setChapterForm({ ...chapterForm, chapter_code: e.target.value })} />
                     <input placeholder="Tên chương" value={chapterForm.chapter_name} onChange={(e) => setChapterForm({ ...chapterForm, chapter_name: e.target.value })} />
                     <input type="number" min="1" value={chapterForm.sequence_no} onChange={(e) => setChapterForm({ ...chapterForm, sequence_no: e.target.value })} />
-                    <button type="submit" disabled={!activeSubject || saving}>Thêm chương</button>
+                    <label className="catalog-check">
+                      <input type="checkbox" checked={chapterForm.is_active} onChange={(e) => setChapterForm({ ...chapterForm, is_active: e.target.checked })} />
+                      Đang dùng
+                    </label>
+                    <div className="catalog-form-actions">
+                      {chapterForm.id && (
+                        <button type="button" className="catalog-ghost-button" onClick={() => setChapterForm(EMPTY_CHAPTER_FORM)} disabled={saving}>
+                          Hủy
+                        </button>
+                      )}
+                      <button type="submit" disabled={!activeSubject || saving}>{chapterForm.id ? 'Lưu chương' : 'Thêm chương'}</button>
+                    </div>
                   </form>
-                  <form className="catalog-form" onSubmit={handleAddClo}>
-                    <h4>Thêm CLO</h4>
+                  <form className="catalog-form" onSubmit={handleSaveClo}>
+                    <h4>{cloForm.id ? 'Sửa CLO' : 'Thêm CLO'}</h4>
                     <input placeholder="CLO1" value={cloForm.clo_code} onChange={(e) => setCloForm({ ...cloForm, clo_code: e.target.value })} />
                     <input placeholder="Mô tả chuẩn đầu ra" value={cloForm.description} onChange={(e) => setCloForm({ ...cloForm, description: e.target.value })} />
                     <input type="number" min="0" max="1" step="0.05" value={cloForm.target_weight} onChange={(e) => setCloForm({ ...cloForm, target_weight: e.target.value })} />
-                    <button type="submit" disabled={!activeSubject || saving}>Thêm CLO</button>
+                    <label className="catalog-check">
+                      <input type="checkbox" checked={cloForm.is_active} onChange={(e) => setCloForm({ ...cloForm, is_active: e.target.checked })} />
+                      Đang dùng
+                    </label>
+                    <div className="catalog-form-actions">
+                      {cloForm.id && (
+                        <button type="button" className="catalog-ghost-button" onClick={() => setCloForm(EMPTY_CLO_FORM)} disabled={saving}>
+                          Hủy
+                        </button>
+                      )}
+                      <button type="submit" disabled={!activeSubject || saving}>{cloForm.id ? 'Lưu CLO' : 'Thêm CLO'}</button>
+                    </div>
                   </form>
                 </div>
                 <div className="catalog-list">
                   {(activeSubject?.chapters || []).map((chapter) => (
-                    <span key={chapter.id || chapter._id}>{chapter.chapter_code} - {chapter.chapter_name}</span>
+                    <article className={`catalog-list-item ${chapter.is_active === false ? 'inactive' : ''}`} key={childId(chapter)}>
+                      <div>
+                        <b>{chapter.chapter_code} - {chapter.chapter_name}</b>
+                        <span>{usageText(chapter.usage_counts)}</span>
+                      </div>
+                      <div className="catalog-item-actions">
+                        <button type="button" className="catalog-ghost-button" onClick={() => setChapterForm(chapterToForm(chapter))} disabled={saving}>
+                          Sửa
+                        </button>
+                        <button type="button" className="catalog-ghost-button" onClick={() => toggleChapterActive(chapter)} disabled={saving}>
+                          {chapter.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
+                        </button>
+                      </div>
+                    </article>
                   ))}
                   {(activeSubject?.learning_outcomes || []).map((clo) => (
-                    <span key={clo.id || clo._id}>{clo.clo_code}: {clo.description}</span>
+                    <article className={`catalog-list-item ${clo.is_active === false ? 'inactive' : ''}`} key={childId(clo)}>
+                      <div>
+                        <b>{clo.clo_code}: {clo.description}</b>
+                        <span>{usageText(clo.usage_counts)}</span>
+                      </div>
+                      <div className="catalog-item-actions">
+                        <button type="button" className="catalog-ghost-button" onClick={() => setCloForm(cloToForm(clo))} disabled={saving}>
+                          Sửa
+                        </button>
+                        <button type="button" className="catalog-ghost-button" onClick={() => toggleCloActive(clo)} disabled={saving}>
+                          {clo.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
+                        </button>
+                      </div>
+                    </article>
                   ))}
                 </div>
               </div>

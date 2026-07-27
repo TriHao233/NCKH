@@ -12,12 +12,24 @@ export function saveSubject(payload) {
   return apiRequest('/catalog/subjects', { method: 'POST', body: payload });
 }
 
+export function updateSubject(subjectId, payload) {
+  return apiRequest(`/catalog/subjects/${subjectId}`, { method: 'PATCH', body: payload });
+}
+
 export function addSubjectChapter(subjectId, payload) {
   return apiRequest(`/catalog/subjects/${subjectId}/chapters`, { method: 'POST', body: payload });
 }
 
+export function updateSubjectChapter(subjectId, chapterId, payload) {
+  return apiRequest(`/catalog/subjects/${subjectId}/chapters/${chapterId}`, { method: 'PATCH', body: payload });
+}
+
 export function addSubjectLearningOutcome(subjectId, payload) {
   return apiRequest(`/catalog/subjects/${subjectId}/learning-outcomes`, { method: 'POST', body: payload });
+}
+
+export function updateSubjectLearningOutcome(subjectId, cloId, payload) {
+  return apiRequest(`/catalog/subjects/${subjectId}/learning-outcomes/${cloId}`, { method: 'PATCH', body: payload });
 }
 
 export function listAiModels() {
