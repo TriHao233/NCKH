@@ -11,6 +11,7 @@ from core.bootstrap import SCHEMA_VERSION
 
 ACTIVE_DOCUMENT_JOB_STATUSES = {"QUEUED", "PROCESSING"}
 RETRYABLE_DOCUMENT_JOB_STATUSES = {"FAILED", "ERROR", "STALE"}
+RETRYABLE_DOCUMENT_JOB_TYPES = {"OCR", "CHUNK"}
 
 
 def utc_now() -> datetime:
@@ -72,7 +73,7 @@ def serialize_document_job(job: dict) -> dict:
             "progress": job.get("progress"),
             "stats": job.get("stats"),
             "error": job.get("error"),
-            "can_retry": status in RETRYABLE_DOCUMENT_JOB_STATUSES and job_type == "OCR",
+            "can_retry": status in RETRYABLE_DOCUMENT_JOB_STATUSES and job_type in RETRYABLE_DOCUMENT_JOB_TYPES,
             "can_cancel": status in ACTIVE_DOCUMENT_JOB_STATUSES,
             "queued_at": job.get("queued_at"),
             "started_at": job.get("started_at"),
@@ -451,6 +452,30 @@ class MongoDocumentRepository:
                 "message": message,
                 "at": now,
             }
+        if normalized == "CANCELLED" and job.get("job_type") == "CHUNK":
+            chunk_sets = list(self.db.chunk_sets.find({"chunk_job_id": job["_id"]}, {"_id": 1}))
+            chunk_set_ids = [chunk_set["_id"] for chunk_set in chunk_sets]
+            self.db.chunk_sets.update_many(
+                {"chunk_job_id": job["_id"]},
+                {
+                    "$set": {
+                        "status": "CANCELLED",
+                        "error": fields.get("error"),
+                        "completed_at": now,
+                    }
+                },
+            )
+            if chunk_set_ids:
+                self.db.chunk_embeddings.update_many(
+                    {"chunk_set_id": {"$in": chunk_set_ids}, "status": "PENDING"},
+                    {
+                        "$set": {
+                            "status": "CANCELLED",
+                            "error": fields.get("error"),
+                            "updated_at": now,
+                        }
+                    },
+                )
         self.collection.update_one(
             {"_id": job["document_id"], "archived_at": None},
             {"$set": document_fields},

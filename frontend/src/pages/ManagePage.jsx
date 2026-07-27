@@ -166,7 +166,7 @@ function pageTextPreview(page) {
 
 function canRetryDocumentJob(job) {
   return Boolean(job?.can_retry) || (
-    job?.job_type === 'OCR' && RETRYABLE_DOCUMENT_JOB_STATUSES.has(job?.status)
+    ['OCR', 'CHUNK'].includes(job?.job_type) && RETRYABLE_DOCUMENT_JOB_STATUSES.has(job?.status)
   );
 }
 
@@ -1526,7 +1526,7 @@ function ManagePage() {
                                           <button
                                             type="button"
                                             className="icon-btn doc-job-action"
-                                            title="Retry OCR job"
+                                            title="Retry job"
                                             disabled={!canRetryDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleRetryDocumentJob(d, job)}
                                           >

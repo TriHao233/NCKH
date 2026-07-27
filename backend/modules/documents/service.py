@@ -10,6 +10,7 @@ from modules.documents.repository import (
     DocumentRepository,
     MongoDocumentRepository,
     RETRYABLE_DOCUMENT_JOB_STATUSES,
+    RETRYABLE_DOCUMENT_JOB_TYPES,
     serialize_document,
     serialize_document_job,
     serialize_document_page,
@@ -122,8 +123,21 @@ class DocumentService:
         current_user: CurrentUser,
     ) -> dict:
         document, job = self._accessible_job(document_id, job_id, current_user)
-        if job.get("status") not in RETRYABLE_DOCUMENT_JOB_STATUSES or job.get("job_type") != "OCR":
-            raise ValueError("Hiện chỉ hỗ trợ retry OCR job đã lỗi")
+        if job.get("status") not in RETRYABLE_DOCUMENT_JOB_STATUSES:
+            raise ValueError("Chỉ hỗ trợ retry job đã lỗi")
+        if job.get("job_type") not in RETRYABLE_DOCUMENT_JOB_TYPES:
+            raise ValueError("Hiện chỉ hỗ trợ retry OCR/CHUNK job")
+        if job.get("job_type") == "CHUNK":
+            from modules.rag.chunking import queue_chunk_retry
+
+            queued = queue_chunk_retry(
+                background_tasks,
+                document_id=str(document["_id"]),
+                config=job.get("config") or {},
+            )
+            new_job = self.repository.find_job(queued["chunk_job_id"])
+            return {"job": serialize_document_job(new_job)}
+
         upload_path = self._original_pdf_path(document)
         new_job = self.repository.create_job(document["_id"], "OCR", config=job.get("config") or {})
 

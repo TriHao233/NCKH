@@ -24,6 +24,14 @@ def get_document_record(doc_id: str) -> dict | None:
     return MongoDocumentRepository(get_database()).find_by_id(doc_id)
 
 
+def is_document_job_cancelled(job_id: str) -> bool:
+    job = get_database().document_jobs.find_one(
+        {"_id": object_id(job_id, "job_id")},
+        {"status": 1},
+    )
+    return bool(job and job.get("status") == "CANCELLED")
+
+
 def iter_document_pages(doc_id: str):
     document = get_document_record(doc_id)
     if not document:
@@ -209,6 +217,19 @@ def complete_chunk_set(
     vector_oid = object_id(vector_collection_id) if vector_collection_id else None
     now = utc_now()
     with mongo_transaction() as session:
+        job = db.document_jobs.find_one({"_id": job_oid}, {"status": 1}, session=session)
+        if job and job.get("status") == "CANCELLED":
+            db.chunk_sets.update_one(
+                {"_id": set_oid},
+                {
+                    "$set": {
+                        "status": "CANCELLED",
+                        "completed_at": now,
+                    }
+                },
+                session=session,
+            )
+            return
         db.chunk_sets.update_one(
             {"_id": set_oid},
             {

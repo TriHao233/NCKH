@@ -37,6 +37,7 @@ from modules.catalog.schemas import (
 from modules.catalog.service import CatalogService
 from modules.notifications.service import NotificationService
 from modules.auth import login as auth_login
+from modules.documents.repository import MongoDocumentRepository
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
@@ -1611,6 +1612,145 @@ class SchemaV2Tests(unittest.TestCase):
         cancelled = service.cancel_job(str(document_id), str(active_job_id), owner)
         self.assertEqual(cancelled["job"]["status"], "CANCELLED")
         self.assertIn("Cancelled by Teacher", cancelled["job"]["error"]["message"])
+
+    def test_document_chunk_job_retry_uses_failed_job_config(self):
+        owner = _current_user("Teacher")
+        document_id = ObjectId()
+        failed_job_id = ObjectId()
+        new_job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeBackgroundTasks:
+            def __init__(self):
+                self.tasks = []
+
+            def add_task(self, func, *args, **kwargs):
+                self.tasks.append({"func": func, "args": args, "kwargs": kwargs})
+
+        class FakeChunkRetryRepository:
+            def __init__(self):
+                self.jobs = {
+                    str(failed_job_id): {
+                        "_id": failed_job_id,
+                        "document_id": document_id,
+                        "document_version": 1,
+                        "job_type": "CHUNK",
+                        "attempt_no": 1,
+                        "status": "FAILED",
+                        "progress": 80,
+                        "stats": None,
+                        "error": {"message": "chunk failed", "at": now},
+                        "config": {"chunk_size": 700, "chunk_overlap": 120, "dry_run": True},
+                        "queued_at": now,
+                        "started_at": now,
+                        "finished_at": now,
+                    }
+                }
+
+            def find_by_id(self, _document_id):
+                return {
+                    "_id": document_id,
+                    "uploaded_by_user_id": owner.id,
+                    "current_version": 1,
+                }
+
+            def find_job(self, job_id):
+                return self.jobs.get(str(job_id))
+
+        repository = FakeChunkRetryRepository()
+        captured = {}
+
+        def fake_queue_chunk_retry(background_tasks, document_id, config):
+            captured["document_id"] = document_id
+            captured["config"] = config
+            repository.jobs[str(new_job_id)] = {
+                "_id": new_job_id,
+                "document_id": ObjectId(document_id),
+                "document_version": 1,
+                "job_type": "CHUNK",
+                "attempt_no": 2,
+                "status": "QUEUED",
+                "progress": 0,
+                "stats": None,
+                "error": None,
+                "queued_at": now,
+                "started_at": None,
+                "finished_at": None,
+            }
+            background_tasks.add_task(lambda: None)
+            return {"chunk_job_id": str(new_job_id), "chunk_set_id": str(ObjectId())}
+
+        import modules.rag.chunking as chunking_module
+
+        original_queue = chunking_module.queue_chunk_retry
+        try:
+            chunking_module.queue_chunk_retry = fake_queue_chunk_retry
+            result = DocumentService(repository).retry_job(
+                str(document_id),
+                str(failed_job_id),
+                FakeBackgroundTasks(),
+                owner,
+            )
+        finally:
+            chunking_module.queue_chunk_retry = original_queue
+
+        self.assertEqual(captured["document_id"], str(document_id))
+        self.assertEqual(captured["config"]["chunk_size"], 700)
+        self.assertEqual(result["job"]["id"], str(new_job_id))
+        self.assertTrue(result["job"]["can_cancel"])
+
+    def test_cancel_chunk_job_marks_chunk_set_and_pending_embeddings_cancelled(self):
+        document_id = ObjectId()
+        chunk_job_id = ObjectId()
+        chunk_set_id = ObjectId()
+        embedding_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeDocumentDatabase:
+            def __init__(self):
+                self.documents = InMemoryCollection(
+                    [
+                        {
+                            "_id": document_id,
+                            "archived_at": None,
+                            "status": "PROCESSING",
+                            "pipeline_summary": {"chunk_status": "PROCESSING"},
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.document_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": chunk_job_id,
+                            "document_id": document_id,
+                            "job_type": "CHUNK",
+                            "status": "PROCESSING",
+                            "queued_at": now,
+                            "started_at": now,
+                        }
+                    ]
+                )
+                self.chunk_sets = InMemoryCollection(
+                    [{"_id": chunk_set_id, "chunk_job_id": chunk_job_id, "status": "PROCESSING"}]
+                )
+                self.chunk_embeddings = InMemoryCollection(
+                    [{"_id": embedding_id, "chunk_set_id": chunk_set_id, "status": "PENDING"}]
+                )
+
+        db = FakeDocumentDatabase()
+        updated = MongoDocumentRepository(db).update_job(
+            str(chunk_job_id),
+            "CANCELLED",
+            error_message="Cancelled by test",
+        )
+
+        self.assertEqual(updated["status"], "CANCELLED")
+        self.assertEqual(db.chunk_sets.find_one({"_id": chunk_set_id})["status"], "CANCELLED")
+        self.assertEqual(db.chunk_embeddings.find_one({"_id": embedding_id})["status"], "CANCELLED")
+        document = db.documents.find_one({"_id": document_id})
+        self.assertEqual(document["pipeline_summary"]["chunk_status"], "CANCELLED")
+        self.assertEqual(document["status"], "FAILED")
 
     def test_admin_can_access_any_teacher_exam(self):
         owner = _current_user("Teacher")

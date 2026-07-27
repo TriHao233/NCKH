@@ -11,7 +11,7 @@ from pymongo import ReturnDocument
 from core.audit import record_audit_event
 from core.config import settings
 from core.dependencies import CurrentUser
-from modules.documents.repository import MongoDocumentRepository
+from modules.documents.repository import MongoDocumentRepository, RETRYABLE_DOCUMENT_JOB_TYPES
 from modules.documents.service import DocumentService
 from modules.generation.generate import process_generate_background
 from modules.generation.mongodb import create_generation_job, get_generation_job
@@ -299,7 +299,7 @@ class AdminJobService:
             "sort_at": updated_at,
             "age_seconds": _seconds_since(updated_at),
             "is_long_running": status in ACTIVE_STATUSES and (_seconds_since(updated_at) or 0) > settings.job_recovery_timeout_minutes * 60,
-            "can_retry": status in RETRYABLE_STATUSES and job.get("job_type") == "OCR",
+            "can_retry": status in RETRYABLE_STATUSES and job.get("job_type") in RETRYABLE_DOCUMENT_JOB_TYPES,
             "can_cancel": status in ACTIVE_STATUSES,
             "snapshot": {
                 "document_version": job.get("document_version"),

@@ -19,6 +19,7 @@ from modules.rag.mongodb import (
     complete_chunk_set,
     get_document_record,
     iter_document_pages,
+    is_document_job_cancelled,
     persist_chunks,
     start_chunk_set,
     update_chunking_status,
@@ -95,6 +96,75 @@ async def chunk_document(
         raise HTTPException(status_code=500, detail=str(ex)) from ex
 
 
+def _chunk_run_config(config: dict) -> dict:
+    return {
+        "strategy": config.get("strategy") or "recursive",
+        "chunk_size": int(config.get("chunk_size") or settings.chunk_size_default),
+        "chunk_overlap": int(config.get("chunk_overlap") or settings.chunk_overlap_default),
+        "buffer_max_pages": int(config.get("buffer_max_pages") or settings.chunk_buffer_max_pages),
+        "buffer_max_chars": int(config.get("buffer_max_chars") or settings.chunk_buffer_max_chars),
+        "max_code_block_lines": int(config.get("max_code_block_lines") or settings.max_code_block_lines),
+        "dry_run": bool(config.get("dry_run", False)),
+        "collection_name": config.get("collection_name") or settings.chromadb_collection_name,
+    }
+
+
+def _empty_chunk_stats() -> ChunkingStats:
+    return ChunkingStats(
+        original_length=0,
+        total_chunks=0,
+        junk_removed=0,
+        avg_chunk_size=0,
+        min_chunk_size=0,
+        max_chunk_size=0,
+        content_type_distribution={},
+    )
+
+
+def _cancelled_chunk_response(
+    document_id: str,
+    chunk_job_id: str,
+    chunk_set_id: str,
+    collection_name: str,
+) -> DocumentChunkResponse:
+    return DocumentChunkResponse(
+        document_id=document_id,
+        chunk_job_id=chunk_job_id,
+        chunk_set_id=chunk_set_id,
+        vector_collection_id=None,
+        collection_name=collection_name,
+        total_chunks=0,
+        stored_chunks=0,
+        stats=_empty_chunk_stats(),
+    )
+
+
+def process_chunk_retry_background(
+    document_id: str,
+    chunk_job_id: str,
+    chunk_set_id: str,
+    run_config: dict,
+) -> None:
+    try:
+        _process_existing_chunk_set(document_id, chunk_job_id, chunk_set_id, run_config)
+    except Exception as exc:
+        logger.exception("Chunk retry job %s failed", chunk_job_id)
+        update_chunking_status(document_id, status="failed", error_message=str(exc))
+
+
+def queue_chunk_retry(background_tasks: BackgroundTasks, document_id: str, config: dict) -> dict:
+    run_config = _chunk_run_config(config)
+    chunk_job_id, chunk_set_id = start_chunk_set(document_id, run_config)
+    background_tasks.add_task(
+        process_chunk_retry_background,
+        document_id=document_id,
+        chunk_job_id=chunk_job_id,
+        chunk_set_id=chunk_set_id,
+        run_config=run_config,
+    )
+    return {"chunk_job_id": chunk_job_id, "chunk_set_id": chunk_set_id}
+
+
 def chunk_document_and_store(
     document_id: str,
     chunk_size: int,
@@ -109,20 +179,37 @@ def chunk_document_and_store(
     if not doc:
         raise ValueError("Document not found")
 
-    resolved_buffer_pages = buffer_max_pages or settings.chunk_buffer_max_pages
-    resolved_buffer_chars = buffer_max_chars or settings.chunk_buffer_max_chars
-    resolved_code_lines = max_code_block_lines or settings.max_code_block_lines
-    resolved_collection = collection_name or settings.chromadb_collection_name
-    run_config = {
-        "strategy": "recursive",
-        "chunk_size": chunk_size,
-        "chunk_overlap": chunk_overlap,
-        "buffer_max_pages": resolved_buffer_pages,
-        "buffer_max_chars": resolved_buffer_chars,
-        "max_code_block_lines": resolved_code_lines,
-        "dry_run": dry_run,
-    }
+    run_config = _chunk_run_config(
+        {
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+            "collection_name": collection_name,
+            "buffer_max_pages": buffer_max_pages,
+            "buffer_max_chars": buffer_max_chars,
+            "max_code_block_lines": max_code_block_lines,
+            "dry_run": dry_run,
+        }
+    )
     chunk_job_id, chunk_set_id = start_chunk_set(document_id, run_config)
+    return _process_existing_chunk_set(document_id, chunk_job_id, chunk_set_id, run_config)
+
+
+def _process_existing_chunk_set(
+    document_id: str,
+    chunk_job_id: str,
+    chunk_set_id: str,
+    run_config: dict,
+) -> DocumentChunkResponse:
+    chunk_size = int(run_config["chunk_size"])
+    chunk_overlap = int(run_config["chunk_overlap"])
+    resolved_buffer_pages = int(run_config["buffer_max_pages"])
+    resolved_buffer_chars = int(run_config["buffer_max_chars"])
+    resolved_code_lines = int(run_config["max_code_block_lines"])
+    resolved_collection = run_config["collection_name"]
+    dry_run = bool(run_config.get("dry_run", False))
+
+    if is_document_job_cancelled(chunk_job_id):
+        return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
 
     total_chunks = 0
     stored_chunks = 0
@@ -140,6 +227,8 @@ def chunk_document_and_store(
         resolved_buffer_pages,
         resolved_buffer_chars,
     ):
+        if is_document_job_cancelled(chunk_job_id):
+            return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
         original_length += source_len
         for chunk in _chunk_buffer(
             buffer_text,
@@ -161,6 +250,9 @@ def chunk_document_and_store(
             max_chunk = max(max_chunk, char_count)
             content_type_distribution[metadata.get("content_type", "text")] += 1
 
+            if is_document_job_cancelled(chunk_job_id):
+                return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
+
     avg_chunk = round(total_chars / max(total_chunks, 1), 2)
     stats = ChunkingStats(
         original_length=original_length,
@@ -171,6 +263,9 @@ def chunk_document_and_store(
         max_chunk_size=max_chunk,
         content_type_distribution=dict(content_type_distribution),
     )
+
+    if is_document_job_cancelled(chunk_job_id):
+        return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
 
     if not dry_run and all_chunks_for_export:
         (
@@ -184,12 +279,17 @@ def chunk_document_and_store(
             resolved_collection,
             all_chunks_for_export,
         )
+        if is_document_job_cancelled(chunk_job_id):
+            return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
         stored_chunks = store_chunks(
             vector_ids,
             vector_documents,
             vector_metadatas,
             resolved_collection,
         )
+
+    if is_document_job_cancelled(chunk_job_id):
+        return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
 
     complete_chunk_set(
         document_id,
