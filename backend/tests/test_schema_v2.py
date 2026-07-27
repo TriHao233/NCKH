@@ -43,6 +43,7 @@ from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     MoodlePublicationRequest,
     ReviewAssignmentRequest,
+    ReviewCreateRequest,
     ReviewOverride,
 )
 from modules.questions.workflow_service import QuestionWorkflowService
@@ -233,6 +234,34 @@ class SchemaV2Tests(unittest.TestCase):
     def test_review_override_requires_reason(self):
         with self.assertRaises(ValidationError):
             ReviewOverride(applied=True, score=0.9)
+
+    def test_structured_review_requires_reject_reason_and_revision_issue(self):
+        with self.assertRaises(ValidationError):
+            ReviewCreateRequest(expected_version=1, decision="REJECTED")
+
+        with self.assertRaises(ValidationError):
+            ReviewCreateRequest(
+                expected_version=1,
+                decision="NEEDS_REVISION",
+                review_form={"overall_note": "Cần sửa đáp án."},
+            )
+
+        payload = ReviewCreateRequest(
+            expected_version=1,
+            decision="NEEDS_REVISION",
+            review_form={
+                "overall_note": "Cần sửa trước khi duyệt.",
+                "revision_issues": [
+                    {
+                        "title": "Đáp án chưa khớp nguồn",
+                        "severity": "HIGH",
+                        "detail": "Nguồn nói FIFO nhưng đáp án chọn Stack.",
+                        "page_number": 2,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(payload.review_form.revision_issues[0].severity, "HIGH")
 
     def test_review_assignment_request_allows_admin_unassign(self):
         payload = ReviewAssignmentRequest(reviewer_user_id=None, note="unassign")

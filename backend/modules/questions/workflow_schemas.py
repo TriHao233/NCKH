@@ -40,6 +40,35 @@ class ReviewOverride(BaseModel):
         return self
 
 
+class ReviewRubricItem(BaseModel):
+    key: str = Field(..., min_length=1, max_length=80)
+    label: str = Field(..., min_length=1, max_length=160)
+    passed: bool
+    note: str = Field("", max_length=500)
+
+
+class ReviewRevisionIssue(BaseModel):
+    title: str = Field(..., min_length=1, max_length=160)
+    severity: Literal["LOW", "MEDIUM", "HIGH"] = "MEDIUM"
+    detail: str = Field("", max_length=1000)
+    source_chunk_id: str | None = Field(None, max_length=120)
+    page_number: int | None = Field(None, ge=1)
+
+
+class StructuredReviewForm(BaseModel):
+    checklist: list[ReviewRubricItem] = Field(default_factory=list, max_length=12)
+    overall_note: str = Field("", max_length=2000)
+    revision_issues: list[ReviewRevisionIssue] = Field(default_factory=list, max_length=20)
+
+    def has_reason(self) -> bool:
+        if self.overall_note.strip():
+            return True
+        return any(
+            issue.title.strip() or issue.detail.strip()
+            for issue in self.revision_issues
+        )
+
+
 class AutoEvaluationRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
     evaluator_model_code: str = Field(
@@ -53,8 +82,18 @@ class AutoEvaluationRequest(BaseModel):
 class ReviewCreateRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
     decision: Literal["APPROVED", "REJECTED", "NEEDS_REVISION"]
-    note: str = ""
+    note: str = Field("", max_length=2000)
     override: ReviewOverride = Field(default_factory=ReviewOverride)
+    review_form: StructuredReviewForm = Field(default_factory=StructuredReviewForm)
+
+    @model_validator(mode="after")
+    def require_structured_reason(self):
+        has_reason = bool(self.note.strip()) or self.review_form.has_reason()
+        if self.decision == "REJECTED" and not has_reason:
+            raise ValueError("Reject cần ghi rõ lý do")
+        if self.decision == "NEEDS_REVISION" and not self.review_form.revision_issues:
+            raise ValueError("Cần ít nhất một lỗi cần Teacher sửa")
+        return self
 
 
 class ReviewAssignmentRequest(BaseModel):

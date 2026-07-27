@@ -1054,6 +1054,8 @@ class QuestionWorkflowService:
             )
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
+        review_form = payload.review_form.model_dump()
+        review_note = payload.note or payload.review_form.overall_note
         review = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
@@ -1062,8 +1064,10 @@ class QuestionWorkflowService:
             "question_version": version["version"],
             "reviewer_user_id": current_user.id,
             "decision": payload.decision,
-            "note": payload.note,
+            "note": review_note,
             "override": payload.override.model_dump(),
+            "review_form": review_form,
+            "revision_issues": review_form.get("revision_issues", []),
             "supersedes_review_id": question.get("latest_review_id"),
             "previous_status": question["review_status"],
             "resulting_status": payload.decision,
@@ -1109,6 +1113,7 @@ class QuestionWorkflowService:
                 "review_id": review["_id"],
                 "correlation_id": str(review["_id"]),
                 "review_assignment": json_safe(question.get("review_assignment") or {}),
+                "review_form": review_form,
             },
             "created_at": now,
         }

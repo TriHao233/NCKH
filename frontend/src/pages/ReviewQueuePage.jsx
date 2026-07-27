@@ -84,6 +84,76 @@ const SCORE_COMPONENTS = [
   },
 ];
 
+const REVIEW_RUBRIC = [
+  { key: 'source_alignment', label: 'Bám sát nguồn' },
+  { key: 'answer_correctness', label: 'Đáp án đúng' },
+  { key: 'bloom_clo_alignment', label: 'Đúng Bloom/CLO' },
+  { key: 'language_quality', label: 'Diễn đạt rõ' },
+  { key: 'moodle_readiness', label: 'Sẵn sàng Moodle' },
+];
+
+function defaultReviewDraft(question, decision) {
+  return {
+    questionId: question.id,
+    questionCode: question.question_code,
+    decision,
+    overallNote: '',
+    overrideReason: '',
+    checklist: REVIEW_RUBRIC.map((item) => ({
+      ...item,
+      passed: decision === 'APPROVED',
+      note: '',
+    })),
+    issues: [],
+  };
+}
+
+function reviewDraftKey(questionId, decision) {
+  return `review-draft:${questionId}:${decision}`;
+}
+
+function loadReviewDraft(question, decision) {
+  const fallback = defaultReviewDraft(question, decision);
+  try {
+    const saved = localStorage.getItem(reviewDraftKey(question.id, decision));
+    if (!saved) return fallback;
+    const parsed = JSON.parse(saved);
+    return {
+      ...fallback,
+      ...parsed,
+      checklist: REVIEW_RUBRIC.map((item) => {
+        const savedItem = (parsed.checklist || []).find((entry) => entry.key === item.key);
+        return savedItem ? { ...item, ...savedItem } : { ...item, passed: false, note: '' };
+      }),
+      issues: Array.isArray(parsed.issues)
+        ? parsed.issues.map((issue, index) => ({ id: issue.id || `issue-${index}`, ...issue }))
+        : [],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function compactIssues(issues) {
+  return (issues || [])
+    .map((issue) => ({
+      title: (issue.title || '').trim(),
+      severity: issue.severity || 'MEDIUM',
+      detail: (issue.detail || '').trim(),
+      source_chunk_id: issue.source_chunk_id || null,
+      page_number: issue.page_number ? Number(issue.page_number) : null,
+    }))
+    .filter((issue) => issue.title || issue.detail);
+}
+
+function reviewIssuesOf(review) {
+  if (Array.isArray(review?.revision_issues)) return review.revision_issues;
+  if (Array.isArray(review?.review_form?.revision_issues)) {
+    return review.review_form.revision_issues;
+  }
+  return [];
+}
+
 function score(value) {
   return typeof value === 'number' ? value.toFixed(2) : '--';
 }
@@ -259,6 +329,10 @@ function ReviewQueuePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busyId, setBusyId] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [reviewDraft, setReviewDraft] = useState(null);
+  const [reviewFormError, setReviewFormError] = useState('');
+  const [assignmentDraft, setAssignmentDraft] = useState(null);
+  const [assignmentError, setAssignmentError] = useState('');
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -296,6 +370,10 @@ function ReviewQueuePage() {
 
   const loadHistory = async (question) => {
     setSelected(question);
+    setReviewDraft(null);
+    setAssignmentDraft(null);
+    setReviewFormError('');
+    setAssignmentError('');
     setHistoryLoading(true);
     setSourceLoading(true);
     setSourceError('');
@@ -372,6 +450,14 @@ function ReviewQueuePage() {
     }
   }, [sourcePdf?.url]);
 
+  useEffect(() => {
+    if (!reviewDraft?.questionId || !reviewDraft?.decision) return;
+    localStorage.setItem(
+      reviewDraftKey(reviewDraft.questionId, reviewDraft.decision),
+      JSON.stringify(reviewDraft),
+    );
+  }, [reviewDraft]);
+
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,
     mine: questions.filter((item) => isAssignmentMine(item, user)).length,
@@ -423,6 +509,61 @@ function ReviewQueuePage() {
     );
   };
 
+  const openReviewForm = (question, decision) => {
+    if (!canReviewQuestion(question)) {
+      alert('Bạn cần claim câu hỏi và giữ lock còn hiệu lực trước khi kiểm duyệt.');
+      return;
+    }
+    setReviewFormError('');
+    setReviewDraft(loadReviewDraft(question, decision));
+  };
+
+  const updateReviewDraft = (updates) => {
+    setReviewDraft((current) => ({ ...current, ...updates }));
+  };
+
+  const updateChecklistItem = (key, updates) => {
+    setReviewDraft((current) => ({
+      ...current,
+      checklist: current.checklist.map((item) => (
+        item.key === key ? { ...item, ...updates } : item
+      )),
+    }));
+  };
+
+  const addReviewIssue = () => {
+    setReviewDraft((current) => ({
+      ...current,
+      issues: [
+        ...current.issues,
+        {
+          id: `issue-${Date.now()}`,
+          title: '',
+          severity: 'MEDIUM',
+          detail: '',
+          source_chunk_id: '',
+          page_number: '',
+        },
+      ],
+    }));
+  };
+
+  const updateReviewIssue = (id, updates) => {
+    setReviewDraft((current) => ({
+      ...current,
+      issues: current.issues.map((issue) => (
+        issue.id === id ? { ...issue, ...updates } : issue
+      )),
+    }));
+  };
+
+  const removeReviewIssue = (id) => {
+    setReviewDraft((current) => ({
+      ...current,
+      issues: current.issues.filter((issue) => issue.id !== id),
+    }));
+  };
+
   const refreshAfterAction = async (question) => {
     const items = await fetchQuestions();
     const fresh = items.find((item) => item.id === question.id);
@@ -455,20 +596,30 @@ function ReviewQueuePage() {
     }
   };
 
-  const assignReview = async (question) => {
-    const currentReviewerId = assignmentOf(question).reviewer_user_id;
-    const reviewerId = window.prompt('Nhập ID Reviewer/Admin cần gán:', currentReviewerId || '');
-    if (reviewerId === null) return;
-    const note = window.prompt('Ghi chú phân công:', '') ?? '';
+  const openAssignmentForm = (question) => {
+    setAssignmentError('');
+    setAssignmentDraft({
+      question,
+      reviewerUserId: assignmentOf(question).reviewer_user_id,
+      note: '',
+    });
+  };
+
+  const submitAssignmentForm = async () => {
+    if (!assignmentDraft?.question) return;
+    const question = assignmentDraft.question;
+    const reviewerId = assignmentDraft.reviewerUserId.trim();
     setBusyId(question.id);
+    setAssignmentError('');
     try {
       await assignQuestionReview(question.id, {
-        reviewer_user_id: reviewerId.trim() || null,
-        note,
+        reviewer_user_id: reviewerId || null,
+        note: assignmentDraft.note,
       });
+      setAssignmentDraft(null);
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Phân công review thất bại: ' + err.message);
+      setAssignmentError(err.message || 'Phân công review thất bại');
     } finally {
       setBusyId('');
     }
@@ -505,38 +656,63 @@ function ReviewQueuePage() {
     }
   };
 
-  const submitReview = async (question, decision) => {
-    if (!canReviewQuestion(question)) {
-      alert('Bạn cần claim câu hỏi và giữ lock còn hiệu lực trước khi kiểm duyệt.');
+  const submitReviewForm = async () => {
+    if (!selected || !reviewDraft) return;
+    if (!canReviewQuestion(selected)) {
+      setReviewFormError('Bạn cần claim câu hỏi và giữ lock còn hiệu lực trước khi kiểm duyệt.');
       return;
     }
-    const note = window.prompt(`Ghi chú ${REVIEW_STATUS_LABEL[decision]} cho ${question.question_code}:`, '');
-    if (note === null) return;
+    const revisionIssues = compactIssues(reviewDraft.issues);
+    const overallNote = reviewDraft.overallNote.trim();
+    const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
+    if (needsOverride && !reviewDraft.overrideReason.trim()) {
+      setReviewFormError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
+      return;
+    }
+    if (reviewDraft.decision === 'REJECTED' && !overallNote && revisionIssues.length === 0) {
+      setReviewFormError('Cần ghi lý do khi từ chối câu hỏi.');
+      return;
+    }
+    if (reviewDraft.decision === 'NEEDS_REVISION' && revisionIssues.length === 0) {
+      setReviewFormError('Cần thêm ít nhất một lỗi cần Teacher sửa.');
+      return;
+    }
     const payload = {
-      expected_version: question.current_version,
-      decision,
-      note,
+      expected_version: selected.current_version,
+      decision: reviewDraft.decision,
+      note: overallNote,
+      review_form: {
+        checklist: reviewDraft.checklist.map((item) => ({
+          key: item.key,
+          label: item.label,
+          passed: Boolean(item.passed),
+          note: item.note || '',
+        })),
+        overall_note: overallNote,
+        revision_issues: revisionIssues,
+      },
     };
-    if (decision === 'APPROVED' && question.evaluation_status !== 'PASSED') {
-      const reason = window.prompt('Câu hỏi chưa đạt đánh giá AI. Nhập lý do duyệt thủ công:', '');
-      if (!reason?.trim()) return;
+    if (needsOverride) {
       payload.override = {
         applied: true,
-        reason: reason.trim(),
+        reason: reviewDraft.overrideReason.trim(),
       };
-      if (typeof question.quality_summary?.overall_score === 'number') {
-        payload.override.score = question.quality_summary.overall_score;
+      if (typeof selected.quality_summary?.overall_score === 'number') {
+        payload.override.score = selected.quality_summary.overall_score;
       }
-      if (question.quality_summary?.color) {
-        payload.override.color = question.quality_summary.color;
+      if (selected.quality_summary?.color) {
+        payload.override.color = selected.quality_summary.color;
       }
     }
-    setBusyId(question.id);
+    setBusyId(selected.id);
+    setReviewFormError('');
     try {
-      await reviewQuestion(question.id, payload);
-      await refreshAfterAction(question);
+      await reviewQuestion(selected.id, payload);
+      localStorage.removeItem(reviewDraftKey(selected.id, reviewDraft.decision));
+      setReviewDraft(null);
+      await refreshAfterAction(selected);
     } catch (err) {
-      alert('Kiểm duyệt thất bại: ' + err.message);
+      setReviewFormError(err.message || 'Kiểm duyệt thất bại');
     } finally {
       setBusyId('');
     }
@@ -599,8 +775,8 @@ function ReviewQueuePage() {
       ))
       .slice(0, 10);
     if (targets.length === 0) return;
-    const note = window.prompt(`Duyệt ${targets.length} câu đạt tốt đang lọc. Ghi chú chung:`, 'Duyệt tự động các câu đạt tốt');
-    if (note === null) return;
+    const note = 'Duyệt hàng loạt các câu đạt tốt';
+    if (!window.confirm(`Duyệt ${targets.length} câu đạt tốt đang lọc?`)) return;
     setBulkBusy(true);
     try {
       for (const question of targets) {
@@ -608,6 +784,15 @@ function ReviewQueuePage() {
           expected_version: question.current_version,
           decision: 'APPROVED',
           note,
+          review_form: {
+            checklist: REVIEW_RUBRIC.map((item) => ({
+              ...item,
+              passed: true,
+              note: '',
+            })),
+            overall_note: note,
+            revision_issues: [],
+          },
         });
       }
       await fetchQuestions();
@@ -635,6 +820,7 @@ function ReviewQueuePage() {
   )) || activeSourcePages[0] || null;
   const pdfPage = activeSourcePage || activePageRecord?.page_number || 1;
   const sourcePdfUrl = sourcePdf?.url ? `${sourcePdf.url}#page=${pdfPage}` : '';
+  const reviewNeedsOverride = reviewDraft?.decision === 'APPROVED' && selected?.evaluation_status !== 'PASSED';
 
   return (
     <main className="review-page">
@@ -833,7 +1019,7 @@ function ReviewQueuePage() {
                   Release
                 </button>
                 {user?.role === 'Admin' && (
-                  <button type="button" disabled={busyId === selected.id || selected.review_status !== 'PENDING'} onClick={() => assignReview(selected)}>
+                  <button type="button" disabled={busyId === selected.id || selected.review_status !== 'PENDING'} onClick={() => openAssignmentForm(selected)}>
                     Gán reviewer
                   </button>
                 )}
@@ -851,12 +1037,12 @@ function ReviewQueuePage() {
                   type="button"
                   className="detail-action-primary"
                   disabled={busyId === selected.id || isEvaluationBusy(selected) || !canReviewQuestion(selected)}
-                  onClick={() => submitReview(selected, 'APPROVED')}
+                  onClick={() => openReviewForm(selected, 'APPROVED')}
                 >
                   Duyệt
                 </button>
-                <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => submitReview(selected, 'NEEDS_REVISION')}>Cần sửa</button>
-                <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => submitReview(selected, 'REJECTED')}>Từ chối</button>
+                <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'NEEDS_REVISION')}>Cần sửa</button>
+                <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'REJECTED')}>Từ chối</button>
                 <button
                   type="button"
                   disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'}
@@ -1016,7 +1202,19 @@ function ReviewQueuePage() {
                     <div>
                       <h3>Lịch sử kiểm duyệt</h3>
                       {reviews.slice(0, 4).map((review) => (
-                        <p key={review.id || review._id}><b>{REVIEW_STATUS_LABEL[review.decision] || review.decision}</b> {review.note || ''}</p>
+                        <div className="history-review" key={review.id || review._id}>
+                          <p><b>{REVIEW_STATUS_LABEL[review.decision] || review.decision}</b> {review.note || ''}</p>
+                          {reviewIssuesOf(review).length > 0 && (
+                            <div className="history-issue-list">
+                              {reviewIssuesOf(review).slice(0, 3).map((issue, index) => (
+                                <small className="history-issue" key={`${issue.title || issue.detail}-${index}`}>
+                                  {issue.severity || 'MEDIUM'} · {issue.title || issue.detail}
+                                  {issue.page_number ? ` · Trang ${issue.page_number}` : ''}
+                                </small>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       ))}
                       {reviews.length === 0 && <p>Chưa có lượt kiểm duyệt.</p>}
                     </div>
@@ -1036,6 +1234,179 @@ function ReviewQueuePage() {
           )}
         </aside>
       </section>
+
+      {reviewDraft && (
+        <div className="review-modal-backdrop">
+          <form
+            className="review-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitReviewForm();
+            }}
+          >
+            <div className="review-modal__head">
+              <div>
+                <span>{reviewDraft.questionCode}</span>
+                <h2>{REVIEW_STATUS_LABEL[reviewDraft.decision] || reviewDraft.decision}</h2>
+              </div>
+              <button type="button" onClick={() => setReviewDraft(null)}>Đóng</button>
+            </div>
+
+            <section className="review-form-section">
+              <h3>Checklist</h3>
+              <div className="review-rubric-grid">
+                {reviewDraft.checklist.map((item) => (
+                  <div className="review-rubric-item" key={item.key}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={item.passed}
+                        onChange={(event) => updateChecklistItem(item.key, { passed: event.target.checked })}
+                      />
+                      <span>{item.label}</span>
+                    </label>
+                    <input
+                      value={item.note}
+                      onChange={(event) => updateChecklistItem(item.key, { note: event.target.value })}
+                      placeholder="Ghi chú"
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="review-form-section">
+              <label className="review-form-field">
+                <span>Ghi chú tổng</span>
+                <textarea
+                  value={reviewDraft.overallNote}
+                  onChange={(event) => updateReviewDraft({ overallNote: event.target.value })}
+                  rows={4}
+                />
+              </label>
+              {reviewNeedsOverride && (
+                <label className="review-form-field">
+                  <span>Lý do override</span>
+                  <textarea
+                    value={reviewDraft.overrideReason}
+                    onChange={(event) => updateReviewDraft({ overrideReason: event.target.value })}
+                    rows={3}
+                    required
+                  />
+                </label>
+              )}
+            </section>
+
+            <section className="review-form-section">
+              <div className="review-issue-head">
+                <h3>Lỗi cần Teacher sửa</h3>
+                <button type="button" onClick={addReviewIssue}>Thêm lỗi</button>
+              </div>
+              {reviewDraft.issues.length === 0 && (
+                <p className="review-form-muted">Chưa có lỗi cần sửa.</p>
+              )}
+              {reviewDraft.issues.map((issue) => (
+                <div className="review-issue-row" key={issue.id}>
+                  <input
+                    value={issue.title}
+                    onChange={(event) => updateReviewIssue(issue.id, { title: event.target.value })}
+                    placeholder="Tiêu đề lỗi"
+                  />
+                  <select
+                    value={issue.severity}
+                    onChange={(event) => updateReviewIssue(issue.id, { severity: event.target.value })}
+                  >
+                    <option value="LOW">Nhẹ</option>
+                    <option value="MEDIUM">Vừa</option>
+                    <option value="HIGH">Nghiêm trọng</option>
+                  </select>
+                  <select
+                    value={issue.source_chunk_id}
+                    onChange={(event) => updateReviewIssue(issue.id, { source_chunk_id: event.target.value })}
+                  >
+                    <option value="">Không gắn nguồn</option>
+                    {sourceItems.map((source, index) => (
+                      <option key={source.chunk_id || index} value={source.chunk_id || ''}>
+                        Citation #{source.citation_order} · {pageRangeLabel(source.page_range)}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="1"
+                    value={issue.page_number}
+                    onChange={(event) => updateReviewIssue(issue.id, { page_number: event.target.value })}
+                    placeholder="Trang"
+                  />
+                  <textarea
+                    value={issue.detail}
+                    onChange={(event) => updateReviewIssue(issue.id, { detail: event.target.value })}
+                    placeholder="Chi tiết"
+                    rows={2}
+                  />
+                  <button type="button" onClick={() => removeReviewIssue(issue.id)}>Xóa</button>
+                </div>
+              ))}
+            </section>
+
+            {reviewFormError && <p className="review-form-error">{reviewFormError}</p>}
+            <div className="review-modal__foot">
+              <button type="button" onClick={() => setReviewDraft(null)}>Hủy</button>
+              <button type="submit" className="detail-action-primary" disabled={busyId === selected?.id}>
+                Gửi review
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {assignmentDraft && (
+        <div className="review-modal-backdrop">
+          <form
+            className="review-modal review-modal--compact"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitAssignmentForm();
+            }}
+          >
+            <div className="review-modal__head">
+              <div>
+                <span>{assignmentDraft.question.question_code}</span>
+                <h2>Gán reviewer</h2>
+              </div>
+              <button type="button" onClick={() => setAssignmentDraft(null)}>Đóng</button>
+            </div>
+            <label className="review-form-field">
+              <span>Reviewer/Admin ID</span>
+              <input
+                value={assignmentDraft.reviewerUserId}
+                onChange={(event) => setAssignmentDraft((current) => ({
+                  ...current,
+                  reviewerUserId: event.target.value,
+                }))}
+              />
+            </label>
+            <label className="review-form-field">
+              <span>Ghi chú</span>
+              <textarea
+                value={assignmentDraft.note}
+                onChange={(event) => setAssignmentDraft((current) => ({
+                  ...current,
+                  note: event.target.value,
+                }))}
+                rows={3}
+              />
+            </label>
+            {assignmentError && <p className="review-form-error">{assignmentError}</p>}
+            <div className="review-modal__foot">
+              <button type="button" onClick={() => setAssignmentDraft(null)}>Hủy</button>
+              <button type="submit" className="detail-action-primary" disabled={busyId === assignmentDraft.question.id}>
+                Lưu phân công
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }
