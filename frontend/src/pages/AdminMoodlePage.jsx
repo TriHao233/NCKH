@@ -14,6 +14,7 @@ import {
   deactivateMoodleTarget,
   listMoodlePublications,
   listMoodleTargets,
+  retryMoodlePublication,
   saveMoodleTarget,
 } from '../api/adminMoodle';
 import '../css/AdminMoodlePage.css';
@@ -80,6 +81,7 @@ function AdminMoodlePage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [checkingKey, setCheckingKey] = useState('');
+  const [retryingId, setRetryingId] = useState('');
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 350);
@@ -199,6 +201,20 @@ function AdminMoodlePage() {
       setError(err.message || 'Khóa Moodle target thất bại');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRetryPublication = async (item) => {
+    if (!window.confirm(`Retry Moodle publication cho "${item.question_code || item.question_id}"?`)) return;
+    setRetryingId(item.id);
+    setError('');
+    try {
+      await retryMoodlePublication(item.id);
+      await loadPublications();
+    } catch (err) {
+      setError(err.message || 'Retry publication Moodle thất bại');
+    } finally {
+      setRetryingId('');
     }
   };
 
@@ -400,6 +416,7 @@ function AdminMoodlePage() {
                 <th>Export</th>
                 <th>Thời gian</th>
                 <th>Ghi chú</th>
+                <th>Retry</th>
               </tr>
             </thead>
             <tbody>
@@ -425,6 +442,21 @@ function AdminMoodlePage() {
                   <td>{item.export_formats?.length ? item.export_formats.join(', ') : item.export_format}</td>
                   <td>{formatDateTime(item.created_at)}</td>
                   <td className="publication-error">{item.error_message || item.message || (item.external_sync === false ? 'Ghi nhận cục bộ' : 'Không có')}</td>
+                  <td>
+                    {item.status === 'FAILED' ? (
+                      <button
+                        type="button"
+                        className="publication-retry-button"
+                        title="Retry publication lỗi"
+                        disabled={retryingId === item.id}
+                        onClick={() => handleRetryPublication(item)}
+                      >
+                        <FontAwesomeIcon icon={faRotateRight} />
+                      </button>
+                    ) : (
+                      <span className="publication-no-action">-</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

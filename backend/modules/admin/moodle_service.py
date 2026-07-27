@@ -15,6 +15,7 @@ from core.bootstrap import SCHEMA_VERSION
 from core.dependencies import CurrentUser
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.questions.repository import json_safe
+from modules.questions.workflow_schemas import MoodlePublicationRequest
 
 
 def utc_now() -> datetime:
@@ -218,6 +219,58 @@ class MoodleTargetService:
             "summary": self._publication_summary(site_key),
         }
 
+    def retry_publication(self, publication_id: str, current_user: CurrentUser) -> dict:
+        publication = self.db.moodle_publications.find_one(
+            {"_id": object_id(publication_id, "publication_id")}
+        )
+        if not publication:
+            raise LookupError("Không tìm thấy Moodle publication")
+        if publication.get("status") != "FAILED":
+            raise ValueError("Chỉ publication lỗi mới được retry")
+        if not publication.get("idempotency_key"):
+            raise ValueError("Publication lỗi thiếu idempotency key")
+
+        request_payload = publication.get("request_payload") or {}
+        target = publication.get("target") or {}
+        export_format = (request_payload.get("export_format") or "BOTH").upper()
+        if export_format not in {"GIFT", "XML", "BOTH"}:
+            export_format = "BOTH"
+        target_id = target.get("target_id") or request_payload.get("target_id")
+
+        payload = MoodlePublicationRequest(
+            expected_version=publication.get("question_version"),
+            target_id=str(target_id) if target_id else None,
+            moodle_site_id=target.get("moodle_site_id") or request_payload.get("moodle_site_id") or "demo-moodle",
+            course_id=target.get("course_id") or request_payload.get("course_id") or "ctdl-demo",
+            category_id=target.get("category_id") or request_payload.get("category_id") or "qbank-demo",
+            export_format=export_format,
+            mock=bool(request_payload.get("mock", publication.get("publication_mode") == "MOCK")),
+        )
+
+        from modules.questions.workflow_service import QuestionWorkflowService
+
+        result = QuestionWorkflowService(self.db).publish_to_moodle(
+            str(publication["question_id"]),
+            payload,
+            current_user.id,
+        )
+        saved_id = result.get("_id") or result.get("id")
+        saved = (
+            self.db.moodle_publications.find_one({"_id": object_id(saved_id, "publication_id")})
+            if saved_id
+            else None
+        )
+        safe_item = _safe_publication_item(saved or result)
+        self._audit(
+            current_user,
+            "admin.moodle_publication_retry",
+            str(publication["_id"]),
+            after=safe_item,
+            metadata={"previous_status": "FAILED", "attempt_no": safe_item.get("attempt_no")},
+            entity_type="moodle_publication",
+        )
+        return safe_item
+
     def _run_check(self, target: dict, started: float) -> dict:
         now = utc_now()
         mode = target.get("mode", "MOCK")
@@ -301,10 +354,11 @@ class MoodleTargetService:
         *,
         after: dict | None = None,
         metadata: dict | None = None,
+        entity_type: str = "moodle_target",
     ) -> None:
         record_audit_event(
             action=action,
-            entity_type="moodle_target",
+            entity_type=entity_type,
             entity_id=entity_id,
             actor_user_id=current_user.id,
             actor_role=current_user.role,

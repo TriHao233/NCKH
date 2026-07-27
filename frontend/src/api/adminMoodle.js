@@ -33,3 +33,7 @@ export function listMoodlePublications({
   if (search) params.set('search', search);
   return apiRequest(`/admin/moodle/publications?${params.toString()}`);
 }
+
+export function retryMoodlePublication(publicationId) {
+  return apiRequest(`/admin/moodle/publications/${publicationId}/retry`, { method: 'POST' });
+}

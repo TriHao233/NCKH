@@ -1458,30 +1458,52 @@ class QuestionWorkflowService:
             "published_at": now,
         }
         with mongo_transaction() as session:
-            self.db.moodle_publications.update_one(
-                {"idempotency_key": idempotency_key},
-                {"$setOnInsert": publication},
-                upsert=True,
-                session=session,
-            )
-            saved = self.db.moodle_publications.find_one(
+            existing = self.db.moodle_publications.find_one(
                 {"idempotency_key": idempotency_key},
                 session=session,
             )
-            self.db.questions.update_one(
-                {
-                    "_id": question["_id"],
-                    "current_version_id": version["_id"],
-                    "review_status": "APPROVED",
-                },
-                {
-                    "$set": {
-                        "publication_status": "PUBLISHED",
-                        "updated_at": now,
-                    }
-                },
-                session=session,
-            )
+            if existing and existing.get("status") == "FAILED":
+                publication["_id"] = existing["_id"]
+                publication["created_at"] = existing.get("created_at") or now
+                publication["attempt_no"] = int(existing.get("attempt_no") or 1) + 1
+                update_fields = {key: value for key, value in publication.items() if key != "_id"}
+                self.db.moodle_publications.update_one(
+                    {"_id": existing["_id"], "status": "FAILED"},
+                    {"$set": update_fields},
+                    session=session,
+                )
+                saved = self.db.moodle_publications.find_one(
+                    {"_id": existing["_id"]},
+                    session=session,
+                )
+            elif existing:
+                saved = existing
+            else:
+                self.db.moodle_publications.update_one(
+                    {"idempotency_key": idempotency_key},
+                    {"$setOnInsert": publication},
+                    upsert=True,
+                    session=session,
+                )
+                saved = self.db.moodle_publications.find_one(
+                    {"idempotency_key": idempotency_key},
+                    session=session,
+                )
+            if (saved or publication).get("status") == "PUBLISHED":
+                self.db.questions.update_one(
+                    {
+                        "_id": question["_id"],
+                        "current_version_id": version["_id"],
+                        "review_status": "APPROVED",
+                    },
+                    {
+                        "$set": {
+                            "publication_status": "PUBLISHED",
+                            "updated_at": now,
+                        }
+                    },
+                    session=session,
+                )
         return json_safe(saved or publication)
 
     def history(

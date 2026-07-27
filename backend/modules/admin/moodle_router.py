@@ -16,6 +16,8 @@ def get_moodle_target_service() -> MoodleTargetService:
 def _translate(exc: Exception):
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, RuntimeError) and str(exc) == "VERSION_CONFLICT":
+        raise HTTPException(status_code=409, detail="Phiên bản câu hỏi đã thay đổi") from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     raise exc
@@ -83,3 +85,15 @@ def list_publications(
         site_key=site_key,
         search=search,
     )
+
+
+@router.post("/publications/{publication_id}/retry")
+def retry_publication(
+    publication_id: str,
+    current_user: CurrentUser = Depends(require_admin),
+    service: MoodleTargetService = Depends(get_moodle_target_service),
+):
+    try:
+        return service.retry_publication(publication_id, current_user)
+    except Exception as exc:
+        _translate(exc)

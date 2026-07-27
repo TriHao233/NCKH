@@ -1,3 +1,4 @@
+import hashlib
 import inspect
 import re
 import unittest
@@ -20,7 +21,7 @@ from modules.admin.jobs_service import (
     _uppercase_status_filter,
 )
 from modules.admin.audit_service import AdminAuditService
-from modules.admin.moodle_service import _safe_publication_item
+from modules.admin.moodle_service import MoodleTargetService, _safe_publication_item
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.admin.overview_service import AdminOverviewService
 from modules.catalog.schemas import (
@@ -1062,6 +1063,135 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(item["status_label"], "Đã ghi mô phỏng")
         self.assertIn("chưa gửi", item["message"])
 
+    def _moodle_retry_database(self, *, current_version=1, failed_version=1):
+        question_id = ObjectId()
+        failed_version_id = ObjectId()
+        current_version_id = failed_version_id if current_version == failed_version else ObjectId()
+        target_id = ObjectId()
+        failed_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        moodle_site_id = "demo-moodle"
+        course_id = "ctdl"
+        category_id = "qbank"
+        failed_hash = "hash-v1"
+        idempotency_key = hashlib.sha256(
+            "|".join(
+                [
+                    moodle_site_id,
+                    course_id,
+                    category_id,
+                    str(failed_version_id),
+                    failed_hash,
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        versions = [
+            {
+                "_id": failed_version_id,
+                "question_id": question_id,
+                "version": failed_version,
+                "document_id": None,
+                "content": "Queue xử lý phần tử theo nguyên tắc nào?",
+                "question_data": {
+                    "options": {"A": "FIFO", "B": "LIFO"},
+                    "correct_answer": "A",
+                    "explanation": "Queue là hàng đợi FIFO.",
+                },
+                "classification": {"assessment_type": "TRAC_NGHIEM"},
+                "clos": [],
+                "sources": [],
+                "content_hash": failed_hash,
+            }
+        ]
+        if current_version_id != failed_version_id:
+            versions.append(
+                {
+                    **versions[0],
+                    "_id": current_version_id,
+                    "version": current_version,
+                    "content_hash": "hash-current",
+                }
+            )
+
+        class FakeRetryDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            "_id": question_id,
+                            "schema_version": SCHEMA_VERSION,
+                            "question_code": "Q-001",
+                            "current_version": current_version,
+                            "current_version_id": current_version_id,
+                            "approved_version_id": current_version_id,
+                            "lifecycle_status": "ACTIVE",
+                            "evaluation_status": "PASSED",
+                            "review_status": "APPROVED",
+                            "publication_status": "FAILED",
+                            "quality_summary": {},
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "latest_review_id": None,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.question_versions = InMemoryCollection(versions)
+                self.moodle_targets = InMemoryCollection(
+                    [
+                        {
+                            "_id": target_id,
+                            "site_key": moodle_site_id,
+                            "site_name": "Demo Moodle",
+                            "mode": "REST_API",
+                            "default_course_id": course_id,
+                            "default_category_id": category_id,
+                            "is_active": True,
+                        }
+                    ]
+                )
+                self.moodle_publications = InMemoryCollection(
+                    [
+                        {
+                            "_id": failed_id,
+                            "schema_version": SCHEMA_VERSION,
+                            "question_id": question_id,
+                            "question_version_id": failed_version_id,
+                            "question_version": failed_version,
+                            "publisher_user_id": ObjectId(),
+                            "target": {
+                                "target_id": target_id,
+                                "moodle_site_id": moodle_site_id,
+                                "site_name": "Demo Moodle",
+                                "mode": "MOCK",
+                                "configured_mode": "REST_API",
+                                "course_id": course_id,
+                                "category_id": category_id,
+                            },
+                            "publication_mode": "MOCK",
+                            "external_sync": False,
+                            "status_detail": None,
+                            "published_content_hash": failed_hash,
+                            "idempotency_key": idempotency_key,
+                            "status": "FAILED",
+                            "attempt_no": 1,
+                            "moodle_question_ref_id": None,
+                            "request_payload": {
+                                "question_code": "Q-001",
+                                "export_format": "BOTH",
+                                "mock": True,
+                            },
+                            "response_payload": {},
+                            "error": {"message": "Moodle timeout"},
+                            "created_at": now,
+                            "updated_at": now,
+                            "published_at": None,
+                        }
+                    ]
+                )
+
+        return FakeRetryDatabase(), failed_id, question_id
+
     def test_moodle_publish_is_idempotent_for_same_version_and_target(self):
         question_id = ObjectId()
         version_id = ObjectId()
@@ -1159,6 +1289,65 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("gift", publication["request_payload"]["exports"])
         self.assertIn("xml", publication["request_payload"]["exports"])
         self.assertIn("chưa gửi dữ liệu sang Moodle thật", publication["response_payload"]["message"])
+
+    def test_admin_moodle_retry_failed_publication_updates_existing_attempt(self):
+        db, failed_id, question_id = self._moodle_retry_database()
+        admin = _current_user("Admin")
+        original_transaction = question_workflow_module.mongo_transaction
+        original_app_env = settings.app_env
+        original_demo_mode = settings.demo_mode
+        original_audit = MoodleTargetService._audit
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            settings.app_env = "demo"
+            settings.demo_mode = True
+            MoodleTargetService._audit = staticmethod(lambda *_args, **_kwargs: None)
+
+            result = MoodleTargetService(db).retry_publication(str(failed_id), admin)
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+            settings.app_env = original_app_env
+            settings.demo_mode = original_demo_mode
+            MoodleTargetService._audit = staticmethod(original_audit)
+
+        self.assertEqual(result["id"], str(failed_id))
+        self.assertEqual(result["status"], "PUBLISHED")
+        self.assertEqual(result["attempt_no"], 2)
+        self.assertEqual(len(db.moodle_publications.records), 1)
+        self.assertEqual(db.moodle_publications.records[0]["status"], "PUBLISHED")
+        self.assertIsNone(db.moodle_publications.records[0]["error"])
+        self.assertEqual(
+            db.questions.find_one({"_id": question_id})["publication_status"],
+            "PUBLISHED",
+        )
+
+    def test_admin_moodle_retry_rejects_changed_question_version(self):
+        db, failed_id, question_id = self._moodle_retry_database(current_version=2)
+        admin = _current_user("Admin")
+        original_transaction = question_workflow_module.mongo_transaction
+        original_app_env = settings.app_env
+        original_demo_mode = settings.demo_mode
+        original_audit = MoodleTargetService._audit
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            settings.app_env = "demo"
+            settings.demo_mode = True
+            MoodleTargetService._audit = staticmethod(lambda *_args, **_kwargs: None)
+
+            with self.assertRaises(RuntimeError) as ctx:
+                MoodleTargetService(db).retry_publication(str(failed_id), admin)
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+            settings.app_env = original_app_env
+            settings.demo_mode = original_demo_mode
+            MoodleTargetService._audit = staticmethod(original_audit)
+
+        self.assertEqual(str(ctx.exception), "VERSION_CONFLICT")
+        self.assertEqual(db.moodle_publications.records[0]["status"], "FAILED")
+        self.assertEqual(
+            db.questions.find_one({"_id": question_id})["publication_status"],
+            "FAILED",
+        )
 
     def test_moodle_target_payload_requires_real_api_config(self):
         with self.assertRaises(ValidationError):

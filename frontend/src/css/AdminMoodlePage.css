@@ -340,7 +340,7 @@
 
 .publication-table {
   width: 100%;
-  min-width: 920px;
+  min-width: 980px;
   border-collapse: collapse;
 }
 
@@ -404,6 +404,34 @@
   max-width: 240px;
   color: #5c6f89;
   overflow-wrap: anywhere;
+}
+
+.publication-retry-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
+  border: 1px solid #f3c3c3;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.publication-retry-button:hover:not(:disabled) {
+  border-color: #dc2626;
+  background: #fff0f0;
+}
+
+.publication-retry-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.publication-no-action {
+  color: #9badbf;
+  font-weight: 800;
 }
 
 .moodle-empty {
