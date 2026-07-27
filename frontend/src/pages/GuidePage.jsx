@@ -10,16 +10,25 @@ const roles = [
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
       </svg>
     ),
-    desc: 'Tải tài liệu học phần, cấu hình sinh câu hỏi, chỉnh sửa và phê duyệt nội dung trước khi xuất bản vào ngân hàng câu hỏi.',
+    desc: 'Tải tài liệu học phần, sinh câu hỏi nháp, chỉnh sửa nội dung và gửi sang hàng kiểm duyệt.',
   },
   {
-    title: 'Quản trị viên (Admin)',
+    title: 'Người duyệt',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    ),
+    desc: 'Nhận câu hỏi trong hàng đợi, đối chiếu nguồn, ghi lỗi cần sửa, duyệt hoặc từ chối phiên bản hiện tại.',
+  },
+  {
+    title: 'Quản trị viên',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2l8 4v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6l8-4z" />
       </svg>
     ),
-    desc: 'Quản lý tài khoản, phân quyền người dùng, giám sát toàn bộ ngân hàng câu hỏi và cấu hình export/mô phỏng Moodle.',
+    desc: 'Quản lý tài khoản, phân quyền, danh mục, hàng đợi vận hành và cấu hình ghi mô phỏng Moodle.',
   },
 ];
 
@@ -27,7 +36,7 @@ const steps = [
   {
     num: '01',
     title: 'Đăng nhập hệ thống',
-    desc: 'Sử dụng tài khoản giảng viên hoặc quản trị viên do nhà trường cấp để đăng nhập vào QBankCTU.',
+    desc: 'Sử dụng tài khoản giảng viên, người duyệt hoặc quản trị viên do nhà trường cấp để đăng nhập vào QBankCTU.',
   },
   {
     num: '02',
@@ -46,13 +55,13 @@ const steps = [
   },
   {
     num: '05',
-    title: 'Chỉnh sửa & duyệt trong Question Editor',
-    desc: 'Giảng viên xem trước, hiệu chỉnh nội dung, đáp án và chọn Duyệt hoặc Từ chối cho từng câu hỏi.',
+    title: 'Gửi kiểm duyệt',
+    desc: 'Giảng viên rà soát nội dung, đáp án, CLO và gửi câu hỏi nháp sang hàng đợi kiểm duyệt.',
   },
   {
     num: '06',
-    title: 'Export & mô phỏng Moodle',
-    desc: 'Câu hỏi đã duyệt được lưu vào ngân hàng câu hỏi và có thể export GIFT/XML hoặc ghi mô phỏng publication Moodle trong demo.',
+    title: 'Duyệt, sửa và xuất bản',
+    desc: 'Người duyệt phê duyệt, từ chối hoặc yêu cầu sửa. Câu cần sửa quay lại cho giảng viên chỉnh rồi gửi duyệt lại; câu đã duyệt có thể export GIFT/XML hoặc ghi mô phỏng Moodle.',
   },
 ];
 
@@ -67,11 +76,11 @@ const faqs = [
   },
   {
     q: 'Câu hỏi do AI sinh ra có tự động lưu vào ngân hàng câu hỏi không?',
-    a: 'Không. Mọi câu hỏi AI sinh ra đều ở trạng thái "Nháp" và chỉ được lưu chính thức sau khi giảng viên xem xét và phê duyệt (mô hình Human-in-the-loop).',
+    a: 'Không. Câu hỏi AI sinh ra ở trạng thái "Nháp"; giảng viên gửi kiểm duyệt và chỉ câu đã được người duyệt phê duyệt mới đi tiếp vào luồng xuất bản.',
   },
   {
     q: 'Tôi có thể chỉnh sửa câu hỏi sau khi AI tạo ra không?',
-    a: 'Có. Mục Question Editor cho phép chỉnh sửa nội dung, đáp án, mức Bloom trước khi phê duyệt hoặc từ chối câu hỏi.',
+    a: 'Có. Giảng viên có thể chỉnh sửa nội dung, đáp án, mức Bloom/CLO trước khi gửi duyệt, hoặc sửa lại theo phản hồi "Cần sửa" của người duyệt.',
   },
   {
     q: 'Câu hỏi đã duyệt được đưa vào Moodle như thế nào?',

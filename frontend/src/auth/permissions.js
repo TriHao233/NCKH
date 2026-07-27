@@ -1,5 +1,5 @@
 export const PERMISSIONS = Object.freeze({
-  teacherWorkspace: Object.freeze(["Teacher", "Admin"]),
+  teacherWorkspace: Object.freeze(["Teacher"]),
   reviewerWorkspace: Object.freeze(["Reviewer", "Admin"]),
   adminWorkspace: Object.freeze(["Admin"]),
   authenticated: Object.freeze(["Admin", "Teacher", "Reviewer"]),

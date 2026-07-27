@@ -12,13 +12,14 @@
 
 .nav-container {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 24px;
+  gap: 20px;
   min-height: var(--nav-h, 80px);
-  max-width: 1520px;
+  max-width: 100%;
   margin: 0 auto;
-  padding: 0 32px;
+  padding: 0 clamp(16px, 2vw, 32px);
+  overflow: visible;
 }
 
 /* ---------- Brand (left) ---------- */
@@ -27,8 +28,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-shrink: 0;
   justify-self: start;
+  min-width: 0;
+  max-width: 190px;
 }
 
 .nav-brand-link {
@@ -47,6 +49,7 @@
   flex-direction: column;
   gap: 2px;
   line-height: 1;
+  min-width: 0;
 }
 
 .nav-title {
@@ -54,14 +57,20 @@
   font-size: 1.05rem;
   font-weight: 800;
   color: var(--secondary, #16233c);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-subtitle {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted, #8a93a3);
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- Nav (center) ---------- */
@@ -69,11 +78,16 @@
 .nav-menu {
   display: flex;
   align-items: center;
-  justify-content: center;
-  justify-self: center;
-  gap: 40px;
+  justify-content: flex-start;
+  justify-self: stretch;
+  gap: 24px;
+  width: 100%;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 2px;
+  scroll-behavior: smooth;
+  scroll-padding-inline: 24px;
   scrollbar-width: none;
 }
 
@@ -85,12 +99,12 @@
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 26px;
+  gap: 18px;
 }
 
 .nav-section + .nav-section {
-  padding-left: 26px;
-  margin-left: 6px;
+  padding-left: 22px;
+  margin-left: 0;
   border-left: 1px solid var(--border-light, #e8e8e8);
 }
 
@@ -101,12 +115,12 @@
 .nav-section-links {
   display: inline-flex;
   align-items: center;
-  gap: 26px;
+  gap: 20px;
 }
 
 .nav-link {
   position: relative;
-  font-size: 1.02rem;
+  font-size: 0.95rem;
   font-weight: 650;
   color: var(--text-muted, #5a6472);
   padding: 12px 2px;
@@ -152,8 +166,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-shrink: 0;
   justify-self: end;
+  min-width: 0;
+  max-width: 230px;
 }
 
 .notification-menu {
@@ -330,8 +345,11 @@
 
 @media (max-width: 1120px) {
   .nav-container {
-    padding: 0 20px;
     gap: 16px;
+  }
+
+  .nav-brand {
+    max-width: 150px;
   }
 
   .nav-title {
@@ -339,7 +357,7 @@
   }
 
   .nav-menu {
-    gap: 18px;
+    gap: 16px;
   }
 
   .nav-section {

@@ -46,17 +46,17 @@ const STATUS_LABEL = {
 const STATUS_OPTIONS = [
   { value: 'all', label: 'Tất cả trạng thái' },
   { value: 'active', label: 'Đang chờ / đang xử lý' },
-  { value: 'retryable', label: 'Cần xử lý / có thể retry' },
-  { value: 'queued', label: 'Generation: đang chờ' },
-  { value: 'processing', label: 'Generation: đang xử lý' },
-  { value: 'failed', label: 'Generation: thất bại' },
-  { value: 'QUEUED', label: 'Job: đang chờ' },
-  { value: 'PROCESSING', label: 'Job: đang xử lý' },
-  { value: 'FAILED', label: 'Job: thất bại' },
-  { value: 'ERROR', label: 'Job: lỗi' },
-  { value: 'STALE', label: 'Job: stale' },
-  { value: 'COMPLETED', label: 'Job: hoàn tất' },
-  { value: 'CANCELLED', label: 'Job: đã hủy' },
+  { value: 'retryable', label: 'Cần xử lý / có thể chạy lại' },
+  { value: 'queued', label: 'Sinh câu hỏi: đang chờ' },
+  { value: 'processing', label: 'Sinh câu hỏi: đang xử lý' },
+  { value: 'failed', label: 'Sinh câu hỏi: thất bại' },
+  { value: 'QUEUED', label: 'Tác vụ: đang chờ' },
+  { value: 'PROCESSING', label: 'Tác vụ: đang xử lý' },
+  { value: 'FAILED', label: 'Tác vụ: thất bại' },
+  { value: 'ERROR', label: 'Tác vụ: lỗi' },
+  { value: 'STALE', label: 'Tác vụ: cần chạy lại' },
+  { value: 'COMPLETED', label: 'Tác vụ: hoàn tất' },
+  { value: 'CANCELLED', label: 'Tác vụ: đã hủy' },
 ];
 
 function jobKey(job) {
@@ -174,7 +174,7 @@ function AdminJobsPage() {
       setSummary(result.summary || { total: 0, active: 0, failed: 0, long_running: 0 });
       setTotal(result.total || 0);
     } catch (err) {
-      setError(err.message || 'Không tải được danh sách job');
+      setError(err.message || 'Không tải được danh sách tác vụ');
       setJobs([]);
       setSummary({ total: 0, active: 0, failed: 0, long_running: 0 });
       setTotal(0);
@@ -263,21 +263,21 @@ function AdminJobsPage() {
       await retryAdminJob(job.kind, job.id);
       await fetchJobs();
     } catch (err) {
-      window.alert(err.message || 'Retry job thất bại');
+      window.alert(err.message || 'Chạy lại tác vụ thất bại');
     } finally {
       setActionKey('');
     }
   };
 
   const handleCancel = async (job) => {
-    if (!window.confirm(`Hủy job ${compactId(job.id)}?`)) return;
+    if (!window.confirm(`Hủy tác vụ ${compactId(job.id)}?`)) return;
     const key = `cancel:${jobKey(job)}`;
     setActionKey(key);
     try {
       await cancelAdminJob(job.kind, job.id);
       await fetchJobs();
     } catch (err) {
-      window.alert(err.message || 'Hủy job thất bại');
+      window.alert(err.message || 'Hủy tác vụ thất bại');
     } finally {
       setActionKey('');
     }
@@ -330,7 +330,7 @@ function AdminJobsPage() {
       <section className="jobs-header">
         <div>
           <span>Quản trị hệ thống</span>
-          <h1>Job hệ thống</h1>
+          <h1>Hàng đợi hệ thống</h1>
           <p>Theo dõi hàng đợi sinh câu hỏi, đánh giá chất lượng và xử lý tài liệu.</p>
         </div>
         <div className="jobs-header-actions">
@@ -359,10 +359,10 @@ function AdminJobsPage() {
         </div>
       </section>
 
-      <section className="jobs-summary" aria-label="Tổng quan job">
+      <section className="jobs-summary" aria-label="Tổng quan hàng đợi">
         <button type="button" className="summary-tile" onClick={showAllJobs}>
           <b>{summary.total}</b>
-          <span>Tổng job</span>
+          <span>Tổng tác vụ</span>
         </button>
         <button type="button" className="summary-tile summary-tile--active" onClick={showActiveJobs}>
           <b>{summary.active}</b>
@@ -378,7 +378,7 @@ function AdminJobsPage() {
         </button>
       </section>
 
-      <section className="jobs-toolbar" aria-label="Bộ lọc job">
+      <section className="jobs-toolbar" aria-label="Bộ lọc hàng đợi">
         <div className="toolbar-field toolbar-field--search">
           <label htmlFor="job-search">
             <FontAwesomeIcon icon={faSearch} />
@@ -388,7 +388,7 @@ function AdminJobsPage() {
             id="job-search"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Job ID, đối tượng, lỗi..."
+            placeholder="Mã tác vụ, đối tượng, lỗi..."
           />
         </div>
         <div className="toolbar-field">
@@ -397,7 +397,7 @@ function AdminJobsPage() {
             Loại
           </label>
           <select id="job-kind" value={kindFilter} onChange={(event) => updateKindFilter(event.target.value)}>
-            <option value="all">Tất cả loại job</option>
+            <option value="all">Tất cả loại tác vụ</option>
             <option value="generation">Sinh câu hỏi</option>
             <option value="evaluation">Đánh giá</option>
             <option value="document">Tài liệu</option>
@@ -442,7 +442,7 @@ function AdminJobsPage() {
         </div>
         <label className="jobs-toggle">
           <input type="checkbox" checked={staleOnly} onChange={toggleStaleOnly} />
-          Chỉ job quá lâu
+          Chỉ tác vụ quá lâu
         </label>
       </section>
 
@@ -452,7 +452,7 @@ function AdminJobsPage() {
         <div className="jobs-table-panel">
           <div className="jobs-table-header">
             <div>
-              <h2>Danh sách job</h2>
+              <h2>Danh sách tác vụ</h2>
               <span>{total} kết quả</span>
             </div>
           </div>
@@ -490,7 +490,7 @@ function AdminJobsPage() {
                       </td>
                       <td>
                         <span className="entity-text">{entityText(job)}</span>
-                        <small>{job.entity?.type || 'entity'} {compactId(job.entity?.id)}</small>
+                        <small>{job.entity?.type || 'đối tượng'} {compactId(job.entity?.id)}</small>
                       </td>
                       <td>{compactId(job.actor_user_id)}</td>
                       <td>
@@ -504,7 +504,7 @@ function AdminJobsPage() {
                         <div className="row-actions">
                           <button
                             type="button"
-                            title="Retry job"
+                            title="Chạy lại tác vụ"
                             disabled={!job.can_retry || Boolean(actionKey)}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -515,7 +515,7 @@ function AdminJobsPage() {
                           </button>
                           <button
                             type="button"
-                            title="Hủy job"
+                            title="Hủy tác vụ"
                             disabled={!job.can_cancel || Boolean(actionKey)}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -532,10 +532,10 @@ function AdminJobsPage() {
               </tbody>
             </table>
             {!loading && jobs.length === 0 && (
-              <p className="jobs-empty">Không có job phù hợp với bộ lọc hiện tại.</p>
+              <p className="jobs-empty">Không có tác vụ phù hợp với bộ lọc hiện tại.</p>
             )}
             {loading && (
-              <p className="jobs-empty">Đang tải danh sách job...</p>
+              <p className="jobs-empty">Đang tải danh sách tác vụ...</p>
             )}
           </div>
           <div className="jobs-pagination">
@@ -549,7 +549,7 @@ function AdminJobsPage() {
           </div>
         </div>
 
-        <aside className="job-detail-panel" aria-label="Chi tiết job">
+        <aside className="job-detail-panel" aria-label="Chi tiết tác vụ">
           {selectedJob ? (
             <>
               <div className="job-detail-header">
@@ -566,15 +566,15 @@ function AdminJobsPage() {
                   <dd>{entityText(selectedJob)}</dd>
                 </div>
                 <div>
-                  <dt>Queued</dt>
+                  <dt>Đưa vào hàng đợi</dt>
                   <dd>{formatDateTime(selectedJob.queued_at)}</dd>
                 </div>
                 <div>
-                  <dt>Started</dt>
+                  <dt>Bắt đầu</dt>
                   <dd>{formatDateTime(selectedJob.started_at)}</dd>
                 </div>
                 <div>
-                  <dt>Finished</dt>
+                  <dt>Hoàn tất</dt>
                   <dd>{formatDateTime(selectedJob.finished_at)}</dd>
                 </div>
                 <div>
@@ -589,12 +589,12 @@ function AdminJobsPage() {
                 </div>
               )}
               <div className="job-detail-json">
-                <span>Snapshot</span>
+                <span>Dữ liệu trạng thái</span>
                 <pre>{JSON.stringify(selectedJob.snapshot || {}, null, 2)}</pre>
               </div>
             </>
           ) : (
-            <p className="job-detail-empty">Chọn một job để xem chi tiết.</p>
+            <p className="job-detail-empty">Chọn một tác vụ để xem chi tiết.</p>
           )}
         </aside>
       </section>

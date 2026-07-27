@@ -13,6 +13,7 @@ from docx import Document
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from main import app
 from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
 from core.dependencies import CurrentUser
@@ -1678,6 +1679,19 @@ class SchemaV2Tests(unittest.TestCase):
     def test_demo_login_route_registration_follows_demo_mode(self):
         route_paths = {route.path for route in auth_login.router.routes}
         self.assertEqual("/demo-login" in route_paths, settings.demo_mode)
+
+    def test_review_dashboard_route_precedes_question_id_route(self):
+        question_route_paths = [
+            route.path
+            for route in app.routes
+            if getattr(route, "path", "").startswith(f"{settings.api_prefix}/questions")
+            and "GET" in getattr(route, "methods", set())
+        ]
+
+        self.assertLess(
+            question_route_paths.index(f"{settings.api_prefix}/questions/review-dashboard"),
+            question_route_paths.index(f"{settings.api_prefix}/questions/{{question_id}}"),
+        )
 
     def test_demo_login_does_not_reenable_disabled_firebase_user(self):
         class FakeFirebaseUser:

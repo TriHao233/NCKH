@@ -16,7 +16,7 @@ const team = [
   {
     name: 'Tiêu Lê Gia Linh',
     role: 'Thành viên nghiên cứu',
-    tasks: 'Thiết kế UI/UX cho hệ thống quản trị · Lập trình giao diện chỉnh sửa câu hỏi (Question Editor) · Kiểm thử trải nghiệm người dùng',
+    tasks: 'Thiết kế UI/UX cho hệ thống quản trị · Lập trình giao diện chỉnh sửa câu hỏi · Kiểm thử trải nghiệm người dùng',
   },
   {
     name: 'Vương Phan Quốc Cường',
@@ -135,7 +135,7 @@ function AboutPage() {
             </div>
             <div className="up-item up-item--accent">
               <span className="up-label">Giải pháp</span>
-              <p>Kết hợp kỹ thuật RAG và quy trình Human-in-the-loop để vừa tăng tốc, vừa đảm bảo kiểm soát.</p>
+              <p>Kết hợp kỹ thuật RAG và quy trình kiểm duyệt có con người tham gia để vừa tăng tốc, vừa đảm bảo kiểm soát.</p>
             </div>
           </div>
         </div>

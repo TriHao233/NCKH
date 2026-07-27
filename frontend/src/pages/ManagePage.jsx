@@ -234,6 +234,22 @@ function latestEvaluationText(item) {
   return `${formatScore(quality.overall_score)} · ${QUALITY_COLOR_LABEL[quality.color] || 'Chưa phân mức'}`;
 }
 
+function reviewIssuesOf(review) {
+  if (Array.isArray(review?.revision_issues)) return review.revision_issues;
+  if (Array.isArray(review?.review_form?.revision_issues)) {
+    return review.review_form.revision_issues;
+  }
+  return [];
+}
+
+function latestRevisionReview(reviews = []) {
+  return reviews.find((review) => review?.decision === 'NEEDS_REVISION') || null;
+}
+
+function revisionIssueText(issue) {
+  return [issue?.title, issue?.detail].filter(Boolean).join(' - ') || 'Chưa có mô tả lỗi.';
+}
+
 function isEvaluationBusy(item) {
   return ['QUEUED', 'PROCESSING', 'RUNNING'].includes(item?.evaluation_status);
 }
@@ -879,8 +895,19 @@ function ManagePage() {
   const compareLeftVersion = versionHistory.find((version) => version.id === versionCompare.left) || null;
   const compareRightVersion = versionHistory.find((version) => version.id === versionCompare.right) || null;
   const compareRows = versionDiffRows(compareLeftVersion, compareRightVersion);
+  const activeRevisionReview = selectedQuestion?.review_status === 'NEEDS_REVISION'
+    ? latestRevisionReview(reviewHistory)
+    : null;
+  const activeRevisionIssues = activeRevisionReview ? reviewIssuesOf(activeRevisionReview) : [];
+  const editingRevisionReview = editing
+    && selectedQuestion
+    && editing.id === selectedQuestion.id
+    && editing.review_status === 'NEEDS_REVISION'
+    ? activeRevisionReview
+    : null;
+  const editingRevisionIssues = editingRevisionReview ? reviewIssuesOf(editingRevisionReview) : [];
 
-  const openEdit = (item) => {
+  const openEdit = async (item) => {
     setEditing(item);
     setEditContent(item.content || '');
     setEditRawOptions(item.question_data?.options ?? null);
@@ -888,6 +915,9 @@ function ManagePage() {
     setEditExplanation(item.question_data?.explanation ?? '');
     setEditCloIds(questionCloIds(item));
     setEditChangeNote('');
+    if (item.review_status === 'NEEDS_REVISION') {
+      await loadWorkflowHistory(item);
+    }
   };
 
   const closeEdit = () => {
@@ -914,6 +944,9 @@ function ManagePage() {
     }
     setSaving(true);
     try {
+      const defaultChangeNote = editing.review_status === 'NEEDS_REVISION'
+        ? 'Chỉnh sửa theo phản hồi kiểm duyệt'
+        : 'Cập nhật câu hỏi';
       await updateQuestion(editing.id, {
         expected_version: editing.current_version,
         content: editContent,
@@ -924,7 +957,7 @@ function ManagePage() {
           explanation: editExplanation,
         },
         clo_ids: editCloIds,
-        change_note: editChangeNote.trim() || 'Question edited',
+        change_note: editChangeNote.trim() || defaultChangeNote,
       });
       setEditing(null);
       await fetchQuestions(searchTerm);
@@ -1230,7 +1263,7 @@ function ManagePage() {
     } catch (error) {
       setDocumentJobsError({
         documentId: doc.id,
-        message: error.message || 'Không tải được lịch sử job tài liệu',
+        message: error.message || 'Không tải được lịch sử tác vụ tài liệu',
       });
     } finally {
       setDocumentJobsLoadingId('');
@@ -1255,7 +1288,7 @@ function ManagePage() {
     } catch (error) {
       setDocumentPagesError({
         documentId: doc.id,
-        message: error.message || 'Không tải được OCR pages',
+        message: error.message || 'Không tải được trang OCR',
       });
     } finally {
       setDocumentPagesLoadingId('');
@@ -1307,7 +1340,7 @@ function ManagePage() {
     } catch (error) {
       setDocumentJobsError({
         documentId,
-        message: error.message || 'Không tải được trạng thái job tài liệu',
+        message: error.message || 'Không tải được trạng thái tác vụ tài liệu',
       });
     } finally {
       setDocumentJobsLoadingId('');
@@ -1321,21 +1354,21 @@ function ManagePage() {
       await retryDocumentJob(doc.id, job.id);
       await refreshDocumentJobState(doc.id);
     } catch (error) {
-      alert('Retry OCR job thất bại: ' + error.message);
+      alert('Chạy lại tác vụ OCR thất bại: ' + error.message);
     } finally {
       setDocumentJobActionKey('');
     }
   };
 
   const handleCancelDocumentJob = async (doc, job) => {
-    if (!window.confirm(`Hủy job ${job.job_type || 'Document'} #${job.attempt_no || 1}?`)) return;
+    if (!window.confirm(`Hủy tác vụ ${job.job_type || 'Document'} #${job.attempt_no || 1}?`)) return;
     const actionKey = `cancel:${job.id}`;
     setDocumentJobActionKey(actionKey);
     try {
       await cancelDocumentJob(doc.id, job.id);
       await refreshDocumentJobState(doc.id);
     } catch (error) {
-      alert('Hủy job thất bại: ' + error.message);
+      alert('Hủy tác vụ thất bại: ' + error.message);
     } finally {
       setDocumentJobActionKey('');
     }
@@ -1509,7 +1542,7 @@ function ManagePage() {
       return;
     }
     if (quickReviewDraft.decision === 'NEEDS_REVISION' && revisionIssues.length === 0) {
-      setQuickReviewError('Cần thêm ít nhất một lỗi cần Teacher sửa.');
+      setQuickReviewError('Cần thêm ít nhất một lỗi để giảng viên sửa.');
       return;
     }
     const payload = {
@@ -1578,7 +1611,7 @@ function ManagePage() {
     setRestoringVersionId(version.id);
     try {
       const updated = await updateQuestion(selectedQuestion.id, payload);
-      setWorkflowMessage(`Đã tạo version ${updated.current_version} từ version ${version.version}. Cần đánh giá/review lại.`);
+      setWorkflowMessage(`Đã tạo version ${updated.current_version} từ version ${version.version}. Cần đánh giá và kiểm duyệt lại.`);
       await fetchQuestions(searchTerm);
       await loadWorkflowHistory(updated, { keepMessage: true });
     } catch (error) {
@@ -1729,7 +1762,7 @@ function ManagePage() {
               </div>
               <div className="coverage-grid">
                 {coverageSections.map((section) => (
-                  <section className="coverage-section" key={section.key}>
+                  <section className={`coverage-section coverage-section--${section.key}`} key={section.key}>
                     <div className="coverage-section-title">
                       <h4>{section.label}</h4>
                       <span>{section.gapCount} trống</span>
@@ -1760,8 +1793,11 @@ function ManagePage() {
 
             <div className="card list-card">
               <div className="list-card-header">
-                <h3>Danh sách câu hỏi</h3>
-                <div className="list-toolbar">
+                <div className="list-card-title">
+                  <h3>Danh sách câu hỏi</h3>
+                  <span>{filtered.length} / {questions.length} câu đang hiển thị</span>
+                </div>
+                <div className="list-actions">
                   {canEditQuestions && (
                     <button type="button" className="btn btn--primary" onClick={openCreateQuestion}>
                       + Thêm câu hỏi
@@ -1795,6 +1831,11 @@ function ManagePage() {
                   >
                     Xuất {exportScopeLabel}
                   </button>
+                </div>
+              </div>
+
+              <div className="question-filter-panel" aria-label="Bộ lọc câu hỏi">
+                <div className="filter-row">
                   <select
                     className="field-select field-select--wide"
                     value={subjectFilter}
@@ -2030,6 +2071,12 @@ function ManagePage() {
                             {PUBLICATION_STATUS_LABEL[item.publication_status] || item.publication_status}
                           </span>
                         </div>
+                        {item.review_status === 'NEEDS_REVISION' && (
+                          <div className="revision-inline-note">
+                            <b>Người duyệt yêu cầu sửa</b>
+                            <span>Mở Chi tiết để xem phản hồi, chỉnh sửa câu hỏi rồi gửi duyệt lại.</span>
+                          </div>
+                        )}
                       </div>
                       <div className="question-side">
                         <span className={`status-badge ${REVIEW_STATUS_CLASS[item.review_status] || ''}`}>
@@ -2162,13 +2209,13 @@ function ManagePage() {
                             </div>
                             {documentErrorMessage(d) && (
                               <span className="doc-error">
-                                {d.latest_error?.job_type || 'Job'}: {documentErrorMessage(d)}
+                                {d.latest_error?.job_type || 'Tác vụ'}: {documentErrorMessage(d)}
                               </span>
                             )}
                             {expandedDocumentId === d.id && (
                               <div className="doc-jobs-panel">
                                 {documentJobsLoadingId === d.id ? (
-                                  <span className="doc-job-note">Đang tải lịch sử job...</span>
+                                  <span className="doc-job-note">Đang tải lịch sử tác vụ...</span>
                                 ) : (
                                   <>
                                     {documentJobsError?.documentId === d.id && (
@@ -2185,7 +2232,7 @@ function ManagePage() {
                                           <button
                                             type="button"
                                             className="icon-btn doc-job-action"
-                                            title="Retry job"
+                                            title="Chạy lại tác vụ"
                                             disabled={!canRetryDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleRetryDocumentJob(d, job)}
                                           >
@@ -2194,7 +2241,7 @@ function ManagePage() {
                                           <button
                                             type="button"
                                             className="icon-btn icon-btn--danger doc-job-action"
-                                            title="Hủy job"
+                                            title="Hủy tác vụ"
                                             disabled={!canCancelDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleCancelDocumentJob(d, job)}
                                           >
@@ -2204,7 +2251,7 @@ function ManagePage() {
                                       </div>
                                     ))}
                                     {documentJobsError?.documentId !== d.id && (documentJobsById[d.id] || []).length === 0 && (
-                                      <span className="doc-job-note">Chưa có job nào cho tài liệu này.</span>
+                                      <span className="doc-job-note">Chưa có tác vụ nào cho tài liệu này.</span>
                                     )}
                                   </>
                                 )}
@@ -2213,7 +2260,7 @@ function ManagePage() {
                             {expandedDocumentPagesId === d.id && (
                               <div className="doc-pages-panel">
                                 {documentPagesLoadingId === d.id ? (
-                                  <span className="doc-job-note">Đang tải OCR pages...</span>
+                                  <span className="doc-job-note">Đang tải trang OCR...</span>
                                 ) : (
                                   <>
                                     {documentPagesError?.documentId === d.id && (
@@ -2250,58 +2297,60 @@ function ManagePage() {
                                       </div>
                                     ))}
                                     {documentPagesError?.documentId !== d.id && (documentPagesById[d.id] || []).length === 0 && (
-                                      <span className="doc-job-note">Chưa có OCR pages cho tài liệu này.</span>
+                                      <span className="doc-job-note">Chưa có trang OCR cho tài liệu này.</span>
                                     )}
                                   </>
                                 )}
                               </div>
                             )}
-	                        </div>
-                          <button
-                            type="button"
-                            className="icon-btn doc-jobs-btn"
-                            title="Xem lịch sử job"
-                            disabled={documentJobsLoadingId === d.id}
-                            onClick={() => toggleDocumentJobs(d)}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-btn doc-pages-btn"
-                            title="Xem OCR pages"
-                            disabled={documentPagesLoadingId === d.id}
-                            onClick={() => toggleDocumentPages(d)}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-btn doc-reindex-btn"
-                            title="Re-index"
-                            disabled={!canReindexDocument(d) || Boolean(documentJobActionKey)}
-                            onClick={() => handleReindexDocument(d)}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></svg>
-                          </button>
-	                        <button
-	                          type="button"
-	                          className="icon-btn doc-edit-btn"
-	                          title="Sửa tài liệu"
-	                          onClick={() => openEditDocument(d)}
-	                        >
-	                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
-	                        </button>
-	                        <button
-	                          type="button"
-	                          className="icon-btn icon-btn--danger doc-delete-btn"
-	                          title="Xoá tài liệu"
-	                          disabled={deletingDocId === d.id}
-	                          onClick={() => handleDeleteDocument(d)}
-	                        >
-	                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-	                        </button>
-	                      </div>
+                            </div>
+                          <div className="doc-actions">
+                            <button
+                              type="button"
+                              className="icon-btn doc-jobs-btn"
+                              title="Xem lịch sử tác vụ"
+                              disabled={documentJobsLoadingId === d.id}
+                              onClick={() => toggleDocumentJobs(d)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn doc-pages-btn"
+                              title="Xem trang OCR"
+                              disabled={documentPagesLoadingId === d.id}
+                              onClick={() => toggleDocumentPages(d)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn doc-reindex-btn"
+                              title="Re-index"
+                              disabled={!canReindexDocument(d) || Boolean(documentJobActionKey)}
+                              onClick={() => handleReindexDocument(d)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn doc-edit-btn"
+                              title="Sửa tài liệu"
+                              onClick={() => openEditDocument(d)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn icon-btn--danger doc-delete-btn"
+                              title="Xoá tài liệu"
+                              disabled={deletingDocId === d.id}
+                              onClick={() => handleDeleteDocument(d)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                            </button>
+                          </div>
+                        </div>
 	                    ))}
 	                    {documents.length === 0 && (
 	                      <p className="empty-note">Chưa có tài liệu nào.</p>
@@ -2339,8 +2388,40 @@ function ManagePage() {
                       ))}
                     </div>
                   )}
-                  {workflowMessage && <p className="workflow-message">{workflowMessage}</p>}
-                  {historyLoading ? (
+	                  {workflowMessage && <p className="workflow-message">{workflowMessage}</p>}
+	                  {selectedQuestion.review_status === 'NEEDS_REVISION' && (
+	                    <div className="revision-feedback-panel">
+	                      <div className="revision-feedback-head">
+	                        <b>Phản hồi cần sửa</b>
+	                        {activeRevisionReview?.reviewed_at && <span>{formatDateTime(activeRevisionReview.reviewed_at)}</span>}
+	                      </div>
+	                      {activeRevisionReview ? (
+	                        <>
+	                          {activeRevisionReview.note && <p>{activeRevisionReview.note}</p>}
+	                          {activeRevisionIssues.length > 0 ? (
+	                            <ul>
+	                              {activeRevisionIssues.map((issue, index) => (
+	                                <li key={`${issue.title || issue.detail || 'issue'}-${index}`}>
+	                                  <span>{issue.severity || 'MEDIUM'}</span>
+	                                  {revisionIssueText(issue)}
+	                                </li>
+	                              ))}
+	                            </ul>
+	                          ) : (
+	                            <p>Người duyệt chưa ghi danh sách lỗi chi tiết.</p>
+	                          )}
+	                        </>
+	                      ) : (
+	                        <p>Chưa tải được phản hồi mới nhất. Chọn lại Chi tiết nếu cần làm mới.</p>
+	                      )}
+	                      {canEditQuestions && (
+	                        <button type="button" className="mini-action mini-action--approve" onClick={() => openEdit(selectedQuestion)}>
+	                          Sửa câu hỏi
+	                        </button>
+	                      )}
+	                    </div>
+	                  )}
+	                  {historyLoading ? (
                     <p className="side-note">Đang tải lịch sử...</p>
                   ) : (
                     <>
@@ -2445,14 +2526,23 @@ function ManagePage() {
                         ))}
                         {evaluationHistory.length === 0 && <span className="history-empty">Chưa có kết quả đánh giá.</span>}
                       </div>
-                      <div className="history-block">
-                        <h4>Kiểm duyệt</h4>
-                        {reviewHistory.slice(0, 2).map((item) => (
-                          <div className="history-item" key={item.id || item._id}>
-                            <b>{REVIEW_STATUS_LABEL[item.decision] || item.decision}</b>
-                            <span>{item.note || 'Không có ghi chú'}</span>
-                          </div>
-                        ))}
+	                      <div className="history-block">
+	                        <h4>Kiểm duyệt</h4>
+	                        {reviewHistory.slice(0, 2).map((item) => (
+	                          <div className="history-item" key={item.id || item._id}>
+	                            <b>{REVIEW_STATUS_LABEL[item.decision] || item.decision}</b>
+	                            <span>{item.note || 'Không có ghi chú'}</span>
+	                            {reviewIssuesOf(item).length > 0 && (
+	                              <ul className="history-issue-list">
+	                                {reviewIssuesOf(item).slice(0, 3).map((issue, index) => (
+	                                  <li key={`${issue.title || issue.detail || 'issue'}-${index}`}>
+	                                    {revisionIssueText(issue)}
+	                                  </li>
+	                                ))}
+	                              </ul>
+	                            )}
+	                          </div>
+	                        ))}
                         {reviewHistory.length === 0 && <span className="history-empty">Chưa có lượt kiểm duyệt.</span>}
                       </div>
                       <div className="history-block">
@@ -2528,7 +2618,7 @@ function ManagePage() {
             {quickReviewDraft.decision !== 'APPROVED' && (
               <div className="quick-review-issue">
                 <label className="draft-edit-field">
-                  <span>Lỗi cần Teacher sửa</span>
+                  <span>Lỗi cần giảng viên sửa</span>
                   <input
                     className="field-input"
                     value={quickReviewDraft.issueTitle}
@@ -2574,7 +2664,7 @@ function ManagePage() {
                 Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={workflowBusyId === quickReviewDraft.question.id}>
-                Gửi review
+                Lưu kết quả kiểm duyệt
               </button>
             </div>
           </form>
@@ -2672,10 +2762,37 @@ function ManagePage() {
         </div>
       )}
 
-      {editing && (
-        <div className="modal-overlay" onClick={closeEdit}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
-            <h3 className="profile-card-title">Chỉnh sửa câu hỏi {editing.question_code}</h3>
+	      {editing && (
+	        <div className="modal-overlay" onClick={closeEdit}>
+	          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
+	            <h3 className="profile-card-title">Chỉnh sửa câu hỏi {editing.question_code}</h3>
+	            {editing.review_status === 'NEEDS_REVISION' && (
+	              <div className="revision-feedback-panel revision-feedback-panel--modal">
+	                <div className="revision-feedback-head">
+	                  <b>Phản hồi cần sửa</b>
+	                  {editingRevisionReview?.reviewed_at && <span>{formatDateTime(editingRevisionReview.reviewed_at)}</span>}
+	                </div>
+	                {editingRevisionReview ? (
+	                  <>
+	                    {editingRevisionReview.note && <p>{editingRevisionReview.note}</p>}
+	                    {editingRevisionIssues.length > 0 ? (
+	                      <ul>
+	                        {editingRevisionIssues.map((issue, index) => (
+	                          <li key={`${issue.title || issue.detail || 'issue'}-${index}`}>
+	                            <span>{issue.severity || 'MEDIUM'}</span>
+	                            {revisionIssueText(issue)}
+	                          </li>
+	                        ))}
+	                      </ul>
+	                    ) : (
+	                      <p>Người duyệt chưa ghi danh sách lỗi chi tiết.</p>
+	                    )}
+	                  </>
+	                ) : (
+	                  <p>Đang tải phản hồi kiểm duyệt...</p>
+	                )}
+	              </div>
+	            )}
 
             <div className="field-group">
               <label className="field-label">Nội dung câu hỏi</label>
@@ -2729,14 +2846,14 @@ function ManagePage() {
               />
             </div>
 
-            <div className="field-group">
-              <label className="field-label">Ghi chú thay đổi</label>
-              <input
-                className="field-input"
-                placeholder="Question edited"
-                value={editChangeNote}
-                onChange={(e) => setEditChangeNote(e.target.value)}
-              />
+	            <div className="field-group">
+	              <label className="field-label">Ghi chú thay đổi</label>
+	              <input
+	                className="field-input"
+	                placeholder={editing.review_status === 'NEEDS_REVISION' ? 'Chỉnh sửa theo phản hồi kiểm duyệt' : 'Cập nhật câu hỏi'}
+	                value={editChangeNote}
+	                onChange={(e) => setEditChangeNote(e.target.value)}
+	              />
             </div>
 
             <div className="modal-actions">

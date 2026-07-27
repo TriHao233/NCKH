@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { Link } from 'react-router-dom';
+import { canAccessPath } from '../auth/permissions';
+import { AuthContext } from '../context/AuthContext';
 import './Footer.css';
 
 const Footer = () => {
   const currentYear = new Date().getFullYear();
+  const { user } = useContext(AuthContext);
+  const role = user?.role;
 
   // Danh sách các liên kết điều hướng nội bộ
   const footerLinks = [
@@ -13,7 +17,7 @@ const Footer = () => {
     { path: '/quan-ly', label: 'Quản lý' },
     { path: '/huong-dan', label: 'Hướng dẫn' },
     { path: '/lien-he', label: 'Liên hệ' },
-  ];
+  ].filter((link) => !role ? canAccessPath(null, link.path) : canAccessPath(role, link.path));
 
   return (
     <footer className="footer">

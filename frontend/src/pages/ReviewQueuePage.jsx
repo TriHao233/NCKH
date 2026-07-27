@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   assignQuestionReview,
   autoEvaluateQuestion,
@@ -38,6 +38,12 @@ const REVIEW_STATUS_LABEL = {
   REJECTED: 'Từ chối',
 };
 
+const QUESTION_ID_PATTERN = /^[a-f\d]{24}$/i;
+
+function isValidQuestionId(value) {
+  return typeof value === 'string' && QUESTION_ID_PATTERN.test(value);
+}
+
 const COLOR_LABEL = {
   all: 'Mọi mức chất lượng',
   GREEN: 'Đạt tốt',
@@ -66,7 +72,7 @@ const PUBLICATION_STATUS_LABEL = {
 const ASSIGNMENT_STATUS_LABEL = {
   all: 'Mọi phân công',
   mine: 'Của tôi',
-  UNASSIGNED: 'Chưa claim',
+  UNASSIGNED: 'Chưa nhận',
   ASSIGNED: 'Đã gán',
   IN_REVIEW: 'Đang xử lý',
 };
@@ -241,11 +247,11 @@ function assignmentStatusLabel(question, user) {
   const assignment = assignmentOf(question);
   const mine = isAssignmentMine(question, user);
   if (assignment.status === 'IN_REVIEW' && isReviewLockExpired(assignment)) {
-    return mine ? 'Lock của tôi hết hạn' : 'Lock hết hạn';
+    return mine ? 'Quyền xử lý của tôi đã hết hạn' : 'Quyền xử lý đã hết hạn';
   }
   if (assignment.status === 'IN_REVIEW') return mine ? 'Tôi đang xử lý' : 'Đang xử lý';
   if (assignment.status === 'ASSIGNED') return mine ? 'Đã gán cho tôi' : 'Đã gán';
-  return ASSIGNMENT_STATUS_LABEL[assignment.status] || assignment.status || 'Chưa claim';
+  return ASSIGNMENT_STATUS_LABEL[assignment.status] || assignment.status || 'Chưa nhận';
 }
 
 function evaluatorModelLabel(model = {}) {
@@ -318,6 +324,7 @@ function SourceText({ source, page }) {
 
 function ReviewQueuePage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user } = useContext(AuthContext);
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -430,7 +437,7 @@ function ReviewQueuePage() {
       const result = await listTeacherOptions();
       setTeacherOptions(result.items || []);
     } catch (err) {
-      setTeacherFilterError(err.message || 'Không tải được bộ lọc Teacher');
+      setTeacherFilterError(err.message || 'Không tải được bộ lọc giảng viên');
       setTeacherOptions([]);
     }
   };
@@ -441,7 +448,7 @@ function ReviewQueuePage() {
       const result = await listReviewerOptions();
       setReviewerOptions(result.items || []);
     } catch (err) {
-      setReviewerFilterError(err.message || 'Không tải được danh sách Reviewer');
+      setReviewerFilterError(err.message || 'Không tải được danh sách người duyệt');
       setReviewerOptions([]);
     }
   };
@@ -452,7 +459,7 @@ function ReviewQueuePage() {
     try {
       setDashboard(await getReviewDashboard());
     } catch (err) {
-      setDashboardError(err.message || 'Không tải được dashboard reviewer');
+      setDashboardError(err.message || 'Không tải được tổng quan người duyệt');
       setDashboard(null);
     } finally {
       setDashboardLoading(false);
@@ -569,6 +576,20 @@ function ReviewQueuePage() {
       return;
     }
     if (openedDeepLinkId === questionId) return;
+    if (!isValidQuestionId(questionId)) {
+      const params = new URLSearchParams(location.search);
+      params.delete('questionId');
+      navigate(
+        {
+          pathname: location.pathname,
+          search: params.toString() ? `?${params.toString()}` : '',
+        },
+        { replace: true },
+      );
+      setOpenedDeepLinkId('');
+      setError('');
+      return;
+    }
     const openLinkedQuestion = async () => {
       try {
         const localQuestion = questions.find((question) => question.id === questionId);
@@ -576,13 +597,13 @@ function ReviewQueuePage() {
         await loadHistory(question);
         setOpenedDeepLinkId(questionId);
       } catch (err) {
-        setError(err.message || 'Không mở được câu hỏi từ thông báo');
+        setError('Không mở được câu hỏi từ liên kết. Câu hỏi có thể đã bị xóa hoặc bạn không có quyền xem.');
         setOpenedDeepLinkId(questionId);
       }
     };
     openLinkedQuestion();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search, questions, openedDeepLinkId]);
+  }, [location.pathname, location.search, navigate, questions, openedDeepLinkId]);
 
   useEffect(() => () => {
     if (sourcePdf?.url) {
@@ -665,7 +686,7 @@ function ReviewQueuePage() {
 
   const openReviewForm = (question, decision) => {
     if (!canReviewQuestion(question)) {
-      alert('Bạn cần claim câu hỏi và giữ lock còn hiệu lực trước khi kiểm duyệt.');
+      alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
     }
     setReviewFormError('');
@@ -771,7 +792,7 @@ function ReviewQueuePage() {
       await claimQuestionReview(question.id);
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Claim review thất bại: ' + err.message);
+      alert('Nhận câu kiểm duyệt thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -783,7 +804,7 @@ function ReviewQueuePage() {
       await releaseQuestionReview(question.id);
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Release review thất bại: ' + err.message);
+      alert('Trả câu kiểm duyệt thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -812,14 +833,14 @@ function ReviewQueuePage() {
       setAssignmentDraft(null);
       await refreshAfterAction(question);
     } catch (err) {
-      setAssignmentError(err.message || 'Phân công review thất bại');
+      setAssignmentError(err.message || 'Phân công kiểm duyệt thất bại');
     } finally {
       setBusyId('');
     }
   };
 
   const unassignReview = async (question) => {
-    if (!window.confirm(`Bỏ phân công review cho ${question.question_code}?`)) return;
+    if (!window.confirm(`Bỏ phân công kiểm duyệt cho ${question.question_code}?`)) return;
     setBusyId(question.id);
     try {
       await assignQuestionReview(question.id, {
@@ -828,7 +849,7 @@ function ReviewQueuePage() {
       });
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Bỏ phân công review thất bại: ' + err.message);
+      alert('Bỏ phân công kiểm duyệt thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -852,7 +873,7 @@ function ReviewQueuePage() {
   const submitReviewForm = async () => {
     if (!selected || !reviewDraft) return;
     if (!canReviewQuestion(selected)) {
-      setReviewFormError('Bạn cần claim câu hỏi và giữ lock còn hiệu lực trước khi kiểm duyệt.');
+      setReviewFormError('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
     }
     const revisionIssues = compactIssues(reviewDraft.issues);
@@ -867,7 +888,7 @@ function ReviewQueuePage() {
       return;
     }
     if (reviewDraft.decision === 'NEEDS_REVISION' && revisionIssues.length === 0) {
-      setReviewFormError('Cần thêm ít nhất một lỗi cần Teacher sửa.');
+      setReviewFormError('Cần thêm ít nhất một lỗi để giảng viên sửa.');
       return;
     }
     const payload = {
@@ -1042,10 +1063,10 @@ function ReviewQueuePage() {
         </div>
       </section>
 
-      <section className="review-dashboard" aria-label="Dashboard công việc reviewer">
+      <section className="review-dashboard" aria-label="Tổng quan công việc kiểm duyệt">
         <div className="review-dashboard__group">
           <div className="review-dashboard__head">
-            <span>Workload</span>
+            <span>Khối lượng xử lý</span>
             <b>{dashboardLoading ? 'Đang tải' : `${dashboardWorkload.pending || 0} câu chờ`}</b>
           </div>
           <div className="review-dashboard__metrics">
@@ -1063,7 +1084,7 @@ function ReviewQueuePage() {
             </div>
             <div>
               <b>{dashboardWorkload.lock_expired || 0}</b>
-              <span>Quá hạn lock</span>
+              <span>Quá hạn giữ câu</span>
             </div>
             <div>
               <b>{dashboardWorkload.mine || 0}</b>
@@ -1075,7 +1096,7 @@ function ReviewQueuePage() {
         <div className="review-dashboard__group review-dashboard__group--performance">
           <div className="review-dashboard__head">
             <span>30 ngày gần nhất</span>
-            <b>{dashboardPerformance.reviews_30d || 0} review</b>
+            <b>{dashboardPerformance.reviews_30d || 0} lượt kiểm duyệt</b>
           </div>
           <div className="review-dashboard__metrics">
             <div>
@@ -1114,7 +1135,7 @@ function ReviewQueuePage() {
               </div>
             ))}
             {dashboardSubjects.length === 0 && (
-              <p>{dashboardLoading ? 'Đang tính theo môn...' : 'Chưa có review theo môn.'}</p>
+              <p>{dashboardLoading ? 'Đang tính theo môn...' : 'Chưa có lượt kiểm duyệt theo môn.'}</p>
             )}
           </div>
         </div>
@@ -1169,7 +1190,7 @@ function ReviewQueuePage() {
                 checked={overdueOnly}
                 onChange={(event) => updateFilter(setOverdueOnly)(event.target.checked)}
               />
-              Quá hạn lock
+              Quá hạn giữ câu
             </label>
             <select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
               <option value="all">Mọi dạng câu hỏi</option>
@@ -1233,7 +1254,7 @@ function ReviewQueuePage() {
               ))}
             </select>
             <select value={creatorFilter} onChange={(event) => updateFilter(setCreatorFilter)(event.target.value)}>
-              <option value="all">Mọi Teacher</option>
+              <option value="all">Mọi giảng viên</option>
               {teacherOptions.map((teacher) => (
                 <option key={teacher.id} value={teacher.id}>
                   {teacher.display_name || teacher.email}
@@ -1350,28 +1371,28 @@ function ReviewQueuePage() {
                   <b>{assignmentStatusLabel(selected, user)}</b>
                 </div>
                 <div>
-                  <span>Reviewer</span>
+                  <span>Người duyệt</span>
                   <b>{selectedAssignment.reviewer_user_id || '--'}</b>
                 </div>
                 <div>
-                  <span>Claim lúc</span>
+                  <span>Nhận lúc</span>
                   <b>{formatDate(selectedAssignment.claimed_at || selectedAssignment.assigned_at)}</b>
                 </div>
                 <div>
-                  <span>Hết lock</span>
+                  <span>Hết hạn giữ câu</span>
                   <b>{formatDate(selectedAssignment.lock_expires_at)}</b>
                 </div>
               </section>
               <div className="detail-actions">
                 <button type="button" disabled={busyId === selected.id || !canClaimQuestion(selected)} onClick={() => claimReview(selected)}>
-                  {selectedAssignment.status === 'IN_REVIEW' && isAssignmentMine(selected, user) ? 'Gia hạn claim' : 'Claim'}
+                  {selectedAssignment.status === 'IN_REVIEW' && isAssignmentMine(selected, user) ? 'Gia hạn giữ câu' : 'Nhận câu'}
                 </button>
                 <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => releaseReview(selected)}>
-                  Release
+                  Trả câu
                 </button>
                 {user?.role === 'Admin' && (
                   <button type="button" disabled={busyId === selected.id || selected.review_status !== 'PENDING'} onClick={() => openAssignmentForm(selected)}>
-                    Gán reviewer
+                    Gán người duyệt
                   </button>
                 )}
                 {user?.role === 'Admin' && (
@@ -1677,7 +1698,7 @@ function ReviewQueuePage() {
 
             <section className="review-form-section">
               <div className="review-issue-head">
-                <h3>Lỗi cần Teacher sửa</h3>
+                <h3>Lỗi cần giảng viên sửa</h3>
                 <button type="button" onClick={addReviewIssue}>Thêm lỗi</button>
               </div>
               {reviewDraft.issues.length === 0 && (
@@ -1731,7 +1752,7 @@ function ReviewQueuePage() {
             <div className="review-modal__foot">
               <button type="button" onClick={() => setReviewDraft(null)}>Hủy</button>
               <button type="submit" className="detail-action-primary" disabled={busyId === selected?.id}>
-                Gửi review
+                Lưu kết quả kiểm duyệt
               </button>
             </div>
           </form>
@@ -1750,12 +1771,12 @@ function ReviewQueuePage() {
             <div className="review-modal__head">
               <div>
                 <span>{assignmentDraft.question.question_code}</span>
-                <h2>Gán reviewer</h2>
+                <h2>Gán người duyệt</h2>
               </div>
               <button type="button" onClick={() => setAssignmentDraft(null)}>Đóng</button>
             </div>
             <label className="review-form-field">
-              <span>Reviewer/Admin active</span>
+              <span>Người duyệt/quản trị viên đang hoạt động</span>
               <select
                 value={assignmentDraft.reviewerUserId}
                 onChange={(event) => setAssignmentDraft((current) => ({
@@ -1763,7 +1784,7 @@ function ReviewQueuePage() {
                   reviewerUserId: event.target.value,
                 }))}
               >
-                <option value="">Bỏ gán reviewer</option>
+                <option value="">Bỏ gán người duyệt</option>
                 {reviewerOptions.map((reviewer) => (
                   <option key={reviewer.id} value={reviewer.id}>
                     {reviewer.display_name || reviewer.email || reviewer.id}

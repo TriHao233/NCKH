@@ -32,8 +32,8 @@ const emptyForm = {
 };
 
 const PUBLISH_ROLES = [
-  { value: 'Admin', label: 'Admin' },
-  { value: 'Reviewer', label: 'Reviewer' },
+  { value: 'Admin', label: 'Quản trị viên' },
+  { value: 'Reviewer', label: 'Người duyệt' },
 ];
 
 const STATUS_LABEL = {

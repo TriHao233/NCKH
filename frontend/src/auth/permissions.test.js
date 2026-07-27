@@ -19,15 +19,21 @@ const PROTECTED_APP_ROUTES = [
   "/ho-so",
 ];
 
-test("admin can access business superuser routes", () => {
-  assert.equal(canAccessPath("Admin", "/sinh-cau-hoi"), true);
-  assert.equal(canAccessPath("Admin", "/quan-ly"), true);
-  assert.equal(canAccessPath("Admin", "/lam-de-thi/abc123"), true);
+test("admin can access reviewer supervision and admin routes only", () => {
+  assert.equal(canAccessPath("Admin", "/sinh-cau-hoi"), false);
+  assert.equal(canAccessPath("Admin", "/quan-ly"), false);
+  assert.equal(canAccessPath("Admin", "/lam-de-thi/abc123"), false);
   assert.equal(canAccessPath("Admin", "/kiem-duyet"), true);
   assert.equal(canAccessPath("Admin", "/tong-quan"), true);
   assert.equal(canAccessPath("Admin", "/nhat-ky-he-thong"), true);
   assert.equal(canAccessPath("Admin", "/quan-ly-job"), true);
   assert.equal(canAccessPath("Admin", "/quan-ly-moodle"), true);
+});
+
+test("teacher can access teacher workspace routes", () => {
+  assert.equal(canAccessPath("Teacher", "/sinh-cau-hoi"), true);
+  assert.equal(canAccessPath("Teacher", "/quan-ly"), true);
+  assert.equal(canAccessPath("Teacher", "/lam-de-thi/abc123"), true);
 });
 
 test("teacher cannot access reviewer or admin-only routes", () => {
@@ -39,10 +45,18 @@ test("teacher cannot access reviewer or admin-only routes", () => {
   assert.equal(canAccessPath("Teacher", "/quan-ly-moodle"), false);
 });
 
+test("anonymous users only access public routes", () => {
+  assert.equal(canAccessPath(null, "/trang-chu"), true);
+  assert.equal(canAccessPath(null, "/gioi-thieu"), true);
+  assert.equal(canAccessPath(null, "/sinh-cau-hoi"), false);
+  assert.equal(canAccessPath(null, "/quan-ly"), false);
+});
+
 test("direct URL permission and landing path use the same route map", () => {
-  assert.deepEqual(rolesForPath("/lam-de-thi/abc123"), ["Teacher", "Admin"]);
+  assert.deepEqual(rolesForPath("/lam-de-thi/abc123"), ["Teacher"]);
   assert.equal(landingPathForRole("Admin"), "/tong-quan");
   assert.equal(landingPathForRole("Admin", "/kiem-duyet?status=PENDING"), "/kiem-duyet?status=PENDING");
+  assert.equal(landingPathForRole("Admin", "/sinh-cau-hoi"), "/tong-quan");
   assert.equal(landingPathForRole("Teacher", "/kiem-duyet"), "/sinh-cau-hoi");
 });
 

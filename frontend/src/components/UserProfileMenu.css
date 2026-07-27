@@ -1,6 +1,7 @@
 .user-menu-container {
   position: relative;
   display: inline-block;
+  min-width: 0;
 }
 
 .user-menu-trigger {
@@ -13,6 +14,8 @@
   border-radius: 40px;
   cursor: pointer;
   transition: all 0.2s ease;
+  max-width: 180px;
+  min-width: 0;
 }
 
 .user-menu-trigger:hover,
@@ -26,18 +29,24 @@
   height: 32px;
   border-radius: 50%;
   object-fit: cover;
+  flex: 0 0 auto;
 }
 
 .user-name {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-chevron {
   font-size: 0.75rem;
   color: var(--muted);
   transition: transform 0.2s ease;
+  flex: 0 0 auto;
 }
 
 .user-menu-trigger.active .user-chevron {

@@ -39,8 +39,13 @@ const UserProfileMenu = () => {
   if (!user) return null;
 
   // Trích xuất thông tin hiển thị (Dựa trên cấu trúc UserInfo trả về từ MongoDB)
-  const displayName = user.display_name || 'Giảng viên';
-  const displayRole = user.role || 'Giảng viên';
+  const roleLabel = {
+    Admin: 'Quản trị viên',
+    Teacher: 'Giảng viên',
+    Reviewer: 'Người duyệt',
+  };
+  const displayName = user.display_name || 'Người dùng';
+  const displayRole = roleLabel[user.role] || user.role || 'Người dùng';
   const canOpenSettings = user.role === 'Admin';
   
   // Tự động generate avatar dựa trên tên người dùng
@@ -71,7 +76,7 @@ const UserProfileMenu = () => {
             Hồ sơ cá nhân
           </Link>
 
-          {user.role === 'Teacher' && (
+          {['Admin', 'Teacher', 'Reviewer'].includes(user.role) && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
               Lịch công việc
@@ -79,9 +84,9 @@ const UserProfileMenu = () => {
           )}
 
           {canOpenSettings && (
-            <Link to="/cai-dat" className="dropdown-item" onClick={() => setIsOpen(false)}>
+            <Link to="/quan-ly-nguoi-dung" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
-              Cài đặt hệ thống
+              Quản lý người dùng
             </Link>
           )}
           

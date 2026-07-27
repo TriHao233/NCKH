@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   createCalendarTask,
@@ -6,6 +6,7 @@ import {
   getMyCalendar,
   updateCalendarTask,
 } from '../api/users';
+import { AuthContext } from '../context/AuthContext';
 import '../css/TaskCalendarPage.css';
 
 const PRIORITY_LABEL = { low: 'Thấp', medium: 'Trung bình', high: 'Cao' };
@@ -207,6 +208,7 @@ function EventRow({ item, onClick }) {
 
 function TaskCalendarPage() {
   const navigate = useNavigate();
+  const { user } = useContext(AuthContext);
   const [view, setView] = useState('list');
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -246,12 +248,16 @@ function TaskCalendarPage() {
 
   const handleEventClick = (item) => {
     if (item.source === 'system') {
+      const query = item.related_entity_id ? `?questionId=${item.related_entity_id}` : '';
       if (item.related_entity_type === 'document') {
-        navigate('/quan-ly');
+        if (user?.role === 'Teacher') {
+          navigate('/quan-ly');
+          return;
+        }
       } else if (item.related_entity_type === 'question') {
-        navigate('/quan-ly');
+        navigate(user?.role === 'Teacher' ? `/quan-ly${query}` : `/kiem-duyet${query}`);
+        return;
       }
-      return;
     }
     setModalState(item);
   };

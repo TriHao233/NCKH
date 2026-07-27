@@ -87,14 +87,14 @@ function AdminOverviewPage() {
     return [
       {
         key: 'users',
-        label: 'Người dùng active',
+        label: 'Người dùng hoạt động',
         value: users.active,
-        detail: `${formatNumber(users.teachers)} Teacher · ${formatNumber(users.reviewers)} Reviewer`,
+        detail: `${formatNumber(users.teachers)} giảng viên · ${formatNumber(users.reviewers)} người duyệt`,
         icon: faUsers,
       },
       {
         key: 'questions',
-        label: 'Câu hỏi active',
+        label: 'Câu hỏi đang dùng',
         value: questions.total,
         detail: `${formatNumber(questions.pending)} chờ duyệt · ${formatNumber(questions.approved)} đã duyệt`,
         icon: faBookOpen,
@@ -108,16 +108,16 @@ function AdminOverviewPage() {
       },
       {
         key: 'jobs',
-        label: 'Job cần xử lý',
+        label: 'Hàng đợi cần xử lý',
         value: jobs.failed,
         detail: `${formatNumber(jobs.active)} đang chạy · ${formatNumber(jobs.long_running)} quá ngưỡng`,
         icon: faServer,
       },
       {
         key: 'moodle',
-        label: 'Moodle publication',
+        label: 'Ghi mô phỏng Moodle',
         value: moodle.publications?.total,
-        detail: `${formatNumber(moodle.publications?.simulated)} mô phỏng · ${formatNumber(moodle.active_targets)} target active`,
+        detail: `${formatNumber(moodle.publications?.simulated)} lượt mô phỏng · ${formatNumber(moodle.active_targets)} cấu hình hoạt động`,
         icon: faPlugCircleCheck,
       },
     ];
@@ -138,7 +138,7 @@ function AdminOverviewPage() {
         <div>
           <span>Quản trị hệ thống</span>
           <h1>Tổng quan vận hành</h1>
-          <p>Health, hàng đợi, kiểm duyệt và Moodle trong một màn hình.</p>
+          <p>Theo dõi sức khỏe hệ thống, hàng đợi, kiểm duyệt và mô phỏng Moodle trong một màn hình.</p>
         </div>
         <button type="button" className="overview-primary-button" onClick={loadOverview} disabled={loading}>
           <FontAwesomeIcon icon={faRotateRight} />
@@ -183,34 +183,34 @@ function AdminOverviewPage() {
         <section className="overview-panel">
           <div className="overview-panel-heading">
             <div>
-              <span>Question bank</span>
-              <h2>Review status</h2>
+              <span>Ngân hàng câu hỏi</span>
+              <h2>Trạng thái kiểm duyệt</h2>
             </div>
             <FontAwesomeIcon icon={faClipboardCheck} />
           </div>
           <dl className="overview-breakdown overview-breakdown--three">
             <div>
-              <dt>Draft</dt>
+              <dt>Nháp</dt>
               <dd>{formatNumber(overview?.questions?.draft)}</dd>
             </div>
             <div>
-              <dt>Pending</dt>
+              <dt>Chờ duyệt</dt>
               <dd>{formatNumber(overview?.questions?.pending)}</dd>
             </div>
             <div>
-              <dt>Approved</dt>
+              <dt>Đã duyệt</dt>
               <dd>{formatNumber(overview?.questions?.approved)}</dd>
             </div>
             <div>
-              <dt>Needs revision</dt>
+              <dt>Cần sửa</dt>
               <dd>{formatNumber(overview?.questions?.needs_revision)}</dd>
             </div>
             <div>
-              <dt>Rejected</dt>
+              <dt>Từ chối</dt>
               <dd>{formatNumber(overview?.questions?.rejected)}</dd>
             </div>
             <div>
-              <dt>Published</dt>
+              <dt>Đã ghi Moodle</dt>
               <dd>{formatNumber(overview?.questions?.published)}</dd>
             </div>
           </dl>
@@ -247,26 +247,26 @@ function AdminOverviewPage() {
         <section className="overview-panel">
           <div className="overview-panel-heading">
             <div>
-              <span>Publication</span>
-              <h2>Moodle status</h2>
+              <span>Mô phỏng Moodle</span>
+              <h2>Trạng thái ghi nhận</h2>
             </div>
             <FontAwesomeIcon icon={faPlugCircleCheck} />
           </div>
           <dl className="overview-breakdown">
             <div>
-              <dt>Published</dt>
+              <dt>Đã ghi</dt>
               <dd>{formatNumber(publications.published)}</dd>
             </div>
             <div>
-              <dt>Failed</dt>
+              <dt>Lỗi</dt>
               <dd>{formatNumber(publications.failed)}</dd>
             </div>
             <div>
-              <dt>Pending</dt>
+              <dt>Đang chờ</dt>
               <dd>{formatNumber(publications.pending)}</dd>
             </div>
             <div>
-              <dt>Mock</dt>
+              <dt>Mô phỏng</dt>
               <dd>{formatNumber(publications.simulated)}</dd>
             </div>
           </dl>
@@ -275,10 +275,10 @@ function AdminOverviewPage() {
         <section className="overview-panel overview-panel--wide">
           <div className="overview-panel-heading">
             <div>
-              <span>Pipeline</span>
-              <h2>Job theo loại</h2>
+              <span>Hàng đợi</span>
+              <h2>Tác vụ theo loại</h2>
             </div>
-            <Link to="/quan-ly-job">Mở job</Link>
+            <Link to="/quan-ly-job">Mở hàng đợi</Link>
           </div>
           <div className="overview-table-wrap">
             <table className="overview-table overview-table--compact">
@@ -303,7 +303,7 @@ function AdminOverviewPage() {
                 ))}
               </tbody>
             </table>
-            {!loading && jobBreakdown.length === 0 && <p className="overview-empty">Chưa có job vận hành.</p>}
+            {!loading && jobBreakdown.length === 0 && <p className="overview-empty">Chưa có tác vụ vận hành.</p>}
           </div>
         </section>
 
@@ -311,13 +311,13 @@ function AdminOverviewPage() {
           <div className="overview-panel-heading">
             <div>
               <span>30 ngày gần nhất</span>
-              <h2>Model usage, token và chi phí</h2>
+              <h2>Sử dụng mô hình, token và chi phí</h2>
             </div>
             <FontAwesomeIcon icon={faServer} />
           </div>
           <div className="model-usage-summary">
             <div>
-              <span>Requests</span>
+              <span>Lượt gọi</span>
               <b>{formatNumber(modelUsage.total_requests)}</b>
             </div>
             <div>
@@ -326,11 +326,11 @@ function AdminOverviewPage() {
               <small>{formatNumber(modelUsage.prompt_tokens)} in · {formatNumber(modelUsage.completion_tokens)} out</small>
             </div>
             <div>
-              <span>Cost</span>
+              <span>Chi phí</span>
               <b>{formatCurrency(modelUsage.cost_usd)}</b>
             </div>
             <div>
-              <span>Latency TB</span>
+              <span>Độ trễ TB</span>
               <b>{formatLatency(modelUsage.avg_latency_ms)}</b>
             </div>
           </div>
@@ -338,15 +338,15 @@ function AdminOverviewPage() {
             <table className="overview-table overview-table--compact">
               <thead>
                 <tr>
-                  <th>Model</th>
+                  <th>Mô hình</th>
                   <th>Luồng</th>
                   <th>Tổng</th>
                   <th>Hoàn tất</th>
                   <th>Lỗi</th>
-                  <th>Error rate</th>
-                  <th>Latency TB</th>
-                  <th>Tokens</th>
-                  <th>Cost</th>
+                  <th>Tỉ lệ lỗi</th>
+                  <th>Độ trễ TB</th>
+                  <th>Token</th>
+                  <th>Chi phí</th>
                 </tr>
               </thead>
               <tbody>
@@ -375,10 +375,10 @@ function AdminOverviewPage() {
         <section className="overview-panel overview-panel--wide">
           <div className="overview-panel-heading">
             <div>
-              <span>Job lỗi gần đây</span>
-              <h2>Retry queue</h2>
+              <span>Tác vụ lỗi gần đây</span>
+              <h2>Hàng đợi cần chạy lại</h2>
             </div>
-            <Link to="/quan-ly-job?status=retryable">Mở job</Link>
+            <Link to="/quan-ly-job?status=retryable">Mở hàng đợi</Link>
           </div>
           <div className="overview-table-wrap">
             <table className="overview-table">
@@ -404,27 +404,27 @@ function AdminOverviewPage() {
                 ))}
               </tbody>
             </table>
-            {!loading && recentJobs.length === 0 && <p className="overview-empty">Không có job cần retry.</p>}
+            {!loading && recentJobs.length === 0 && <p className="overview-empty">Không có tác vụ cần chạy lại.</p>}
           </div>
         </section>
 
         <section className="overview-panel overview-panel--wide">
           <div className="overview-panel-heading">
             <div>
-              <span>Audit gần đây</span>
+              <span>Nhật ký gần đây</span>
               <h2>Thay đổi hệ thống</h2>
             </div>
-            <Link to="/nhat-ky-he-thong">Mở audit</Link>
+            <Link to="/nhat-ky-he-thong">Mở nhật ký</Link>
           </div>
           <div className="audit-list-compact">
             {recentAudit.map((item) => (
               <article key={item.id}>
                 <strong>{item.action}</strong>
-                <span>{item.entity?.type || 'entity'} · {compactId(item.entity?.id)}</span>
+                <span>{item.entity?.type || 'đối tượng'} · {compactId(item.entity?.id)}</span>
                 <small>{formatDateTime(item.created_at)}</small>
               </article>
             ))}
-            {!loading && recentAudit.length === 0 && <p className="overview-empty">Chưa có audit log.</p>}
+            {!loading && recentAudit.length === 0 && <p className="overview-empty">Chưa có nhật ký.</p>}
           </div>
         </section>
       </section>

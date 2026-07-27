@@ -63,8 +63,8 @@ function HomePage() {
               </div>
               <div className="trust-divider"></div>
               <div className="trust-item">
-                <span className="trust-num">Multi-LLM</span>
-                <span className="trust-label">Kiểm duyệt chéo AI</span>
+                <span className="trust-num">Review</span>
+                <span className="trust-label">Kiểm duyệt bởi người duyệt</span>
               </div>
             </div>
           </div>
@@ -232,11 +232,11 @@ function HomePage() {
               </div>
               <div className="ws-card">
                 <span className="ws-step-num">05</span>
-                <h3 className="ws-title">Human-in-the-loop (Kiểm duyệt)</h3>
-                <p className="ws-desc">AI đánh giá sơ bộ, giảng viên sử dụng Editor để duyệt, chỉnh sửa và chuẩn hóa nội dung trước khi xuất bản.</p>
+                <h3 className="ws-title">Kiểm duyệt có phản hồi</h3>
+                <p className="ws-desc">AI đánh giá sơ bộ, người duyệt kiểm tra phiên bản hiện tại; câu cần sửa quay lại cho giảng viên chỉnh và gửi duyệt lại.</p>
                 <div className="ws-tags">
-                  <span className="ws-tag">Auto-eval</span>
-                  <span className="ws-tag">Giảng viên duyệt</span>
+                  <span className="ws-tag">AI đánh giá</span>
+                  <span className="ws-tag">Người duyệt quyết định</span>
                 </div>
               </div>
             </div>

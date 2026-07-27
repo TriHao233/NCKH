@@ -24,30 +24,30 @@ const EXPORT_PAGE_SIZE = 100;
 
 const ACTION_OPTIONS = [
   { value: 'all', label: 'Tất cả hành động' },
-  { value: 'user.admin_update', label: 'Cập nhật user' },
-  { value: 'user.deactivate', label: 'Khóa user' },
+  { value: 'user.admin_update', label: 'Cập nhật người dùng' },
+  { value: 'user.deactivate', label: 'Khóa người dùng' },
   { value: 'QUESTION_EVALUATED', label: 'Đánh giá câu hỏi' },
   { value: 'QUESTION_APPROVED', label: 'Duyệt câu hỏi' },
   { value: 'QUESTION_REJECTED', label: 'Từ chối câu hỏi' },
   { value: 'QUESTION_NEEDS_REVISION', label: 'Yêu cầu sửa' },
-  { value: 'QUESTION_REVIEW_CLAIMED', label: 'Claim review' },
-  { value: 'QUESTION_REVIEW_RELEASED', label: 'Release review' },
-  { value: 'admin.job_retry', label: 'Retry job' },
-  { value: 'admin.job_cancel', label: 'Hủy job' },
-  { value: 'admin.moodle_target_save', label: 'Lưu Moodle target' },
-  { value: 'admin.moodle_target_deactivate', label: 'Tắt Moodle target' },
-  { value: 'admin.moodle_target_check', label: 'Kiểm tra Moodle target' },
+  { value: 'QUESTION_REVIEW_CLAIMED', label: 'Nhận kiểm duyệt' },
+  { value: 'QUESTION_REVIEW_RELEASED', label: 'Trả câu kiểm duyệt' },
+  { value: 'admin.job_retry', label: 'Chạy lại tác vụ' },
+  { value: 'admin.job_cancel', label: 'Hủy tác vụ' },
+  { value: 'admin.moodle_target_save', label: 'Lưu cấu hình Moodle' },
+  { value: 'admin.moodle_target_deactivate', label: 'Tắt cấu hình Moodle' },
+  { value: 'admin.moodle_target_check', label: 'Kiểm tra cấu hình Moodle' },
   { value: 'auth.demo_login', label: 'Demo login' },
 ];
 
 const ENTITY_OPTIONS = [
-  { value: 'all', label: 'Tất cả entity' },
-  { value: 'user', label: 'User' },
-  { value: 'QUESTION', label: 'Question' },
-  { value: 'generation', label: 'Generation job' },
-  { value: 'evaluation', label: 'Evaluation job' },
-  { value: 'document', label: 'Document job' },
-  { value: 'moodle_target', label: 'Moodle target' },
+  { value: 'all', label: 'Tất cả đối tượng' },
+  { value: 'user', label: 'Người dùng' },
+  { value: 'QUESTION', label: 'Câu hỏi' },
+  { value: 'generation', label: 'Tác vụ sinh câu hỏi' },
+  { value: 'evaluation', label: 'Tác vụ đánh giá' },
+  { value: 'document', label: 'Tác vụ tài liệu' },
+  { value: 'moodle_target', label: 'Cấu hình Moodle' },
 ];
 
 function compactId(value) {
@@ -155,7 +155,7 @@ function AdminAuditPage() {
       setLogs(result.items || []);
       setTotal(result.total || 0);
     } catch (err) {
-      setError(err.message || 'Không tải được audit log');
+      setError(err.message || 'Không tải được nhật ký');
       setLogs([]);
       setTotal(0);
     } finally {
@@ -250,8 +250,8 @@ function AdminAuditPage() {
       <section className="jobs-header">
         <div>
           <span>Quản trị hệ thống</span>
-          <h1>Audit log</h1>
-          <p>Theo dõi hành động nhạy cảm, thay đổi quyền và workflow trên toàn hệ thống.</p>
+          <h1>Nhật ký hệ thống</h1>
+          <p>Theo dõi hành động nhạy cảm, thay đổi quyền và luồng xử lý trên toàn hệ thống.</p>
         </div>
         <div className="jobs-header-actions">
           <button
@@ -279,7 +279,7 @@ function AdminAuditPage() {
         </div>
       </section>
 
-      <section className="jobs-toolbar jobs-toolbar--audit" aria-label="Bộ lọc audit">
+      <section className="jobs-toolbar jobs-toolbar--audit" aria-label="Bộ lọc nhật ký">
         <div className="toolbar-field toolbar-field--search">
           <label htmlFor="audit-search">
             <FontAwesomeIcon icon={faSearch} />
@@ -289,7 +289,7 @@ function AdminAuditPage() {
             id="audit-search"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Action, actor, entity..."
+            placeholder="Hành động, người thực hiện, đối tượng..."
           />
         </div>
         <div className="toolbar-field">
@@ -304,7 +304,7 @@ function AdminAuditPage() {
           </select>
         </div>
         <div className="toolbar-field">
-          <label htmlFor="audit-entity-type">Entity</label>
+          <label htmlFor="audit-entity-type">Đối tượng</label>
           <select id="audit-entity-type" value={entityTypeFilter} onChange={(event) => updateEntityTypeFilter(event.target.value)}>
             {ENTITY_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -312,11 +312,11 @@ function AdminAuditPage() {
           </select>
         </div>
         <div className="toolbar-field">
-          <label htmlFor="audit-actor">Actor ID</label>
+          <label htmlFor="audit-actor">ID người thực hiện</label>
           <input id="audit-actor" value={actorUserId} onChange={(event) => updateActorUserId(event.target.value)} placeholder="User ID" />
         </div>
         <div className="toolbar-field">
-          <label htmlFor="audit-entity">Entity ID</label>
+          <label htmlFor="audit-entity">ID đối tượng</label>
           <input id="audit-entity" value={entityId} onChange={(event) => updateEntityId(event.target.value)} placeholder="Object ID" />
         </div>
         <div className="toolbar-field">
@@ -345,8 +345,8 @@ function AdminAuditPage() {
                 <tr>
                   <th>Thời gian</th>
                   <th>Hành động</th>
-                  <th>Actor</th>
-                  <th>Entity</th>
+                  <th>Người thực hiện</th>
+                  <th>Đối tượng</th>
                 </tr>
               </thead>
               <tbody>
@@ -377,10 +377,10 @@ function AdminAuditPage() {
               </tbody>
             </table>
             {!loading && logs.length === 0 && (
-              <p className="jobs-empty">Không có audit log phù hợp với bộ lọc hiện tại.</p>
+              <p className="jobs-empty">Không có nhật ký phù hợp với bộ lọc hiện tại.</p>
             )}
             {loading && (
-              <p className="jobs-empty">Đang tải audit log...</p>
+              <p className="jobs-empty">Đang tải nhật ký...</p>
             )}
           </div>
           <div className="jobs-pagination">
@@ -394,7 +394,7 @@ function AdminAuditPage() {
           </div>
         </div>
 
-        <aside className="job-detail-panel" aria-label="Chi tiết audit">
+        <aside className="job-detail-panel" aria-label="Chi tiết nhật ký">
           {selectedLog ? (
             <>
               <div className="job-detail-header">
@@ -407,35 +407,35 @@ function AdminAuditPage() {
                   <dd>{formatDateTime(selectedLog.created_at)}</dd>
                 </div>
                 <div>
-                  <dt>Actor</dt>
+                  <dt>Người thực hiện</dt>
                   <dd>{actorText(selectedLog)}</dd>
                 </div>
                 <div>
-                  <dt>Entity</dt>
+                  <dt>Đối tượng</dt>
                   <dd>{entityText(selectedLog)}</dd>
                 </div>
               </dl>
               <div className="audit-json-grid">
                 <div className="job-detail-json">
-                  <span>Before</span>
+                  <span>Trước</span>
                   <pre>{jsonText(selectedLog.before)}</pre>
                 </div>
                 <div className="job-detail-json">
-                  <span>After</span>
+                  <span>Sau</span>
                   <pre>{jsonText(selectedLog.after)}</pre>
                 </div>
                 <div className="job-detail-json">
-                  <span>Changes</span>
+                  <span>Thay đổi</span>
                   <pre>{jsonText(selectedLog.changes)}</pre>
                 </div>
                 <div className="job-detail-json">
-                  <span>Metadata</span>
+                  <span>Dữ liệu bổ sung</span>
                   <pre>{jsonText(selectedLog.metadata)}</pre>
                 </div>
               </div>
             </>
           ) : (
-            <p className="job-detail-empty">Chọn một audit log để xem chi tiết.</p>
+            <p className="job-detail-empty">Chọn một nhật ký để xem chi tiết.</p>
           )}
         </aside>
       </section>

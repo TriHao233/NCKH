@@ -16,6 +16,7 @@ import './Header.css';
 const Header = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const navMenuRef = useRef(null);
   const notificationRef = useRef(null);
   
   // Lấy trạng thái user từ AuthContext thay vì tự check localStorage
@@ -142,8 +143,8 @@ const Header = () => {
         { path: '/tong-quan', label: 'Tổng quan' },
         { path: '/danh-muc', label: 'Danh mục' },
         { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
-        { path: '/nhat-ky-he-thong', label: 'Audit' },
-        { path: '/quan-ly-job', label: 'Job' },
+        { path: '/nhat-ky-he-thong', label: 'Nhật ký' },
+        { path: '/quan-ly-job', label: 'Hàng đợi' },
         { path: '/quan-ly-moodle', label: 'Moodle' },
       ],
     },
@@ -155,6 +156,11 @@ const Header = () => {
     }))
     .filter((group) => group.id === 'public' || (signedIn && group.items.length > 0));
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
+
+  useEffect(() => {
+    const activeLink = navMenuRef.current?.querySelector('.nav-link--active');
+    activeLink?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [location.pathname, role, signedIn]);
 
   return (
     <header className="navbar" id="navbar">
@@ -173,7 +179,7 @@ const Header = () => {
           </div>
         </div>
 
-        <nav className="nav-menu" aria-label="Điều hướng chính">
+        <nav className="nav-menu" aria-label="Điều hướng chính" ref={navMenuRef}>
           {visibleNavGroups.map((group) => (
             <div
               key={group.id}
@@ -182,7 +188,8 @@ const Header = () => {
               {showSectionLabels && <span className="nav-section-label">{group.label}</span>}
               <div className="nav-section-links">
                 {group.items.map((link) => {
-                  const isActive = location.pathname === link.path;
+                  const isActive = location.pathname === link.path
+                    || location.pathname.startsWith(`${link.path}/`);
                   return (
                     <Link
                       key={link.path}
