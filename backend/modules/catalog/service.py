@@ -423,10 +423,16 @@ class CatalogService:
             )
         if settings.prompt_source == "db" and not active_prompt_count:
             warnings.append("PROMPT_SOURCE=db nhưng chưa có prompt active trong DB; runtime sẽ fallback file.")
-        if not self._catalog_model(generation_code):
+        generation_catalog_model = self._catalog_model(generation_code)
+        evaluation_catalog_model = self._catalog_model(evaluation_code)
+        if not generation_catalog_model:
             warnings.append(f"Model sinh câu hỏi '{generation_code}' chưa có trong catalog DB.")
-        if not self._catalog_model(evaluation_code):
+        elif generation_catalog_model.get("is_active") is False:
+            warnings.append(f"Model sinh câu hỏi '{generation_code}' đang inactive trong catalog DB.")
+        if not evaluation_catalog_model:
             warnings.append(f"Model đánh giá '{evaluation_code}' chưa có trong catalog DB.")
+        elif evaluation_catalog_model.get("is_active") is False:
+            warnings.append(f"Model đánh giá '{evaluation_code}' đang inactive trong catalog DB.")
 
         return json_safe(
             {
@@ -442,8 +448,8 @@ class CatalogService:
                 "gemini_api_key_configured": bool(settings.GEMINI_API_KEY),
                 "generation_factory": self._model_factory_status(generation_code),
                 "evaluation_factory": self._model_factory_status(evaluation_code),
-                "generation_catalog_model": self._catalog_model(generation_code),
-                "evaluation_catalog_model": self._catalog_model(evaluation_code),
+                "generation_catalog_model": generation_catalog_model,
+                "evaluation_catalog_model": evaluation_catalog_model,
                 "active_prompt_count": active_prompt_count,
                 "active_evaluation_policy": active_policy or FALLBACK_EVALUATION_POLICY,
                 "warnings": warnings,

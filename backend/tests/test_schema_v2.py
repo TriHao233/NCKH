@@ -1652,6 +1652,10 @@ class SchemaV2Tests(unittest.TestCase):
         runtime = service.runtime_config()
         self.assertIn("prompt_source", runtime)
         self.assertIn("supported_provider_patterns", runtime)
+        if settings.model_provider == "qwen":
+            self.assertTrue(
+                any("Model sinh c" in warning and "inactive" in warning for warning in runtime["warnings"])
+            )
 
     def test_admin_job_summary_tracks_operational_states(self):
         jobs = [
