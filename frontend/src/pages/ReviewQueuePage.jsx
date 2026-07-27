@@ -4,6 +4,8 @@ import {
   autoEvaluateQuestion,
   claimQuestionReview,
   exportQuestionMoodle,
+  fetchQuestionSourcePdf,
+  getQuestionSources,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
   listQuestionReviews,
@@ -175,6 +177,30 @@ function refId(value) {
   return value.id || value._id || '';
 }
 
+function shortId(value) {
+  const text = refId(value);
+  if (!text) return '--';
+  return text.length > 12 ? `${text.slice(0, 6)}...${text.slice(-4)}` : text;
+}
+
+function pageRangeLabel(pageRange = {}) {
+  if (Array.isArray(pageRange.pages) && pageRange.pages.length > 0) {
+    return `Trang ${pageRange.pages.join(', ')}`;
+  }
+  if (pageRange.start && pageRange.end) {
+    return pageRange.start === pageRange.end
+      ? `Trang ${pageRange.start}`
+      : `Trang ${pageRange.start}-${pageRange.end}`;
+  }
+  if (pageRange.start) return `Trang ${pageRange.start}`;
+  return 'Chưa có trang';
+}
+
+function firstSourcePage(source) {
+  const pageNumber = source?.pages?.[0]?.page_number || source?.page_range?.start;
+  return pageNumber ? Number(pageNumber) : 1;
+}
+
 function downloadMoodleExport(question, format, content) {
   const extension = format === 'xml' ? 'xml' : 'gift';
   const mimeType = format === 'xml' ? 'application/xml' : 'text/plain';
@@ -187,6 +213,21 @@ function downloadMoodleExport(question, format, content) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function SourceText({ source, page }) {
+  const excerpt = source?.context_excerpt || source?.chunk_text || '';
+  const pageText = page?.text || source?.chunk_text || '';
+  return (
+    <div className="source-text">
+      {excerpt && (
+        <p className="source-highlight">
+          <mark>{excerpt}</mark>
+        </p>
+      )}
+      <p>{pageText || 'Chưa có OCR text cho trang này.'}</p>
+    </div>
+  );
 }
 
 function ReviewQueuePage() {
@@ -208,6 +249,13 @@ function ReviewQueuePage() {
   const [evaluations, setEvaluations] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [publications, setPublications] = useState([]);
+  const [sourceViewer, setSourceViewer] = useState(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState('');
+  const [activeSourceIndex, setActiveSourceIndex] = useState(0);
+  const [activeSourcePage, setActiveSourcePage] = useState(1);
+  const [sourcePdf, setSourcePdf] = useState(null);
+  const [sourcePdfLoading, setSourcePdfLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busyId, setBusyId] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -249,19 +297,43 @@ function ReviewQueuePage() {
   const loadHistory = async (question) => {
     setSelected(question);
     setHistoryLoading(true);
+    setSourceLoading(true);
+    setSourceError('');
+    setSourceViewer(null);
+    setSourcePdf(null);
+    setSourcePdfLoading(false);
+    setActiveSourceIndex(0);
+    setActiveSourcePage(1);
     try {
-      const [evaluationResult, reviewResult, publicationResult] = await Promise.all([
+      const [evaluationResult, reviewResult, publicationResult, sourceResult] = await Promise.all([
         listQuestionEvaluations(question.id),
         listQuestionReviews(question.id),
         listQuestionMoodlePublications(question.id),
+        getQuestionSources(question.id),
       ]);
       setEvaluations(evaluationResult.items || []);
       setReviews(reviewResult.items || []);
       setPublications(publicationResult.items || []);
+      setSourceViewer(sourceResult);
+      const firstSource = sourceResult.items?.[0];
+      setActiveSourcePage(firstSourcePage(firstSource));
+      setSourceLoading(false);
+      if (sourceResult.document?.pdf_available) {
+        setSourcePdfLoading(true);
+        try {
+          setSourcePdf(await fetchQuestionSourcePdf(question.id));
+        } catch (err) {
+          setSourceError(err.message || 'Không mở được PDF nguồn');
+        } finally {
+          setSourcePdfLoading(false);
+        }
+      }
     } catch (err) {
       setError(err.message || 'Không tải được lịch sử câu hỏi');
+      setSourceError(err.message || 'Không tải được nguồn câu hỏi');
     } finally {
       setHistoryLoading(false);
+      setSourceLoading(false);
     }
   };
 
@@ -289,7 +361,16 @@ function ReviewQueuePage() {
     setEvaluations([]);
     setReviews([]);
     setPublications([]);
+    setSourceViewer(null);
+    setSourceError('');
+    setSourcePdf(null);
   }, [questions, selected]);
+
+  useEffect(() => () => {
+    if (sourcePdf?.url) {
+      URL.revokeObjectURL(sourcePdf.url);
+    }
+  }, [sourcePdf?.url]);
 
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,
@@ -306,6 +387,11 @@ function ReviewQueuePage() {
   const updateFilter = (setter) => (value) => {
     setter(value);
     setPage(1);
+  };
+
+  const openSource = (source, index) => {
+    setActiveSourceIndex(index);
+    setActiveSourcePage(firstSourcePage(source));
   };
 
   const canClaimQuestion = (question) => {
@@ -541,6 +627,14 @@ function ReviewQueuePage() {
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
   const latestModel = latestEvaluation?.evaluator_model || {};
   const selectedAssignment = assignmentOf(selected);
+  const sourceItems = sourceViewer?.items || [];
+  const activeSource = sourceItems[activeSourceIndex] || sourceItems[0] || null;
+  const activeSourcePages = activeSource?.pages || [];
+  const activePageRecord = activeSourcePages.find((pageItem) => (
+    pageItem.page_number === activeSourcePage
+  )) || activeSourcePages[0] || null;
+  const pdfPage = activeSourcePage || activePageRecord?.page_number || 1;
+  const sourcePdfUrl = sourcePdf?.url ? `${sourcePdf.url}#page=${pdfPage}` : '';
 
   return (
     <main className="review-page">
@@ -848,12 +942,74 @@ function ReviewQueuePage() {
                     {latestEvidence.fallback_reason && <span>Lý do dùng đánh giá dự phòng: {latestEvidence.fallback_reason}</span>}
                   </section>
 
-                  <section className="evidence-block">
-                    <h3>Đoạn tài liệu nguồn</h3>
-                    {(selected.sources || []).slice(0, 3).map((source, index) => (
-                      <p key={source.chunk_id || index}>{source.context_excerpt || `Đoạn tài liệu #${index + 1}`}</p>
+                  <section className="source-viewer">
+                    <div className="source-viewer__head">
+                      <h3>Nguồn câu hỏi</h3>
+                      <span>{sourceViewer?.document?.title || 'Không có tài liệu nguồn'}</span>
+                    </div>
+                    {sourceError && <p className="source-warning">{sourceError}</p>}
+                    {(sourceViewer?.warnings || []).map((warning) => (
+                      <p className="source-warning" key={warning}>{warning}</p>
                     ))}
-                    {(selected.sources || []).length === 0 && <p>Không có đoạn tài liệu nguồn.</p>}
+                    {sourceLoading ? (
+                      <p className="review-empty">Đang tải nguồn câu hỏi...</p>
+                    ) : sourceItems.length === 0 ? (
+                      <p className="review-empty">Không có citation nguồn cho câu hỏi này.</p>
+                    ) : (
+                      <>
+                        <div className="source-list">
+                          {sourceItems.map((source, index) => (
+                            <button
+                              type="button"
+                              key={source.chunk_id || index}
+                              className={`source-card ${activeSource === source ? 'source-card--active' : ''}`}
+                              onClick={() => openSource(source, index)}
+                            >
+                              <span>Citation #{source.citation_order}</span>
+                              <b>{pageRangeLabel(source.page_range)}</b>
+                              <small>Chunk {shortId(source.chunk_id)} · Hash {shortId(source.chunk_content_hash)}</small>
+                              {source.is_current_chunk_set === false && <em>Nguồn cũ</em>}
+                            </button>
+                          ))}
+                        </div>
+
+                        {activeSource && (
+                          <div className="source-detail">
+                            <div className="source-meta-grid">
+                              <span>Chunk ID <b>{activeSource.chunk_id || '--'}</b></span>
+                              <span>Chunk set <b>{shortId(activeSource.chunk_set_id)}</b></span>
+                              <span>Hiện hành <b>{activeSource.is_current_chunk_set === false ? 'Không' : 'Có'}</b></span>
+                              <span>Content hash <b>{shortId(activeSource.current_content_hash || activeSource.chunk_content_hash)}</b></span>
+                            </div>
+                            {(activeSource.warnings || []).map((warning) => (
+                              <p className="source-warning" key={warning}>{warning}</p>
+                            ))}
+                            <div className="source-page-tabs">
+                              {activeSourcePages.map((pageItem) => (
+                                <button
+                                  type="button"
+                                  key={pageItem.page_number}
+                                  className={pageItem.page_number === activeSourcePage ? 'source-page-tabs__active' : ''}
+                                  onClick={() => setActiveSourcePage(pageItem.page_number)}
+                                >
+                                  Trang {pageItem.page_number}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="source-pdf">
+                              {sourcePdfLoading ? (
+                                <p>Đang mở PDF...</p>
+                              ) : sourcePdfUrl ? (
+                                <iframe src={sourcePdfUrl} title={`PDF nguồn ${sourceViewer?.document?.original_filename || ''}`} />
+                              ) : (
+                                <p>Không có PDF gốc khả dụng.</p>
+                              )}
+                            </div>
+                            <SourceText source={activeSource} page={activePageRecord} />
+                          </div>
+                        )}
+                      </>
+                    )}
                   </section>
 
                   <section className="history-grid">

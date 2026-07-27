@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import resolve_path
 from core.database import get_database
 from core.dependencies import CurrentUser
 from modules.questions.repository import (
@@ -31,11 +33,80 @@ BLOOM_LEVELS = {
 
 INITIAL_REVIEW_STATUSES = {"DRAFT", "PENDING"}
 SUBMITTABLE_REVIEW_STATUSES = {"DRAFT", "NEEDS_REVISION"}
+SOURCE_PAGE_TEXT_LIMIT = 6000
 
 
 def stable_hash(value: dict) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _current_original_pdf_artifact(document: dict | None) -> dict | None:
+    if not document:
+        return None
+    artifacts = document.get("artifacts") or []
+    current = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("type") == "ORIGINAL_PDF" and artifact.get("is_current", True)
+    ]
+    candidates = current or [
+        artifact for artifact in artifacts if artifact.get("type") == "ORIGINAL_PDF"
+    ]
+    for artifact in candidates:
+        storage = artifact.get("storage") or {}
+        if storage.get("provider") == "LOCAL" and storage.get("uri"):
+            return artifact
+    return None
+
+
+def _source_page_numbers(source: dict, chunk: dict | None) -> list[int]:
+    page_range = (chunk or {}).get("page_range") or source.get("page_range") or {}
+    explicit_pages = page_range.get("pages") or []
+    pages: list[int] = []
+    for page in explicit_pages:
+        try:
+            pages.append(int(page))
+        except (TypeError, ValueError):
+            continue
+    start = page_range.get("start")
+    end = page_range.get("end")
+    if start is not None and end is not None:
+        try:
+            start_int = int(start)
+            end_int = int(end)
+            pages.extend(range(start_int, end_int + 1))
+        except (TypeError, ValueError):
+            pass
+    elif start is not None:
+        try:
+            pages.append(int(start))
+        except (TypeError, ValueError):
+            pass
+    return sorted({page for page in pages if page > 0})
+
+
+def _document_source_payload(
+    document: dict | None,
+    question_id: str,
+) -> dict | None:
+    if not document:
+        return None
+    current_processing = document.get("current_processing") or {}
+    current_ocr_job_id = current_processing.get("ocr_job_id")
+    current_chunk_set_id = current_processing.get("chunk_set_id")
+    return json_safe(
+        {
+            "id": document["_id"],
+            "title": document["title"],
+            "original_filename": document["original_filename"],
+            "page_count": document.get("page_count"),
+            "current_ocr_job_id": current_ocr_job_id,
+            "current_chunk_set_id": current_chunk_set_id,
+            "pdf_available": _current_original_pdf_artifact(document) is not None,
+            "pdf_url": f"/questions/{question_id}/source-pdf",
+        }
+    )
 
 
 class QuestionService:
@@ -437,6 +508,158 @@ class QuestionService:
             )
             for version in versions
         ]
+
+    def source_viewer(
+        self,
+        question_id: str,
+        current_user: CurrentUser | None = None,
+    ) -> dict | None:
+        pair = self.repository.find_pair(question_id)
+        self._ensure_read_access(pair, current_user)
+        if not pair:
+            return None
+        question, version = pair
+        sources = version.get("sources") or []
+        document = None
+        if version.get("document_id"):
+            document = self.references.find_document(version["document_id"])
+        if document is None:
+            for source in sources:
+                chunk_id = source.get("chunk_id")
+                if not chunk_id:
+                    continue
+                chunk = self.references.find_chunk(object_id(chunk_id, "chunk_id"))
+                if chunk and chunk.get("document_id"):
+                    document = self.references.find_document(chunk["document_id"])
+                    break
+        current_processing = (document or {}).get("current_processing") or {}
+        current_chunk_set_id = current_processing.get("chunk_set_id")
+        current_ocr_job_id = current_processing.get("ocr_job_id")
+        warnings = []
+        if sources and not document:
+            warnings.append("Tài liệu nguồn không còn khả dụng")
+
+        items = []
+        for order, source in enumerate(sources, start=1):
+            chunk = None
+            chunk_id = source.get("chunk_id")
+            source_warnings = []
+            if chunk_id:
+                chunk = self.references.find_chunk(object_id(chunk_id, "chunk_id"))
+            if chunk_id and not chunk:
+                source_warnings.append("Chunk nguồn không còn tồn tại")
+
+            source_chunk_set_id = source.get("chunk_set_id") or (chunk or {}).get("chunk_set_id")
+            is_current_chunk_set = None
+            if current_chunk_set_id is not None and source_chunk_set_id is not None:
+                is_current_chunk_set = source_chunk_set_id == current_chunk_set_id
+                if not is_current_chunk_set:
+                    source_warnings.append("Nguồn không còn thuộc chunk set hiện hành")
+
+            source_hash = source.get("chunk_content_hash")
+            current_hash = (chunk or {}).get("content_hash")
+            content_hash_matches = None
+            if source_hash and current_hash:
+                content_hash_matches = source_hash == current_hash
+                if not content_hash_matches:
+                    source_warnings.append("Nội dung chunk đã thay đổi so với snapshot câu hỏi")
+
+            page_numbers = _source_page_numbers(source, chunk)
+            page_records = []
+            if document and current_ocr_job_id:
+                page_records = self.references.find_pages(
+                    document["_id"],
+                    current_ocr_job_id,
+                    page_numbers,
+                )
+            page_map = {int(page.get("page_number", 0)): page for page in page_records}
+            pages = [
+                {
+                    "page_number": page_number,
+                    "text": (
+                        page_map.get(page_number, {}).get("cleaned_text")
+                        or page_map.get(page_number, {}).get("raw_text")
+                        or ""
+                    )[:SOURCE_PAGE_TEXT_LIMIT],
+                    "formula_blocks": page_map.get(page_number, {}).get("formula_blocks") or [],
+                }
+                for page_number in page_numbers
+            ]
+
+            items.append(
+                {
+                    "citation_order": int(source.get("citation_order") or order),
+                    "source_type": source.get("source_type") or "CHUNK",
+                    "is_primary": bool(source.get("is_primary")),
+                    "chunk_id": chunk_id,
+                    "chunk_no": (chunk or {}).get("chunk_no"),
+                    "chunk_set_id": source_chunk_set_id,
+                    "current_chunk_set_id": current_chunk_set_id,
+                    "is_current_chunk_set": is_current_chunk_set,
+                    "chunk_content_hash": source_hash,
+                    "current_content_hash": current_hash,
+                    "content_hash_matches": content_hash_matches,
+                    "page_range": (chunk or {}).get("page_range") or {},
+                    "heading": (chunk or {}).get("heading") or {},
+                    "content_type": (chunk or {}).get("content_type"),
+                    "semantic_type": (chunk or {}).get("semantic_type"),
+                    "information_density": (chunk or {}).get("information_density"),
+                    "context_excerpt": source.get("context_excerpt") or (chunk or {}).get("content", "")[:2000],
+                    "chunk_text": ((chunk or {}).get("content") or source.get("context_excerpt") or "")[:4000],
+                    "pages": pages,
+                    "warnings": source_warnings,
+                }
+            )
+
+        return json_safe(
+            {
+                "question_id": question["_id"],
+                "question_code": question["question_code"],
+                "version_id": version["_id"],
+                "version": version["version"],
+                "document": _document_source_payload(document, question_id),
+                "items": items,
+                "warnings": warnings,
+            }
+        )
+
+    def source_pdf_artifact(
+        self,
+        question_id: str,
+        current_user: CurrentUser | None = None,
+    ) -> dict | None:
+        pair = self.repository.find_pair(question_id)
+        self._ensure_read_access(pair, current_user)
+        if not pair:
+            return None
+        _, version = pair
+        document = None
+        if version.get("document_id"):
+            document = self.references.find_document(version["document_id"])
+        if document is None:
+            for source in version.get("sources") or []:
+                chunk_id = source.get("chunk_id")
+                if not chunk_id:
+                    continue
+                chunk = self.references.find_chunk(object_id(chunk_id, "chunk_id"))
+                if chunk and chunk.get("document_id"):
+                    document = self.references.find_document(chunk["document_id"])
+                    break
+        artifact = _current_original_pdf_artifact(document)
+        if not artifact:
+            return None
+        storage = artifact.get("storage") or {}
+        uri = storage.get("uri")
+        if not uri:
+            return None
+        path = Path(uri)
+        if not path.is_absolute():
+            path = resolve_path(path)
+        return {
+            "path": path,
+            "filename": (document or {}).get("original_filename") or "source.pdf",
+            "mime_type": artifact.get("mime_type") or "application/pdf",
+        }
 
     def update(
         self,

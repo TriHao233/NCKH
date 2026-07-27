@@ -1,4 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 
 from core.config import settings
 from core.dependencies import (
@@ -10,6 +11,7 @@ from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionListResponse,
     QuestionResponse,
+    QuestionSourceViewerResponse,
     QuestionVersionResponse,
     QuestionUpdateRequest,
 )
@@ -112,6 +114,47 @@ def list_question_versions(
     if versions is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
     return versions
+
+
+@router.get("/{question_id}/sources", response_model=QuestionSourceViewerResponse)
+def get_question_sources(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionService = Depends(get_question_service),
+):
+    try:
+        sources = service.source_viewer(question_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not sources:
+        raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
+    return sources
+
+
+@router.get("/{question_id}/source-pdf")
+def get_question_source_pdf(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionService = Depends(get_question_service),
+):
+    try:
+        artifact = service.source_pdf_artifact(question_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Không tìm thấy PDF nguồn")
+    path = artifact["path"]
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="File PDF nguồn không còn tồn tại")
+    return FileResponse(
+        path,
+        media_type=artifact["mime_type"],
+        filename=artifact["filename"],
+    )
 
 
 @router.patch("/{question_id}", response_model=QuestionResponse)

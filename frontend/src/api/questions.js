@@ -1,4 +1,9 @@
-import { apiRequest } from '../services/apiClient';
+import { auth } from '../../firebase';
+import { apiRequest, ApiError } from '../services/apiClient';
+
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || '/api/v1'
+).replace(/\/$/, '');
 
 export function listQuestions({
   page = 1,
@@ -34,6 +39,42 @@ export function listQuestions({
 
 export function getQuestion(id) {
   return apiRequest(`/questions/${id}`);
+}
+
+export function getQuestionSources(id) {
+  return apiRequest(`/questions/${id}/sources`);
+}
+
+function filenameFromDisposition(disposition) {
+  const match = disposition?.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || 'source.pdf';
+}
+
+export async function fetchQuestionSourcePdf(id) {
+  await auth.authStateReady();
+  const firebaseUser = auth.currentUser;
+  if (!firebaseUser) {
+    throw new ApiError('Bạn chưa đăng nhập', 401, null);
+  }
+  const response = await fetch(`${API_BASE_URL}/questions/${id}/source-pdf`, {
+    headers: {
+      Authorization: `Bearer ${await firebaseUser.getIdToken()}`,
+    },
+  });
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // Keep the fallback message below if the PDF endpoint returns plain text.
+    }
+    throw new ApiError(payload?.detail || 'Không mở được PDF nguồn', response.status, payload);
+  }
+  const blob = await response.blob();
+  return {
+    url: window.URL.createObjectURL(blob),
+    filename: filenameFromDisposition(response.headers.get('content-disposition')),
+  };
 }
 
 export function createQuestion(payload) {

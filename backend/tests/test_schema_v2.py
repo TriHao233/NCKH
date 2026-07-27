@@ -31,7 +31,12 @@ from modules.generation.llm.deepseek import DeepseekProvider
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.question import _build_retry_prompt, _check_type_format
-from modules.questions.schemas import QuestionCreateRequest, QuestionResponse, QuestionUpdateRequest
+from modules.questions.schemas import (
+    QuestionCreateRequest,
+    QuestionResponse,
+    QuestionSourceViewerResponse,
+    QuestionUpdateRequest,
+)
 from modules.questions.repository import MongoQuestionRepository
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
@@ -263,6 +268,134 @@ class SchemaV2Tests(unittest.TestCase):
             updated_at=now,
         )
         self.assertEqual(response.review_assignment["status"], "IN_REVIEW")
+
+    def test_question_source_viewer_schema_accepts_chunk_pages(self):
+        response = QuestionSourceViewerResponse(
+            question_id=str(ObjectId()),
+            question_code="Q-1",
+            version_id=str(ObjectId()),
+            version=1,
+            document={
+                "id": str(ObjectId()),
+                "title": "Document",
+                "original_filename": "source.pdf",
+                "page_count": 4,
+                "current_ocr_job_id": str(ObjectId()),
+                "current_chunk_set_id": str(ObjectId()),
+                "pdf_available": True,
+                "pdf_url": "/questions/q/source-pdf",
+            },
+            items=[
+                {
+                    "citation_order": 1,
+                    "source_type": "CHUNK",
+                    "is_primary": True,
+                    "chunk_id": str(ObjectId()),
+                    "page_range": {"start": 2, "end": 3, "pages": [2, 3]},
+                    "context_excerpt": "Queue follows FIFO.",
+                    "pages": [{"page_number": 2, "text": "Queue follows FIFO."}],
+                }
+            ],
+        )
+        self.assertEqual(response.items[0].pages[0].page_number, 2)
+
+    def test_question_source_viewer_reports_stale_chunk_set_and_pages(self):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        document_id = ObjectId()
+        old_chunk_set_id = ObjectId()
+        current_chunk_set_id = ObjectId()
+        ocr_job_id = ObjectId()
+        chunk_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        question = {
+            "_id": question_id,
+            "question_code": "Q-1",
+            "current_version_id": version_id,
+            "current_version": 1,
+            "created_by_user_id": ObjectId(),
+        }
+        version = {
+            "_id": version_id,
+            "version": 1,
+            "document_id": document_id,
+            "created_by_user_id": question["created_by_user_id"],
+            "sources": [
+                {
+                    "source_type": "CHUNK",
+                    "chunk_id": chunk_id,
+                    "chunk_set_id": old_chunk_set_id,
+                    "chunk_content_hash": "hash-a",
+                    "citation_order": 1,
+                    "is_primary": True,
+                    "context_excerpt": "Queue follows FIFO.",
+                }
+            ],
+        }
+        document = {
+            "_id": document_id,
+            "title": "Data Structures",
+            "original_filename": "ctdl.pdf",
+            "page_count": 5,
+            "current_processing": {
+                "ocr_job_id": ocr_job_id,
+                "chunk_set_id": current_chunk_set_id,
+            },
+            "artifacts": [
+                {
+                    "type": "ORIGINAL_PDF",
+                    "is_current": True,
+                    "storage": {"provider": "LOCAL", "uri": "data/uploads/source.pdf"},
+                    "mime_type": "application/pdf",
+                }
+            ],
+        }
+        chunk = {
+            "_id": chunk_id,
+            "document_id": document_id,
+            "chunk_set_id": old_chunk_set_id,
+            "chunk_no": 7,
+            "content": "Queue follows FIFO.",
+            "content_hash": "hash-a",
+            "page_range": {"start": 2, "end": 3, "pages": [2, 3]},
+            "heading": {"title": "Queue"},
+        }
+
+        class PairRepository:
+            def find_pair(self, _question_id):
+                return question, version
+
+        class References:
+            def find_chunk(self, requested_chunk_id):
+                return chunk if requested_chunk_id == chunk_id else None
+
+            def find_document(self, requested_document_id):
+                return document if requested_document_id == document_id else None
+
+            def find_pages(self, requested_document_id, requested_ocr_job_id, page_numbers):
+                self.page_query = (requested_document_id, requested_ocr_job_id, page_numbers)
+                return [
+                    {
+                        "page_number": 2,
+                        "cleaned_text": "Page 2 Queue follows FIFO.",
+                        "formula_blocks": [],
+                    }
+                ]
+
+            def find_subject(self, _subject_id):
+                return None
+
+        references = References()
+        service = QuestionService(repository=PairRepository(), references=references)
+        result = service.source_viewer(str(question_id), _current_user("Reviewer"))
+
+        self.assertEqual(result["document"]["title"], "Data Structures")
+        self.assertTrue(result["document"]["pdf_available"])
+        self.assertEqual(result["items"][0]["chunk_no"], 7)
+        self.assertFalse(result["items"][0]["is_current_chunk_set"])
+        self.assertIn("Nguồn không còn thuộc chunk set hiện hành", result["items"][0]["warnings"])
+        self.assertEqual(result["items"][0]["pages"][0]["page_number"], 2)
+        self.assertEqual(references.page_query, (document_id, ocr_job_id, [2, 3]))
 
     def test_reviewer_must_hold_active_review_lock(self):
         service = QuestionWorkflowService(database=None)

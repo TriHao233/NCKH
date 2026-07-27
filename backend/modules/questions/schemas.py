@@ -89,6 +89,56 @@ class QuestionVersionResponse(BaseModel):
     created_at: datetime
 
 
+class QuestionSourcePage(BaseModel):
+    page_number: int
+    text: str = ""
+    formula_blocks: list[Any] = Field(default_factory=list)
+
+
+class QuestionSourceDocument(BaseModel):
+    id: str
+    title: str
+    original_filename: str
+    page_count: int | None = None
+    current_ocr_job_id: str | None = None
+    current_chunk_set_id: str | None = None
+    pdf_available: bool = False
+    pdf_url: str | None = None
+
+
+class QuestionSourceItem(BaseModel):
+    citation_order: int
+    source_type: str
+    is_primary: bool
+    chunk_id: str | None = None
+    chunk_no: int | None = None
+    chunk_set_id: str | None = None
+    current_chunk_set_id: str | None = None
+    is_current_chunk_set: bool | None = None
+    chunk_content_hash: str | None = None
+    current_content_hash: str | None = None
+    content_hash_matches: bool | None = None
+    page_range: dict[str, Any] = Field(default_factory=dict)
+    heading: dict[str, Any] = Field(default_factory=dict)
+    content_type: str | None = None
+    semantic_type: str | None = None
+    information_density: float | int | None = None
+    context_excerpt: str = ""
+    chunk_text: str = ""
+    pages: list[QuestionSourcePage] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QuestionSourceViewerResponse(BaseModel):
+    question_id: str
+    question_code: str
+    version_id: str
+    version: int
+    document: QuestionSourceDocument | None = None
+    items: list[QuestionSourceItem] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class QuestionListResponse(BaseModel):
     items: list[QuestionResponse]
     total: int

@@ -113,6 +113,13 @@ class QuestionReferenceRepository(Protocol):
 
     def find_document(self, document_id: ObjectId) -> dict | None: ...
 
+    def find_pages(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId | None,
+        page_numbers: list[int],
+    ) -> list[dict]: ...
+
     def find_subject(self, subject_id: ObjectId) -> dict | None: ...
 
 
@@ -131,6 +138,22 @@ class MongoQuestionReferenceRepository:
                 "archived_at": None,
             }
         )
+
+    def find_pages(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId | None,
+        page_numbers: list[int],
+    ) -> list[dict]:
+        if not page_numbers:
+            return []
+        query: dict = {
+            "document_id": document_id,
+            "page_number": {"$in": sorted(set(page_numbers))},
+        }
+        if ocr_job_id is not None:
+            query["ocr_job_id"] = ocr_job_id
+        return list(self.db.document_pages.find(query).sort("page_number", 1))
 
     def find_subject(self, subject_id: ObjectId) -> dict | None:
         return self.db.subjects.find_one({"_id": subject_id, "is_active": True})
