@@ -1,4 +1,5 @@
 import inspect
+import re
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
 from core.dependencies import CurrentUser
+from core import job_recovery
 from modules.admin.jobs_service import (
     AdminJobService,
     _generation_status_filter,
@@ -270,10 +272,43 @@ def _path_values(record, path):
 
 def _matches_query(record, query):
     for key, expected in (query or {}).items():
-        values = _path_values(record, key)
-        if isinstance(expected, dict) and "$in" in expected:
-            if not any(value in expected["$in"] for value in values):
+        if key == "$or":
+            if not any(_matches_query(record, item) for item in expected):
                 return False
+            continue
+        if key == "$and":
+            if not all(_matches_query(record, item) for item in expected):
+                return False
+            continue
+        values = _path_values(record, key)
+        if isinstance(expected, dict):
+            for operator, operand in expected.items():
+                if operator == "$in":
+                    if not any(value in operand for value in values):
+                        return False
+                elif operator == "$lt":
+                    if not any(value is not None and value < operand for value in values):
+                        return False
+                elif operator == "$lte":
+                    if not any(value is not None and value <= operand for value in values):
+                        return False
+                elif operator == "$gt":
+                    if not any(value is not None and value > operand for value in values):
+                        return False
+                elif operator == "$gte":
+                    if not any(value is not None and value >= operand for value in values):
+                        return False
+                elif operator == "$exists":
+                    if bool(values) is not bool(operand):
+                        return False
+                elif operator == "$regex":
+                    flags = re.IGNORECASE if expected.get("$options") == "i" else 0
+                    if not any(re.search(operand, str(value), flags) for value in values if value is not None):
+                        return False
+                elif operator == "$options":
+                    continue
+                else:
+                    return False
         elif expected is None:
             if values and not any(value is None for value in values):
                 return False
@@ -319,7 +354,11 @@ class InMemoryCollection:
     @staticmethod
     def _set_path(record, path, value, filter_query):
         if ".$." not in path:
-            record[path] = value
+            current = record
+            parts = path.split(".")
+            for part in parts[:-1]:
+                current = current.setdefault(part, {})
+            current[parts[-1]] = value
             return
         collection_key, field_key = path.split(".$.", 1)
         target_id = filter_query.get(f"{collection_key}._id")
@@ -327,6 +366,11 @@ class InMemoryCollection:
             if item.get("_id") == target_id:
                 item[field_key] = value
                 return
+
+    def insert_one(self, record):
+        item = dict(record)
+        self.records.append(item)
+        return type("Result", (), {"inserted_id": item.get("_id")})()
 
     def find_one_and_update(
         self,
@@ -350,6 +394,29 @@ class InMemoryCollection:
             record.setdefault(path, []).append(value)
         return record
 
+    def update_one(self, filter_query, update, **_kwargs):
+        matched = 0
+        modified = 0
+        for record in self.records:
+            if not _matches_query(record, filter_query):
+                continue
+            matched = 1
+            changed = False
+            for path, value in (update.get("$set") or {}).items():
+                self._set_path(record, path, value, filter_query)
+                changed = True
+            for path, value in (update.get("$push") or {}).items():
+                record.setdefault(path, []).append(value)
+                changed = True
+            modified = 1 if changed else 0
+            break
+
+        return type(
+            "Result",
+            (),
+            {"matched_count": matched, "modified_count": modified},
+        )()
+
     def update_many(self, filter_query, update, **_kwargs):
         matched = 0
         modified = 0
@@ -357,8 +424,14 @@ class InMemoryCollection:
             if not _matches_query(record, filter_query):
                 continue
             matched += 1
+            changed = False
             for path, value in (update.get("$set") or {}).items():
                 self._set_path(record, path, value, filter_query)
+                changed = True
+            for path, value in (update.get("$push") or {}).items():
+                record.setdefault(path, []).append(value)
+                changed = True
+            if changed:
                 modified += 1
 
         return type(
@@ -1125,6 +1198,95 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
         self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+
+    def test_job_recovery_marks_only_stale_active_jobs(self):
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(minutes=180)
+        fresh = now - timedelta(minutes=5)
+        question_id = ObjectId()
+        evaluation_job_id = ObjectId()
+        document_id = ObjectId()
+        chunk_job_id = ObjectId()
+        chunk_set_id = ObjectId()
+        fresh_generation_id = ObjectId()
+
+        class FakeRecoveryDatabase:
+            def __init__(self):
+                self.generation_jobs = InMemoryCollection(
+                    [
+                        {"_id": ObjectId(), "status": "queued", "updated_at": old},
+                        {"_id": fresh_generation_id, "status": "processing", "updated_at": fresh},
+                    ]
+                )
+                self.evaluation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": evaluation_job_id,
+                            "status": "PROCESSING",
+                            "question_id": question_id,
+                            "updated_at": old,
+                        }
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            "_id": question_id,
+                            "evaluation_status": "PROCESSING",
+                            "quality_summary": {"latest_evaluation_job_id": evaluation_job_id},
+                        }
+                    ]
+                )
+                self.document_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": chunk_job_id,
+                            "document_id": document_id,
+                            "job_type": "CHUNK",
+                            "status": "PROCESSING",
+                            "updated_at": old,
+                        }
+                    ]
+                )
+                self.documents = InMemoryCollection(
+                    [
+                        {
+                            "_id": document_id,
+                            "archived_at": None,
+                            "status": "PROCESSING",
+                            "pipeline_summary": {"chunk_status": "PROCESSING"},
+                        }
+                    ]
+                )
+                self.chunk_sets = InMemoryCollection(
+                    [{"_id": chunk_set_id, "chunk_job_id": chunk_job_id, "status": "PROCESSING"}]
+                )
+                self.chunk_embeddings = InMemoryCollection(
+                    [{"_id": ObjectId(), "chunk_set_id": chunk_set_id, "status": "PENDING"}]
+                )
+
+        db = FakeRecoveryDatabase()
+        original_get_database = job_recovery.get_database
+        try:
+            job_recovery.get_database = lambda: db
+            result = job_recovery.recover_stale_jobs(timeout_minutes=60)
+        finally:
+            job_recovery.get_database = original_get_database
+
+        self.assertEqual(
+            result,
+            {"generation_failed": 1, "evaluation_stale": 1, "document_failed": 1},
+        )
+        self.assertEqual(db.generation_jobs.find_one({"_id": fresh_generation_id})["status"], "processing")
+        self.assertEqual(db.evaluation_jobs.find_one({"_id": evaluation_job_id})["status"], "STALE")
+        question = db.questions.find_one({"_id": question_id})
+        self.assertEqual(question["evaluation_status"], "STALE")
+        self.assertIn("exceeded 60 minute recovery timeout", question["quality_summary"]["error"]["message"])
+        document = db.documents.find_one({"_id": document_id})
+        self.assertEqual(document["status"], "FAILED")
+        self.assertEqual(document["pipeline_summary"]["chunk_status"], "FAILED")
+        self.assertEqual(db.chunk_sets.find_one({"_id": chunk_set_id})["status"], "FAILED")
+        self.assertEqual(db.chunk_embeddings.find_one({"chunk_set_id": chunk_set_id})["status"], "FAILED")
 
     def test_admin_audit_service_normalizes_flat_and_nested_records(self):
         class FakeCursor(list):
