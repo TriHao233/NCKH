@@ -874,6 +874,129 @@ class SchemaV2Tests(unittest.TestCase):
                 now,
             )
 
+    def test_review_assignment_claim_and_review_enforce_lock_owner(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        other_reviewer = _current_user("Reviewer")
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": teacher.id,
+            "generated_by_model_id": None,
+            "classification": {
+                "subject": {"id": None},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 2},
+                "difficulty": None,
+            },
+            "clos": [],
+            "content": "Stack follows which rule?",
+            "question_data": {
+                "options": {"A": "LIFO", "B": "FIFO"},
+                "correct_answer": "A",
+                "explanation": "Stack is last-in-first-out.",
+            },
+            "sources": [],
+            "keywords": [],
+            "content_hash": "hash-review-lock",
+            "change_note": "Initial version",
+            "created_at": now,
+        }
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-LOCK",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "PENDING",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {"overall_score": 0.91, "color": "GREEN"},
+            "review_assignment": {"status": "UNASSIGNED"},
+            "latest_review_id": None,
+            "created_by_user_id": teacher.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
+
+        class FakeWorkflowDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([question])
+                self.question_versions = InMemoryCollection([version])
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": reviewer.id, "role": "Reviewer", "is_active": True},
+                        {"_id": other_reviewer.id, "role": "Reviewer", "is_active": True},
+                    ]
+                )
+                self.question_reviews = InMemoryCollection()
+                self.audit_logs = InMemoryCollection()
+                self.notifications = InMemoryCollection()
+
+        db = FakeWorkflowDatabase()
+        original_transaction = question_workflow_module.mongo_transaction
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            service = QuestionWorkflowService(db)
+
+            assigned = service.assign_review(
+                str(question_id),
+                ReviewAssignmentRequest(
+                    reviewer_user_id=str(reviewer.id),
+                    note="Assign to reviewer",
+                ),
+                admin,
+            )
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), other_reviewer)
+
+            claimed = service.claim_review(str(question_id), reviewer)
+            with self.assertRaises(PermissionError):
+                service.release_review(str(question_id), other_reviewer)
+            with self.assertRaises(PermissionError):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    other_reviewer,
+                )
+
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+
+        self.assertEqual(assigned["review_assignment"]["status"], "ASSIGNED")
+        self.assertEqual(assigned["review_assignment"]["reviewer_user_id"], str(reviewer.id))
+        self.assertEqual(claimed["review_assignment"]["status"], "IN_REVIEW")
+        self.assertEqual(claimed["review_assignment"]["reviewer_user_id"], str(reviewer.id))
+        self.assertEqual(review["decision"], "APPROVED")
+        updated_question = db.questions.find_one({"_id": question_id})
+        self.assertEqual(updated_question["review_status"], "APPROVED")
+        self.assertEqual(updated_question["approved_version_id"], version_id)
+        self.assertEqual(updated_question["review_assignment"]["status"], "UNASSIGNED")
+        self.assertEqual(len(db.question_reviews.records), 1)
+        self.assertEqual(len(db.notifications.records), 1)
+        self.assertEqual(
+            [event["action"] for event in db.audit_logs.records],
+            ["QUESTION_REVIEW_ASSIGNED", "QUESTION_REVIEW_CLAIMED", "QUESTION_APPROVED"],
+        )
+
     def test_auto_evaluation_requires_expected_version(self):
         with self.assertRaises(ValidationError):
             AutoEvaluationRequest()
