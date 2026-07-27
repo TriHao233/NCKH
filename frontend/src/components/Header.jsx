@@ -1,19 +1,112 @@
-import React, { useContext } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useContext, useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRightToBracket } from '@fortawesome/free-solid-svg-icons';
+import { faBell, faCheckDouble, faRightToBracket } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { PERMISSIONS } from '../auth/permissions';
+import {
+  getUnreadNotificationCount,
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from '../api/notifications';
 import UserProfileMenu from './UserProfileMenu'; 
 import './Header.css';
 
 const Header = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const notificationRef = useRef(null);
   
   // Lấy trạng thái user từ AuthContext thay vì tự check localStorage
   const { user, loading } = useContext(AuthContext);
   const role = user?.role;
   const signedIn = Boolean(user);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const refreshUnreadCount = async () => {
+    if (!signedIn) return;
+    try {
+      const result = await getUnreadNotificationCount();
+      setUnreadCount(result.unread_count || 0);
+    } catch {
+      setUnreadCount(0);
+    }
+  };
+
+  const loadNotifications = async () => {
+    if (!signedIn) return;
+    setNotificationLoading(true);
+    try {
+      const result = await listNotifications({ page: 1, pageSize: 8 });
+      setNotifications(result.items || []);
+    } catch {
+      setNotifications([]);
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!signedIn) {
+      setUnreadCount(0);
+      setNotifications([]);
+      setNotificationOpen(false);
+      return undefined;
+    }
+    refreshUnreadCount();
+    const intervalId = window.setInterval(refreshUnreadCount, 60000);
+    return () => window.clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn, user?.id]);
+
+  useEffect(() => {
+    if (!notificationOpen) return undefined;
+    const handleClick = (event) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+        setNotificationOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [notificationOpen]);
+
+  const toggleNotifications = async () => {
+    const nextOpen = !notificationOpen;
+    setNotificationOpen(nextOpen);
+    if (nextOpen) {
+      await loadNotifications();
+      await refreshUnreadCount();
+    }
+  };
+
+  const openNotification = async (notification) => {
+    if (!notification.is_read) {
+      try {
+        await markNotificationRead(notification.id);
+        setUnreadCount((current) => Math.max(0, current - 1));
+      } catch {
+        // Opening the deep link should not be blocked by read-state sync.
+      }
+    }
+    setNotificationOpen(false);
+    if (notification.link) {
+      navigate(notification.link);
+    }
+  };
+
+  const markAllRead = async () => {
+    try {
+      await markAllNotificationsRead();
+      setUnreadCount(0);
+      setNotifications((current) => current.map((item) => ({ ...item, is_read: true })));
+    } catch {
+      // Keep the current unread state if the API fails.
+    }
+  };
 
   const navGroups = [
     {
@@ -109,7 +202,53 @@ const Header = () => {
         <div className="nav-actions">
           {/* Kiểm tra user từ Context để render nút Đăng nhập hoặc Menu User */}
           {user ? (
-            <UserProfileMenu />
+            <>
+              <div className="notification-menu" ref={notificationRef}>
+                <button
+                  type="button"
+                  className={`notification-button ${unreadCount > 0 ? 'notification-button--unread' : ''}`}
+                  onClick={toggleNotifications}
+                  aria-label="Thông báo"
+                  aria-expanded={notificationOpen}
+                >
+                  <FontAwesomeIcon icon={faBell} />
+                  {unreadCount > 0 && (
+                    <span className="notification-count">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                  )}
+                </button>
+                {notificationOpen && (
+                  <div className="notification-panel">
+                    <div className="notification-panel__head">
+                      <b>Thông báo</b>
+                      <button type="button" onClick={markAllRead} disabled={unreadCount === 0}>
+                        <FontAwesomeIcon icon={faCheckDouble} />
+                        Đã đọc
+                      </button>
+                    </div>
+                    <div className="notification-list">
+                      {notificationLoading ? (
+                        <p>Đang tải thông báo...</p>
+                      ) : notifications.length > 0 ? (
+                        notifications.map((notification) => (
+                          <button
+                            type="button"
+                            className={`notification-item ${notification.is_read ? '' : 'notification-item--unread'}`}
+                            key={notification.id}
+                            onClick={() => openNotification(notification)}
+                          >
+                            <span>{notification.title}</span>
+                            <small>{notification.body || notification.entity?.question_code || 'Xem chi tiết'}</small>
+                          </button>
+                        ))
+                      ) : (
+                        <p>Chưa có thông báo.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <UserProfileMenu />
+            </>
           ) : (
             <Link
               to="/dang-nhap"

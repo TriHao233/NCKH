@@ -17,6 +17,7 @@ from modules.admin.jobs_service import (
 )
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.notifications.service import NotificationService
 from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
@@ -956,6 +957,86 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(dashboard["performance"]["average_review_hours"], 3.0)
         self.assertEqual(dashboard["subjects"][0]["label"], "CTDL")
         self.assertEqual(dashboard["subjects"][0]["reviewed"], 2)
+
+    def test_notification_service_creates_and_marks_read(self):
+        class FakeCursor(list):
+            def sort(self, *_args):
+                return self
+
+            def skip(self, count):
+                return FakeCursor(self[count:])
+
+            def limit(self, count):
+                return FakeCursor(self[:count])
+
+        class FakeUpdateResult:
+            def __init__(self, modified_count):
+                self.modified_count = modified_count
+
+        class FakeNotifications:
+            def __init__(self):
+                self.records = []
+
+            @staticmethod
+            def _matches(record, query):
+                return all(record.get(key) == value for key, value in query.items())
+
+            def insert_one(self, record):
+                self.records.append(record)
+
+            def count_documents(self, query):
+                return sum(1 for record in self.records if self._matches(record, query))
+
+            def find(self, query):
+                return FakeCursor([record for record in self.records if self._matches(record, query)])
+
+            def find_one_and_update(self, query, update, return_document=None):
+                for record in self.records:
+                    if self._matches(record, query):
+                        record.update(update.get("$set", {}))
+                        return record
+                return None
+
+            def update_many(self, query, update):
+                modified = 0
+                for record in self.records:
+                    if self._matches(record, query):
+                        record.update(update.get("$set", {}))
+                        modified += 1
+                return FakeUpdateResult(modified)
+
+        class FakeDatabase:
+            def __init__(self):
+                self.notifications = FakeNotifications()
+
+        db = FakeDatabase()
+        service = NotificationService(db)
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        question_id = ObjectId()
+        version_id = ObjectId()
+        notification = service.notify_review_decision(
+            question={
+                "_id": question_id,
+                "question_code": "Q-1",
+                "created_by_user_id": teacher.id,
+            },
+            version={"_id": version_id, "created_by_user_id": teacher.id},
+            review={"decision": "NEEDS_REVISION", "note": "Cần sửa đáp án"},
+            actor_user_id=reviewer.id,
+        )
+
+        self.assertIsNotNone(notification)
+        self.assertEqual(notification["type"], "QUESTION_NEEDS_REVISION")
+        self.assertEqual(notification["entity"]["id"], str(question_id))
+        self.assertEqual(service.unread_count(teacher), 1)
+        page = service.list(teacher, 1, 10)
+        self.assertEqual(page["total"], 1)
+        self.assertFalse(page["items"][0]["is_read"])
+
+        marked = service.mark_read(notification["id"], teacher)
+        self.assertTrue(marked["is_read"])
+        self.assertEqual(service.unread_count(teacher), 0)
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(

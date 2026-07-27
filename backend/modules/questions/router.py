@@ -16,6 +16,7 @@ from modules.questions.schemas import (
     QuestionUpdateRequest,
 )
 from modules.questions.service import QuestionService, get_question_service
+from modules.notifications.service import safe_notify_question_resubmitted
 from modules.questions.workflow_service import (
     DEFAULT_EVALUATOR_MODEL_CODE,
     QuestionWorkflowService,
@@ -195,6 +196,8 @@ def submit_question_for_review(
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
+        previous_question = service.get(question_id, current_user)
+        previous_review_status = previous_question.get("review_status") if previous_question else None
         question = service.submit_for_review(question_id, current_user)
         if question and question.get("evaluation_status") != "PASSED":
             job = workflow_service.enqueue_auto_evaluation(
@@ -207,6 +210,13 @@ def submit_question_for_review(
             if job.get("status") == "QUEUED":
                 background_tasks.add_task(process_evaluation_job_background, job["_id"])
             question = service.get(question_id, current_user) or question
+        if question:
+            safe_notify_question_resubmitted(
+                database=workflow_service.db,
+                question_id=question_id,
+                previous_review_status=previous_review_status,
+                actor_user_id=current_user.id,
+            )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
             raise HTTPException(status_code=409, detail="Cau hoi da duoc cap nhat boi nguoi khac") from exc

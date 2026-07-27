@@ -17,6 +17,7 @@ from core.dependencies import CurrentUser
 from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
+from modules.notifications.service import safe_notify_review_decision
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
@@ -1137,6 +1138,13 @@ class QuestionWorkflowService:
             if not result.matched_count:
                 raise RuntimeError("VERSION_CONFLICT")
             self.db.audit_logs.insert_one(audit, session=session)
+        safe_notify_review_decision(
+            database=self.db,
+            question=question,
+            version=version,
+            review=review,
+            actor_user_id=current_user.id,
+        )
         return json_safe(review)
 
     @staticmethod

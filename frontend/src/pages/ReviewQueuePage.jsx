@@ -1,10 +1,12 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   assignQuestionReview,
   autoEvaluateQuestion,
   claimQuestionReview,
   exportQuestionMoodle,
   fetchQuestionSourcePdf,
+  getQuestion,
   getReviewDashboard,
   getQuestionSources,
   listQuestionEvaluations,
@@ -306,6 +308,7 @@ function SourceText({ source, page }) {
 }
 
 function ReviewQueuePage() {
+  const location = useLocation();
   const { user } = useContext(AuthContext);
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -341,6 +344,7 @@ function ReviewQueuePage() {
   const [dashboard, setDashboard] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState('');
+  const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -461,6 +465,8 @@ function ReviewQueuePage() {
       setSelected(fresh);
       return;
     }
+    const linkedQuestionId = new URLSearchParams(location.search).get('questionId') || '';
+    if (linkedQuestionId && selected.id === linkedQuestionId) return;
     setSelected(null);
     setEvaluations([]);
     setReviews([]);
@@ -468,7 +474,29 @@ function ReviewQueuePage() {
     setSourceViewer(null);
     setSourceError('');
     setSourcePdf(null);
-  }, [questions, selected]);
+  }, [location.search, questions, selected]);
+
+  useEffect(() => {
+    const questionId = new URLSearchParams(location.search).get('questionId') || '';
+    if (!questionId) {
+      setOpenedDeepLinkId('');
+      return;
+    }
+    if (openedDeepLinkId === questionId) return;
+    const openLinkedQuestion = async () => {
+      try {
+        const localQuestion = questions.find((question) => question.id === questionId);
+        const question = localQuestion || await getQuestion(questionId);
+        await loadHistory(question);
+        setOpenedDeepLinkId(questionId);
+      } catch (err) {
+        setError(err.message || 'Không mở được câu hỏi từ thông báo');
+        setOpenedDeepLinkId(questionId);
+      }
+    };
+    openLinkedQuestion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, questions, openedDeepLinkId]);
 
   useEffect(() => () => {
     if (sourcePdf?.url) {

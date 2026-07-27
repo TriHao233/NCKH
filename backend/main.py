@@ -21,6 +21,7 @@ from modules.catalog.router import router as catalog_router
 from modules.documents.router import router as documents_router
 from modules.exams.router import router as exams_router
 from modules.generation.generate import router as generation_router
+from modules.notifications.router import router as notifications_router
 from modules.ocr.ocr import router as ocr_router
 from modules.questions.router import router as questions_router
 from modules.questions.workflow_router import router as question_workflow_router
@@ -71,6 +72,7 @@ app.include_router(documents_router)
 app.include_router(questions_router)
 app.include_router(question_workflow_router)
 app.include_router(exams_router)
+app.include_router(notifications_router)
 
 firebase_guard = [Depends(require_teacher_or_admin)]
 app.include_router(ocr_router, dependencies=firebase_guard)

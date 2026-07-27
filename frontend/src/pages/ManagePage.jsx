@@ -1,9 +1,10 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   autoEvaluateQuestion,
   createQuestion,
   deleteQuestion,
+  getQuestion,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
   listQuestionReviews,
@@ -318,6 +319,7 @@ function renderChoiceEditor({
 
 function ManagePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useContext(AuthContext);
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
@@ -368,6 +370,7 @@ function ManagePage() {
   const [restoringVersionId, setRestoringVersionId] = useState('');
   const [quickReviewDraft, setQuickReviewDraft] = useState(null);
   const [quickReviewError, setQuickReviewError] = useState('');
+  const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
 
   const [creatingQuestion, setCreatingQuestion] = useState(false);
   const [newQuestionType, setNewQuestionType] = useState(QUESTION_TYPES[0]?.backend || '');
@@ -510,6 +513,28 @@ function ManagePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions]);
+
+  useEffect(() => {
+    const questionId = new URLSearchParams(location.search).get('questionId') || '';
+    if (!questionId) {
+      setOpenedDeepLinkId('');
+      return;
+    }
+    if (openedDeepLinkId === questionId) return;
+    const openLinkedQuestion = async () => {
+      try {
+        const localQuestion = questions.find((question) => question.id === questionId);
+        const question = localQuestion || await getQuestion(questionId);
+        await loadWorkflowHistory(question);
+        setOpenedDeepLinkId(questionId);
+      } catch (error) {
+        setWorkflowMessage(error.message || 'Không mở được câu hỏi từ thông báo');
+        setOpenedDeepLinkId(questionId);
+      }
+    };
+    openLinkedQuestion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, questions, openedDeepLinkId]);
 
   const counts = useMemo(() => ({
     all: questions.length,

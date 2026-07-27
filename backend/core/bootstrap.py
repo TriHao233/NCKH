@@ -33,6 +33,7 @@ RAG_COLLECTIONS = (
     "question_evaluations",
     "question_reviews",
     "audit_logs",
+    "notifications",
     "moodle_targets",
     "moodle_publications",
     "exams",
@@ -504,6 +505,18 @@ def _ensure_indexes() -> None:
     rag_db.audit_logs.create_index(
         [("action", ASCENDING), ("created_at", DESCENDING)],
         name="ix_audit_action",
+    )
+    rag_db.notifications.create_indexes(
+        [
+            IndexModel(
+                [("recipient_user_id", ASCENDING), ("is_read", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_notifications_recipient_read",
+            ),
+            IndexModel(
+                [("recipient_user_id", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_notifications_recipient_created",
+            ),
+        ]
     )
     rag_db.moodle_targets.create_indexes(
         [
