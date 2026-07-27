@@ -85,6 +85,10 @@ export function updateQuestion(id, payload) {
   return apiRequest(`/questions/${id}`, { method: 'PATCH', body: payload });
 }
 
+export function listQuestionVersions(id) {
+  return apiRequest(`/questions/${id}/versions`);
+}
+
 export function submitQuestionForReview(id) {
   return apiRequest(`/questions/${id}/submit-review`, { method: 'POST' });
 }

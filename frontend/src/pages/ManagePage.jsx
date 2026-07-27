@@ -7,6 +7,7 @@ import {
   listQuestionEvaluations,
   listQuestionMoodlePublications,
   listQuestionReviews,
+  listQuestionVersions,
   listQuestions,
   publishQuestionToMoodle,
   reviewQuestion,
@@ -84,6 +85,21 @@ const QUALITY_COLOR_LABEL = {
 
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
 
+const QUICK_REVIEW_RUBRIC = [
+  { key: 'source_alignment', label: 'Bám sát nguồn' },
+  { key: 'answer_correctness', label: 'Đáp án đúng' },
+  { key: 'bloom_clo_alignment', label: 'Đúng Bloom/CLO' },
+  { key: 'language_quality', label: 'Diễn đạt rõ' },
+  { key: 'moodle_readiness', label: 'Sẵn sàng Moodle' },
+];
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('vi-VN');
+}
+
 function formatScore(value) {
   return typeof value === 'number' ? value.toFixed(2) : '—';
 }
@@ -129,6 +145,75 @@ function questionBloomLevel(item) {
 
 function questionCloIds(item) {
   return (item?.clos || []).map((clo) => refId(clo.id || clo)).filter(Boolean);
+}
+
+function versionSourceChunkIds(version) {
+  return (version?.sources || [])
+    .map((source) => refId(source.chunk_id || source.chunk))
+    .filter(Boolean);
+}
+
+function versionClassification(version) {
+  return version?.classification || {};
+}
+
+function versionCloLabel(version) {
+  const labels = (version?.clos || []).map((clo) => clo.code || clo.clo_code || refId(clo.id || clo));
+  return labels.filter(Boolean).join(', ');
+}
+
+function stringifyComparable(value) {
+  if (value === undefined || value === null || value === '') return '—';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function versionDiffRows(left, right) {
+  if (!left || !right) return [];
+  const leftClassification = versionClassification(left);
+  const rightClassification = versionClassification(right);
+  const rows = [
+    {
+      label: 'Nội dung',
+      before: left.content,
+      after: right.content,
+    },
+    {
+      label: 'Lựa chọn',
+      before: left.question_data?.options,
+      after: right.question_data?.options,
+    },
+    {
+      label: 'Đáp án',
+      before: left.question_data?.correct_answer,
+      after: right.question_data?.correct_answer,
+    },
+    {
+      label: 'Giải thích',
+      before: left.question_data?.explanation,
+      after: right.question_data?.explanation,
+    },
+    {
+      label: 'Bloom',
+      before: leftClassification.bloom?.name || leftClassification.bloom?.level,
+      after: rightClassification.bloom?.name || rightClassification.bloom?.level,
+    },
+    {
+      label: 'CLO',
+      before: versionCloLabel(left),
+      after: versionCloLabel(right),
+    },
+    {
+      label: 'Nguồn',
+      before: versionSourceChunkIds(left),
+      after: versionSourceChunkIds(right),
+    },
+  ].map((row) => ({
+    ...row,
+    before: stringifyComparable(row.before),
+    after: stringifyComparable(row.after),
+  }));
+  return rows.filter((row) => row.before !== row.after);
 }
 
 function renderChoiceEditor({
@@ -264,8 +349,13 @@ function ManagePage() {
   const [evaluationHistory, setEvaluationHistory] = useState([]);
   const [reviewHistory, setReviewHistory] = useState([]);
   const [publicationHistory, setPublicationHistory] = useState([]);
+  const [versionHistory, setVersionHistory] = useState([]);
+  const [versionCompare, setVersionCompare] = useState({ left: '', right: '' });
   const [historyLoading, setHistoryLoading] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
+  const [restoringVersionId, setRestoringVersionId] = useState('');
+  const [quickReviewDraft, setQuickReviewDraft] = useState(null);
+  const [quickReviewError, setQuickReviewError] = useState('');
 
   const [creatingQuestion, setCreatingQuestion] = useState(false);
   const [newQuestionType, setNewQuestionType] = useState(QUESTION_TYPES[0]?.backend || '');
@@ -334,16 +424,25 @@ function ManagePage() {
     if (!question) return;
     setHistoryLoading(true);
     if (!keepMessage) setWorkflowMessage('');
+    setVersionHistory([]);
+    setVersionCompare({ left: '', right: '' });
     try {
-      const [evaluations, reviews, publications] = await Promise.all([
+      const [evaluations, reviews, publications, versions] = await Promise.all([
         listQuestionEvaluations(question.id),
         listQuestionReviews(question.id),
         listQuestionMoodlePublications(question.id),
+        listQuestionVersions(question.id),
       ]);
+      const versionItems = versions || [];
       setSelectedQuestion(question);
       setEvaluationHistory(evaluations.items || []);
       setReviewHistory(reviews.items || []);
       setPublicationHistory(publications.items || []);
+      setVersionHistory(versionItems);
+      setVersionCompare({
+        left: versionItems[1]?.id || versionItems[0]?.id || '',
+        right: versionItems[0]?.id || '',
+      });
     } catch (error) {
       setWorkflowMessage(error.message || 'Không tải được lịch sử kiểm duyệt');
     } finally {
@@ -408,6 +507,9 @@ function ManagePage() {
 
   const editSubject = editing ? subjectById.get(questionSubjectId(editing)) : null;
   const editLearningOutcomes = (editSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
+  const compareLeftVersion = versionHistory.find((version) => version.id === versionCompare.left) || null;
+  const compareRightVersion = versionHistory.find((version) => version.id === versionCompare.right) || null;
+  const compareRows = versionDiffRows(compareLeftVersion, compareRightVersion);
 
   const openEdit = (item) => {
     setEditing(item);
@@ -628,25 +730,63 @@ function ManagePage() {
     }
   };
 
-  const handleReview = async (item, decision) => {
-    const labels = {
-      APPROVED: 'duyệt',
-      NEEDS_REVISION: 'yêu cầu sửa',
-      REJECTED: 'từ chối',
-    };
-    const note = window.prompt(`Ghi chú ${labels[decision]} câu hỏi ${item.question_code}:`, '');
-    if (note === null) return;
+  const openQuickReview = (item, decision) => {
+    setQuickReviewError('');
+    setQuickReviewDraft({
+      question: item,
+      decision,
+      note: '',
+      overrideReason: '',
+      issueTitle: '',
+      issueSeverity: 'MEDIUM',
+      issueDetail: '',
+    });
+  };
+
+  const submitQuickReview = async () => {
+    if (!quickReviewDraft?.question) return;
+    const item = quickReviewDraft.question;
+    const note = quickReviewDraft.note.trim();
+    const issueTitle = quickReviewDraft.issueTitle.trim();
+    const issueDetail = quickReviewDraft.issueDetail.trim();
+    const revisionIssues = issueTitle || issueDetail
+      ? [{
+        title: issueTitle || issueDetail.slice(0, 160),
+        severity: quickReviewDraft.issueSeverity,
+        detail: issueDetail,
+      }]
+      : [];
+    const needsOverride = quickReviewDraft.decision === 'APPROVED' && item.evaluation_status !== 'PASSED';
+    if (needsOverride && !quickReviewDraft.overrideReason.trim()) {
+      setQuickReviewError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
+      return;
+    }
+    if (quickReviewDraft.decision === 'REJECTED' && !note && revisionIssues.length === 0) {
+      setQuickReviewError('Cần ghi lý do khi từ chối câu hỏi.');
+      return;
+    }
+    if (quickReviewDraft.decision === 'NEEDS_REVISION' && revisionIssues.length === 0) {
+      setQuickReviewError('Cần thêm ít nhất một lỗi cần Teacher sửa.');
+      return;
+    }
     const payload = {
       expected_version: item.current_version,
-      decision,
+      decision: quickReviewDraft.decision,
       note,
+      review_form: {
+        checklist: QUICK_REVIEW_RUBRIC.map((rubric) => ({
+          ...rubric,
+          passed: quickReviewDraft.decision === 'APPROVED',
+          note: '',
+        })),
+        overall_note: note,
+        revision_issues: revisionIssues,
+      },
     };
-    if (decision === 'APPROVED' && item.evaluation_status !== 'PASSED') {
-      const reason = window.prompt('Câu hỏi chưa đạt đánh giá AI. Nhập lý do duyệt thủ công:', '');
-      if (!reason?.trim()) return;
+    if (needsOverride) {
       payload.override = {
         applied: true,
-        reason: reason.trim(),
+        reason: quickReviewDraft.overrideReason.trim(),
       };
       if (typeof item.quality_summary?.overall_score === 'number') {
         payload.override.score = item.quality_summary.overall_score;
@@ -656,13 +796,52 @@ function ManagePage() {
       }
     }
     setWorkflowBusyId(item.id);
+    setQuickReviewError('');
     try {
       await reviewQuestion(item.id, payload);
+      setQuickReviewDraft(null);
       await refreshAfterWorkflow('Đã cập nhật trạng thái kiểm duyệt.', item);
     } catch (error) {
-      alert('Kiểm duyệt thất bại: ' + error.message);
+      setQuickReviewError(error.message || 'Kiểm duyệt thất bại');
     } finally {
       setWorkflowBusyId(null);
+    }
+  };
+
+  const handleRestoreVersion = async (version) => {
+    if (!selectedQuestion || !version) return;
+    if (version.version === selectedQuestion.current_version) return;
+    if (!window.confirm(`Khôi phục ${selectedQuestion.question_code} về nội dung version ${version.version}?`)) {
+      return;
+    }
+    const classification = versionClassification(version);
+    const subjectId = refId(classification.subject?.id || classification.subject);
+    const chapterId = refId(classification.chapter?.id || classification.chapter);
+    const questionType = normalizeQuestionType(classification.assessment_type);
+    const payload = {
+      expected_version: selectedQuestion.current_version,
+      content: version.content,
+      question_data: version.question_data || {},
+      bloom_level: classification.bloom?.level || undefined,
+      difficulty: classification.difficulty || undefined,
+      source_chunk_ids: versionSourceChunkIds(version),
+      clo_ids: (version.clos || []).map((clo) => refId(clo.id || clo)).filter(Boolean),
+      change_note: `Khôi phục từ version ${version.version}`,
+    };
+    if (questionType) payload.question_type = questionType;
+    if (subjectId) payload.subject_id = subjectId;
+    if (chapterId) payload.chapter_id = chapterId;
+
+    setRestoringVersionId(version.id);
+    try {
+      const updated = await updateQuestion(selectedQuestion.id, payload);
+      setWorkflowMessage(`Đã tạo version ${updated.current_version} từ version ${version.version}. Cần đánh giá/review lại.`);
+      await fetchQuestions(searchTerm);
+      await loadWorkflowHistory(updated, { keepMessage: true });
+    } catch (error) {
+      setWorkflowMessage(error.message || 'Khôi phục version thất bại');
+    } finally {
+      setRestoringVersionId('');
     }
   };
 
@@ -916,7 +1095,7 @@ function ManagePage() {
                                 type="button"
                                 className="mini-action mini-action--approve"
                                 disabled={workflowBusyId === item.id || isEvaluationBusy(item)}
-                                onClick={() => handleReview(item, 'APPROVED')}
+                                onClick={() => openQuickReview(item, 'APPROVED')}
                               >
                                 Duyệt
                               </button>
@@ -924,7 +1103,7 @@ function ManagePage() {
                                 type="button"
                                 className="mini-action"
                                 disabled={workflowBusyId === item.id}
-                                onClick={() => handleReview(item, 'NEEDS_REVISION')}
+                                onClick={() => openQuickReview(item, 'NEEDS_REVISION')}
                               >
                                 Cần sửa
                               </button>
@@ -932,7 +1111,7 @@ function ManagePage() {
                                 type="button"
                                 className="mini-action mini-action--danger"
                                 disabled={workflowBusyId === item.id}
-                                onClick={() => handleReview(item, 'REJECTED')}
+                                onClick={() => openQuickReview(item, 'REJECTED')}
                               >
                                 Từ chối
                               </button>
@@ -1053,6 +1232,97 @@ function ManagePage() {
                     <p className="side-note">Đang tải lịch sử...</p>
                   ) : (
                     <>
+                      <div className="history-block version-history-block">
+                        <div className="version-block-head">
+                          <h4>Phiên bản</h4>
+                          <span>{versionHistory.length} version</span>
+                        </div>
+                        {versionHistory.length === 0 ? (
+                          <span className="history-empty">Chưa có lịch sử phiên bản.</span>
+                        ) : (
+                          <>
+                            <div className="version-list">
+                              {versionHistory.slice(0, 5).map((version) => (
+                                <div
+                                  className={`version-item ${version.version === selectedQuestion.current_version ? 'version-item--current' : ''}`}
+                                  key={version.id}
+                                >
+                                  <div>
+                                    <b>Version {version.version}</b>
+                                    <span>{version.change_note || version.origin}</span>
+                                    <small>{formatDateTime(version.created_at)}</small>
+                                  </div>
+                                  {canEditQuestions && version.version !== selectedQuestion.current_version && (
+                                    <button
+                                      type="button"
+                                      className="mini-action"
+                                      disabled={restoringVersionId === version.id}
+                                      onClick={() => handleRestoreVersion(version)}
+                                    >
+                                      {restoringVersionId === version.id ? 'Đang khôi phục' : 'Khôi phục'}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                            {versionHistory.length > 1 && (
+                              <div className="version-compare">
+                                <div className="version-select-row">
+                                  <label>
+                                    Từ
+                                    <select
+                                      className="field-select"
+                                      value={versionCompare.left}
+                                      onChange={(event) => setVersionCompare((current) => ({
+                                        ...current,
+                                        left: event.target.value,
+                                      }))}
+                                    >
+                                      {versionHistory.map((version) => (
+                                        <option key={version.id} value={version.id}>
+                                          Version {version.version}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label>
+                                    Đến
+                                    <select
+                                      className="field-select"
+                                      value={versionCompare.right}
+                                      onChange={(event) => setVersionCompare((current) => ({
+                                        ...current,
+                                        right: event.target.value,
+                                      }))}
+                                    >
+                                      {versionHistory.map((version) => (
+                                        <option key={version.id} value={version.id}>
+                                          Version {version.version}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                </div>
+                                {compareRows.length === 0 ? (
+                                  <span className="history-empty">Hai version đang chọn không khác nội dung chính.</span>
+                                ) : (
+                                  <div className="version-diff-list">
+                                    {compareRows.map((row) => (
+                                      <div className="version-diff-row" key={row.label}>
+                                        <b>{row.label}</b>
+                                        <span>Trước</span>
+                                        <pre>{row.before}</pre>
+                                        <span>Sau</span>
+                                        <pre>{row.after}</pre>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
                       <div className="history-block">
                         <h4>Đánh giá AI</h4>
                         {evaluationHistory.slice(0, 2).map((item) => (
@@ -1102,6 +1372,102 @@ function ManagePage() {
           </aside>
         </div>
       </section>
+
+      {quickReviewDraft && (
+        <div className="modal-overlay" onClick={() => setQuickReviewDraft(null)}>
+          <form
+            className="modal-card quick-review-modal"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitQuickReview();
+            }}
+          >
+            <h3 className="profile-card-title">
+              {REVIEW_STATUS_LABEL[quickReviewDraft.decision] || quickReviewDraft.decision} · {quickReviewDraft.question.question_code}
+            </h3>
+            <label className="draft-edit-field">
+              <span>Ghi chú tổng</span>
+              <textarea
+                className="field-input"
+                rows={4}
+                value={quickReviewDraft.note}
+                onChange={(event) => setQuickReviewDraft((current) => ({
+                  ...current,
+                  note: event.target.value,
+                }))}
+              />
+            </label>
+            {quickReviewDraft.decision === 'APPROVED' && quickReviewDraft.question.evaluation_status !== 'PASSED' && (
+              <label className="draft-edit-field">
+                <span>Lý do override</span>
+                <textarea
+                  className="field-input"
+                  rows={3}
+                  required
+                  value={quickReviewDraft.overrideReason}
+                  onChange={(event) => setQuickReviewDraft((current) => ({
+                    ...current,
+                    overrideReason: event.target.value,
+                  }))}
+                />
+              </label>
+            )}
+            {quickReviewDraft.decision !== 'APPROVED' && (
+              <div className="quick-review-issue">
+                <label className="draft-edit-field">
+                  <span>Lỗi cần Teacher sửa</span>
+                  <input
+                    className="field-input"
+                    value={quickReviewDraft.issueTitle}
+                    onChange={(event) => setQuickReviewDraft((current) => ({
+                      ...current,
+                      issueTitle: event.target.value,
+                    }))}
+                    placeholder="Ví dụ: Đáp án chưa khớp nguồn"
+                  />
+                </label>
+                <label className="draft-edit-field">
+                  <span>Mức độ</span>
+                  <select
+                    className="field-select"
+                    value={quickReviewDraft.issueSeverity}
+                    onChange={(event) => setQuickReviewDraft((current) => ({
+                      ...current,
+                      issueSeverity: event.target.value,
+                    }))}
+                  >
+                    <option value="LOW">Nhẹ</option>
+                    <option value="MEDIUM">Vừa</option>
+                    <option value="HIGH">Nghiêm trọng</option>
+                  </select>
+                </label>
+                <label className="draft-edit-field">
+                  <span>Chi tiết</span>
+                  <textarea
+                    className="field-input"
+                    rows={3}
+                    value={quickReviewDraft.issueDetail}
+                    onChange={(event) => setQuickReviewDraft((current) => ({
+                      ...current,
+                      issueDetail: event.target.value,
+                    }))}
+                  />
+                </label>
+              </div>
+            )}
+            {quickReviewError && <p className="manage-error">{quickReviewError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={() => setQuickReviewDraft(null)}>
+                Hủy
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={workflowBusyId === quickReviewDraft.question.id}>
+                Gửi review
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {editing && (
         <div className="modal-overlay" onClick={closeEdit}>
