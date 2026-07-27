@@ -36,17 +36,21 @@ def attach_original_artifact(
     uri: str,
     size_bytes: int,
     sha256: str,
+    artifact_type: str = "ORIGINAL_PDF",
+    mime_type: str = "application/pdf",
 ) -> None:
     _repository().attach_original_artifact(
         document_id,
         uri=uri,
         size_bytes=size_bytes,
         sha256=sha256,
+        artifact_type=artifact_type,
+        mime_type=mime_type,
     )
 
 
-def create_ocr_job(document_id: str) -> str:
-    job = _repository().create_job(document_id, "OCR")
+def create_ocr_job(document_id: str, config: dict | None = None) -> str:
+    job = _repository().create_job(document_id, "OCR", config=config)
     return str(job["_id"])
 
 

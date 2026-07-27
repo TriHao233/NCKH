@@ -6,6 +6,11 @@ import shutil
 import time
 from pathlib import Path
 
+from docx import Document
+from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
@@ -30,6 +35,21 @@ _UPLOAD_DIR = resolve_path(settings.upload_dir)
 _OUTPUT_DIR = resolve_path(settings.ocr_output_dir)
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+SUPPORTED_UPLOAD_TYPES = {
+    ".pdf": {
+        "artifact_type": "ORIGINAL_PDF",
+        "mime_type": "application/pdf",
+        "source_format": "pdf",
+    },
+    ".docx": {
+        "artifact_type": "ORIGINAL_DOCX",
+        "mime_type": DOCX_MIME_TYPE,
+        "source_format": "docx",
+    },
+}
+DOCX_PAGE_CHAR_LIMIT = 12_000
 
 
 def _ocr_job_cancelled(job_id: str) -> bool:
@@ -76,6 +96,108 @@ async def process_ocr_background(
         )
 
 
+def _iter_docx_blocks(document: Document):
+    for child in document.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, document)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, document)
+
+
+def _table_to_markdown(table: Table) -> str:
+    rows = []
+    for row in table.rows:
+        cells = [" ".join(cell.text.split()) for cell in row.cells]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def extract_docx_pages(docx_path: str | Path, *, page_char_limit: int = DOCX_PAGE_CHAR_LIMIT) -> tuple[list[dict], dict]:
+    document = Document(str(docx_path))
+    blocks: list[str] = []
+    paragraph_count = 0
+    table_count = 0
+
+    for block in _iter_docx_blocks(document):
+        if isinstance(block, Paragraph):
+            text = block.text.strip()
+            if text:
+                blocks.append(text)
+                paragraph_count += 1
+        elif isinstance(block, Table):
+            text = _table_to_markdown(block).strip()
+            if text:
+                blocks.append(text)
+                table_count += 1
+
+    if not blocks:
+        raise ValueError("DOCX không có nội dung văn bản để xử lý")
+
+    pages: list[dict] = []
+    current: list[str] = []
+    current_length = 0
+    for block in blocks:
+        block_length = len(block)
+        if current and current_length + block_length + 2 > page_char_limit:
+            text = "\n\n".join(current).strip()
+            pages.append({"page_number": len(pages) + 1, "text": text, "original_text": text, "formula_blocks": []})
+            current = []
+            current_length = 0
+        current.append(block)
+        current_length += block_length + 2
+
+    if current:
+        text = "\n\n".join(current).strip()
+        pages.append({"page_number": len(pages) + 1, "text": text, "original_text": text, "formula_blocks": []})
+
+    stats = {
+        "source_format": "docx",
+        "page_count": len(pages),
+        "paragraph_count": paragraph_count,
+        "table_count": table_count,
+        "char_count": sum(len(page["text"]) for page in pages),
+    }
+    return pages, stats
+
+
+async def process_docx_background(
+    document_id: str,
+    job_id: str,
+    upload_path: str,
+    output_path: str,
+    document_title: str,
+):
+    try:
+        if _ocr_job_cancelled(job_id):
+            return
+        update_document_status(document_id, job_id, status="processing")
+        started_at = time.time()
+        pages, stats = await run_in_threadpool(extract_docx_pages, upload_path)
+        if _ocr_job_cancelled(job_id):
+            return
+        output = Path(output_path)
+        output.write_text(
+            f"# {document_title}\n\n" + "\n\n---\n\n".join(page["text"] for page in pages),
+            encoding="utf-8",
+        )
+        save_document_pages(document_id, job_id, pages)
+        if _ocr_job_cancelled(job_id):
+            return
+        stats["processing_time"] = round(time.time() - started_at, 1)
+        update_document_status(document_id, job_id, status="completed", stats=stats)
+    except Exception as exc:
+        logger.exception("DOCX extraction job %s failed", job_id)
+        if _ocr_job_cancelled(job_id):
+            return
+        update_document_status(
+            document_id,
+            job_id,
+            status="failed",
+            error_message=str(exc),
+        )
+
+
 async def queue_pdf_ocr_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile,
@@ -84,8 +206,11 @@ async def queue_pdf_ocr_upload(
     subject_id: str | None = None,
     chapter_id: str | None = None,
 ) -> dict:
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Chỉ chấp nhận file PDF")
+    safe_filename = Path(file.filename or "").name
+    extension = Path(safe_filename).suffix.lower()
+    upload_type = SUPPORTED_UPLOAD_TYPES.get(extension)
+    if not safe_filename or not upload_type:
+        raise HTTPException(status_code=400, detail="Chỉ chấp nhận file PDF hoặc DOCX")
 
     file.file.seek(0, os.SEEK_END)
     file_size = file.file.tell()
@@ -93,16 +218,16 @@ async def queue_pdf_ocr_upload(
     if file_size > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dung lượng tối đa 50 MB")
 
-    title = Path(file.filename).stem.replace("_", " ")
+    title = Path(safe_filename).stem.replace("_", " ")
     document_id = create_document_record(
-        filename=file.filename,
+        filename=safe_filename,
         title=title,
         uploaded_by_user_id=current_user.id,
         subject_id=subject_id,
         chapter_id=chapter_id,
     )
-    job_id = create_ocr_job(document_id)
-    upload_path = _UPLOAD_DIR / f"{document_id}_{file.filename}"
+    job_id = create_ocr_job(document_id, config={"source_format": upload_type["source_format"]})
+    upload_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
     output_path = _OUTPUT_DIR / f"{document_id}_result.md"
 
     try:
@@ -117,6 +242,8 @@ async def queue_pdf_ocr_upload(
             uri=str(upload_path),
             size_bytes=file_size,
             sha256=digest.hexdigest(),
+            artifact_type=upload_type["artifact_type"],
+            mime_type=upload_type["mime_type"],
         )
     except Exception as exc:
         update_document_status(
@@ -129,8 +256,9 @@ async def queue_pdf_ocr_upload(
     finally:
         file.file.close()
 
+    processor = process_docx_background if upload_type["source_format"] == "docx" else process_ocr_background
     background_tasks.add_task(
-        process_ocr_background,
+        processor,
         document_id=document_id,
         job_id=job_id,
         upload_path=str(upload_path),

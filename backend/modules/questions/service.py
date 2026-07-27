@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 
@@ -415,6 +416,82 @@ class QuestionService:
         pair = self.repository.find_pair(question_id)
         self._ensure_read_access(pair, current_user)
         return serialize_question(*pair) if pair else None
+
+    def duplicate(self, question_id: str, current_user: CurrentUser) -> dict | None:
+        pair = self.repository.find_pair(question_id)
+        self._ensure_read_access(pair, current_user)
+        if not pair:
+            return None
+
+        source_question, source_version = pair
+        now = utc_now()
+        new_question_id = ObjectId()
+        new_version_id = ObjectId()
+        classification = deepcopy(source_version.get("classification") or {})
+        clos = deepcopy(source_version.get("clos") or [])
+        question_data = deepcopy(source_version.get("question_data") or {})
+        sources = deepcopy(source_version.get("sources") or [])
+        content = source_version.get("content") or ""
+        content_hash = stable_hash(
+            {
+                "content": content,
+                "question_data": question_data,
+                "classification": classification,
+                "clos": clos,
+                "sources": sources,
+            }
+        )
+
+        aggregate = {
+            "_id": new_question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": f"Q-{str(new_question_id).upper()}",
+            "current_version": 1,
+            "current_version_id": new_version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "NOT_STARTED",
+            "review_status": "DRAFT",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {},
+            "review_assignment": {
+                "status": "UNASSIGNED",
+                "reviewer_user_id": None,
+                "assigned_by_user_id": None,
+                "assigned_at": None,
+                "claimed_at": None,
+                "lock_expires_at": None,
+                "last_released_at": None,
+                "release_reason": None,
+            },
+            "latest_review_id": None,
+            "created_by_user_id": current_user.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
+        version = {
+            "_id": new_version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": new_question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": source_version.get("document_id"),
+            "created_by_user_id": current_user.id,
+            "generated_by_model_id": None,
+            "classification": classification,
+            "clos": clos,
+            "content": content,
+            "question_data": question_data,
+            "sources": sources,
+            "keywords": deepcopy(source_version.get("keywords") or []),
+            "content_hash": content_hash,
+            "change_note": f"Duplicated from {source_question.get('question_code') or question_id}",
+            "created_at": now,
+        }
+        question, current = self.repository.create(aggregate, version)
+        return serialize_question(question, current)
 
     def list(
         self,

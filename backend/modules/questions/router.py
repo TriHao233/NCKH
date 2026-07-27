@@ -108,6 +108,27 @@ def get_question(
     return question
 
 
+@router.post(
+    "/{question_id}/duplicate",
+    response_model=QuestionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_question(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: QuestionService = Depends(get_question_service),
+):
+    try:
+        question = service.duplicate(question_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not question:
+        raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
+    return question
+
+
 @router.get("/{question_id}/versions", response_model=list[QuestionVersionResponse])
 def list_question_versions(
     question_id: str,

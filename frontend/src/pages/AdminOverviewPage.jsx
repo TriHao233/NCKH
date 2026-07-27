@@ -41,6 +41,15 @@ function formatLatency(value) {
   return `${Math.round(value)}ms`;
 }
 
+function formatCurrency(value) {
+  if (typeof value !== 'number') return '--';
+  return new Intl.NumberFormat('vi-VN', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: value < 1 ? 4 : 2,
+  }).format(value);
+}
+
 function compactId(value) {
   if (!value) return 'Chưa có';
   const text = String(value);
@@ -121,6 +130,7 @@ function AdminOverviewPage() {
   const publications = overview?.moodle?.publications || {};
   const jobBreakdown = overview?.jobs?.breakdown || [];
   const modelPerformance = overview?.model_performance || [];
+  const modelUsage = overview?.model_usage_summary || {};
 
   return (
     <main className="admin-overview-page">
@@ -301,9 +311,28 @@ function AdminOverviewPage() {
           <div className="overview-panel-heading">
             <div>
               <span>30 ngày gần nhất</span>
-              <h2>Latency/error theo model</h2>
+              <h2>Model usage, token và chi phí</h2>
             </div>
             <FontAwesomeIcon icon={faServer} />
+          </div>
+          <div className="model-usage-summary">
+            <div>
+              <span>Requests</span>
+              <b>{formatNumber(modelUsage.total_requests)}</b>
+            </div>
+            <div>
+              <span>Tokens</span>
+              <b>{formatNumber(modelUsage.total_tokens)}</b>
+              <small>{formatNumber(modelUsage.prompt_tokens)} in · {formatNumber(modelUsage.completion_tokens)} out</small>
+            </div>
+            <div>
+              <span>Cost</span>
+              <b>{formatCurrency(modelUsage.cost_usd)}</b>
+            </div>
+            <div>
+              <span>Latency TB</span>
+              <b>{formatLatency(modelUsage.avg_latency_ms)}</b>
+            </div>
           </div>
           <div className="overview-table-wrap">
             <table className="overview-table overview-table--compact">
@@ -316,6 +345,8 @@ function AdminOverviewPage() {
                   <th>Lỗi</th>
                   <th>Error rate</th>
                   <th>Latency TB</th>
+                  <th>Tokens</th>
+                  <th>Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -328,6 +359,11 @@ function AdminOverviewPage() {
                     <td>{formatNumber(item.failed)}</td>
                     <td>{formatPercent(item.error_rate)}</td>
                     <td>{formatLatency(item.avg_latency_ms)}</td>
+                    <td>
+                      {formatNumber(item.total_tokens)}
+                      <small>{formatNumber(item.prompt_tokens)} in · {formatNumber(item.completion_tokens)} out</small>
+                    </td>
+                    <td>{formatCurrency(item.cost_usd)}</td>
                   </tr>
                 ))}
               </tbody>

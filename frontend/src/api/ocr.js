@@ -16,6 +16,8 @@ export async function uploadOcrPdf(file, { subjectId, chapterId } = {}) {
   return response.json();
 }
 
+export const uploadSourceDocument = uploadOcrPdf;
+
 export function getOcrStatus(jobId, options = {}) {
   return apiFetch(`/api/v1/ocr/status/${jobId}`, options);
 }

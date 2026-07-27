@@ -6,25 +6,14 @@ import { signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, sig
 import { auth, googleProvider } from "../../firebase";
 import { apiRequest } from "../services/apiClient";
 import { landingPathForRole } from "../auth/permissions";
+import {
+  demoUsernameFor,
+  loginErrorMessage,
+  normalizeLoginEmail,
+  validateLoginIdentifier,
+} from "../auth/loginIdentifier";
 
 const DEMO_LOGIN_ENABLED = String(import.meta.env.VITE_DEMO_MODE).toLowerCase() === "true";
-
-const DEMO_LOGIN_ALIASES = {
-  admin: "admin",
-  "admin@qbankctu.edu.vn": "admin",
-  reviewer: "reviewer",
-  "reviewer@qbankctu.edu.vn": "reviewer",
-};
-
-function demoUsernameFor(value) {
-  if (!DEMO_LOGIN_ENABLED) return null;
-  const identifier = value.trim().toLowerCase();
-  return DEMO_LOGIN_ALIASES[identifier] || null;
-}
-
-function normalizeLoginEmail(value) {
-  return value.trim().toLowerCase();
-}
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -80,11 +69,16 @@ function LoginPage() {
       alert("Vui lòng nhập đầy đủ email và mật khẩu.");
       return;
     }
+    const identifierError = validateLoginIdentifier(formData.email, DEMO_LOGIN_ENABLED);
+    if (identifierError) {
+      alert(identifierError);
+      return;
+    }
 
     setIsLoading(true);
 
     try {
-      const demoUsername = demoUsernameFor(formData.email);
+      const demoUsername = demoUsernameFor(formData.email, DEMO_LOGIN_ENABLED);
       const userCredential = demoUsername
         ? await apiRequest("/auth/demo-login", {
             method: "POST",
@@ -105,15 +99,7 @@ function LoginPage() {
       navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
       await signOut(auth).catch(() => {});
-      if (
-        error.code === "auth/invalid-credential" ||
-        error.code === "auth/user-not-found" ||
-        error.code === "auth/wrong-password"
-      ) {
-        alert("Email hoặc mật khẩu không chính xác!");
-      } else {
-        alert("Đăng nhập thất bại: " + error.message);
-      }
+      alert(loginErrorMessage(error, DEMO_LOGIN_ENABLED));
     } finally {
       setIsLoading(false);
     }

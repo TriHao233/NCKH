@@ -5,6 +5,7 @@ import {
   autoGenerateQuestions,
   createVariant,
   deleteVariant,
+  downloadVariantDocx,
   downloadVariantPdf,
   getExam,
   getMatrixAvailability,
@@ -55,6 +56,17 @@ const EXAM_STATUS_LABEL = {
 
 const QUESTION_POOL_PAGE_SIZE = 20;
 
+const EXPORT_VARIANT_TYPES = [
+  { value: 'de', label: 'Đề thi' },
+  { value: 'dapan', label: 'Đáp án' },
+  { value: 'de_dapan', label: 'Đề + Đáp án' },
+];
+
+const EXPORT_FORMATS = [
+  { value: 'pdf', label: 'PDF' },
+  { value: 'docx', label: 'DOCX' },
+];
+
 function examStatus(exam) {
   return String(exam?.status || 'DRAFT').toUpperCase();
 }
@@ -70,7 +82,7 @@ const STEPS = [
   { id: 'questions', label: '4. Chọn câu hỏi' },
   { id: 'variants', label: '5. Mã đề' },
   { id: 'preview', label: '6. Xem trước' },
-  { id: 'export', label: '7. Xuất PDF' },
+  { id: 'export', label: '7. Xuất đề' },
 ];
 
 function emptyCell() {
@@ -805,13 +817,17 @@ function ExportStep({ exam }) {
     listVariants(exam.id).then((result) => setVariants(result || [])).catch(() => {});
   }, [exam.id]);
 
-  const handleExport = async (variantId, type) => {
-    const key = `${variantId}-${type}`;
+  const handleExport = async (variantId, type, format) => {
+    const key = `${variantId}-${type}-${format}`;
     setBusy(key);
     try {
-      await downloadVariantPdf(exam.id, variantId, type);
+      if (format === 'docx') {
+        await downloadVariantDocx(exam.id, variantId, type);
+      } else {
+        await downloadVariantPdf(exam.id, variantId, type);
+      }
     } catch (err) {
-      alert('Xuất PDF thất bại: ' + err.message);
+      alert(`Xuất ${format.toUpperCase()} thất bại: ${err.message}`);
     } finally {
       setBusy('');
     }
@@ -819,22 +835,34 @@ function ExportStep({ exam }) {
 
   return (
     <div>
-      <h3 className="step-title">Xuất PDF</h3>
+      <h3 className="step-title">Xuất đề thi</h3>
       {variants.length === 0 && <p className="empty-note">Chưa có mã đề nào, hãy tạo mã đề ở bước trước.</p>}
       <div className="export-list">
         {variants.map((variant) => (
           <div className="export-item" key={variant.id}>
             <span>Mã đề <b>{variant.exam_code}</b></span>
             <div className="export-actions">
-              <button type="button" className="btn btn--outline" disabled={busy === `${variant.id}-de` || variant.questions.length === 0} onClick={() => handleExport(variant.id, 'de')}>
-                Đề thi
-              </button>
-              <button type="button" className="btn btn--outline" disabled={busy === `${variant.id}-dapan` || variant.questions.length === 0} onClick={() => handleExport(variant.id, 'dapan')}>
-                Đáp án
-              </button>
-              <button type="button" className="btn btn--outline" disabled={busy === `${variant.id}-de_dapan` || variant.questions.length === 0} onClick={() => handleExport(variant.id, 'de_dapan')}>
-                Đề + Đáp án
-              </button>
+              {EXPORT_VARIANT_TYPES.map((exportType) => (
+                <div className="export-action-group" key={exportType.value}>
+                  <span>{exportType.label}</span>
+                  <div>
+                    {EXPORT_FORMATS.map((format) => {
+                      const key = `${variant.id}-${exportType.value}-${format.value}`;
+                      return (
+                        <button
+                          type="button"
+                          className="btn btn--outline"
+                          disabled={busy === key || variant.questions.length === 0}
+                          onClick={() => handleExport(variant.id, exportType.value, format.value)}
+                          key={format.value}
+                        >
+                          {busy === key ? 'Đang xuất' : format.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ))}

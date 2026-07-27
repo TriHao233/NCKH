@@ -21,6 +21,13 @@ import { listSubjects } from '../api/catalog';
 import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import {
+  DEFAULT_REVIEW_COMMENT_TEMPLATES,
+  encodeSavedReviewTemplates,
+  parseSavedReviewTemplates,
+  reviewTemplateStorageKey,
+  templatesForDecision,
+} from '../utils/reviewCommentTemplates';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -355,6 +362,8 @@ function ReviewQueuePage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [reviewDraft, setReviewDraft] = useState(null);
   const [reviewFormError, setReviewFormError] = useState('');
+  const [reviewTemplates, setReviewTemplates] = useState([...DEFAULT_REVIEW_COMMENT_TEMPLATES]);
+  const [templateTitle, setTemplateTitle] = useState('');
   const [assignmentDraft, setAssignmentDraft] = useState(null);
   const [assignmentError, setAssignmentError] = useState('');
   const [dashboard, setDashboard] = useState(null);
@@ -589,6 +598,13 @@ function ReviewQueuePage() {
     );
   }, [reviewDraft]);
 
+  useEffect(() => {
+    const saved = parseSavedReviewTemplates(
+      localStorage.getItem(reviewTemplateStorageKey(user)),
+    );
+    setReviewTemplates([...DEFAULT_REVIEW_COMMENT_TEMPLATES, ...saved]);
+  }, [user?.email, user?.id, user?.uid]);
+
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,
     mine: questions.filter((item) => isAssignmentMine(item, user)).length,
@@ -658,6 +674,45 @@ function ReviewQueuePage() {
 
   const updateReviewDraft = (updates) => {
     setReviewDraft((current) => ({ ...current, ...updates }));
+  };
+
+  const persistReviewTemplates = (customTemplates) => {
+    const normalized = customTemplates.slice(0, 20);
+    localStorage.setItem(
+      reviewTemplateStorageKey(user),
+      encodeSavedReviewTemplates(normalized),
+    );
+    setReviewTemplates([...DEFAULT_REVIEW_COMMENT_TEMPLATES, ...normalized]);
+  };
+
+  const applyReviewTemplate = (template) => {
+    const currentNote = (reviewDraft?.overallNote || '').trim();
+    updateReviewDraft({
+      overallNote: currentNote ? `${currentNote}\n${template.body}` : template.body,
+    });
+    setReviewFormError('');
+  };
+
+  const saveCurrentReviewTemplate = () => {
+    const body = (reviewDraft?.overallNote || '').trim();
+    if (!body) {
+      setReviewFormError('Cần có ghi chú tổng trước khi lưu mẫu.');
+      return;
+    }
+    const title = templateTitle.trim() || body.split('\n')[0].slice(0, 60);
+    const customTemplates = reviewTemplates.filter((template) => !template.built_in);
+    persistReviewTemplates([
+      {
+        id: `tpl-${Date.now()}`,
+        title,
+        body,
+        decision: reviewDraft.decision,
+        updated_at: new Date().toISOString(),
+      },
+      ...customTemplates,
+    ]);
+    setTemplateTitle('');
+    setReviewFormError('');
   };
 
   const updateChecklistItem = (key, updates) => {
@@ -966,6 +1021,9 @@ function ReviewQueuePage() {
   const pdfPage = activeSourcePage || activePageRecord?.page_number || 1;
   const sourcePdfUrl = sourcePdf?.url ? `${sourcePdf.url}#page=${pdfPage}` : '';
   const reviewNeedsOverride = reviewDraft?.decision === 'APPROVED' && selected?.evaluation_status !== 'PASSED';
+  const availableReviewTemplates = reviewDraft
+    ? templatesForDecision(reviewTemplates, reviewDraft.decision)
+    : [];
 
   return (
     <main className="review-page">
@@ -1569,6 +1627,33 @@ function ReviewQueuePage() {
             </section>
 
             <section className="review-form-section">
+              <div className="review-template-panel">
+                <div className="review-template-head">
+                  <h3>Mẫu nhận xét</h3>
+                  <div>
+                    <input
+                      value={templateTitle}
+                      onChange={(event) => setTemplateTitle(event.target.value)}
+                      placeholder="Tên mẫu"
+                    />
+                    <button type="button" onClick={saveCurrentReviewTemplate}>
+                      Lưu mẫu
+                    </button>
+                  </div>
+                </div>
+                <div className="review-template-list">
+                  {availableReviewTemplates.map((template) => (
+                    <button
+                      type="button"
+                      key={template.id}
+                      onClick={() => applyReviewTemplate(template)}
+                    >
+                      <b>{template.title}</b>
+                      <span>{template.body}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <label className="review-form-field">
                 <span>Ghi chú tổng</span>
                 <textarea

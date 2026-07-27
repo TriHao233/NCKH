@@ -4,9 +4,12 @@ import re
 import unittest
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from bson import ObjectId
+from docx import Document
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -42,6 +45,8 @@ from modules.documents.repository import MongoDocumentRepository
 from modules.documents.schemas import DocumentPageUpdateRequest, DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
+from modules.exams.pdf_service import render_exam_docx
+from modules.ocr.ocr import extract_docx_pages
 from modules.exams.schemas import (
     AddQuestionsManualRequest,
     ExamMatrixRequest,
@@ -947,6 +952,85 @@ class SchemaV2Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.submit_for_review(str(repository.question["_id"]), teacher)
         self.assertEqual(repository.update_calls, 0)
+
+    def test_duplicate_question_creates_draft_copy_without_review_state(self):
+        teacher = _current_user("Teacher")
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        source_question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-SOURCE",
+            "current_version": 3,
+            "current_version_id": version_id,
+            "approved_version_id": version_id,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "APPROVED",
+            "publication_status": "PUBLISHED",
+            "quality_summary": {"color": "GREEN"},
+            "review_assignment": {"status": "ASSIGNED"},
+            "latest_review_id": ObjectId(),
+            "created_by_user_id": teacher.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
+        source_version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 3,
+            "origin": "AI",
+            "generation_run_id": ObjectId(),
+            "document_id": None,
+            "created_by_user_id": teacher.id,
+            "generated_by_model_id": ObjectId(),
+            "classification": {
+                "subject": {"id": None},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 2},
+                "difficulty": "de",
+            },
+            "clos": [{"code": "CLO1"}],
+            "content": "Queue follows FIFO.",
+            "question_data": {"options": {"A": "FIFO", "B": "LIFO"}, "correct_answer": "A"},
+            "sources": [],
+            "keywords": ["queue"],
+            "content_hash": "source-hash",
+            "change_note": "Approved version",
+            "created_at": now,
+        }
+
+        class DuplicateRepository:
+            def __init__(self):
+                self.created_question = None
+                self.created_version = None
+
+            def find_pair(self, _question_id):
+                return source_question, source_version
+
+            def create(self, aggregate, version):
+                self.created_question = aggregate
+                self.created_version = version
+                return aggregate, version
+
+        repository = DuplicateRepository()
+        service = QuestionService(repository=repository, references=object())
+
+        duplicated = service.duplicate(str(question_id), teacher)
+
+        self.assertNotEqual(duplicated["id"], str(question_id))
+        self.assertEqual(duplicated["review_status"], "DRAFT")
+        self.assertEqual(duplicated["evaluation_status"], "NOT_STARTED")
+        self.assertEqual(duplicated["publication_status"], "NOT_PUBLISHED")
+        self.assertIsNone(duplicated["approved_version_id"])
+        self.assertEqual(duplicated["content"], source_version["content"])
+        self.assertEqual(repository.created_question["created_by_user_id"], teacher.id)
+        self.assertEqual(repository.created_version["origin"], "MANUAL")
+        self.assertEqual(source_question["review_status"], "APPROVED")
 
     def test_reviewer_must_hold_active_review_lock(self):
         service = QuestionWorkflowService(database=None)
@@ -2150,6 +2234,29 @@ class SchemaV2Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DocumentService(repository).reindex(str(document_id), FakeBackgroundTasks(), owner)
 
+    def test_docx_upload_extractor_builds_pages_from_paragraphs_and_tables(self):
+        with TemporaryDirectory() as temp_dir:
+            docx_path = Path(temp_dir) / "source.docx"
+            document = Document()
+            document.add_paragraph("Chương 1. Tổng quan cấu trúc dữ liệu")
+            document.add_paragraph("Hàng đợi sử dụng chính sách FIFO.")
+            table = document.add_table(rows=2, cols=2)
+            table.cell(0, 0).text = "Thuật ngữ"
+            table.cell(0, 1).text = "Ý nghĩa"
+            table.cell(1, 0).text = "Stack"
+            table.cell(1, 1).text = "LIFO"
+            document.save(docx_path)
+
+            pages, stats = extract_docx_pages(docx_path, page_char_limit=80)
+
+        joined_text = "\n".join(page["text"] for page in pages)
+        self.assertGreaterEqual(len(pages), 1)
+        self.assertEqual(stats["source_format"], "docx")
+        self.assertEqual(stats["paragraph_count"], 2)
+        self.assertEqual(stats["table_count"], 1)
+        self.assertIn("FIFO", joined_text)
+        self.assertIn("Stack | LIFO", joined_text)
+
     def test_admin_can_access_any_teacher_exam(self):
         owner = _current_user("Teacher")
         admin = _current_user("Admin")
@@ -2158,6 +2265,46 @@ class SchemaV2Tests(unittest.TestCase):
 
         result = service.get_exam(str(exam["_id"]), admin)
         self.assertEqual(result["created_by_user_id"], str(owner.id))
+
+    def test_exam_docx_export_contains_questions_and_answers(self):
+        docx_bytes = render_exam_docx(
+            {
+                "school_name": "CTU",
+                "faculty_name": "College of ICT",
+                "exam_name": "Midterm",
+                "subject_name": "Data Structures",
+                "duration_minutes": 90,
+            },
+            "A01",
+            [
+                {
+                    "order": 1,
+                    "content_snapshot": {
+                        "content": "Queue uses which policy?",
+                        "question_data": {
+                            "options": {"A": "FIFO", "B": "LIFO"},
+                            "correct_answer": "A",
+                        },
+                    },
+                }
+            ],
+            "de_dapan",
+        )
+
+        document = Document(BytesIO(docx_bytes))
+        paragraph_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        table_text = "\n".join(
+            cell.text
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+        )
+
+        self.assertGreater(len(docx_bytes), 1000)
+        self.assertIn("Midterm", paragraph_text)
+        self.assertIn("Queue uses which policy?", paragraph_text)
+        self.assertIn("FIFO", paragraph_text)
+        self.assertIn("A", table_text)
 
     def test_exam_lifecycle_requires_exact_current_approved_questions(self):
         owner = _current_user("Teacher")
@@ -2395,6 +2542,77 @@ class SchemaV2Tests(unittest.TestCase):
             service.delete_exam(str(exam["_id"]), owner)
 
         self.assertIsNotNone(repository.find(exam["_id"]))
+
+    def test_duplicate_exam_creates_editable_draft_without_variants(self):
+        owner = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        question_id = ObjectId()
+        version_id = ObjectId()
+        snapshot = {
+            "id": str(question_id),
+            "question_code": "Q-1",
+            "content": "Queue uses FIFO",
+            "question_data": {"options": {"A": "FIFO"}, "correct_answer": "A"},
+            "classification": {"subject": {"id": str(exam["subject_id"])}},
+        }
+        exam.update(
+            {
+                "status": "FINALIZED",
+                "question_count": 1,
+                "matrix": [
+                    {
+                        "chapter_id": None,
+                        "cognitive_level": "nhan_biet",
+                        "difficulty": "de",
+                        "count": 1,
+                    }
+                ],
+                "questions": [
+                    {
+                        "question_id": question_id,
+                        "version_id": version_id,
+                        "content_snapshot": snapshot,
+                    }
+                ],
+                "finalized_snapshot": {
+                    "subject_id": exam["subject_id"],
+                    "question_count": 1,
+                    "header": {"school": "CTU", "duration_minutes": 90},
+                    "matrix": [
+                        {
+                            "chapter_id": None,
+                            "cognitive_level": "nhan_biet",
+                            "difficulty": "de",
+                            "count": 1,
+                        }
+                    ],
+                    "questions": [
+                        {
+                            "question_id": question_id,
+                            "version_id": version_id,
+                            "content_snapshot": snapshot,
+                        }
+                    ],
+                },
+            }
+        )
+        repository = FakeExamRepository(
+            [exam],
+            variants=[{"_id": ObjectId(), "exam_id": exam["_id"]}],
+        )
+        service = ExamService(repository, FakeExamQuestionRepository())
+
+        duplicated = service.duplicate_exam(str(exam["_id"]), owner)
+        stored_duplicate = repository.find(duplicated["id"])
+
+        self.assertNotEqual(duplicated["id"], str(exam["_id"]))
+        self.assertEqual(duplicated["status"], "DRAFT")
+        self.assertEqual(duplicated["variant_count"], 0)
+        self.assertEqual(duplicated["questions"][0]["question_id"], str(question_id))
+        self.assertEqual(duplicated["matrix"][0]["count"], 1)
+        self.assertEqual(stored_duplicate["created_by_user_id"], owner.id)
+        self.assertNotIn("finalized_snapshot", stored_duplicate)
+        self.assertEqual(exam["status"], "FINALIZED")
 
     def test_exam_question_pool_uses_server_side_filters(self):
         owner = _current_user("Teacher")
@@ -3315,6 +3533,12 @@ class SchemaV2Tests(unittest.TestCase):
                             "status": "COMPLETED",
                             "evaluator_model_code": "qwen",
                             "duration_ms": 1200,
+                            "usage": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 40,
+                                "total_tokens": 140,
+                                "cost_usd": 0.012,
+                            },
                             "queued_at": now,
                             "started_at": now,
                             "finished_at": now,
@@ -3325,6 +3549,12 @@ class SchemaV2Tests(unittest.TestCase):
                             "status": "ERROR",
                             "evaluator_model_code": "qwen",
                             "duration_ms": 800,
+                            "token_usage": {
+                                "prompt_tokens": 50,
+                                "completion_tokens": 10,
+                                "total_tokens": 60,
+                            },
+                            "billing": {"cost_usd": 0.004},
                             "queued_at": now,
                             "started_at": now,
                             "finished_at": now,
@@ -3363,7 +3593,15 @@ class SchemaV2Tests(unittest.TestCase):
                             "_id": ObjectId(),
                             "status": "COMPLETED",
                             "model": {"model_code": "deepseek"},
-                            "execution": {"latency_ms": 2000},
+                            "execution": {
+                                "latency_ms": 2000,
+                                "usage": {
+                                    "prompt_tokens": 300,
+                                    "completion_tokens": 120,
+                                    "total_tokens": 420,
+                                    "cost_usd": 0.03,
+                                },
+                            },
                             "created_at": now,
                             "finished_at": now,
                             "updated_at": now,
@@ -3371,8 +3609,15 @@ class SchemaV2Tests(unittest.TestCase):
                         {
                             "_id": ObjectId(),
                             "status": "FAILED",
-                            "model": {"provider": "deepseek"},
-                            "execution": {"latency_ms": 4000},
+                            "model": {
+                                "provider": "deepseek",
+                                "config": {"input_cost_per_1k": 0.05, "output_cost_per_1k": 0.3},
+                            },
+                            "execution": {
+                                "latency_ms": 4000,
+                                "prompt_tokens": 80,
+                                "completion_tokens": 20,
+                            },
                             "created_at": now,
                             "finished_at": now,
                             "updated_at": now,
@@ -3432,8 +3677,18 @@ class SchemaV2Tests(unittest.TestCase):
         model_rows = {item["key"]: item for item in overview["model_performance"]}
         self.assertEqual(model_rows["evaluation:qwen"]["error_rate"], 0.5)
         self.assertEqual(model_rows["evaluation:qwen"]["avg_latency_ms"], 1000)
+        self.assertEqual(model_rows["evaluation:qwen"]["total_tokens"], 200)
+        self.assertEqual(model_rows["evaluation:qwen"]["prompt_tokens"], 150)
+        self.assertEqual(model_rows["evaluation:qwen"]["completion_tokens"], 50)
+        self.assertEqual(model_rows["evaluation:qwen"]["cost_usd"], 0.016)
         self.assertEqual(model_rows["generation:deepseek"]["error_rate"], 0.5)
         self.assertEqual(model_rows["generation:deepseek"]["avg_latency_ms"], 3000)
+        self.assertEqual(model_rows["generation:deepseek"]["total_tokens"], 520)
+        self.assertEqual(model_rows["generation:deepseek"]["cost_usd"], 0.04)
+        self.assertEqual(overview["model_usage_summary"]["total_requests"], 4)
+        self.assertEqual(overview["model_usage_summary"]["total_tokens"], 720)
+        self.assertEqual(overview["model_usage_summary"]["cost_usd"], 0.056)
+        self.assertEqual(overview["model_usage_summary"]["avg_latency_ms"], 2000)
         self.assertIn("Model timeout", [item["error_message"] for item in overview["recent_jobs"]])
         self.assertEqual(overview["recent_audit"][0]["action"], "admin.job_retry")
         attention = {item["key"]: item for item in overview["attention"]}

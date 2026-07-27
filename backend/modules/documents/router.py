@@ -51,7 +51,7 @@ def create_document(
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
-async def upload_document_pdf(
+async def upload_document_source(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     subject_id: str | None = Form(None),

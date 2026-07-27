@@ -1,0 +1,47 @@
+export const DEMO_LOGIN_ALIASES = {
+  admin: 'admin',
+  'admin@qbankctu.edu.vn': 'admin',
+  reviewer: 'reviewer',
+  'reviewer@qbankctu.edu.vn': 'reviewer',
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function normalizeLoginEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function isValidEmail(value) {
+  return EMAIL_PATTERN.test(normalizeLoginEmail(value));
+}
+
+export function demoUsernameFor(value, demoLoginEnabled = false) {
+  if (!demoLoginEnabled) return null;
+  return DEMO_LOGIN_ALIASES[normalizeLoginEmail(value)] || null;
+}
+
+export function validateLoginIdentifier(value, demoLoginEnabled = false) {
+  const identifier = normalizeLoginEmail(value);
+  if (!identifier) return 'Vui lòng nhập email hoặc tài khoản demo.';
+  if (demoUsernameFor(identifier, demoLoginEnabled)) return '';
+  if (isValidEmail(identifier)) return '';
+  return demoLoginEnabled
+    ? 'Tài khoản demo chỉ hỗ trợ admin/reviewer. Nếu đăng nhập thường, vui lòng nhập email hợp lệ.'
+    : 'Vui lòng nhập email hợp lệ, ví dụ: example@ctu.edu.vn.';
+}
+
+export function loginErrorMessage(error, demoLoginEnabled = false) {
+  if (
+    error?.code === 'auth/invalid-credential'
+    || error?.code === 'auth/user-not-found'
+    || error?.code === 'auth/wrong-password'
+  ) {
+    return 'Email hoặc mật khẩu không chính xác!';
+  }
+  if (error?.code === 'auth/invalid-email') {
+    return demoLoginEnabled
+      ? 'Email không hợp lệ. Bạn có thể nhập email đầy đủ hoặc tài khoản demo admin/reviewer.'
+      : 'Email không hợp lệ. Vui lòng nhập email đầy đủ, ví dụ: example@ctu.edu.vn.';
+  }
+  return `Đăng nhập thất bại: ${error?.message || 'Lỗi không xác định'}`;
+}

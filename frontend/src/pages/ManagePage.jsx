@@ -4,6 +4,7 @@ import {
   autoEvaluateQuestion,
   createQuestion,
   deleteQuestion,
+  duplicateQuestion,
   getQuestion,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
@@ -45,6 +46,28 @@ import {
   parseSavedQuestionFilters,
   questionFilterStorageKey,
 } from '../utils/questionFilterPresets';
+import { buildQuestionCoverage } from '../utils/questionCoverage';
+import {
+  buildBulkQuestionUpdatePayload,
+  filterSubmittableQuestions,
+  selectedQuestionsForIds,
+  summarizeBulkSettled,
+} from '../utils/questionBulkActions';
+import {
+  downloadCsv,
+  downloadXlsx,
+  rowsToCsv,
+  timestampedCsvFilename,
+  timestampedXlsxFilename,
+} from '../utils/csvExport';
+import {
+  QUESTION_BANK_EXPORT_COLUMNS,
+  downloadTextFile,
+  parseQuestionBankImportFile,
+  questionsToGift,
+  questionsToMoodleXml,
+  timestampedQuestionBankFilename,
+} from '../utils/questionBankExchange';
 import '../css/ManagePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -125,6 +148,13 @@ const DIFFICULTIES = [
 ];
 
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
+const QUESTION_BANK_EXPORT_FORMATS = [
+  { value: 'csv', label: 'CSV' },
+  { value: 'xlsx', label: 'XLSX' },
+  { value: 'gift', label: 'GIFT' },
+  { value: 'xml', label: 'XML Moodle' },
+];
+const QUESTION_IMPORT_ACCEPT = '.csv,.xlsx,.gift,.txt,.xml';
 
 const QUICK_REVIEW_RUBRIC = [
   { key: 'source_alignment', label: 'Bám sát nguồn' },
@@ -458,6 +488,9 @@ function ManagePage() {
   const [savedQuestionFilters, setSavedQuestionFilters] = useState([]);
   const [selectedSavedFilterId, setSelectedSavedFilterId] = useState('');
   const [savedFilterName, setSavedFilterName] = useState('');
+  const [questionExportFormat, setQuestionExportFormat] = useState('csv');
+  const [questionExchangeBusy, setQuestionExchangeBusy] = useState('');
+  const [questionExchangeMessage, setQuestionExchangeMessage] = useState('');
 
   const [editing, setEditing] = useState(null);
   const [editContent, setEditContent] = useState('');
@@ -467,7 +500,17 @@ function ManagePage() {
   const [editCloIds, setEditCloIds] = useState([]);
   const [editChangeNote, setEditChangeNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState([]);
+  const [bulkActionBusy, setBulkActionBusy] = useState('');
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkEditDraft, setBulkEditDraft] = useState({
+    bloomLevel: '',
+    difficulty: '',
+    applyClo: false,
+    cloIds: [],
+  });
   const [deletingId, setDeletingId] = useState(null);
+  const [duplicatingQuestionId, setDuplicatingQuestionId] = useState(null);
   const [deletingDocId, setDeletingDocId] = useState(null);
   const [workflowBusyId, setWorkflowBusyId] = useState(null);
   const [selectedQuestion, setSelectedQuestion] = useState(null);
@@ -731,6 +774,10 @@ function ManagePage() {
   }, [questions]);
 
   useEffect(() => {
+    setSelectedQuestionIds((current) => current.filter((id) => questions.some((question) => question.id === id)));
+  }, [questions]);
+
+  useEffect(() => {
     const questionId = new URLSearchParams(location.search).get('questionId') || '';
     if (!questionId) {
       setOpenedDeepLinkId('');
@@ -789,6 +836,37 @@ function ManagePage() {
     : null;
   const filterChapters = (selectedFilterSubject?.chapters || []).filter((chapter) => chapter.is_active !== false);
   const filterLearningOutcomes = (selectedFilterSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
+  const questionCoverage = useMemo(() => buildQuestionCoverage({
+    questions: filtered,
+    subject: selectedFilterSubject,
+    bloomLevels: BLOOM_LEVELS,
+  }), [filtered, selectedFilterSubject]);
+  const coverageScopeLabel = selectedFilterSubject
+    ? selectedFilterSubject.subject_name || selectedFilterSubject.name || selectedFilterSubject.title || refId(selectedFilterSubject)
+    : 'Tất cả môn đang lọc';
+  const coverageSections = [
+    { key: 'bloom', label: 'Bloom', rows: questionCoverage.bloom, gapCount: questionCoverage.gaps.bloom },
+    { key: 'chapters', label: 'Chương', rows: questionCoverage.chapters, gapCount: questionCoverage.gaps.chapters },
+    { key: 'clos', label: 'CLO', rows: questionCoverage.clos, gapCount: questionCoverage.gaps.clos },
+  ];
+  const selectedQuestions = useMemo(
+    () => selectedQuestionsForIds(questions, selectedQuestionIds),
+    [questions, selectedQuestionIds],
+  );
+  const selectedSubmittableQuestions = useMemo(
+    () => filterSubmittableQuestions(selectedQuestions, SUBMITTABLE_REVIEW_STATUSES),
+    [selectedQuestions],
+  );
+  const filteredQuestionIds = useMemo(() => filtered.map((question) => question.id), [filtered]);
+  const allFilteredSelected = filteredQuestionIds.length > 0
+    && filteredQuestionIds.every((questionId) => selectedQuestionIds.includes(questionId));
+  const selectedSubjectIds = Array.from(new Set(selectedQuestions.map(questionSubjectId).filter(Boolean)));
+  const bulkCloSubject = selectedSubjectIds.length === 1 ? subjectById.get(selectedSubjectIds[0]) : null;
+  const bulkLearningOutcomes = (bulkCloSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
+  const exportableQuestions = selectedQuestions.length > 0 ? selectedQuestions : filtered;
+  const exportScopeLabel = selectedQuestions.length > 0
+    ? `${selectedQuestions.length} đã chọn`
+    : `${filtered.length} đang lọc`;
 
   const handleSubjectFilterChange = (value) => {
     setSubjectFilter(value);
@@ -869,6 +947,237 @@ function ManagePage() {
       alert('Xoá câu hỏi thất bại: ' + error.message);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDuplicateQuestion = async (item) => {
+    setDuplicatingQuestionId(item.id);
+    try {
+      const duplicate = await duplicateQuestion(item.id);
+      await fetchQuestions(searchTerm);
+      setWorkflowMessage(`Đã nhân bản ${item.question_code} thành ${duplicate.question_code} ở trạng thái nháp.`);
+    } catch (error) {
+      alert('Nhân bản câu hỏi thất bại: ' + error.message);
+    } finally {
+      setDuplicatingQuestionId(null);
+    }
+  };
+
+  const toggleQuestionSelection = (questionId) => {
+    setSelectedQuestionIds((current) => (
+      current.includes(questionId)
+        ? current.filter((id) => id !== questionId)
+        : [...current, questionId]
+    ));
+  };
+
+  const toggleFilteredSelection = () => {
+    setSelectedQuestionIds((current) => {
+      const next = new Set(current);
+      if (allFilteredSelected) {
+        filteredQuestionIds.forEach((id) => next.delete(id));
+      } else {
+        filteredQuestionIds.forEach((id) => next.add(id));
+      }
+      return Array.from(next);
+    });
+  };
+
+  const resetBulkEditDraft = () => {
+    setBulkEditDraft({
+      bloomLevel: '',
+      difficulty: '',
+      applyClo: false,
+      cloIds: [],
+    });
+  };
+
+  const openBulkEdit = () => {
+    if (selectedQuestions.length === 0) return;
+    resetBulkEditDraft();
+    setBulkEditOpen(true);
+  };
+
+  const closeBulkEdit = () => {
+    if (bulkActionBusy === 'edit') return;
+    setBulkEditOpen(false);
+  };
+
+  const toggleBulkClo = (cloId) => {
+    setBulkEditDraft((current) => ({
+      ...current,
+      cloIds: current.cloIds.includes(cloId)
+        ? current.cloIds.filter((id) => id !== cloId)
+        : [...current.cloIds, cloId],
+    }));
+  };
+
+  const handleBulkSubmit = async () => {
+    if (selectedSubmittableQuestions.length === 0) {
+      alert('Không có câu hỏi đã chọn nào ở trạng thái có thể gửi duyệt.');
+      return;
+    }
+    if (!window.confirm(`Gửi duyệt ${selectedSubmittableQuestions.length} câu hỏi đã chọn?`)) return;
+    setBulkActionBusy('submit');
+    try {
+      const results = await Promise.allSettled(
+        selectedSubmittableQuestions.map((question) => (
+          submitQuestionForReview(question.id).then(() => question.id)
+        )),
+      );
+      const summary = summarizeBulkSettled(results);
+      const successfulIds = new Set(
+        results
+          .filter((result) => result.status === 'fulfilled')
+          .map((result) => result.value),
+      );
+      setSelectedQuestionIds((current) => current.filter((id) => !successfulIds.has(id)));
+      await fetchQuestions(searchTerm);
+      setWorkflowMessage(`Đã gửi duyệt ${summary.success}/${selectedSubmittableQuestions.length} câu hỏi.`);
+      if (summary.failed > 0) {
+        alert(`Có ${summary.failed} câu gửi duyệt thất bại. Lỗi đầu tiên: ${summary.firstError}`);
+      }
+    } finally {
+      setBulkActionBusy('');
+    }
+  };
+
+  const handleBulkArchive = async () => {
+    if (selectedQuestions.length === 0) return;
+    if (!window.confirm(`Lưu trữ ${selectedQuestions.length} câu hỏi đã chọn?`)) return;
+    setBulkActionBusy('archive');
+    try {
+      const results = await Promise.allSettled(
+        selectedQuestions.map((question) => deleteQuestion(question.id).then(() => question.id)),
+      );
+      const summary = summarizeBulkSettled(results);
+      const successfulIds = new Set(
+        results
+          .filter((result) => result.status === 'fulfilled')
+          .map((result) => result.value),
+      );
+      setSelectedQuestionIds((current) => current.filter((id) => !successfulIds.has(id)));
+      await fetchQuestions(searchTerm);
+      setWorkflowMessage(`Đã lưu trữ ${summary.success}/${selectedQuestions.length} câu hỏi.`);
+      if (summary.failed > 0) {
+        alert(`Có ${summary.failed} câu lưu trữ thất bại. Lỗi đầu tiên: ${summary.firstError}`);
+      }
+    } finally {
+      setBulkActionBusy('');
+    }
+  };
+
+  const handleBulkEdit = async (event) => {
+    event.preventDefault();
+    if (bulkEditDraft.applyClo && !bulkCloSubject) {
+      alert('Chỉ có thể sửa CLO hàng loạt khi các câu đã chọn thuộc cùng một môn.');
+      return;
+    }
+    const workItems = selectedQuestions
+      .map((question) => ({
+        question,
+        payload: buildBulkQuestionUpdatePayload(question, bulkEditDraft),
+      }))
+      .filter((item) => item.payload);
+    if (workItems.length === 0) {
+      alert('Chọn ít nhất một trường cần cập nhật.');
+      return;
+    }
+    setBulkActionBusy('edit');
+    try {
+      const results = await Promise.allSettled(
+        workItems.map(({ question, payload }) => (
+          updateQuestion(question.id, payload).then(() => question.id)
+        )),
+      );
+      const summary = summarizeBulkSettled(results);
+      const successfulIds = new Set(
+        results
+          .filter((result) => result.status === 'fulfilled')
+          .map((result) => result.value),
+      );
+      setSelectedQuestionIds((current) => current.filter((id) => !successfulIds.has(id)));
+      await fetchQuestions(searchTerm);
+      setWorkflowMessage(`Đã cập nhật hàng loạt ${summary.success}/${workItems.length} câu hỏi.`);
+      if (summary.success > 0) {
+        setBulkEditOpen(false);
+      }
+      if (summary.failed > 0) {
+        alert(`Có ${summary.failed} câu cập nhật thất bại. Lỗi đầu tiên: ${summary.firstError}`);
+      }
+    } finally {
+      setBulkActionBusy('');
+    }
+  };
+
+  const handleQuestionBankExport = () => {
+    if (exportableQuestions.length === 0) {
+      alert('Không có câu hỏi nào để xuất.');
+      return;
+    }
+    const prefix = selectedQuestions.length > 0 ? 'question-bank-selected' : 'question-bank-filtered';
+    if (questionExportFormat === 'csv') {
+      downloadCsv(
+        timestampedCsvFilename(prefix),
+        rowsToCsv(QUESTION_BANK_EXPORT_COLUMNS, exportableQuestions),
+      );
+    } else if (questionExportFormat === 'xlsx') {
+      downloadXlsx(
+        timestampedXlsxFilename(prefix),
+        QUESTION_BANK_EXPORT_COLUMNS,
+        exportableQuestions,
+        'Question bank',
+      );
+    } else if (questionExportFormat === 'gift') {
+      downloadTextFile(
+        timestampedQuestionBankFilename(prefix, 'gift'),
+        questionsToGift(exportableQuestions),
+        'text/plain;charset=utf-8',
+      );
+    } else if (questionExportFormat === 'xml') {
+      downloadTextFile(
+        timestampedQuestionBankFilename(prefix, 'xml'),
+        questionsToMoodleXml(exportableQuestions),
+        'application/xml;charset=utf-8',
+      );
+    }
+    setQuestionExchangeMessage(`Đã xuất ${exportableQuestions.length} câu hỏi (${QUESTION_BANK_EXPORT_FORMATS.find((item) => item.value === questionExportFormat)?.label || questionExportFormat}).`);
+  };
+
+  const handleQuestionBankImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setQuestionExchangeBusy('import');
+    setQuestionExchangeMessage('');
+    try {
+      const parsed = await parseQuestionBankImportFile(file, { subjects });
+      if (parsed.errors.length > 0) {
+        const preview = parsed.errors.slice(0, 6).join('\n');
+        const suffix = parsed.errors.length > 6 ? `\n... và ${parsed.errors.length - 6} lỗi khác` : '';
+        alert(`Không nhập được file này:\n${preview}${suffix}`);
+        return;
+      }
+      if (parsed.items.length === 0) {
+        alert('File không có câu hỏi hợp lệ để nhập.');
+        return;
+      }
+      if (!window.confirm(`Tạo ${parsed.items.length} câu hỏi từ file "${file.name}"?`)) return;
+
+      const results = await Promise.allSettled(
+        parsed.items.map((item) => createQuestion(item.payload).then(() => item.rowNumber)),
+      );
+      const summary = summarizeBulkSettled(results);
+      await fetchQuestions(searchTerm);
+      setQuestionExchangeMessage(`Đã nhập ${summary.success}/${parsed.items.length} câu hỏi từ ${file.name}.`);
+      if (summary.failed > 0) {
+        alert(`Có ${summary.failed} câu hỏi nhập thất bại. Lỗi đầu tiên: ${summary.firstError}`);
+      }
+    } catch (error) {
+      alert('Nhập ngân hàng câu hỏi thất bại: ' + error.message);
+    } finally {
+      setQuestionExchangeBusy('');
     }
   };
 
@@ -1407,6 +1716,48 @@ function ManagePage() {
               </button>
             </div>
 
+            <div className="coverage-panel">
+              <div className="coverage-panel-header">
+                <div>
+                  <h3>Độ phủ ngân hàng</h3>
+                  <span>{coverageScopeLabel}</span>
+                </div>
+                <div className="coverage-total">
+                  <b>{questionCoverage.total}</b>
+                  <span>{questionCoverage.approvedTotal} đã duyệt</span>
+                </div>
+              </div>
+              <div className="coverage-grid">
+                {coverageSections.map((section) => (
+                  <section className="coverage-section" key={section.key}>
+                    <div className="coverage-section-title">
+                      <h4>{section.label}</h4>
+                      <span>{section.gapCount} trống</span>
+                    </div>
+                    <div className="coverage-list">
+                      {section.rows.length === 0 ? (
+                        <span className="coverage-empty">Chưa có dữ liệu</span>
+                      ) : section.rows.map((row) => (
+                        <div className={`coverage-row coverage-row--${row.status}`} key={row.id}>
+                          <div className="coverage-row-meta">
+                            <span>{row.label}</span>
+                            <strong>{row.count}</strong>
+                          </div>
+                          <div className="coverage-track">
+                            <span style={{ '--coverage-value': `${row.percent}%` }} />
+                          </div>
+                          <div className="coverage-row-foot">
+                            <span>{row.approved} duyệt</span>
+                            {row.target_percent > 0 && <span>Mục tiêu {row.target_percent}%</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
+
             <div className="card list-card">
               <div className="list-card-header">
                 <h3>Danh sách câu hỏi</h3>
@@ -1416,6 +1767,34 @@ function ManagePage() {
                       + Thêm câu hỏi
                     </button>
                   )}
+                  {canEditQuestions && (
+                    <label className={`btn btn--outline question-import-button ${questionExchangeBusy ? 'question-import-button--disabled' : ''}`}>
+                      Nhập CSV/XLSX/GIFT/XML
+                      <input
+                        type="file"
+                        accept={QUESTION_IMPORT_ACCEPT}
+                        disabled={Boolean(questionExchangeBusy)}
+                        onChange={handleQuestionBankImportFile}
+                      />
+                    </label>
+                  )}
+                  <select
+                    className="field-select exchange-format-select"
+                    value={questionExportFormat}
+                    onChange={(e) => setQuestionExportFormat(e.target.value)}
+                  >
+                    {QUESTION_BANK_EXPORT_FORMATS.map((format) => (
+                      <option key={format.value} value={format.value}>{format.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn--outline"
+                    disabled={exportableQuestions.length === 0}
+                    onClick={handleQuestionBankExport}
+                  >
+                    Xuất {exportScopeLabel}
+                  </button>
                   <select
                     className="field-select field-select--wide"
                     value={subjectFilter}
@@ -1564,6 +1943,51 @@ function ManagePage() {
                 </button>
               </div>
 
+              {questionExchangeMessage && (
+                <p className="question-exchange-message">{questionExchangeMessage}</p>
+              )}
+
+              {canEditQuestions && (
+                <div className="bulk-action-bar">
+                  <label className="bulk-select-all">
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      disabled={filteredQuestionIds.length === 0 || Boolean(bulkActionBusy)}
+                      onChange={toggleFilteredSelection}
+                    />
+                    <span>Chọn danh sách đang hiển thị</span>
+                  </label>
+                  <span className="bulk-count">{selectedQuestions.length} đã chọn</span>
+                  <div className="bulk-actions">
+                    <button
+                      type="button"
+                      className="btn btn--outline"
+                      disabled={selectedQuestions.length === 0 || Boolean(bulkActionBusy)}
+                      onClick={openBulkEdit}
+                    >
+                      Sửa hàng loạt
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--outline"
+                      disabled={selectedSubmittableQuestions.length === 0 || Boolean(bulkActionBusy)}
+                      onClick={handleBulkSubmit}
+                    >
+                      Gửi duyệt
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--outline btn--danger"
+                      disabled={selectedQuestions.length === 0 || Boolean(bulkActionBusy)}
+                      onClick={handleBulkArchive}
+                    >
+                      Lưu trữ
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {questionsError && <p className="manage-error">{questionsError}</p>}
 
               {questionsLoading ? (
@@ -1574,6 +1998,16 @@ function ManagePage() {
                     <article key={item.id} className="question-item">
                       <div className="question-main">
                         <div className="question-meta-row">
+                          {canEditQuestions && (
+                            <label className="question-select">
+                              <input
+                                type="checkbox"
+                                checked={selectedQuestionIds.includes(item.id)}
+                                onChange={() => toggleQuestionSelection(item.id)}
+                                aria-label={`Chọn ${item.question_code}`}
+                              />
+                            </label>
+                          )}
                           <span className="q-id">{item.question_code}</span>
                           <span className="q-tag">{questionTypeLabel((item.classification?.assessment_type || '').toLowerCase())}</span>
                           <span className="bloom-tag">{item.classification?.bloom?.name || '—'}</span>
@@ -1663,6 +2097,15 @@ function ManagePage() {
                           )}
                           {canEditQuestions && (
                             <>
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                title="Nhân bản"
+                                disabled={duplicatingQuestionId === item.id}
+                                onClick={() => handleDuplicateQuestion(item)}
+                              >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+                              </button>
                               <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                               </button>
@@ -2132,6 +2575,97 @@ function ManagePage() {
               </button>
               <button type="submit" className="btn btn--primary" disabled={workflowBusyId === quickReviewDraft.question.id}>
                 Gửi review
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {bulkEditOpen && (
+        <div className="modal-overlay" onClick={closeBulkEdit}>
+          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleBulkEdit}>
+            <h3 className="profile-card-title">Sửa hàng loạt {selectedQuestions.length} câu hỏi</h3>
+
+            <div className="field-group">
+              <label className="field-label">Mức Bloom</label>
+              <select
+                className="field-select"
+                value={bulkEditDraft.bloomLevel}
+                onChange={(e) => setBulkEditDraft((current) => ({ ...current, bloomLevel: e.target.value }))}
+              >
+                <option value="">Không đổi Bloom</option>
+                {BLOOM_LEVELS.map((bloom) => (
+                  <option key={bloom.level} value={String(bloom.level)}>
+                    {bloom.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Độ khó</label>
+              <select
+                className="field-select"
+                value={bulkEditDraft.difficulty}
+                onChange={(e) => setBulkEditDraft((current) => ({ ...current, difficulty: e.target.value }))}
+              >
+                <option value="">Không đổi độ khó</option>
+                {DIFFICULTIES.map((difficulty) => (
+                  <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field-group">
+              <label className="clo-option bulk-clo-toggle">
+                <input
+                  type="checkbox"
+                  checked={bulkEditDraft.applyClo}
+                  disabled={!bulkCloSubject}
+                  onChange={(e) => setBulkEditDraft((current) => ({
+                    ...current,
+                    applyClo: e.target.checked,
+                    cloIds: e.target.checked ? current.cloIds : [],
+                  }))}
+                />
+                <span>
+                  <b>Cập nhật CLO</b>
+                  {bulkCloSubject
+                    ? (bulkCloSubject.subject_name || bulkCloSubject.name || refId(bulkCloSubject))
+                    : 'Chỉ khả dụng khi các câu cùng môn'}
+                </span>
+              </label>
+              {bulkEditDraft.applyClo && bulkLearningOutcomes.length > 0 && (
+                <div className="clo-option-list">
+                  {bulkLearningOutcomes.map((clo) => {
+                    const cloId = refId(clo);
+                    return (
+                      <label className="clo-option" key={cloId}>
+                        <input
+                          type="checkbox"
+                          checked={bulkEditDraft.cloIds.includes(cloId)}
+                          onChange={() => toggleBulkClo(cloId)}
+                        />
+                        <span>
+                          <b>{clo.clo_code || clo.code}</b>
+                          {clo.description}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {bulkEditDraft.applyClo && bulkLearningOutcomes.length === 0 && (
+                <p className="clo-empty">Môn này chưa có CLO trong danh mục.</p>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={closeBulkEdit} disabled={bulkActionBusy === 'edit'}>
+                Huỷ
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={bulkActionBusy === 'edit'}>
+                {bulkActionBusy === 'edit' ? 'Đang cập nhật...' : 'Cập nhật hàng loạt'}
               </button>
             </div>
           </form>

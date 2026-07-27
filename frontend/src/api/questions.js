@@ -95,6 +95,10 @@ export function createQuestion(payload) {
   return apiRequest('/questions', { method: 'POST', body: payload });
 }
 
+export function duplicateQuestion(id) {
+  return apiRequest(`/questions/${id}/duplicate`, { method: 'POST' });
+}
+
 export function updateQuestion(id, payload) {
   return apiRequest(`/questions/${id}`, { method: 'PATCH', body: payload });
 }

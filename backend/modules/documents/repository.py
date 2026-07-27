@@ -371,6 +371,8 @@ class MongoDocumentRepository:
         uri: str,
         size_bytes: int,
         sha256: str,
+        artifact_type: str = "ORIGINAL_PDF",
+        mime_type: str = "application/pdf",
     ) -> None:
         now = utc_now()
         self.collection.update_one(
@@ -379,14 +381,14 @@ class MongoDocumentRepository:
                 "$push": {
                     "artifacts": {
                         "_id": ObjectId(),
-                        "type": "ORIGINAL_PDF",
+                        "type": artifact_type,
                         "document_version": 1,
                         "storage": {
                             "provider": "LOCAL",
                             "uri": uri,
                             "gridfs_file_id": None,
                         },
-                        "mime_type": "application/pdf",
+                        "mime_type": mime_type,
                         "size_bytes": size_bytes,
                         "sha256": sha256,
                         "is_current": True,

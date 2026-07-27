@@ -168,14 +168,18 @@ class DocumentService:
             new_job = self.repository.find_job(queued["index_job_id"])
             return {"job": serialize_document_job(new_job)}
 
-        upload_path = self._original_pdf_path(document)
-        new_job = self.repository.create_job(document["_id"], "OCR", config=job.get("config") or {})
+        artifact = self._original_source_artifact(document)
+        upload_path = ((artifact.get("storage") or {}).get("uri"))
+        source_format = "docx" if artifact.get("type") == "ORIGINAL_DOCX" else "pdf"
+        config = {**(job.get("config") or {}), "source_format": source_format}
+        new_job = self.repository.create_job(document["_id"], "OCR", config=config)
 
-        from modules.ocr.ocr import process_ocr_background
+        from modules.ocr.ocr import process_docx_background, process_ocr_background
 
         output_path = resolve_path(settings.ocr_output_dir) / f"{document['_id']}_result.md"
+        processor = process_docx_background if source_format == "docx" else process_ocr_background
         background_tasks.add_task(
-            process_ocr_background,
+            processor,
             document_id=str(document["_id"]),
             job_id=str(new_job["_id"]),
             upload_path=str(Path(upload_path)),
@@ -243,18 +247,18 @@ class DocumentService:
         return document, job
 
     @staticmethod
-    def _original_pdf_path(document: dict) -> str:
+    def _original_source_artifact(document: dict) -> dict:
         artifact = next(
             (
                 item for item in document.get("artifacts", [])
-                if item.get("type") == "ORIGINAL_PDF" and item.get("is_current", True)
+                if item.get("type") in {"ORIGINAL_PDF", "ORIGINAL_DOCX"} and item.get("is_current", True)
             ),
             None,
         )
         upload_path = ((artifact or {}).get("storage") or {}).get("uri")
         if not upload_path:
-            raise ValueError("Không tìm thấy file PDF gốc để retry OCR")
-        return upload_path
+            raise ValueError("Không tìm thấy file gốc để retry xử lý tài liệu")
+        return artifact
 
     @staticmethod
     def _ensure_ocr_editable(document: dict) -> None:

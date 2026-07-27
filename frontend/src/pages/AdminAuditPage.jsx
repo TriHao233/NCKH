@@ -3,14 +3,24 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronLeft,
   faChevronRight,
+  faFileCsv,
+  faFileExcel,
   faFilter,
   faRotateRight,
   faSearch,
 } from '@fortawesome/free-solid-svg-icons';
 import { listAdminAuditLogs } from '../api/adminAudit';
+import {
+  downloadCsv,
+  downloadXlsx,
+  rowsToCsv,
+  timestampedCsvFilename,
+  timestampedXlsxFilename,
+} from '../utils/csvExport';
 import '../css/AdminJobsPage.css';
 
 const PAGE_SIZE = 25;
+const EXPORT_PAGE_SIZE = 100;
 
 const ACTION_OPTIONS = [
   { value: 'all', label: 'Tất cả hành động' },
@@ -82,6 +92,24 @@ function actorText(log) {
   return actor.service_name || actor.type || 'System';
 }
 
+const AUDIT_EXPORT_COLUMNS = [
+  { header: 'Audit ID', value: (log) => log.id },
+  { header: 'Created at', value: (log) => log.created_at || '' },
+  { header: 'Action', value: (log) => log.action || '' },
+  { header: 'Action label', value: (log) => actionLabel(log.action) },
+  { header: 'Actor', value: actorText },
+  { header: 'Actor role', value: (log) => log.actor?.role || '' },
+  { header: 'Actor type', value: (log) => log.actor?.type || '' },
+  { header: 'Entity', value: entityText },
+  { header: 'Entity type', value: (log) => log.entity?.type || '' },
+  { header: 'Entity ID', value: (log) => log.entity?.id || '' },
+  { header: 'Entity version ID', value: (log) => log.entity?.version_id || '' },
+  { header: 'Before', value: (log) => log.before || {} },
+  { header: 'After', value: (log) => log.after || {} },
+  { header: 'Changes', value: (log) => log.changes || [] },
+  { header: 'Metadata', value: (log) => log.metadata || {} },
+];
+
 function AdminAuditPage() {
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
@@ -96,6 +124,7 @@ function AdminAuditPage() {
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [exportKey, setExportKey] = useState('');
   const [selectedId, setSelectedId] = useState('');
 
   useEffect(() => {
@@ -106,21 +135,23 @@ function AdminAuditPage() {
     return () => clearTimeout(handle);
   }, [searchInput]);
 
+  const buildAuditQuery = useCallback((nextPage = page, pageSize = PAGE_SIZE) => ({
+    page: nextPage,
+    pageSize,
+    search: searchTerm,
+    action: actionFilter,
+    entityType: entityTypeFilter,
+    actorUserId: actorUserId.trim(),
+    entityId: entityId.trim(),
+    dateFrom,
+    dateTo,
+  }), [actionFilter, actorUserId, dateFrom, dateTo, entityId, entityTypeFilter, page, searchTerm]);
+
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const result = await listAdminAuditLogs({
-        page,
-        pageSize: PAGE_SIZE,
-        search: searchTerm,
-        action: actionFilter,
-        entityType: entityTypeFilter,
-        actorUserId: actorUserId.trim(),
-        entityId: entityId.trim(),
-        dateFrom,
-        dateTo,
-      });
+      const result = await listAdminAuditLogs(buildAuditQuery());
       setLogs(result.items || []);
       setTotal(result.total || 0);
     } catch (err) {
@@ -130,7 +161,7 @@ function AdminAuditPage() {
     } finally {
       setLoading(false);
     }
-  }, [actionFilter, actorUserId, dateFrom, dateTo, entityId, entityTypeFilter, page, searchTerm]);
+  }, [buildAuditQuery]);
 
   useEffect(() => {
     fetchLogs();
@@ -172,6 +203,48 @@ function AdminAuditPage() {
     setPage(1);
   };
 
+  const fetchAuditForExport = async () => {
+    const firstResult = await listAdminAuditLogs(buildAuditQuery(1, EXPORT_PAGE_SIZE));
+    const exportRows = [...(firstResult.items || [])];
+    const expectedTotal = firstResult.total || exportRows.length;
+
+    for (let nextPage = 2; exportRows.length < expectedTotal; nextPage += 1) {
+      const result = await listAdminAuditLogs(buildAuditQuery(nextPage, EXPORT_PAGE_SIZE));
+      const pageRows = result.items || [];
+      if (!pageRows.length) break;
+      exportRows.push(...pageRows);
+    }
+
+    return exportRows;
+  };
+
+  const exportAuditCsv = async () => {
+    setExportKey('audit-csv');
+    try {
+      const exportRows = await fetchAuditForExport();
+      const csv = rowsToCsv(AUDIT_EXPORT_COLUMNS, exportRows);
+      downloadCsv(timestampedCsvFilename('admin-audit'), csv);
+    } catch (err) {
+      window.alert(err.message || 'Xuất CSV thất bại');
+    } finally {
+      setExportKey('');
+    }
+  };
+
+  const exportAuditXlsx = async () => {
+    setExportKey('audit-xlsx');
+    try {
+      const exportRows = await fetchAuditForExport();
+      downloadXlsx(timestampedXlsxFilename('admin-audit'), AUDIT_EXPORT_COLUMNS, exportRows, 'Admin audit');
+    } catch (err) {
+      window.alert(err.message || 'Xuất XLSX thất bại');
+    } finally {
+      setExportKey('');
+    }
+  };
+
+  const exportDisabled = loading || Boolean(exportKey) || total === 0;
+
   return (
     <main className="admin-jobs-page">
       <section className="jobs-header">
@@ -180,10 +253,30 @@ function AdminAuditPage() {
           <h1>Audit log</h1>
           <p>Theo dõi hành động nhạy cảm, thay đổi quyền và workflow trên toàn hệ thống.</p>
         </div>
-        <button type="button" className="jobs-primary-button" onClick={fetchLogs} disabled={loading}>
-          <FontAwesomeIcon icon={faRotateRight} />
-          <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
-        </button>
+        <div className="jobs-header-actions">
+          <button
+            type="button"
+            className="jobs-secondary-button"
+            onClick={exportAuditCsv}
+            disabled={exportDisabled}
+          >
+            <FontAwesomeIcon icon={faFileCsv} />
+            <span>{exportKey === 'audit-csv' ? 'Đang xuất' : 'Xuất CSV'}</span>
+          </button>
+          <button
+            type="button"
+            className="jobs-secondary-button"
+            onClick={exportAuditXlsx}
+            disabled={exportDisabled}
+          >
+            <FontAwesomeIcon icon={faFileExcel} />
+            <span>{exportKey === 'audit-xlsx' ? 'Đang xuất' : 'Xuất XLSX'}</span>
+          </button>
+          <button type="button" className="jobs-primary-button" onClick={fetchLogs} disabled={loading}>
+            <FontAwesomeIcon icon={faRotateRight} />
+            <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
+          </button>
+        </div>
       </section>
 
       <section className="jobs-toolbar jobs-toolbar--audit" aria-label="Bộ lọc audit">

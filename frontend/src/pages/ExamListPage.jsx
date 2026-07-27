@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createExam, deleteExam, listExams } from '../api/exams';
+import { createExam, deleteExam, duplicateExam, listExams } from '../api/exams';
 import { listSubjects } from '../api/catalog';
 import '../css/ExamListPage.css';
 
@@ -34,6 +34,7 @@ function ExamListPage() {
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [duplicatingId, setDuplicatingId] = useState(null);
 
   const [name, setName] = useState('');
   const [examTitle, setExamTitle] = useState('');
@@ -108,6 +109,18 @@ function ExamListPage() {
     }
   };
 
+  const handleDuplicate = async (exam) => {
+    setDuplicatingId(exam.id);
+    try {
+      const duplicate = await duplicateExam(exam.id);
+      navigate(`/lam-de-thi/${duplicate.id}`);
+    } catch (err) {
+      alert('Nhân bản đề thi thất bại: ' + err.message);
+    } finally {
+      setDuplicatingId(null);
+    }
+  };
+
   return (
     <main className="exam-list-page">
       <section className="page-hero">
@@ -117,7 +130,7 @@ function ExamListPage() {
             <h1 className="page-hero-title">Danh sách đề thi</h1>
             <p className="page-hero-desc">
               Tạo đề thi trắc nghiệm hoàn chỉnh từ ngân hàng câu hỏi đã được duyệt, cấu hình ma trận đề
-              và xuất PDF theo chuẩn đề thi giấy.
+              và xuất PDF/DOCX theo chuẩn đề thi giấy.
             </p>
           </div>
           <button type="button" className="btn btn--primary" onClick={openCreate}>
@@ -147,12 +160,21 @@ function ExamListPage() {
                     <span>{exam.variant_count}/4 mã đề</span>
                   </div>
                   <div className="exam-card-actions">
-                    <button type="button" className="btn btn--outline" onClick={() => navigate(`/lam-de-thi/${exam.id}`)}>
-                      Mở đề thi
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-btn icon-btn--danger"
+	                    <button type="button" className="btn btn--outline" onClick={() => navigate(`/lam-de-thi/${exam.id}`)}>
+	                      Mở đề thi
+	                    </button>
+	                    <button
+	                      type="button"
+	                      className="icon-btn"
+	                      title="Nhân bản"
+	                      disabled={duplicatingId === exam.id}
+	                      onClick={() => handleDuplicate(exam)}
+	                    >
+	                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+	                    </button>
+	                    <button
+	                      type="button"
+	                      className="icon-btn icon-btn--danger"
                       title="Xoá"
                       disabled={deletingId === exam.id}
                       onClick={() => handleDelete(exam)}

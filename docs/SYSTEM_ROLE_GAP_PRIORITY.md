@@ -26,6 +26,16 @@ Cập nhật: 2026-07-27
 - Đã audit/chốt `P1-ADM-06 — Quản lý Moodle target`.
 - Đã audit/chốt `P1-REV-01 — Phân công và claim review`.
 - Đã audit/chốt `P1-REV-02 — Bộ lọc nghiệp vụ đầy đủ`.
+- Đã audit/chốt `P2-REV-01 — Bulk review theo batch với audit từng item`.
+- Đã hoàn thiện/chốt `P2-REV-05 — Mẫu nhận xét tái sử dụng`.
+- Đã hoàn thiện/chốt `P2-TEA-01 — Bulk edit/submit/archive`.
+- Đã hoàn thiện/chốt `P2-TEA-02 — Import/export GIFT, XML, CSV/XLSX`.
+- Đã hoàn thiện/chốt `P2-TEA-03 — Nhân bản câu hỏi/đề thi`.
+- Đã hoàn thiện/chốt `P2-TEA-04 — Hỗ trợ DOCX thật khi upload tài liệu`.
+- Đã hoàn thiện/chốt `P2-TEA-05 — Export đề DOCX bên cạnh PDF`.
+- Đã hoàn thiện/chốt `P2-TEA-06 — Dashboard độ phủ Bloom/CLO/chương`.
+- Đã hoàn thiện/chốt `P2-ADM-04 — Báo cáo sử dụng model/token/latency/chi phí`.
+- Đã hoàn thiện/chốt `P2-ADM-05 — Export báo cáo CSV/XLSX`.
 - Checklist `P1-TEA-02` hiện đã xong 6/6:
   - xem OCR pages;
   - sửa OCR trước khi chunk/index;
@@ -70,21 +80,31 @@ Cập nhật: 2026-07-27
   - audit/chốt Admin Audit Log API/UI: filter actor/entity/action/date/search, before/after/changes/metadata và UI read-only.
   - audit/chốt catalog lifecycle môn/chương/CLO: sửa/sắp xếp/activate-deactivate, chặn trùng mã, không hard-delete và hiển thị usage counts.
   - audit/chốt model/prompt/policy admin: health-check model, test prompt, activate/deactivate/rollback version, runtime config và cảnh báo `PROMPT_SOURCE`.
+  - audit/chốt P2 bulk review: `ReviewQueuePage` duyệt hàng loạt tối đa 10 câu đạt AI/GREEN qua từng review API; backend ghi audit `QUESTION_APPROVED` riêng cho từng item.
+  - thêm mẫu nhận xét tái sử dụng cho Reviewer: built-in templates, lưu mẫu cá nhân theo user trong `localStorage`, áp dụng nhanh vào ghi chú tổng.
+  - thêm bulk action cho Teacher trong `ManagePage`: chọn nhiều câu, sửa metadata Bloom/độ khó/CLO, gửi duyệt hàng loạt và lưu trữ hàng loạt bằng API hiện có.
+  - thêm nhân bản câu hỏi và đề thi: backend tạo bản nháp mới reset workflow/variant, frontend có nút nhân bản trong ngân hàng câu hỏi và danh sách đề thi.
+  - thêm upload DOCX thật vào pipeline tài liệu: backend trích text DOCX thành `document_pages`, lưu artifact `ORIGINAL_DOCX`, retry đúng processor; frontend cho chọn PDF/DOCX và cập nhật copy xử lý tài liệu.
+  - thêm export DOCX cạnh PDF cho đề thi/mã đề, dùng cùng dữ liệu variant và tùy chọn `de`/`dapan`/`de_dapan`.
+  - thêm dashboard độ phủ Bloom/CLO/chương trong `ManagePage`, tính theo danh sách đang lọc và giữ cả chương/CLO chưa có câu để thấy khoảng trống.
+  - thêm export báo cáo CSV/XLSX cho Admin Jobs và Audit log, gom toàn bộ kết quả theo filter qua pagination trước khi tải file.
+  - thêm import/export ngân hàng câu hỏi trong `ManagePage`: export danh sách đang lọc hoặc câu đã chọn sang CSV/XLSX/GIFT/XML Moodle; import CSV/XLSX/GIFT/XML thành câu hỏi qua API hiện có, có parser kiểm lỗi theo dòng và map môn/chương/CLO từ catalog.
+  - mở rộng Operations Dashboard thành báo cáo model usage 30 ngày: tổng request, token input/output/total, latency trung bình, error rate và cost USD theo model/luồng.
 - Đã kiểm tra sau thay đổi cuối:
-  - backend `python -m pytest tests/test_schema_v2.py -q`: `95 passed`
-  - frontend `npm --prefix frontend test`: `7 passed`
+  - backend `python -m pytest tests/test_schema_v2.py -q`: `99 passed`
+  - frontend `npm --prefix frontend test`: `33 passed`
   - frontend `npm --prefix frontend run build`: pass, còn warning bundle >500 kB của Vite.
   - `git diff --check`: không có whitespace error, chỉ còn warning LF sẽ được Git đổi sang CRLF trên Windows.
 
 **Còn lại theo backlog trong file này:**
 
 - Nếu tính `P0 + P1` core backlog: còn `0` epic/mục chưa chốt trong file.
-- Nếu tính cả `P2`: còn `17` epic/mục.
+- Nếu tính cả `P2`: còn `7` epic/mục.
 - Chi tiết:
   - `P0`: 7 mục (`P0-01` đến `P0-07`); đã chốt toàn bộ, còn 0 mục.
   - `P1`: 17 mục tổng; toàn bộ Teacher/Admin/Reviewer P1 đã audit/chốt, còn 0 mục.
-  - `P2`: 17 mục mở rộng/năng suất.
-- Ghi chú tiếp theo: P0 và P1 core đã xong; nếu làm tiếp thì chuyển sang P2 mở rộng/năng suất hoặc hardening theo test/QA.
+  - `P2`: 17 mục mở rộng/năng suất; `P2-REV-01`, `P2-REV-05`, `P2-TEA-01`, `P2-TEA-02`, `P2-TEA-03`, `P2-TEA-04`, `P2-TEA-05`, `P2-TEA-06`, `P2-ADM-04` và `P2-ADM-05` đã xong, còn 7 mục.
+- Ghi chú tiếp theo: P0/P1 core, `P2-REV-01`, `P2-REV-05`, `P2-TEA-01`, `P2-TEA-02`, `P2-TEA-03`, `P2-TEA-04`, `P2-TEA-05`, `P2-TEA-06`, `P2-ADM-04` và `P2-ADM-05` đã xong; nếu làm tiếp thì chuyển sang P2 mở rộng/năng suất còn lại.
 
 **Lưu ý repo:**
 
@@ -755,24 +775,42 @@ không chỉ current version/source document.
 - `P2-ADM-02`: phân quyền chi tiết theo permission thay vì chỉ ba role.
 - `P2-ADM-03`: quản lý ownership/chia sẻ/chuyển giao tài liệu.
 - `P2-ADM-04`: báo cáo sử dụng model, token, latency và chi phí.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** `AdminOverviewService` trả thêm `model_usage_summary` và mở rộng `model_performance` theo cửa sổ 30 ngày với request/completed/failed/active, error rate, latency trung bình, prompt/completion/total tokens và `cost_usd`. Backend đọc nhiều path usage phổ biến (`usage`, `token_usage`, `execution.usage`, `billing`, `metrics`) và nếu chưa có cost trực tiếp thì có thể ước tính từ pricing trong `model.config`/`evaluator_model.config`. `AdminOverviewPage` hiển thị KPI model usage 30 ngày và bảng theo model/luồng có token + cost. Backend test mở rộng fixture overview để phủ token/cost trực tiếp và cost ước tính theo giá per-1K.
 - `P2-ADM-05`: export báo cáo CSV/XLSX.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** `AdminJobsPage` và `AdminAuditPage` có nút xuất CSV/XLSX theo bộ lọc hiện tại; mỗi lần export gọi API qua pagination để gom toàn bộ kết quả thay vì chỉ trang đang xem. CSV có BOM để Excel mở tiếng Việt ổn định; XLSX được sinh dạng workbook OOXML zip không nén bằng util `csvExport` nên không cần thêm dependency. Frontend test phủ CSV escaping, filename timestamp và workbook XLSX có worksheet XML escape đúng.
 
 ### 9.2. Reviewer
 
-- `P2-REV-01`: bulk review theo batch với audit từng item.
+- `P2-REV-01`: bulk review theo batch với audit từng item. **Đã audit/chốt 2026-07-27:** UI `ReviewQueuePage` có thao tác “Duyệt câu đạt tốt”, chọn batch tối đa 10 câu đang lọc thỏa `canReviewQuestion`, `evaluation_status=PASSED`, `quality_summary.color=GREEN`, xác nhận trước khi chạy và gọi `reviewQuestion` từng item với structured review form. Backend `QuestionWorkflowService.review` tạo `question_reviews` và audit log `QUESTION_APPROVED` riêng cho từng câu trong transaction, nên mỗi item có dấu vết audit độc lập.
 - `P2-REV-02`: comment thread và mention.
 - `P2-REV-03`: secondary review/two-person approval cho câu quan trọng.
 - `P2-REV-04`: calibration giữa Reviewer và AI.
 - `P2-REV-05`: mẫu nhận xét tái sử dụng.
 
+  **Đã hoàn thiện/chốt 2026-07-27:** `ReviewQueuePage` có panel mẫu nhận xét trong modal review, gồm mẫu built-in theo quyết định (`APPROVED`, `NEEDS_REVISION`, `REJECTED`), áp dụng nhanh vào ghi chú tổng và lưu mẫu cá nhân theo user qua `localStorage`. Util `reviewCommentTemplates` chuẩn hóa/parse/encode payload, giới hạn nội dung và lọc mẫu theo decision; frontend test phủ storage key, round-trip/trim payload và filter decision.
+
 ### 9.3. Teacher
 
 - `P2-TEA-01`: bulk edit, bulk submit và bulk archive.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** `ManagePage` có checkbox chọn từng câu/chọn toàn bộ danh sách đang hiển thị, thanh thao tác hàng loạt cho sửa metadata, gửi duyệt và lưu trữ. Bulk edit cập nhật Bloom, độ khó và CLO khi các câu cùng môn bằng `updateQuestion` từng item với `expected_version`; bulk submit/archive dùng API hiện có và gom kết quả thành công/thất bại theo batch. Util `questionBulkActions` tách logic selected/submittable/payload/summary và frontend test phủ các nhánh chính.
 - `P2-TEA-02`: import/export GIFT, XML, CSV/XLSX.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** `ManagePage` có luồng import/export ngân hàng câu hỏi. Export dùng scope thông minh: nếu đang chọn câu hỏi thì xuất phần đã chọn, nếu không thì xuất toàn bộ danh sách đang lọc; hỗ trợ CSV, XLSX, GIFT và XML Moodle. Import hỗ trợ CSV/XLSX/GIFT/XML, parse trước ở frontend, dừng nếu file có lỗi theo dòng, map subject/chapter/CLO theo ID hoặc mã catalog và tạo câu hỏi bằng API `createQuestion`. Util `questionBankExchange` tách logic flatten metadata, sinh GIFT/XML Moodle, đọc CSV và đọc workbook XLSX OOXML tối thiểu; frontend test phủ alias loại câu hỏi, flatten export, CSV/GIFT/XLSX/XML import và filename timestamp.
 - `P2-TEA-03`: nhân bản câu hỏi hoặc đề thi.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** backend có endpoint clone câu hỏi/đề thi, tạo bản nháp mới do user hiện tại sở hữu, reset review/evaluation/publication hoặc exam status/variant/finalized snapshot và giữ lại nội dung/classification/ma trận/câu hỏi snapshot để chỉnh tiếp. Frontend có nút nhân bản trong `ManagePage` và `ExamListPage`; clone đề thi mở ngay builder của bản sao. Backend test phủ reset workflow câu hỏi và clone đề finalized không copy variant.
 - `P2-TEA-04`: hỗ trợ DOCX thật; hiện upload backend chỉ nhận PDF.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** `/documents/upload` và route tương thích `/ocr/upload` nhận thêm `.docx`; backend lưu artifact `ORIGINAL_DOCX`, tạo job xử lý nền tương thích OCR status, trích paragraph/table bằng `python-docx` thành `document_pages`, rồi frontend tiếp tục chunk/index/generate bằng pipeline cũ. Retry OCR job đọc artifact gốc để chạy lại OCR PDF hoặc extractor DOCX đúng loại. `GeneratePage` cho chọn `.pdf,.docx` và cập nhật copy sang “xử lý tài liệu”. Backend test phủ extractor DOCX với paragraph + table.
 - `P2-TEA-05`: export đề DOCX bên cạnh PDF.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** backend có endpoint `/exams/{exam_id}/variants/{variant_id}/export/docx` dùng cùng `VALID_EXPORT_TYPES` với PDF (`de`, `dapan`, `de_dapan`) và render DOCX bằng `python-docx` từ snapshot variant hiện có. Frontend `ExportStep` cho mỗi mã đề tải được cả PDF và DOCX theo từng loại bản xuất; `ExamListPage` đã cập nhật copy PDF/DOCX. Backend test mở lại bytes DOCX bằng `python-docx` để kiểm tra nội dung câu hỏi và bảng đáp án.
 - `P2-TEA-06`: dashboard độ phủ Bloom/CLO/chương.
+
+  **Đã hoàn thiện/chốt 2026-07-27:** `ManagePage` có panel độ phủ theo danh sách câu hỏi đang lọc, gồm phân bố Bloom, chương và CLO, số câu đã duyệt, mục trống và tỷ lệ mục tiêu CLO nếu catalog có `target_weight`. Util `questionCoverage` tính coverage độc lập, giữ chapter/CLO active chưa có câu để nhìn rõ gap; frontend test phủ đếm Bloom/approved, catalog gap và fallback khi chưa chọn môn.
 - `P2-TEA-07`: chia sẻ ngân hàng câu hỏi trong cùng môn/bộ môn.
 
 ### 9.4. Hạ tầng chung

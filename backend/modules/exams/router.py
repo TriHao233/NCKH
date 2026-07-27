@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.config import settings
 from core.dependencies import CurrentUser, require_teacher_or_admin
-from modules.exams.pdf_service import VALID_EXPORT_TYPES, render_exam_pdf
+from modules.exams.pdf_service import VALID_EXPORT_TYPES, render_exam_docx, render_exam_pdf
 from modules.exams.schemas import (
     AddQuestionsManualRequest,
     ExamCreateRequest,
@@ -67,6 +67,22 @@ def get_exam(
 ):
     try:
         return service.get_exam(exam_id, current_user)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post(
+    "/{exam_id}/duplicate",
+    response_model=ExamResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_exam(
+    exam_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: ExamService = Depends(get_exam_service),
+):
+    try:
+        return service.duplicate_exam(exam_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -294,5 +310,32 @@ async def export_variant_pdf(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{exam_id}/variants/{variant_id}/export/docx")
+def export_variant_docx(
+    exam_id: str,
+    variant_id: str,
+    export_type: str = Query("de", alias="type"),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: ExamVariantService = Depends(get_exam_variant_service),
+):
+    if export_type not in VALID_EXPORT_TYPES:
+        raise HTTPException(status_code=400, detail="type phải là de, dapan hoặc de_dapan")
+    try:
+        exam, variant = service.get_exam_variant_pair(exam_id, variant_id, current_user)
+    except Exception as exc:
+        _translate(exc)
+    if not variant["questions"]:
+        raise HTTPException(status_code=400, detail="Mã đề chưa có câu hỏi, không thể xuất DOCX")
+    docx_bytes = render_exam_docx(
+        exam["header"], variant["exam_code"], variant["questions"], export_type
+    )
+    filename = f"{variant['exam_code']}_{export_type}.docx"
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

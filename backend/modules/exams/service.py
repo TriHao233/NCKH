@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from copy import deepcopy
 from typing import Any
 
 from bson import ObjectId
@@ -206,6 +207,32 @@ class ExamService:
     def get_exam(self, exam_id: str, current_user: CurrentUser) -> dict:
         exam = self._get_for_user_or_404(exam_id, current_user)
         return serialize_exam(exam, self.repository.count_variants(exam_id))
+
+    def duplicate_exam(self, exam_id: str, current_user: CurrentUser) -> dict:
+        source = self._get_for_user_or_404(exam_id, current_user)
+        snapshot = source.get("finalized_snapshot") or {}
+        now = utc_now()
+        clone = {
+            "_id": ObjectId(),
+            "schema_version": SCHEMA_VERSION,
+            "name": f"{source['name']} (bản sao)",
+            "exam_title": source["exam_title"],
+            "subject_id": snapshot.get("subject_id") or source["subject_id"],
+            "question_count": snapshot.get("question_count") or source["question_count"],
+            "header": deepcopy(snapshot.get("header") or source["header"]),
+            "matrix": deepcopy(snapshot.get("matrix") or source.get("matrix", [])),
+            "questions": deepcopy(snapshot.get("questions") or source.get("questions", [])),
+            "status": ExamStatus.DRAFT.value,
+            "delivery_mode": source.get("delivery_mode", "paper"),
+            "time_limit_seconds": source.get("time_limit_seconds"),
+            "scoring_config": deepcopy(source.get("scoring_config")),
+            "lms_export_status": "not_exported",
+            "created_by_user_id": current_user.id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.repository.create(clone)
+        return serialize_exam(clone, 0)
 
     def list_exams(self, page: int, page_size: int, current_user: CurrentUser | None) -> dict:
         owner_user_id = (

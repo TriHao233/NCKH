@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 from typing import Any
 
 from pymongo.database import Database
@@ -18,6 +19,69 @@ MODEL_WINDOW_DAYS = 30
 MODEL_SUCCESS_STATUSES = {"COMPLETED", "PASSED", "SUCCESS", "SUCCEEDED"}
 MODEL_FAILED_STATUSES = {"FAILED", "ERROR", "STALE", "FAILED_VALIDATION"}
 MODEL_ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "RUNNING", "GENERATING"}
+PROMPT_TOKEN_PATHS = [
+    "usage.prompt_tokens",
+    "usage.input_tokens",
+    "token_usage.prompt_tokens",
+    "token_usage.input_tokens",
+    "execution.prompt_tokens",
+    "execution.input_tokens",
+    "execution.usage.prompt_tokens",
+    "execution.usage.input_tokens",
+    "metrics.prompt_tokens",
+    "metrics.input_tokens",
+]
+COMPLETION_TOKEN_PATHS = [
+    "usage.completion_tokens",
+    "usage.output_tokens",
+    "token_usage.completion_tokens",
+    "token_usage.output_tokens",
+    "execution.completion_tokens",
+    "execution.output_tokens",
+    "execution.usage.completion_tokens",
+    "execution.usage.output_tokens",
+    "metrics.completion_tokens",
+    "metrics.output_tokens",
+]
+TOTAL_TOKEN_PATHS = [
+    "usage.total_tokens",
+    "token_usage.total_tokens",
+    "execution.total_tokens",
+    "execution.usage.total_tokens",
+    "metrics.total_tokens",
+    "total_tokens",
+]
+COST_USD_PATHS = [
+    "cost_usd",
+    "usage.cost_usd",
+    "token_usage.cost_usd",
+    "execution.cost_usd",
+    "execution.usage.cost_usd",
+    "billing.cost_usd",
+    "metrics.cost_usd",
+]
+INPUT_PRICE_PER_1K_PATHS = [
+    "model.config.input_cost_per_1k",
+    "model.config.input_price_per_1k",
+    "model.config.prompt_cost_per_1k",
+    "evaluator_model.config.input_cost_per_1k",
+    "evaluator_model.config.input_price_per_1k",
+    "evaluator_model.config.prompt_cost_per_1k",
+]
+OUTPUT_PRICE_PER_1K_PATHS = [
+    "model.config.output_cost_per_1k",
+    "model.config.output_price_per_1k",
+    "model.config.completion_cost_per_1k",
+    "evaluator_model.config.output_cost_per_1k",
+    "evaluator_model.config.output_price_per_1k",
+    "evaluator_model.config.completion_cost_per_1k",
+]
+TOTAL_PRICE_PER_1K_PATHS = [
+    "model.config.cost_per_1k_tokens",
+    "model.config.price_per_1k_tokens",
+    "evaluator_model.config.cost_per_1k_tokens",
+    "evaluator_model.config.price_per_1k_tokens",
+]
 
 
 def _as_aware_utc(value: Any) -> datetime | None:
@@ -35,6 +99,58 @@ def _path_value(record: dict, path: str):
             return None
         current = current.get(part)
     return current
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if isfinite(float(value)) else None
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+        return parsed if isfinite(parsed) else None
+    return None
+
+
+def _first_number(record: dict, paths: list[str]) -> float | None:
+    for path in paths:
+        value = _number(_path_value(record, path))
+        if value is not None:
+            return value
+    return None
+
+
+def _token_usage(record: dict) -> dict:
+    prompt_tokens = int(max(0, _first_number(record, PROMPT_TOKEN_PATHS) or 0))
+    completion_tokens = int(max(0, _first_number(record, COMPLETION_TOKEN_PATHS) or 0))
+    total_tokens = int(max(0, _first_number(record, TOTAL_TOKEN_PATHS) or 0))
+    if not total_tokens:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _cost_usd(record: dict, usage: dict) -> float | None:
+    direct_cost = _first_number(record, COST_USD_PATHS)
+    if direct_cost is not None:
+        return max(0.0, direct_cost)
+    input_price = _first_number(record, INPUT_PRICE_PER_1K_PATHS)
+    output_price = _first_number(record, OUTPUT_PRICE_PER_1K_PATHS)
+    total_price = _first_number(record, TOTAL_PRICE_PER_1K_PATHS)
+    if input_price is not None or output_price is not None:
+        return (
+            usage["prompt_tokens"] * max(0.0, input_price or 0.0)
+            + usage["completion_tokens"] * max(0.0, output_price or 0.0)
+        ) / 1000
+    if total_price is not None:
+        return usage["total_tokens"] * max(0.0, total_price) / 1000
+    return None
 
 
 def _duration_ms(record: dict, *, duration_path: str, start_key: str = "started_at", end_key: str = "finished_at") -> int | None:
@@ -62,6 +178,7 @@ class AdminOverviewService:
         failed_documents = self._document_count({"status": "FAILED"})
         retryable_job_count = job_page["summary"].get("failed", 0)
         long_running_job_count = job_page["summary"].get("long_running", 0)
+        model_report = self._model_usage_report()
 
         attention = [
             {
@@ -130,7 +247,8 @@ class AdminOverviewService:
                     "active_targets": self._count("moodle_targets", {"is_active": True}),
                     "publications": moodle_summary,
                 },
-                "model_performance": self._model_performance(),
+                "model_performance": model_report["rows"],
+                "model_usage_summary": model_report["summary"],
                 "attention": attention,
                 "recent_jobs": retryable_jobs["items"],
                 "recent_audit": audit_page["items"],
@@ -219,21 +337,49 @@ class AdminOverviewService:
         return [groups[key] for key in order if groups[key]["total"] > 0]
 
     def _model_performance(self) -> list[dict]:
+        return self._model_usage_report()["rows"]
+
+    def _model_usage_report(self) -> dict:
         since = utc_now() - timedelta(days=MODEL_WINDOW_DAYS)
         groups: dict[str, dict] = {}
         self._collect_evaluation_model_performance(groups, since)
         self._collect_generation_model_performance(groups, since)
 
         rows = []
+        summary_latencies = []
+        summary = {
+            "window_days": MODEL_WINDOW_DAYS,
+            "total_requests": 0,
+            "completed": 0,
+            "failed": 0,
+            "active": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+            "avg_latency_ms": None,
+            "error_rate": None,
+        }
         for group in groups.values():
             latencies = group.pop("_latencies")
+            summary_latencies.extend(latencies)
             total = group["total"]
             failed = group["failed"]
             group["error_rate"] = round(failed / total, 3) if total else None
             group["avg_latency_ms"] = round(sum(latencies) / len(latencies)) if latencies else None
+            group["cost_usd"] = round(group["cost_usd"], 6)
+            for key in ["total", "completed", "failed", "active", "prompt_tokens", "completion_tokens", "total_tokens"]:
+                summary_key = "total_requests" if key == "total" else key
+                summary[summary_key] += group[key]
+            summary["cost_usd"] += group["cost_usd"]
             rows.append(group)
+        summary["cost_usd"] = round(summary["cost_usd"], 6)
+        if summary["total_requests"]:
+            summary["error_rate"] = round(summary["failed"] / summary["total_requests"], 3)
+        if summary_latencies:
+            summary["avg_latency_ms"] = round(sum(summary_latencies) / len(summary_latencies))
         rows.sort(key=lambda item: (item["failed"], item["total"], item["model_code"]), reverse=True)
-        return rows[:8]
+        return {"summary": summary, "rows": rows[:8]}
 
     def _model_group(self, groups: dict[str, dict], *, kind: str, kind_label: str, model_code: str) -> dict:
         key = f"{kind}:{model_code}"
@@ -248,6 +394,10 @@ class AdminOverviewService:
                 "completed": 0,
                 "failed": 0,
                 "active": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
                 "_latencies": [],
             },
         )
@@ -303,6 +453,8 @@ class AdminOverviewService:
     @staticmethod
     def _add_model_job(group: dict, record: dict, duration_ms: int | None) -> None:
         status = str(record.get("status") or "").upper()
+        usage = _token_usage(record)
+        cost_usd = _cost_usd(record, usage)
         group["total"] += 1
         if status in MODEL_SUCCESS_STATUSES:
             group["completed"] += 1
@@ -310,5 +462,10 @@ class AdminOverviewService:
             group["failed"] += 1
         elif status in MODEL_ACTIVE_STATUSES:
             group["active"] += 1
+        group["prompt_tokens"] += usage["prompt_tokens"]
+        group["completion_tokens"] += usage["completion_tokens"]
+        group["total_tokens"] += usage["total_tokens"]
+        if cost_usd is not None:
+            group["cost_usd"] += cost_usd
         if duration_ms is not None:
             group["_latencies"].append(duration_ms)

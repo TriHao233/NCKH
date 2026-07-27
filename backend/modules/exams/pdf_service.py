@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.async_api import async_playwright
 
@@ -102,3 +106,75 @@ async def render_exam_pdf(
         finally:
             await browser.close()
     return pdf_bytes
+
+
+def _add_labeled_line(document: Document, label: str, value: Any) -> None:
+    if value in (None, ""):
+        return
+    paragraph = document.add_paragraph()
+    paragraph.add_run(f"{label}: ").bold = True
+    paragraph.add_run(str(value))
+
+
+def render_exam_docx(
+    header: dict,
+    exam_code: str,
+    questions: list[dict],
+    export_type: str,
+) -> bytes:
+    if export_type not in VALID_EXPORT_TYPES:
+        raise ValueError(f"export_type không hợp lệ: {export_type}")
+    if not questions:
+        raise ValueError("Đề thi chưa có câu hỏi, không thể xuất DOCX")
+
+    context = _build_context(header, exam_code, questions, export_type)
+    document = Document()
+    normal_style = document.styles["Normal"]
+    normal_style.font.name = "Times New Roman"
+    normal_style.font.size = Pt(12)
+
+    if header.get("school_name"):
+        document.add_paragraph(str(header["school_name"]))
+    if header.get("faculty_name"):
+        document.add_paragraph(str(header["faculty_name"]))
+
+    title = document.add_heading(header.get("exam_name") or "Đề thi", level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    _add_labeled_line(document, "Mã đề", exam_code)
+    _add_labeled_line(document, "Môn học", header.get("subject_name"))
+    if header.get("duration_minutes"):
+        _add_labeled_line(document, "Thời gian", f"{header.get('duration_minutes')} phút")
+    _add_labeled_line(document, "Lớp", header.get("class_name"))
+    _add_labeled_line(document, "Phòng", header.get("room"))
+    _add_labeled_line(document, "Ngày thi", header.get("exam_date"))
+
+    if context["show_questions"]:
+        document.add_paragraph()
+        for question in context["questions"]:
+            paragraph = document.add_paragraph()
+            paragraph.add_run(f"Câu {question['number']}. ").bold = True
+            paragraph.add_run(str(question["content"]))
+            for option in question["options"]:
+                option_paragraph = document.add_paragraph(style=None)
+                option_paragraph.paragraph_format.left_indent = Pt(18)
+                run = option_paragraph.add_run(f"{option['label']}. {option['text']}")
+                if context["show_answers"] and option["correct"]:
+                    run.bold = True
+
+    if context["show_answer_table"]:
+        document.add_paragraph()
+        document.add_heading("Đáp án", level=2)
+        table = document.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        header_cells = table.rows[0].cells
+        header_cells[0].text = "Câu"
+        header_cells[1].text = "Đáp án"
+        for row in context["answer_rows"]:
+            cells = table.add_row().cells
+            cells[0].text = str(row["number"])
+            cells[1].text = str(row["answer"])
+
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()

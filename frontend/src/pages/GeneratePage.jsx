@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { chunkDocument } from '../api/chunk';
 import { listDocuments } from '../api/documents';
 import { enqueueGenerateQuestions, getGenerateStatus } from '../api/generate';
-import { getOcrStatus, uploadOcrPdf } from '../api/ocr';
+import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
 import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
 import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
 import {
@@ -29,8 +29,8 @@ import '../css/GeneratePage.css';
 const PHASE_LABELS = {
   idle: 'Sẵn sàng',
   uploading: 'Đang tải tài liệu lên...',
-  ocr_queued: 'OCR đã vào hàng đợi',
-  ocr_processing: 'Đang OCR tài liệu...',
+  ocr_queued: 'Tài liệu đã vào hàng đợi xử lý',
+  ocr_processing: 'Đang OCR/trích xuất tài liệu...',
   chunking: 'Đang index / chunk tài liệu...',
   generate_queued: 'Sinh câu hỏi đã vào hàng đợi',
   generate_processing: 'Đang sinh câu hỏi bằng AI...',
@@ -39,6 +39,7 @@ const PHASE_LABELS = {
 };
 
 const MAX_TOTAL_QUESTIONS = 20;
+const SUPPORTED_SOURCE_EXTENSIONS = ['.pdf', '.docx'];
 const PRESET_STORAGE_KEY = 'qbank_generation_presets';
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
 
@@ -179,7 +180,7 @@ function reusableDocumentLabel(document) {
   const state = isDocumentIndexed(document)
     ? 'đã index'
     : normalizeStatus(pipeline.ocr_status) === 'COMPLETED'
-      ? 'đã OCR'
+      ? 'đã xử lý'
       : document.status;
   return `${document.title} (${pages}, ${state})`;
 }
@@ -190,6 +191,11 @@ function validateDraftBeforeSave(draft) {
     rawOptions: draft.rawOptions,
     correctAnswer: draft.correctAnswer,
   });
+}
+
+function isSupportedSourceFile(fileValue) {
+  const name = fileValue?.name || '';
+  return SUPPORTED_SOURCE_EXTENSIONS.some((extension) => name.toLowerCase().endsWith(extension));
 }
 
 function mergeUpdatedDraft(draft, updatedQuestion) {
@@ -276,13 +282,13 @@ function GeneratePage() {
   )) || hasServerMetrics;
   const timingItems = [
     timings.documentMs === 'reused'
-      ? { label: 'Tài liệu', value: 'Đã OCR/index sẵn' }
+      ? { label: 'Tài liệu', value: 'Đã xử lý/index sẵn' }
       : null,
     Number.isFinite(timings.uploadMs)
       ? { label: 'Upload', value: formatDuration(timings.uploadMs) }
       : null,
     Number.isFinite(timings.ocrMs)
-      ? { label: 'OCR', value: formatDuration(timings.ocrMs) }
+      ? { label: 'Xử lý tài liệu', value: formatDuration(timings.ocrMs) }
       : null,
     Number.isFinite(timings.chunkMs)
       ? { label: 'Chunk/Index', value: formatDuration(timings.chunkMs) }
@@ -330,7 +336,7 @@ function GeneratePage() {
       const result = await listDocuments({ page: 1, pageSize: 100 });
       setDocuments(result.items || []);
     } catch (err) {
-      setDocumentsError(err.message || 'Không tải được danh sách tài liệu đã OCR');
+      setDocumentsError(err.message || 'Không tải được danh sách tài liệu đã xử lý');
     } finally {
       setDocumentsLoading(false);
     }
@@ -368,12 +374,12 @@ function GeneratePage() {
 
   const validateForm = () => {
     if (sourceMode === 'upload') {
-      if (!file) return 'Vui lòng chọn file PDF';
-      if (!file.name.toLowerCase().endsWith('.pdf')) return 'Chỉ hỗ trợ file PDF';
+      if (!file) return 'Vui lòng chọn file PDF hoặc DOCX';
+      if (!isSupportedSourceFile(file)) return 'Chỉ hỗ trợ file PDF hoặc DOCX';
     } else {
-      if (!selectedDocumentId) return 'Vui lòng chọn tài liệu đã OCR';
+      if (!selectedDocumentId) return 'Vui lòng chọn tài liệu đã xử lý';
       if (!selectedDocument) return 'Không tìm thấy tài liệu đã chọn';
-      if (!isDocumentOcrReady(selectedDocument)) return 'Tài liệu này chưa OCR xong';
+      if (!isDocumentOcrReady(selectedDocument)) return 'Tài liệu này chưa xử lý xong';
     }
     if (questionPlan.length === 0) return 'Vui lòng thêm ít nhất một dòng cấu hình câu hỏi';
     if (totalQuestions < 1 || totalQuestions > MAX_TOTAL_QUESTIONS) {
@@ -781,11 +787,11 @@ function GeneratePage() {
     resetTimings();
   };
 
-  const runOcrPipeline = async (pdfFile, signal) => {
+  const runOcrPipeline = async (sourceFile, signal) => {
     setPhase('uploading');
-    setStatusDetail('Đang upload file PDF...');
+    setStatusDetail('Đang upload tài liệu...');
     const uploadStartedAt = nowMs();
-    const uploadResult = await uploadOcrPdf(pdfFile);
+    const uploadResult = await uploadSourceDocument(sourceFile);
     markTiming('uploadMs', uploadStartedAt);
     const ocrJobId = uploadResult.job_id;
     const docId = uploadResult.document_id;
@@ -799,12 +805,12 @@ function GeneratePage() {
       onUpdate: (status) => {
         if (status.status === 'queued') setPhase('ocr_queued');
         if (status.status === 'processing') setPhase('ocr_processing');
-        setStatusDetail(`OCR: ${status.status}`);
+        setStatusDetail(`Xử lý tài liệu: ${status.status}`);
       },
     });
 
     if (ocrResult.status === 'failed') {
-      throw new Error(ocrResult.error_message || 'OCR thất bại');
+      throw new Error(ocrResult.error_message || 'Xử lý tài liệu thất bại');
     }
     markTiming('ocrMs', ocrStartedAt);
 
@@ -918,14 +924,14 @@ function GeneratePage() {
         await fetchReusableDocuments();
       } else {
         if (!selectedDocument) {
-          throw new Error('Vui lòng chọn tài liệu đã OCR');
+          throw new Error('Vui lòng chọn tài liệu đã xử lý');
         }
         docId = selectedDocument.id;
         setDocumentId(docId);
         if (isDocumentIndexed(selectedDocument)) {
           setChunkReady(true);
           setTimingValues({ documentMs: 'reused' });
-          setStatusDetail('Sử dụng tài liệu đã OCR và index trước đó');
+          setStatusDetail('Sử dụng tài liệu đã xử lý và index trước đó');
         } else {
           await runChunk(docId);
           await fetchReusableDocuments();
@@ -1077,7 +1083,7 @@ function GeneratePage() {
                   disabled={isBusy}
                   onClick={() => selectSourceMode('upload')}
                 >
-                  Tải PDF mới
+                  Tải tài liệu mới
                 </button>
                 <button
                   type="button"
@@ -1085,7 +1091,7 @@ function GeneratePage() {
                   disabled={isBusy}
                   onClick={() => selectSourceMode('existing')}
                 >
-                  Chọn tài liệu đã OCR
+                  Chọn tài liệu đã xử lý
                 </button>
               </div>
 
@@ -1093,7 +1099,7 @@ function GeneratePage() {
                 <label className={`upload-drop ${isBusy ? 'upload-drop--disabled' : ''}`}>
                   <input
                     type="file"
-                    accept=".pdf"
+                    accept=".pdf,.docx"
                     disabled={isBusy}
                     onChange={(e) => {
                       const nextFile = e.target.files?.[0] || null;
@@ -1117,8 +1123,8 @@ function GeneratePage() {
                     <polyline points="17 8 12 3 7 8" />
                     <line x1="12" y1="3" x2="12" y2="15" />
                   </svg>
-                  <span>{fileName || 'Kéo thả hoặc chọn file PDF'}</span>
-                  <span className="upload-hint">Chỉ hỗ trợ PDF · Tự động OCR với file scan</span>
+                  <span>{fileName || 'Kéo thả hoặc chọn file PDF/DOCX'}</span>
+                  <span className="upload-hint">PDF scan sẽ OCR · DOCX được trích xuất text trực tiếp</span>
                 </label>
               ) : (
                 <div className="existing-doc-panel">
@@ -1130,7 +1136,7 @@ function GeneratePage() {
                       onChange={(e) => handleSelectExistingDocument(e.target.value)}
                     >
                       <option value="">
-                        {documentsLoading ? 'Đang tải tài liệu...' : 'Chọn tài liệu đã OCR'}
+                        {documentsLoading ? 'Đang tải tài liệu...' : 'Chọn tài liệu đã xử lý'}
                       </option>
                       {reusableDocuments.map((doc) => (
                         <option
@@ -1152,13 +1158,13 @@ function GeneratePage() {
                   </div>
                   {documentsError && <p className="source-note source-note--error">{documentsError}</p>}
                   {!documentsLoading && reusableDocuments.length === 0 && !documentsError && (
-                    <p className="source-note">Chưa có tài liệu OCR sẵn sàng. Hãy tải PDF mới trước.</p>
+                    <p className="source-note">Chưa có tài liệu sẵn sàng. Hãy tải PDF hoặc DOCX mới trước.</p>
                   )}
                   {selectedDocument && (
                     <p className="source-note">
                       {isDocumentIndexed(selectedDocument)
                         ? 'Tài liệu đã index, có thể sinh câu hỏi ngay.'
-                        : 'Tài liệu đã OCR; hệ thống sẽ chunk/index trước khi sinh câu hỏi.'}
+                        : 'Tài liệu đã xử lý; hệ thống sẽ chunk/index trước khi sinh câu hỏi.'}
                     </p>
                   )}
                 </div>
@@ -1369,7 +1375,7 @@ function GeneratePage() {
             {drafts.length === 0 ? (
               <div className="gen-preview-empty">
                 <p>Chưa có câu hỏi nháp.</p>
-                <span>Tải PDF, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.</span>
+                <span>Tải PDF/DOCX, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.</span>
               </div>
             ) : (
               <div className="draft-list">

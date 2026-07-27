@@ -4,15 +4,25 @@ import {
   faBan,
   faChevronLeft,
   faChevronRight,
+  faFileCsv,
+  faFileExcel,
   faFilter,
   faPlay,
   faRotateRight,
   faSearch,
 } from '@fortawesome/free-solid-svg-icons';
 import { cancelAdminJob, listAdminJobs, retryAdminJob } from '../api/adminJobs';
+import {
+  downloadCsv,
+  downloadXlsx,
+  rowsToCsv,
+  timestampedCsvFilename,
+  timestampedXlsxFilename,
+} from '../utils/csvExport';
 import '../css/AdminJobsPage.css';
 
 const PAGE_SIZE = 25;
+const EXPORT_PAGE_SIZE = 100;
 
 const KIND_LABEL = {
   generation: 'Sinh câu hỏi',
@@ -95,6 +105,27 @@ function entityText(job) {
   return entity.label || entity.id || 'Chưa gắn đối tượng';
 }
 
+const JOB_EXPORT_COLUMNS = [
+  { header: 'Job ID', value: (job) => job.id },
+  { header: 'Kind', value: (job) => KIND_LABEL[job.kind] || job.kind || '' },
+  { header: 'Status', value: (job) => STATUS_LABEL[job.status] || job.status || '' },
+  { header: 'Entity label', value: entityText },
+  { header: 'Entity type', value: (job) => job.entity?.type || '' },
+  { header: 'Entity ID', value: (job) => job.entity?.id || '' },
+  { header: 'Actor user ID', value: (job) => job.actor_user_id || '' },
+  { header: 'Queued at', value: (job) => job.queued_at || '' },
+  { header: 'Started at', value: (job) => job.started_at || '' },
+  { header: 'Finished at', value: (job) => job.finished_at || '' },
+  { header: 'Updated at', value: (job) => job.updated_at || '' },
+  { header: 'Progress', value: (job) => job.progress ?? '' },
+  { header: 'Age seconds', value: (job) => job.age_seconds ?? '' },
+  { header: 'Long running', value: (job) => (job.is_long_running ? 'yes' : 'no') },
+  { header: 'Can retry', value: (job) => (job.can_retry ? 'yes' : 'no') },
+  { header: 'Can cancel', value: (job) => (job.can_cancel ? 'yes' : 'no') },
+  { header: 'Error', value: (job) => job.error_message || '' },
+  { header: 'Snapshot', value: (job) => job.snapshot || {} },
+];
+
 function AdminJobsPage() {
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState({ total: 0, active: 0, failed: 0, long_running: 0 });
@@ -111,6 +142,7 @@ function AdminJobsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionKey, setActionKey] = useState('');
+  const [exportKey, setExportKey] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
 
   useEffect(() => {
@@ -121,21 +153,23 @@ function AdminJobsPage() {
     return () => clearTimeout(handle);
   }, [searchInput]);
 
+  const buildJobQuery = useCallback((nextPage = page, pageSize = PAGE_SIZE) => ({
+    page: nextPage,
+    pageSize,
+    kind: kindFilter,
+    status: statusFilter,
+    staleOnly,
+    search: searchTerm,
+    userId: userIdFilter.trim(),
+    dateFrom,
+    dateTo,
+  }), [dateFrom, dateTo, kindFilter, page, searchTerm, staleOnly, statusFilter, userIdFilter]);
+
   const fetchJobs = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const result = await listAdminJobs({
-        page,
-        pageSize: PAGE_SIZE,
-        kind: kindFilter,
-        status: statusFilter,
-        staleOnly,
-        search: searchTerm,
-        userId: userIdFilter.trim(),
-        dateFrom,
-        dateTo,
-      });
+      const result = await listAdminJobs(buildJobQuery());
       setJobs(result.items || []);
       setSummary(result.summary || { total: 0, active: 0, failed: 0, long_running: 0 });
       setTotal(result.total || 0);
@@ -147,7 +181,7 @@ function AdminJobsPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, kindFilter, page, searchTerm, staleOnly, statusFilter, userIdFilter]);
+  }, [buildJobQuery]);
 
   useEffect(() => {
     fetchJobs();
@@ -249,6 +283,48 @@ function AdminJobsPage() {
     }
   };
 
+  const fetchJobsForExport = async () => {
+    const firstResult = await listAdminJobs(buildJobQuery(1, EXPORT_PAGE_SIZE));
+    const exportRows = [...(firstResult.items || [])];
+    const expectedTotal = firstResult.total || exportRows.length;
+
+    for (let nextPage = 2; exportRows.length < expectedTotal; nextPage += 1) {
+      const result = await listAdminJobs(buildJobQuery(nextPage, EXPORT_PAGE_SIZE));
+      const pageRows = result.items || [];
+      if (!pageRows.length) break;
+      exportRows.push(...pageRows);
+    }
+
+    return exportRows;
+  };
+
+  const exportJobsCsv = async () => {
+    setExportKey('jobs-csv');
+    try {
+      const exportRows = await fetchJobsForExport();
+      const csv = rowsToCsv(JOB_EXPORT_COLUMNS, exportRows);
+      downloadCsv(timestampedCsvFilename('admin-jobs'), csv);
+    } catch (err) {
+      window.alert(err.message || 'Xuất CSV thất bại');
+    } finally {
+      setExportKey('');
+    }
+  };
+
+  const exportJobsXlsx = async () => {
+    setExportKey('jobs-xlsx');
+    try {
+      const exportRows = await fetchJobsForExport();
+      downloadXlsx(timestampedXlsxFilename('admin-jobs'), JOB_EXPORT_COLUMNS, exportRows, 'Admin jobs');
+    } catch (err) {
+      window.alert(err.message || 'Xuất XLSX thất bại');
+    } finally {
+      setExportKey('');
+    }
+  };
+
+  const exportDisabled = loading || Boolean(exportKey) || total === 0;
+
   return (
     <main className="admin-jobs-page">
       <section className="jobs-header">
@@ -257,10 +333,30 @@ function AdminJobsPage() {
           <h1>Job hệ thống</h1>
           <p>Theo dõi hàng đợi sinh câu hỏi, đánh giá chất lượng và xử lý tài liệu.</p>
         </div>
-        <button type="button" className="jobs-primary-button" onClick={fetchJobs} disabled={loading}>
-          <FontAwesomeIcon icon={faRotateRight} />
-          <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
-        </button>
+        <div className="jobs-header-actions">
+          <button
+            type="button"
+            className="jobs-secondary-button"
+            onClick={exportJobsCsv}
+            disabled={exportDisabled}
+          >
+            <FontAwesomeIcon icon={faFileCsv} />
+            <span>{exportKey === 'jobs-csv' ? 'Đang xuất' : 'Xuất CSV'}</span>
+          </button>
+          <button
+            type="button"
+            className="jobs-secondary-button"
+            onClick={exportJobsXlsx}
+            disabled={exportDisabled}
+          >
+            <FontAwesomeIcon icon={faFileExcel} />
+            <span>{exportKey === 'jobs-xlsx' ? 'Đang xuất' : 'Xuất XLSX'}</span>
+          </button>
+          <button type="button" className="jobs-primary-button" onClick={fetchJobs} disabled={loading}>
+            <FontAwesomeIcon icon={faRotateRight} />
+            <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
+          </button>
+        </div>
       </section>
 
       <section className="jobs-summary" aria-label="Tổng quan job">
