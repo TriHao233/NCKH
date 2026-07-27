@@ -17,6 +17,7 @@ import {
   releaseQuestionReview,
   reviewQuestion,
 } from '../api/questions';
+import { listSubjects } from '../api/catalog';
 import { AuthContext } from '../context/AuthContext';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ReviewQueuePage.css';
@@ -318,11 +319,18 @@ function ReviewQueuePage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [bloomFilter, setBloomFilter] = useState('all');
   const [colorFilter, setColorFilter] = useState('all');
+  const [subjectFilter, setSubjectFilter] = useState('all');
+  const [chapterFilter, setChapterFilter] = useState('all');
+  const [cloFilter, setCloFilter] = useState('all');
+  const [evaluationStatusFilter, setEvaluationStatusFilter] = useState('all');
+  const [publicationStatusFilter, setPublicationStatusFilter] = useState('all');
   const [minScore, setMinScore] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [catalogSubjects, setCatalogSubjects] = useState([]);
+  const [catalogFilterError, setCatalogFilterError] = useState('');
   const [selected, setSelected] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -361,7 +369,12 @@ function ReviewQueuePage() {
         questionType: typeFilter === 'all' ? undefined : typeFilter,
         bloomLevel: bloomFilter === 'all' ? undefined : bloomFilter,
         qualityColor: colorFilter === 'all' ? undefined : colorFilter,
+        subjectId: subjectFilter === 'all' ? undefined : subjectFilter,
+        chapterId: chapterFilter === 'all' ? undefined : chapterFilter,
+        cloId: cloFilter === 'all' ? undefined : cloFilter,
         minScore: Number.isFinite(numericMinScore) ? numericMinScore : undefined,
+        evaluationStatus: evaluationStatusFilter === 'all' ? undefined : evaluationStatusFilter,
+        publicationStatus: publicationStatusFilter === 'all' ? undefined : publicationStatusFilter,
         search: searchTerm || undefined,
         assignmentStatus,
         assignedTo: assignmentFilter === 'mine' ? 'me' : undefined,
@@ -377,6 +390,17 @@ function ReviewQueuePage() {
       return [];
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCatalogFilters = async () => {
+    setCatalogFilterError('');
+    try {
+      const result = await listSubjects();
+      setCatalogSubjects(result || []);
+    } catch (err) {
+      setCatalogFilterError(err.message || 'Không tải được bộ lọc môn học');
+      setCatalogSubjects([]);
     }
   };
 
@@ -451,9 +475,24 @@ function ReviewQueuePage() {
   useEffect(() => {
     fetchQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, statusFilter, assignmentFilter, typeFilter, bloomFilter, colorFilter, minScore, searchTerm]);
+  }, [
+    page,
+    statusFilter,
+    assignmentFilter,
+    typeFilter,
+    bloomFilter,
+    colorFilter,
+    subjectFilter,
+    chapterFilter,
+    cloFilter,
+    evaluationStatusFilter,
+    publicationStatusFilter,
+    minScore,
+    searchTerm,
+  ]);
 
   useEffect(() => {
+    fetchCatalogFilters();
     fetchDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -526,6 +565,13 @@ function ReviewQueuePage() {
 
   const updateFilter = (setter) => (value) => {
     setter(value);
+    setPage(1);
+  };
+
+  const updateSubjectFilter = (value) => {
+    setSubjectFilter(value);
+    setChapterFilter('all');
+    setCloFilter('all');
     setPage(1);
   };
 
@@ -870,6 +916,9 @@ function ReviewQueuePage() {
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
   const latestModel = latestEvaluation?.evaluator_model || {};
   const selectedAssignment = assignmentOf(selected);
+  const selectedCatalogSubject = catalogSubjects.find((subject) => subject.id === subjectFilter);
+  const chapterFilterOptions = selectedCatalogSubject?.chapters || [];
+  const cloFilterOptions = selectedCatalogSubject?.learning_outcomes || [];
   const sourceItems = sourceViewer?.items || [];
   const activeSource = sourceItems[activeSourceIndex] || sourceItems[0] || null;
   const activeSourcePages = activeSource?.pages || [];
@@ -1029,6 +1078,50 @@ function ReviewQueuePage() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+            <select value={subjectFilter} onChange={(event) => updateSubjectFilter(event.target.value)}>
+              <option value="all">Mọi môn học</option>
+              {catalogSubjects.map((subject) => (
+                <option key={subject.id} value={subject.id}>
+                  {subject.subject_code} - {subject.subject_name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={chapterFilter}
+              onChange={(event) => updateFilter(setChapterFilter)(event.target.value)}
+              disabled={subjectFilter === 'all'}
+            >
+              <option value="all">Mọi chương</option>
+              {chapterFilterOptions.map((chapter) => (
+                <option key={childId(chapter)} value={childId(chapter)}>
+                  {chapter.chapter_code} - {chapter.chapter_name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={cloFilter}
+              onChange={(event) => updateFilter(setCloFilter)(event.target.value)}
+              disabled={subjectFilter === 'all'}
+            >
+              <option value="all">Mọi CLO</option>
+              {cloFilterOptions.map((clo) => (
+                <option key={childId(clo)} value={childId(clo)}>
+                  {clo.clo_code}
+                </option>
+              ))}
+            </select>
+            <select value={evaluationStatusFilter} onChange={(event) => updateFilter(setEvaluationStatusFilter)(event.target.value)}>
+              <option value="all">Mọi trạng thái AI</option>
+              {Object.entries(EVALUATION_STATUS_LABEL).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <select value={publicationStatusFilter} onChange={(event) => updateFilter(setPublicationStatusFilter)(event.target.value)}>
+              <option value="all">Mọi trạng thái Moodle</option>
+              {Object.entries(PUBLICATION_STATUS_LABEL).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
             <input
               type="number"
               min="0"
@@ -1045,6 +1138,7 @@ function ReviewQueuePage() {
             />
           </div>
 
+          {catalogFilterError && <p className="review-error review-error--filters">{catalogFilterError}</p>}
           {error && <p className="review-error">{error}</p>}
           {loading ? (
             <p className="review-empty">Đang tải hàng đợi...</p>
