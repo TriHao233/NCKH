@@ -1099,6 +1099,10 @@ class QuestionWorkflowService:
         }
 
     def publish_to_moodle(self, question_id: str, payload: MoodlePublicationRequest, user_id) -> dict:
+        if not payload.mock:
+            raise ValueError("Tích hợp Moodle thật chưa được cấu hình; hãy dùng export GIFT/XML")
+        if settings.app_env == "production" and not settings.demo_mode:
+            raise ValueError("Mô phỏng Moodle bị tắt trong production; hãy dùng export GIFT/XML")
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
@@ -1147,7 +1151,7 @@ class QuestionWorkflowService:
             },
             "response_payload": {
                 "mock": payload.mock,
-                "message": "Mock Moodle publication recorded locally with export payload",
+                "message": "Simulated Moodle publication recorded locally with export payload",
                 "export_formats": list(exports.keys()),
             },
             "error": None,

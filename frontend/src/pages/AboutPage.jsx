@@ -70,7 +70,7 @@ const scope = [
         <circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" />
       </svg>
     ),
-    items: ['Mô hình ngôn ngữ lớn mã nguồn mở, chạy local', 'Kỹ thuật RAG truy xuất ngữ cảnh từ tài liệu', 'Plugin đồng bộ trực tiếp vào Moodle'],
+    items: ['Mô hình ngôn ngữ lớn mã nguồn mở, chạy local', 'Kỹ thuật RAG truy xuất ngữ cảnh từ tài liệu', 'Export chuẩn Moodle và mô phỏng publication'],
   },
 ];
 
@@ -89,7 +89,7 @@ const objectives = [
   },
   {
     title: 'Tương thích & liên kết hệ thống',
-    desc: 'Xây dựng cơ chế chuyển đổi, đồng bộ dữ liệu câu hỏi từ hệ thống sang Ngân hàng câu hỏi của Moodle.',
+    desc: 'Xây dựng cơ chế chuyển đổi và export dữ liệu câu hỏi theo định dạng Ngân hàng câu hỏi của Moodle.',
   },
 ];
 

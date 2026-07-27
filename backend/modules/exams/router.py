@@ -28,6 +28,8 @@ router = APIRouter(prefix=f"{settings.api_prefix}/exams", tags=["Exams"])
 def _translate(exc: Exception):
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, PermissionError):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     raise exc
@@ -58,11 +60,11 @@ def list_exams(
 @router.get("/{exam_id}", response_model=ExamResponse)
 def get_exam(
     exam_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.get_exam(exam_id)
+        return service.get_exam(exam_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -71,11 +73,11 @@ def get_exam(
 def update_exam(
     exam_id: str,
     payload: ExamUpdateRequest,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.update_exam(exam_id, payload)
+        return service.update_exam(exam_id, payload, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -83,11 +85,11 @@ def update_exam(
 @router.delete("/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_exam(
     exam_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        service.delete_exam(exam_id)
+        service.delete_exam(exam_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -96,11 +98,11 @@ def delete_exam(
 def save_matrix(
     exam_id: str,
     payload: ExamMatrixRequest,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.save_matrix(exam_id, payload)
+        return service.save_matrix(exam_id, payload, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -108,11 +110,11 @@ def save_matrix(
 @router.get("/{exam_id}/matrix/availability", response_model=list[MatrixCellAvailability])
 def matrix_availability(
     exam_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.matrix_availability(exam_id)
+        return service.matrix_availability(exam_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -120,11 +122,11 @@ def matrix_availability(
 @router.post("/{exam_id}/questions/auto-generate", response_model=ExamResponse)
 def auto_generate_questions(
     exam_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.auto_generate_pool(exam_id)
+        return service.auto_generate_pool(exam_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -133,11 +135,11 @@ def auto_generate_questions(
 def add_questions_manual(
     exam_id: str,
     payload: AddQuestionsManualRequest,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.add_questions_manual(exam_id, payload)
+        return service.add_questions_manual(exam_id, payload, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -146,11 +148,11 @@ def add_questions_manual(
 def remove_question(
     exam_id: str,
     question_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.remove_question(exam_id, question_id)
+        return service.remove_question(exam_id, question_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -163,11 +165,11 @@ def remove_question(
 def create_variant(
     exam_id: str,
     payload: ExamVariantCreateRequest,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
-        return service.create_variant(exam_id, payload)
+        return service.create_variant(exam_id, payload, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -175,11 +177,11 @@ def create_variant(
 @router.get("/{exam_id}/variants", response_model=list[ExamVariantResponse])
 def list_variants(
     exam_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
-        return service.list_variants(exam_id)
+        return service.list_variants(exam_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -188,11 +190,11 @@ def list_variants(
 def get_variant(
     exam_id: str,
     variant_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
-        return service.get_variant(exam_id, variant_id)
+        return service.get_variant(exam_id, variant_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -203,11 +205,11 @@ def get_variant(
 def delete_variant(
     exam_id: str,
     variant_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
-        service.delete_variant(exam_id, variant_id)
+        service.delete_variant(exam_id, variant_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -216,11 +218,11 @@ def delete_variant(
 def preview_variant(
     exam_id: str,
     variant_id: str,
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
-        return service.build_preview(exam_id, variant_id)
+        return service.build_preview(exam_id, variant_id, current_user)
     except Exception as exc:
         _translate(exc)
 
@@ -230,18 +232,13 @@ async def export_variant_pdf(
     exam_id: str,
     variant_id: str,
     export_type: str = Query("de", alias="type"),
-    _user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     if export_type not in VALID_EXPORT_TYPES:
         raise HTTPException(status_code=400, detail="type phải là de, dapan hoặc de_dapan")
     try:
-        exam = service.exams.find(exam_id)
-        if not exam:
-            raise LookupError("Không tìm thấy đề thi")
-        variant = service.variants.find(variant_id)
-        if not variant or str(variant["exam_id"]) != exam_id:
-            raise LookupError("Không tìm thấy mã đề")
+        exam, variant = service.get_exam_variant_pair(exam_id, variant_id, current_user)
     except Exception as exc:
         _translate(exc)
     if not variant["questions"]:

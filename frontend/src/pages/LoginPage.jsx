@@ -5,15 +5,9 @@ import { AuthContext } from "../context/AuthContext";
 import { signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
 import { apiRequest } from "../services/apiClient";
+import { landingPathForRole } from "../auth/permissions";
 
-const PROTECTED_ROUTE_ROLES = {
-  "/sinh-cau-hoi": ["Teacher"],
-  "/quan-ly": ["Teacher"],
-  "/kiem-duyet": ["Reviewer"],
-  "/danh-muc": ["Admin"],
-  "/quan-ly-nguoi-dung": ["Admin"],
-  "/ho-so": ["Admin", "Teacher", "Reviewer"],
-};
+const DEMO_LOGIN_ENABLED = String(import.meta.env.VITE_DEMO_MODE).toLowerCase() === "true";
 
 const DEMO_LOGIN_ALIASES = {
   admin: "admin",
@@ -23,25 +17,13 @@ const DEMO_LOGIN_ALIASES = {
 };
 
 function demoUsernameFor(value) {
+  if (!DEMO_LOGIN_ENABLED) return null;
   const identifier = value.trim().toLowerCase();
   return DEMO_LOGIN_ALIASES[identifier] || null;
 }
 
 function normalizeLoginEmail(value) {
   return value.trim().toLowerCase();
-}
-
-function landingPathForRole(role, requestedPath) {
-  const requestedPathname = typeof requestedPath === "string"
-    ? requestedPath.split("?")[0]
-    : null;
-  if (requestedPathname && PROTECTED_ROUTE_ROLES[requestedPathname]?.includes(role)) {
-    return requestedPath;
-  }
-  if (role === "Reviewer") return "/kiem-duyet";
-  if (role === "Admin") return "/danh-muc";
-  if (role === "Teacher") return "/sinh-cau-hoi";
-  return "/trang-chu";
 }
 
 function LoginPage() {
@@ -230,13 +212,13 @@ function LoginPage() {
               </button>
 
               <div className="divider">
-                <span>hoặc đăng nhập bằng tài khoản demo/email</span>
+                <span>{DEMO_LOGIN_ENABLED ? "hoặc đăng nhập bằng tài khoản demo/email" : "hoặc đăng nhập bằng email"}</span>
               </div>
 
               <form className="auth-form" onSubmit={handleSubmit} noValidate>
                 <div className="field-group">
                   <label className="field-label" htmlFor="email">
-                    Tài khoản hoặc email
+                    {DEMO_LOGIN_ENABLED ? "Tài khoản hoặc email" : "Email"}
                   </label>
                   <div className="field-wrap">
                     <i className="fa-regular fa-envelope field-icon"></i>
@@ -247,7 +229,7 @@ function LoginPage() {
                       value={formData.email}
                       onChange={handleChange}
                       className="field-input"
-                      placeholder="admin, reviewer hoặc example@ctu.edu.vn"
+                      placeholder={DEMO_LOGIN_ENABLED ? "admin, reviewer hoặc example@ctu.edu.vn" : "example@ctu.edu.vn"}
                       autoComplete="username"
                     />
                   </div>

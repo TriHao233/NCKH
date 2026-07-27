@@ -1,5 +1,6 @@
 import inspect
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bson import ObjectId
@@ -7,8 +8,11 @@ from pydantic import ValidationError
 
 from core.bootstrap import VALIDATORS
 from core.config import settings
+from core.dependencies import CurrentUser
+from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
+from modules.exams.service import ExamService, ExamVariantService
 from modules.generation.schemas import (
     BloomLevel,
     GeneratedQuestion,
@@ -29,8 +33,163 @@ from modules.questions.workflow_schemas import (
     ReviewOverride,
 )
 from modules.rag.search import _heading_matches_target, _normalize_heading_text
-from modules.users.schemas import GenerationPresetPayload, PublicRegisterRequest, RoleEnum
+from modules.users.schemas import (
+    GenerationPresetPayload,
+    PublicRegisterRequest,
+    RoleEnum,
+    UserAdminUpdateRequest,
+)
 from modules.users.service import UserService
+
+
+def _current_user(role="Teacher", user_id=None):
+    oid = user_id or ObjectId()
+    return CurrentUser(
+        id=oid,
+        firebase_uid=f"firebase-{oid}",
+        email=f"{role.lower()}@example.com",
+        role=role,
+        is_active=True,
+    )
+
+
+def _exam_doc(owner_id):
+    now = datetime.now(timezone.utc)
+    return {
+        "_id": ObjectId(),
+        "name": "Midterm",
+        "exam_title": "Data Structures Midterm",
+        "subject_id": ObjectId(),
+        "question_count": 1,
+        "header": {"school": "CTU"},
+        "matrix": [],
+        "questions": [],
+        "status": "draft",
+        "created_by_user_id": owner_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+class FakeExamRepository:
+    def __init__(self, exams=None, variants=None):
+        self.exams = {str(exam["_id"]): exam for exam in (exams or [])}
+        self.variants = variants or []
+
+    def create(self, exam):
+        self.exams[str(exam["_id"])] = exam
+        return exam
+
+    def find(self, exam_id):
+        return self.exams.get(str(exam_id))
+
+    def list(self, page, page_size, created_by_user_id):
+        items = list(self.exams.values())
+        if created_by_user_id is not None:
+            items = [
+                exam for exam in items
+                if str(exam.get("created_by_user_id")) == str(created_by_user_id)
+            ]
+        return items, len(items)
+
+    def update(self, exam_id, updates):
+        exam = self.find(exam_id)
+        if not exam:
+            return None
+        exam.update(updates)
+        exam["updated_at"] = datetime.now(timezone.utc)
+        return exam
+
+    def delete(self, exam_id):
+        return self.exams.pop(str(exam_id), None) is not None
+
+    def count_variants(self, exam_id):
+        return len([v for v in self.variants if str(v["exam_id"]) == str(exam_id)])
+
+
+class FakeExamVariantRepository:
+    def __init__(self, variants=None):
+        self.variants = {str(variant["_id"]): variant for variant in (variants or [])}
+
+    def create(self, variant):
+        self.variants[str(variant["_id"])] = variant
+        return variant
+
+    def find(self, variant_id):
+        return self.variants.get(str(variant_id))
+
+    def list_by_exam(self, exam_id):
+        return [
+            variant for variant in self.variants.values()
+            if str(variant["exam_id"]) == str(exam_id)
+        ]
+
+    def delete(self, variant_id):
+        return self.variants.pop(str(variant_id), None) is not None
+
+
+def _user_doc(role="Admin", is_active=True):
+    now = datetime.now(timezone.utc)
+    oid = ObjectId()
+    return {
+        "_id": oid,
+        "firebase_uid": f"firebase-{oid}",
+        "email": f"{role.lower()}-{oid}@example.com",
+        "display_name": f"{role} User",
+        "role": role,
+        "profile": {"school": "", "address": "", "avatar": ""},
+        "is_active": is_active,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+class FakeUserRepository:
+    def __init__(self, users):
+        self.users = {str(user["_id"]): dict(user) for user in users}
+
+    def find_by_id(self, user_id):
+        return self.users.get(str(user_id))
+
+    def update(self, user_id, fields):
+        user = self.find_by_id(user_id)
+        if not user:
+            return None
+        user.update(fields)
+        user["updated_at"] = datetime.now(timezone.utc)
+        return user
+
+    def count_active_admins(self):
+        return len([
+            user for user in self.users.values()
+            if user.get("role") == "Admin" and user.get("is_active", True)
+        ])
+
+
+class FakeIdentityGateway:
+    def __init__(self):
+        self.disabled_calls = []
+        self.update_calls = []
+
+    def create_user(self, *, email, password, display_name):
+        raise NotImplementedError
+
+    def update_user(self, firebase_uid, **fields):
+        self.update_calls.append((firebase_uid, fields))
+
+    def set_user_disabled(self, firebase_uid, disabled):
+        self.disabled_calls.append((firebase_uid, disabled))
+
+    def delete_user(self, firebase_uid):
+        raise NotImplementedError
+
+
+class FakeSessions:
+    def __init__(self):
+        self.upserts = []
+
+    def upsert(self, firebase_uid, id_token):
+        self.upserts.append((firebase_uid, id_token))
 
 
 class SchemaV2Tests(unittest.TestCase):
@@ -78,6 +237,73 @@ class SchemaV2Tests(unittest.TestCase):
         payload = MoodlePublicationRequest(expected_version=1)
         self.assertEqual(payload.moodle_site_id, "demo-moodle")
         self.assertTrue(payload.mock)
+
+    def test_demo_login_route_registration_follows_demo_mode(self):
+        route_paths = {route.path for route in auth_login.router.routes}
+        self.assertEqual("/demo-login" in route_paths, settings.demo_mode)
+
+    def test_teacher_cannot_access_another_teachers_exam(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        service = ExamService(FakeExamRepository([exam]), question_repository=None)
+
+        with self.assertRaises(PermissionError):
+            service.get_exam(str(exam["_id"]), other_teacher)
+
+        result = service.get_exam(str(exam["_id"]), owner)
+        self.assertEqual(result["id"], str(exam["_id"]))
+
+    def test_admin_can_access_any_teacher_exam(self):
+        owner = _current_user("Teacher")
+        admin = _current_user("Admin")
+        exam = _exam_doc(owner.id)
+        service = ExamService(FakeExamRepository([exam]), question_repository=None)
+
+        result = service.get_exam(str(exam["_id"]), admin)
+        self.assertEqual(result["created_by_user_id"], str(owner.id))
+
+    def test_variant_preview_enforces_exam_ownership(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        variant = {
+            "_id": ObjectId(),
+            "exam_id": exam["_id"],
+            "exam_code": "A01",
+            "questions": [],
+            "answer_key": {},
+            "created_at": datetime.now(timezone.utc),
+        }
+        service = ExamVariantService(
+            FakeExamRepository([exam]),
+            FakeExamVariantRepository([variant]),
+        )
+
+        with self.assertRaises(PermissionError):
+            service.build_preview(str(exam["_id"]), str(variant["_id"]), other_teacher)
+
+    def test_cannot_deactivate_last_active_admin(self):
+        admin_doc = _user_doc("Admin", True)
+        service = UserService(FakeUserRepository([admin_doc]), FakeIdentityGateway(), FakeSessions())
+        actor = _current_user("Admin", admin_doc["_id"])
+
+        with self.assertRaises(ValueError):
+            service.deactivate(str(admin_doc["_id"]), actor)
+
+    def test_cannot_downgrade_last_active_admin(self):
+        admin_doc = _user_doc("Admin", True)
+        identity = FakeIdentityGateway()
+        service = UserService(FakeUserRepository([admin_doc]), identity, FakeSessions())
+        actor = _current_user("Admin", admin_doc["_id"])
+
+        with self.assertRaises(ValueError):
+            service.update_admin(
+                str(admin_doc["_id"]),
+                UserAdminUpdateRequest(role="Teacher"),
+                actor,
+            )
+        self.assertEqual(identity.disabled_calls, [])
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(

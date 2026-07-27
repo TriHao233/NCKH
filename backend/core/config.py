@@ -24,9 +24,21 @@ def _env_first(names: tuple[str, ...], default: str) -> str:
     return default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings(BaseModel):
     app_name: str = os.getenv("APP_NAME", "QBankCTU API")
     app_version: str = os.getenv("APP_VERSION", "0.1.0")
+    app_env: str = os.getenv("APP_ENV", "production").strip().lower()
+    demo_mode: bool = _env_bool(
+        "DEMO_MODE",
+        os.getenv("APP_ENV", "production").strip().lower() == "demo",
+    )
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
 
@@ -58,10 +70,15 @@ class Settings(BaseModel):
         os.getenv("DB_NAME", "rag_database"),
     )
     mongo_connect_timeout_ms: int = int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "10000"))
+    job_recovery_timeout_minutes: int = int(os.getenv("JOB_RECOVERY_TIMEOUT_MINUTES", "120"))
 
     firebase_credentials_path: str = os.getenv(
         "FIREBASE_CREDENTIALS_PATH", str(BASE_DIR / "firebase-service-account.json")
     )
+    demo_admin_email: str = os.getenv("DEMO_ADMIN_EMAIL", "admin@qbankctu.edu.vn")
+    demo_admin_password: str = os.getenv("DEMO_ADMIN_PASSWORD", "")
+    demo_reviewer_email: str = os.getenv("DEMO_REVIEWER_EMAIL", "reviewer@qbankctu.edu.vn")
+    demo_reviewer_password: str = os.getenv("DEMO_REVIEWER_PASSWORD", "")
 
     # Provider LLM mặc định (qwen chạy local qua Ollama)
     model_provider: str = os.getenv("MODEL_PROVIDER", "qwen")

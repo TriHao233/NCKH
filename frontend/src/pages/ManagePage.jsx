@@ -64,10 +64,10 @@ const EVALUATION_STATUS_LABEL = {
 };
 
 const PUBLICATION_STATUS_LABEL = {
-  NOT_PUBLISHED: 'Chưa đồng bộ',
-  PUBLISHED: 'Đã đồng bộ Moodle',
-  STALE: 'Cần đồng bộ lại',
-  FAILED: 'Đồng bộ lỗi',
+  NOT_PUBLISHED: 'Chưa ghi mô phỏng',
+  PUBLISHED: 'Đã ghi mô phỏng Moodle',
+  STALE: 'Cần ghi mô phỏng lại',
+  FAILED: 'Mô phỏng lỗi',
 };
 
 const QUALITY_COLOR_CLASS = {
@@ -668,10 +668,10 @@ function ManagePage() {
 
   const handlePublishMoodle = async (item) => {
     if (item.review_status !== 'APPROVED') {
-      alert('Chỉ câu hỏi đã duyệt mới được đồng bộ Moodle.');
+      alert('Chỉ câu hỏi đã duyệt mới được ghi mô phỏng Moodle.');
       return;
     }
-    if (!window.confirm(`Ghi nhận đồng bộ Moodle cho ${item.question_code}?`)) {
+    if (!window.confirm(`Ghi mô phỏng Moodle cho ${item.question_code}?`)) {
       return;
     }
     setWorkflowBusyId(item.id);
@@ -681,9 +681,9 @@ function ManagePage() {
         export_format: 'BOTH',
         mock: true,
       });
-      await refreshAfterWorkflow('Đã ghi nhận đồng bộ Moodle.', item);
+      await refreshAfterWorkflow('Đã ghi mô phỏng Moodle.', item);
     } catch (error) {
-      alert('Đồng bộ Moodle thất bại: ' + error.message);
+      alert('Ghi mô phỏng Moodle thất bại: ' + error.message);
     } finally {
       setWorkflowBusyId(null);
     }
@@ -742,7 +742,7 @@ function ManagePage() {
             <div className="page-hero-badge">Khu vực quản lý</div>
             <h1 className="page-hero-title">Quản lý ngân hàng câu hỏi</h1>
             <p className="page-hero-desc">
-              Theo dõi, chỉnh sửa và phê duyệt câu hỏi trước khi đồng bộ vào ngân hàng đề thi trên Moodle.
+              Theo dõi, chỉnh sửa và phê duyệt câu hỏi trước khi export hoặc ghi mô phỏng Moodle.
             </p>
           </div>
           <div className="manage-hero-actions">
@@ -761,7 +761,7 @@ function ManagePage() {
               onClick={() => handlePublishMoodle(approvedForPublication[0])}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></svg>
-              Đồng bộ Moodle
+              Mô phỏng Moodle
             </button>
           </div>
         </div>
@@ -942,7 +942,7 @@ function ManagePage() {
                                 disabled={workflowBusyId === item.id || item.review_status !== 'APPROVED' || item.publication_status === 'PUBLISHED'}
                                 onClick={() => handlePublishMoodle(item)}
                               >
-                                Moodle
+                                Mô phỏng
                               </button>
                             </>
                           )}
@@ -1026,7 +1026,7 @@ function ManagePage() {
             <div className="card side-card workflow-card">
               <h3>Luồng kiểm duyệt</h3>
               {!selectedQuestion ? (
-                <p className="side-note">Chọn "Chi tiết" trên một câu hỏi để xem kết quả đánh giá, kiểm duyệt và đồng bộ Moodle.</p>
+                <p className="side-note">Chọn "Chi tiết" trên một câu hỏi để xem kết quả đánh giá, kiểm duyệt và mô phỏng Moodle.</p>
               ) : (
                 <>
                   <div className="workflow-question-code">{selectedQuestion.question_code}</div>
@@ -1081,7 +1081,7 @@ function ManagePage() {
                             <span>{item.moodle_question_ref_id || 'Đã ghi nhận trong hệ thống'}</span>
                           </div>
                         ))}
-                        {publicationHistory.length === 0 && <span className="history-empty">Chưa đồng bộ Moodle.</span>}
+                        {publicationHistory.length === 0 && <span className="history-empty">Chưa ghi mô phỏng Moodle.</span>}
                       </div>
                     </>
                   )}
@@ -1090,9 +1090,9 @@ function ManagePage() {
             </div>
 
             <div className="card side-card">
-              <h3>Trạng thái Moodle</h3>
+              <h3>Trạng thái mô phỏng Moodle</h3>
               <p className="side-note">
-                Câu hỏi đã duyệt có thể được ghi nhận đồng bộ Moodle trong môi trường demo.
+                Câu hỏi đã duyệt có thể được ghi mô phỏng Moodle trong môi trường demo.
               </p>
               <div className="moodle-status">
                 <span className="moodle-dot" />

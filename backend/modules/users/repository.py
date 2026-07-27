@@ -60,6 +60,8 @@ class UserRepository(Protocol):
 
     def update(self, user_id: str | ObjectId, fields: dict) -> dict | None: ...
 
+    def count_active_admins(self) -> int: ...
+
     def delete_by_id(self, user_id: str | ObjectId) -> None: ...
 
     def get_stats(self, user_id: str | ObjectId) -> dict: ...
@@ -175,6 +177,9 @@ class MongoUserRepository:
             {"$set": fields},
             return_document=ReturnDocument.AFTER,
         )
+
+    def count_active_admins(self) -> int:
+        return self.collection.count_documents({"role": "Admin", "is_active": True})
 
     def delete_by_id(self, user_id: str | ObjectId) -> None:
         self.collection.delete_one({"_id": object_id(user_id)})

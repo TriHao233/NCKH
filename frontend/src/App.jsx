@@ -17,6 +17,7 @@ import TaskCalendarPage from './pages/TaskCalendarPage';
 import ExamListPage from './pages/ExamListPage';
 import ExamBuilderPage from './pages/ExamBuilderPage';
 import { AuthContext } from './context/AuthContext';
+import { PERMISSIONS } from './auth/permissions';
 
 function RequireRole({ roles, children }) {
     const { user, loading } = useContext(AuthContext);
@@ -37,7 +38,7 @@ function App() {
                 <Route
                     path="/sinh-cau-hoi"
                     element={(
-                        <RequireRole roles={['Teacher']}>
+                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
                             <GeneratePage />
                         </RequireRole>
                     )}
@@ -45,7 +46,7 @@ function App() {
                 <Route
                     path="/quan-ly"
                     element={(
-                        <RequireRole roles={['Teacher']}>
+                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
                             <ManagePage />
                         </RequireRole>
                     )}
@@ -53,7 +54,7 @@ function App() {
                 <Route
                     path="/lam-de-thi"
                     element={(
-                        <RequireRole roles={['Teacher']}>
+                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
                             <ExamListPage />
                         </RequireRole>
                     )}
@@ -61,7 +62,7 @@ function App() {
                 <Route
                     path="/lam-de-thi/:examId"
                     element={(
-                        <RequireRole roles={['Teacher']}>
+                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
                             <ExamBuilderPage />
                         </RequireRole>
                     )}
@@ -69,7 +70,7 @@ function App() {
                 <Route
                     path="/kiem-duyet"
                     element={(
-                        <RequireRole roles={['Reviewer']}>
+                        <RequireRole roles={PERMISSIONS.reviewerWorkspace}>
                             <ReviewQueuePage />
                         </RequireRole>
                     )}
@@ -77,7 +78,7 @@ function App() {
                 <Route
                     path="/danh-muc"
                     element={(
-                        <RequireRole roles={['Admin']}>
+                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
                             <CatalogAdminPage />
                         </RequireRole>
                     )}
@@ -85,7 +86,7 @@ function App() {
                 <Route
                     path="/quan-ly-nguoi-dung"
                     element={(
-                        <RequireRole roles={['Admin']}>
+                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
                             <UsersAdminPage />
                         </RequireRole>
                     )}
@@ -93,7 +94,7 @@ function App() {
                 <Route
                     path="/lich-cong-viec"
                     element={(
-                        <RequireRole roles={['Teacher']}>
+                        <RequireRole roles={PERMISSIONS.authenticated}>
                             <TaskCalendarPage />
                         </RequireRole>
                     )}
@@ -103,7 +104,7 @@ function App() {
                 <Route
                     path="/ho-so"
                     element={(
-                        <RequireRole roles={['Admin', 'Teacher', 'Reviewer']}>
+                        <RequireRole roles={PERMISSIONS.authenticated}>
                             <UserProfile />
                         </RequireRole>
                     )}

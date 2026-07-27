@@ -11,6 +11,7 @@ from core.config import settings
 from core.database import close_database, ping_database
 from core.dependencies import require_teacher_or_admin
 from core.firebase import init_firebase
+from core.job_recovery import recover_stale_jobs
 from core.logging import setup_logging
 from modules.auth import login, profile, register
 from modules.catalog.router import router as catalog_router
@@ -31,6 +32,7 @@ async def lifespan(_app: FastAPI):
     init_firebase()
     await asyncio.to_thread(ping_database)
     await asyncio.to_thread(bootstrap_database)
+    await asyncio.to_thread(recover_stale_jobs)
     try:
         yield
     finally:

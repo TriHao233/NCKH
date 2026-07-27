@@ -39,10 +39,10 @@ const EVALUATION_STATUS_LABEL = {
 };
 
 const PUBLICATION_STATUS_LABEL = {
-  NOT_PUBLISHED: 'Chưa đồng bộ',
+  NOT_PUBLISHED: 'Chưa ghi mô phỏng',
   PENDING: 'Đang chờ',
-  PUBLISHED: 'Đã đồng bộ',
-  FAILED: 'Đồng bộ lỗi',
+  PUBLISHED: 'Đã ghi mô phỏng',
+  FAILED: 'Mô phỏng lỗi',
 };
 
 const PAGE_SIZE = 20;
@@ -318,7 +318,7 @@ function ReviewQueuePage() {
       });
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Đồng bộ Moodle thất bại: ' + err.message);
+      alert('Ghi mô phỏng Moodle thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -562,7 +562,7 @@ function ReviewQueuePage() {
                   disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'}
                   onClick={() => publish(selected)}
                 >
-                  Moodle
+                  Mô phỏng Moodle
                 </button>
                 <button
                   type="button"
@@ -659,13 +659,13 @@ function ReviewQueuePage() {
                       {reviews.length === 0 && <p>Chưa có lượt kiểm duyệt.</p>}
                     </div>
                     <div>
-                      <h3>Đồng bộ Moodle</h3>
+                      <h3>Mô phỏng Moodle</h3>
                       {publications.slice(0, 4).map((publication) => (
                         <p key={publication.id || publication._id}>
                           <b>{publicationStatusLabel(publication.status)}</b> {publication.moodle_question_ref_id || ''}
                         </p>
                       ))}
-                      {publications.length === 0 && <p>Chưa đồng bộ.</p>}
+                      {publications.length === 0 && <p>Chưa ghi mô phỏng.</p>}
                     </div>
                   </section>
                 </>

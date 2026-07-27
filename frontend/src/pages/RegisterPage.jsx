@@ -20,13 +20,7 @@ import {
 } from "@fortawesome/free-regular-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import "../css/RegisterPage.css";
-
-function landingPathForRole(role) {
-  if (role === "Reviewer") return "/kiem-duyet";
-  if (role === "Admin") return "/danh-muc";
-  if (role === "Teacher") return "/sinh-cau-hoi";
-  return "/trang-chu";
-}
+import { landingPathForRole } from "../auth/permissions";
 
 function DangKy() {
   const navigate = useNavigate();

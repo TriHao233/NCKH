@@ -208,11 +208,11 @@ def get_user(
 def update_user(
     user_id: str,
     payload: UserAdminUpdateRequest,
-    _admin: CurrentUser = Depends(require_admin),
+    admin: CurrentUser = Depends(require_admin),
     service: UserService = Depends(get_user_service),
 ):
     try:
-        user = service.update_admin(user_id, payload)
+        user = service.update_admin(user_id, payload, admin)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not user:
@@ -223,11 +223,11 @@ def update_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(
     user_id: str,
-    _admin: CurrentUser = Depends(require_admin),
+    admin: CurrentUser = Depends(require_admin),
     service: UserService = Depends(get_user_service),
 ):
     try:
-        deleted = service.deactivate(user_id)
+        deleted = service.deactivate(user_id, admin)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:

@@ -252,9 +252,9 @@ function HomePage() {
               <div className="ws-card ws-card--success">
                 <span className="ws-step-num">06</span>
                 <h3 className="ws-title">Tích hợp Moodle</h3>
-                <p className="ws-desc">Ngân hàng câu hỏi chất lượng cao được lưu trữ và tự động đồng bộ qua Plugin sang hệ thống E-learning Moodle.</p>
+                <p className="ws-desc">Ngân hàng câu hỏi chất lượng cao được lưu trữ, export theo chuẩn Moodle và ghi nhận mô phỏng trong môi trường demo.</p>
                 <div className="ws-tags">
-                  <span className="ws-tag ws-tag--green">Moodle Sync</span>
+                  <span className="ws-tag ws-tag--green">Moodle Export</span>
                   <span className="ws-tag ws-tag--green">JSON / DOCX</span>
                 </div>
               </div>
@@ -332,8 +332,8 @@ function HomePage() {
                   <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
                 </svg>
               </div>
-              <h3 className="fc-title">Đồng bộ Moodle</h3>
-              <p className="fc-desc">Tích hợp sâu hệ thống Moodle LMS qua Plugin, đóng gói câu hỏi tự động với định dạng chuẩn.</p>
+              <h3 className="fc-title">Export Moodle</h3>
+              <p className="fc-desc">Đóng gói câu hỏi tự động theo định dạng chuẩn và ghi nhận mô phỏng publication cho demo.</p>
             </div>
           </div>
         </div>

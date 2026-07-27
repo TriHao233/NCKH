@@ -6,7 +6,9 @@ from typing import Protocol
 from bson import ObjectId
 from firebase_admin import auth
 
+from core.audit import record_audit_event
 from core.database import get_rag_db
+from core.dependencies import CurrentUser
 from modules.auth.session_repository import (
     FirebaseSessionRepository,
     get_firebase_session_repository,
@@ -295,7 +297,31 @@ class UserService:
         updated = self.repository.update(user_id, {"task_calendar": next_tasks})
         return updated is not None
 
-    def update_admin(self, user_id: str, payload: UserAdminUpdateRequest) -> dict | None:
+    def _ensure_admin_floor(self, user: dict, fields: dict) -> None:
+        if user.get("role") != "Admin" or not user.get("is_active", True):
+            return
+        next_role = fields.get("role", user.get("role"))
+        next_active = fields.get("is_active", user.get("is_active", True))
+        if next_role == "Admin" and next_active is True:
+            return
+        if self.repository.count_active_admins() <= 1:
+            raise ValueError("Hệ thống phải còn ít nhất một Admin active")
+
+    @staticmethod
+    def _user_audit_snapshot(user: dict | None) -> dict:
+        if not user:
+            return {}
+        return {
+            "role": user.get("role"),
+            "is_active": user.get("is_active", True),
+        }
+
+    def update_admin(
+        self,
+        user_id: str,
+        payload: UserAdminUpdateRequest,
+        actor: CurrentUser | None = None,
+    ) -> dict | None:
         fields = payload.model_dump(exclude_none=True)
         profile = fields.get("profile")
         if profile is not None and hasattr(profile, "model_dump"):
@@ -306,6 +332,8 @@ class UserService:
         user = self.repository.find_by_id(user_id)
         if not user:
             return None
+        self._ensure_admin_floor(user, fields)
+        before = self._user_audit_snapshot(user)
         if payload.display_name is not None:
             self.identity.update_user(user["firebase_uid"], display_name=payload.display_name)
         if payload.is_active is not None:
@@ -313,16 +341,38 @@ class UserService:
         updated = self.repository.update(user_id, fields)
         if updated and payload.is_active is False:
             self.sessions.upsert(user["firebase_uid"], None)
+        if updated and {"role", "is_active"} & set(fields):
+            record_audit_event(
+                action="user.admin_update",
+                entity_type="user",
+                entity_id=user["_id"],
+                actor_user_id=actor.id if actor else None,
+                actor_role=actor.role if actor else None,
+                before=before,
+                after=self._user_audit_snapshot(updated),
+                metadata={"changed_fields": sorted({"role", "is_active"} & set(fields))},
+            )
         return serialize_user(updated) if updated else None
 
-    def deactivate(self, user_id: str) -> bool:
+    def deactivate(self, user_id: str, actor: CurrentUser | None = None) -> bool:
         user = self.repository.find_by_id(user_id)
         if not user:
             return False
+        self._ensure_admin_floor(user, {"is_active": False})
+        before = self._user_audit_snapshot(user)
         self.identity.set_user_disabled(user["firebase_uid"], True)
         updated = self.repository.update(user_id, {"is_active": False})
         if updated:
             self.sessions.upsert(user["firebase_uid"], None)
+            record_audit_event(
+                action="user.deactivate",
+                entity_type="user",
+                entity_id=user["_id"],
+                actor_user_id=actor.id if actor else None,
+                actor_role=actor.role if actor else None,
+                before=before,
+                after=self._user_audit_snapshot(updated),
+            )
         return updated is not None
 
 

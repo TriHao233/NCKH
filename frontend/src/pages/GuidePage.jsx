@@ -19,7 +19,7 @@ const roles = [
         <path d="M12 2l8 4v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6l8-4z" />
       </svg>
     ),
-    desc: 'Quản lý tài khoản, phân quyền người dùng, giám sát toàn bộ ngân hàng câu hỏi và cấu hình đồng bộ dữ liệu sang Moodle.',
+    desc: 'Quản lý tài khoản, phân quyền người dùng, giám sát toàn bộ ngân hàng câu hỏi và cấu hình export/mô phỏng Moodle.',
   },
 ];
 
@@ -51,8 +51,8 @@ const steps = [
   },
   {
     num: '06',
-    title: 'Xuất bản & đồng bộ Moodle',
-    desc: 'Câu hỏi đã duyệt được lưu vào ngân hàng câu hỏi và có thể đồng bộ trực tiếp sang hệ thống Moodle qua Plugin.',
+    title: 'Export & mô phỏng Moodle',
+    desc: 'Câu hỏi đã duyệt được lưu vào ngân hàng câu hỏi và có thể export GIFT/XML hoặc ghi mô phỏng publication Moodle trong demo.',
   },
 ];
 
@@ -75,7 +75,7 @@ const faqs = [
   },
   {
     q: 'Câu hỏi đã duyệt được đưa vào Moodle như thế nào?',
-    a: 'Hệ thống tự động chuyển đổi dữ liệu câu hỏi sang cấu trúc chuẩn của Moodle (nội dung, đáp án, thiết lập xáo trộn) thông qua Plugin tích hợp.',
+    a: 'Hệ thống chuyển đổi dữ liệu câu hỏi sang cấu trúc chuẩn của Moodle (nội dung, đáp án, thiết lập xáo trộn) để export GIFT/XML; publication hiện là mô phỏng trong demo.',
   },
 ];
 
@@ -87,7 +87,7 @@ function GuidePage() {
           <div className="page-hero-badge">Hướng dẫn sử dụng</div>
           <h1 className="page-hero-title">Bắt đầu với QBankCTU chỉ trong vài bước</h1>
           <p className="page-hero-desc">
-            Từ tải tài liệu đến xuất bản câu hỏi vào Moodle — quy trình được thiết kế đơn giản, rõ ràng, phù hợp cho
+            Từ tải tài liệu đến export câu hỏi theo chuẩn Moodle — quy trình được thiết kế đơn giản, rõ ràng, phù hợp cho
             cả giảng viên chưa quen thao tác kỹ thuật.
           </p>
         </div>

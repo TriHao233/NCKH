@@ -89,6 +89,21 @@ class ExamService:
             raise LookupError("Không tìm thấy đề thi")
         return exam
 
+    @staticmethod
+    def _assert_can_access(exam: dict, current_user: CurrentUser | None) -> None:
+        if current_user is None:
+            raise PermissionError("Bạn chưa đăng nhập")
+        if current_user.role == "Admin":
+            return
+        if current_user.role == "Teacher" and str(exam.get("created_by_user_id")) == str(current_user.id):
+            return
+        raise PermissionError("Bạn không có quyền truy cập đề thi này")
+
+    def _get_for_user_or_404(self, exam_id: str, current_user: CurrentUser | None) -> dict:
+        exam = self._get_or_404(exam_id)
+        self._assert_can_access(exam, current_user)
+        return exam
+
     def create_exam(self, payload: ExamCreateRequest, created_by_user_id: ObjectId) -> dict:
         now = utc_now()
         exam = {
@@ -113,8 +128,8 @@ class ExamService:
         self.repository.create(exam)
         return serialize_exam(exam, 0)
 
-    def get_exam(self, exam_id: str) -> dict:
-        exam = self._get_or_404(exam_id)
+    def get_exam(self, exam_id: str, current_user: CurrentUser) -> dict:
+        exam = self._get_for_user_or_404(exam_id, current_user)
         return serialize_exam(exam, self.repository.count_variants(exam_id))
 
     def list_exams(self, page: int, page_size: int, current_user: CurrentUser | None) -> dict:
@@ -130,8 +145,8 @@ class ExamService:
         ]
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
-    def update_exam(self, exam_id: str, payload: ExamUpdateRequest) -> dict:
-        self._get_or_404(exam_id)
+    def update_exam(self, exam_id: str, payload: ExamUpdateRequest, current_user: CurrentUser) -> dict:
+        self._get_for_user_or_404(exam_id, current_user)
         updates: dict[str, Any] = {}
         if payload.name is not None:
             updates["name"] = payload.name
@@ -144,14 +159,14 @@ class ExamService:
         exam = self.repository.update(exam_id, updates) if updates else self._get_or_404(exam_id)
         return serialize_exam(exam, self.repository.count_variants(exam_id))
 
-    def delete_exam(self, exam_id: str) -> None:
-        self._get_or_404(exam_id)
+    def delete_exam(self, exam_id: str, current_user: CurrentUser) -> None:
+        self._get_for_user_or_404(exam_id, current_user)
         if self.repository.count_variants(exam_id) > 0:
             raise ValueError("Không thể xoá đề thi đã có mã đề, hãy xoá mã đề trước")
         self.repository.delete(exam_id)
 
-    def save_matrix(self, exam_id: str, payload: ExamMatrixRequest) -> dict:
-        self._get_or_404(exam_id)
+    def save_matrix(self, exam_id: str, payload: ExamMatrixRequest, current_user: CurrentUser) -> dict:
+        self._get_for_user_or_404(exam_id, current_user)
         cells = [_matrix_cell_dict(cell) for cell in payload.cells]
         exam = self.repository.update(exam_id, {"matrix": cells})
         return serialize_exam(exam, self.repository.count_variants(exam_id))
@@ -171,8 +186,8 @@ class ExamService:
         )
         return pairs
 
-    def matrix_availability(self, exam_id: str) -> list[dict]:
-        exam = self._get_or_404(exam_id)
+    def matrix_availability(self, exam_id: str, current_user: CurrentUser) -> list[dict]:
+        exam = self._get_for_user_or_404(exam_id, current_user)
         results = []
         for cell in exam.get("matrix", []):
             pairs = self._find_approved_for_cell(exam, cell)
@@ -189,8 +204,8 @@ class ExamService:
             )
         return results
 
-    def auto_generate_pool(self, exam_id: str) -> dict:
-        exam = self._get_or_404(exam_id)
+    def auto_generate_pool(self, exam_id: str, current_user: CurrentUser) -> dict:
+        exam = self._get_for_user_or_404(exam_id, current_user)
         matrix = exam.get("matrix", [])
         if not matrix:
             raise ValueError("Chưa cấu hình ma trận đề thi")
@@ -231,8 +246,8 @@ class ExamService:
         updated = self.repository.update(exam_id, {"questions": selected_refs})
         return serialize_exam(updated, self.repository.count_variants(exam_id))
 
-    def add_questions_manual(self, exam_id: str, payload: AddQuestionsManualRequest) -> dict:
-        exam = self._get_or_404(exam_id)
+    def add_questions_manual(self, exam_id: str, payload: AddQuestionsManualRequest, current_user: CurrentUser) -> dict:
+        exam = self._get_for_user_or_404(exam_id, current_user)
         existing_refs = list(exam.get("questions", []))
         existing_ids = {str(ref["question_id"]) for ref in existing_refs}
         new_refs = []
@@ -263,8 +278,8 @@ class ExamService:
         updated = self.repository.update(exam_id, {"questions": total})
         return serialize_exam(updated, self.repository.count_variants(exam_id))
 
-    def remove_question(self, exam_id: str, question_id: str) -> dict:
-        exam = self._get_or_404(exam_id)
+    def remove_question(self, exam_id: str, question_id: str, current_user: CurrentUser) -> dict:
+        exam = self._get_for_user_or_404(exam_id, current_user)
         remaining = [
             ref
             for ref in exam.get("questions", [])
@@ -285,8 +300,25 @@ class ExamVariantService:
             raise LookupError("Không tìm thấy đề thi")
         return exam
 
-    def create_variant(self, exam_id: str, payload: ExamVariantCreateRequest) -> dict:
+    def _get_exam_for_user_or_404(self, exam_id: str, current_user: CurrentUser | None) -> dict:
         exam = self._get_exam_or_404(exam_id)
+        ExamService._assert_can_access(exam, current_user)
+        return exam
+
+    def get_exam_variant_pair(
+        self,
+        exam_id: str,
+        variant_id: str,
+        current_user: CurrentUser | None,
+    ) -> tuple[dict, dict]:
+        exam = self._get_exam_for_user_or_404(exam_id, current_user)
+        variant = self.variants.find(variant_id)
+        if not variant or str(variant["exam_id"]) != exam_id:
+            raise LookupError("Không tìm thấy mã đề")
+        return exam, variant
+
+    def create_variant(self, exam_id: str, payload: ExamVariantCreateRequest, current_user: CurrentUser) -> dict:
+        exam = self._get_exam_for_user_or_404(exam_id, current_user)
         questions = exam.get("questions", [])
         if not questions:
             raise ValueError("Đề thi chưa có câu hỏi, không thể tạo mã đề")
@@ -340,29 +372,20 @@ class ExamVariantService:
         self.variants.create(variant)
         return serialize_variant(variant)
 
-    def list_variants(self, exam_id: str) -> list[dict]:
-        self._get_exam_or_404(exam_id)
+    def list_variants(self, exam_id: str, current_user: CurrentUser) -> list[dict]:
+        self._get_exam_for_user_or_404(exam_id, current_user)
         return [serialize_variant(v) for v in self.variants.list_by_exam(exam_id)]
 
-    def get_variant(self, exam_id: str, variant_id: str) -> dict:
-        self._get_exam_or_404(exam_id)
-        variant = self.variants.find(variant_id)
-        if not variant or str(variant["exam_id"]) != exam_id:
-            raise LookupError("Không tìm thấy mã đề")
+    def get_variant(self, exam_id: str, variant_id: str, current_user: CurrentUser) -> dict:
+        _exam, variant = self.get_exam_variant_pair(exam_id, variant_id, current_user)
         return serialize_variant(variant)
 
-    def delete_variant(self, exam_id: str, variant_id: str) -> None:
-        self._get_exam_or_404(exam_id)
-        variant = self.variants.find(variant_id)
-        if not variant or str(variant["exam_id"]) != exam_id:
-            raise LookupError("Không tìm thấy mã đề")
+    def delete_variant(self, exam_id: str, variant_id: str, current_user: CurrentUser) -> None:
+        _exam, variant = self.get_exam_variant_pair(exam_id, variant_id, current_user)
         self.variants.delete(variant_id)
 
-    def build_preview(self, exam_id: str, variant_id: str) -> dict:
-        exam = self._get_exam_or_404(exam_id)
-        variant = self.variants.find(variant_id)
-        if not variant or str(variant["exam_id"]) != exam_id:
-            raise LookupError("Không tìm thấy mã đề")
+    def build_preview(self, exam_id: str, variant_id: str, current_user: CurrentUser) -> dict:
+        exam, variant = self.get_exam_variant_pair(exam_id, variant_id, current_user)
         questions = []
         for entry in sorted(variant["questions"], key=lambda item: item["order"]):
             snapshot = entry["content_snapshot"]

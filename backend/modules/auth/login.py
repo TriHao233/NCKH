@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
+from core.audit import record_audit_event
+from core.config import settings
 from core.database import get_rag_db
 from core.dependencies import CurrentUser, get_current_user
 from modules.auth.session_repository import get_firebase_session_repository
@@ -32,14 +34,14 @@ class DemoLoginRequest(BaseModel):
 
 DEMO_USERS = {
     "admin": {
-        "password": "admin",
-        "email": "admin@qbankctu.edu.vn",
+        "password": settings.demo_admin_password,
+        "email": settings.demo_admin_email,
         "display_name": "Admin Demo",
         "role": "Admin",
     },
     "reviewer": {
-        "password": "reviewer",
-        "email": "reviewer@qbankctu.edu.vn",
+        "password": settings.demo_reviewer_password,
+        "email": settings.demo_reviewer_email,
         "display_name": "Reviewer Demo",
         "role": "Reviewer",
     },
@@ -49,10 +51,11 @@ DEMO_USERS = {
 def _ensure_demo_firebase_user(email: str, display_name: str):
     try:
         firebase_user = auth.get_user_by_email(email)
+        if getattr(firebase_user, "disabled", False):
+            raise HTTPException(status_code=403, detail="Tài khoản demo đã bị khóa")
         return auth.update_user(
             firebase_user.uid,
             display_name=display_name,
-            disabled=False,
             email_verified=True,
         )
     except auth.UserNotFoundError:
@@ -76,31 +79,41 @@ def _ensure_demo_app_user(firebase_uid: str, demo_user: dict) -> dict:
                 "display_name": demo_user["display_name"],
                 "role": demo_user["role"],
                 "profile": {"school": "", "address": "", "avatar": ""},
-                "is_active": True,
                 "updated_at": now,
             },
-            "$setOnInsert": {"created_at": now},
+            "$setOnInsert": {"created_at": now, "is_active": True},
         },
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
 
 
-@router.post("/demo-login")
-def demo_login(request: DemoLoginRequest):
-    username = request.username.strip().lower()
-    demo_user = DEMO_USERS.get(username)
-    if not demo_user or request.password != demo_user["password"]:
-        raise HTTPException(status_code=401, detail="Tài khoản demo không chính xác")
-    firebase_user = _ensure_demo_firebase_user(
-        demo_user["email"],
-        demo_user["display_name"],
-    )
-    app_user = _ensure_demo_app_user(firebase_user.uid, demo_user)
-    if not app_user.get("is_active", True):
-        raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
-    custom_token = auth.create_custom_token(firebase_user.uid).decode("utf-8")
-    return {"custom_token": custom_token}
+if settings.demo_mode:
+    @router.post("/demo-login")
+    def demo_login(request: DemoLoginRequest):
+        username = request.username.strip().lower()
+        demo_user = DEMO_USERS.get(username)
+        if not demo_user or not demo_user["password"]:
+            raise HTTPException(status_code=503, detail="Demo login chưa được cấu hình")
+        if request.password != demo_user["password"]:
+            raise HTTPException(status_code=401, detail="Tài khoản demo không chính xác")
+        firebase_user = _ensure_demo_firebase_user(
+            demo_user["email"],
+            demo_user["display_name"],
+        )
+        app_user = _ensure_demo_app_user(firebase_user.uid, demo_user)
+        if not app_user.get("is_active", True):
+            raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
+        record_audit_event(
+            action="auth.demo_login",
+            entity_type="user",
+            entity_id=app_user["_id"],
+            actor_user_id=app_user["_id"],
+            actor_role=app_user["role"],
+            metadata={"username": username, "email": demo_user["email"].lower()},
+        )
+        custom_token = auth.create_custom_token(firebase_user.uid).decode("utf-8")
+        return {"custom_token": custom_token}
 
 
 @router.post("/login")

@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRightToBracket } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
+import { PERMISSIONS } from '../auth/permissions';
 import UserProfileMenu from './UserProfileMenu'; 
 import './Header.css';
 
@@ -28,7 +29,7 @@ const Header = () => {
     {
       id: 'teacher',
       label: 'Giảng viên',
-      roles: ['Teacher'],
+      roles: PERMISSIONS.teacherWorkspace,
       items: [
         { path: '/sinh-cau-hoi', label: 'Sinh câu hỏi' },
         { path: '/quan-ly', label: 'Quản lý câu hỏi' },
@@ -38,7 +39,7 @@ const Header = () => {
     {
       id: 'reviewer',
       label: 'Người duyệt',
-      roles: ['Reviewer'],
+      roles: PERMISSIONS.reviewerWorkspace,
       items: [
         { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
       ],
@@ -46,7 +47,7 @@ const Header = () => {
     {
       id: 'admin',
       label: 'Quản trị',
-      roles: ['Admin'],
+      roles: PERMISSIONS.adminWorkspace,
       items: [
         { path: '/danh-muc', label: 'Danh mục' },
         { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
