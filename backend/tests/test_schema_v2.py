@@ -1,6 +1,7 @@
 import inspect
 import re
 import unittest
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -63,6 +64,7 @@ from modules.questions.workflow_schemas import (
     ReviewCreateRequest,
     ReviewOverride,
 )
+from modules.questions import workflow_service as question_workflow_module
 from modules.questions.workflow_service import QuestionWorkflowService
 from modules.rag.search import _heading_matches_target, _normalize_heading_text
 from modules.users.schemas import (
@@ -394,13 +396,19 @@ class InMemoryCollection:
             record.setdefault(path, []).append(value)
         return record
 
-    def update_one(self, filter_query, update, **_kwargs):
+    def update_one(self, filter_query, update, *, upsert=False, **_kwargs):
         matched = 0
         modified = 0
-        for record in self.records:
-            if not _matches_query(record, filter_query):
-                continue
+        record = self.find_one(filter_query)
+        if record is None and upsert:
+            record = dict(update.get("$setOnInsert") or {})
+            self.records.append(record)
             matched = 1
+            modified = 1
+        elif record is not None:
+            matched = 1
+
+        if record is not None:
             changed = False
             for path, value in (update.get("$set") or {}).items():
                 self._set_path(record, path, value, filter_query)
@@ -408,8 +416,8 @@ class InMemoryCollection:
             for path, value in (update.get("$push") or {}).items():
                 record.setdefault(path, []).append(value)
                 changed = True
-            modified = 1 if changed else 0
-            break
+            if changed:
+                modified = 1
 
         return type(
             "Result",
@@ -774,6 +782,104 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(item["status_detail"], "SIMULATED_LOCAL_RECORD")
         self.assertEqual(item["status_label"], "Đã ghi mô phỏng")
         self.assertIn("chưa gửi", item["message"])
+
+    def test_moodle_publish_is_idempotent_for_same_version_and_target(self):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        target_id = ObjectId()
+        publisher_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakePublicationDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            "_id": question_id,
+                            "schema_version": SCHEMA_VERSION,
+                            "question_code": "Q-001",
+                            "current_version": 1,
+                            "current_version_id": version_id,
+                            "approved_version_id": version_id,
+                            "lifecycle_status": "ACTIVE",
+                            "evaluation_status": "PASSED",
+                            "review_status": "APPROVED",
+                            "publication_status": "NOT_PUBLISHED",
+                            "quality_summary": {},
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "latest_review_id": None,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.question_versions = InMemoryCollection(
+                    [
+                        {
+                            "_id": version_id,
+                            "question_id": question_id,
+                            "version": 1,
+                            "document_id": None,
+                            "content": "Queue xử lý phần tử theo nguyên tắc nào?",
+                            "question_data": {
+                                "options": {"A": "FIFO", "B": "LIFO"},
+                                "correct_answer": "A",
+                                "explanation": "Queue là hàng đợi FIFO.",
+                            },
+                            "classification": {"assessment_type": "TRAC_NGHIEM"},
+                            "clos": [],
+                            "sources": [],
+                            "content_hash": "hash-v1",
+                        }
+                    ]
+                )
+                self.moodle_targets = InMemoryCollection(
+                    [
+                        {
+                            "_id": target_id,
+                            "site_key": "demo-moodle",
+                            "site_name": "Demo Moodle",
+                            "mode": "REST_API",
+                            "default_course_id": "ctdl",
+                            "default_category_id": "qbank",
+                            "is_active": True,
+                        }
+                    ]
+                )
+                self.moodle_publications = InMemoryCollection()
+
+        db = FakePublicationDatabase()
+        original_transaction = question_workflow_module.mongo_transaction
+        original_app_env = settings.app_env
+        original_demo_mode = settings.demo_mode
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            settings.app_env = "demo"
+            settings.demo_mode = True
+            service = QuestionWorkflowService(db)
+            payload = MoodlePublicationRequest(expected_version=1)
+
+            first = service.publish_to_moodle(str(question_id), payload, publisher_id)
+            second = service.publish_to_moodle(str(question_id), payload, publisher_id)
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+            settings.app_env = original_app_env
+            settings.demo_mode = original_demo_mode
+
+        self.assertEqual(len(db.moodle_publications.records), 1)
+        self.assertEqual(first["_id"], second["_id"])
+        self.assertEqual(first["idempotency_key"], second["idempotency_key"])
+        self.assertEqual(db.questions.find_one({"_id": question_id})["publication_status"], "PUBLISHED")
+        publication = db.moodle_publications.records[0]
+        self.assertEqual(publication["publication_mode"], "MOCK")
+        self.assertFalse(publication["external_sync"])
+        self.assertEqual(publication["status_detail"], "SIMULATED_LOCAL_RECORD")
+        self.assertEqual(publication["target"]["configured_mode"], "REST_API")
+        self.assertEqual(publication["target"]["course_id"], "ctdl")
+        self.assertEqual(publication["target"]["category_id"], "qbank")
+        self.assertIn("gift", publication["request_payload"]["exports"])
+        self.assertIn("xml", publication["request_payload"]["exports"])
+        self.assertIn("chưa gửi dữ liệu sang Moodle thật", publication["response_payload"]["message"])
 
     def test_moodle_target_payload_requires_real_api_config(self):
         with self.assertRaises(ValidationError):
