@@ -13,6 +13,7 @@ from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser
+from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, utc_now
@@ -1109,17 +1110,35 @@ class QuestionWorkflowService:
         if question["review_status"] != "APPROVED" or question.get("approved_version_id") != version["_id"]:
             raise ValueError("Chỉ câu hỏi đã được duyệt ở phiên bản hiện tại mới được xuất Moodle")
 
+        target_service = MoodleTargetService(self.db)
+        target_config = target_service.find_target(payload.target_id or payload.moodle_site_id)
+        if payload.target_id and not target_config:
+            raise LookupError("Không tìm thấy Moodle target")
+        if target_config and not target_config.get("is_active", True):
+            raise ValueError("Moodle target đang bị khóa")
+
+        moodle_site_id = (target_config or {}).get("site_key") or payload.moodle_site_id
+        course_id = payload.course_id
+        category_id = payload.category_id
+        if target_config:
+            if payload.course_id == "ctdl-demo":
+                course_id = target_config.get("default_course_id") or course_id
+            if payload.category_id == "qbank-demo":
+                category_id = target_config.get("default_category_id") or category_id
         target = {
-            "moodle_site_id": payload.moodle_site_id,
-            "course_id": payload.course_id,
-            "category_id": payload.category_id,
+            "target_id": target_config.get("_id") if target_config else None,
+            "moodle_site_id": moodle_site_id,
+            "site_name": (target_config or {}).get("site_name"),
+            "mode": (target_config or {}).get("mode", "MOCK" if payload.mock else "REST_API"),
+            "course_id": course_id,
+            "category_id": category_id,
         }
         published_content_hash = version["content_hash"]
         idempotency_material = "|".join(
             [
-                payload.moodle_site_id,
-                payload.course_id,
-                payload.category_id,
+                moodle_site_id,
+                course_id,
+                category_id,
                 str(version["_id"]),
                 published_content_hash,
             ]
@@ -1139,7 +1158,7 @@ class QuestionWorkflowService:
             "idempotency_key": idempotency_key,
             "status": "PUBLISHED",
             "attempt_no": 1,
-            "moodle_question_ref_id": f"mock-{str(version['_id'])}",
+            "moodle_question_ref_id": f"mock-{moodle_site_id}-{str(version['_id'])}",
             "request_payload": {
                 "question_code": question["question_code"],
                 "content": version["content"],
@@ -1148,6 +1167,7 @@ class QuestionWorkflowService:
                 "export_format": payload.export_format,
                 "exports": exports,
                 "mock": payload.mock,
+                "target": json_safe(target),
             },
             "response_payload": {
                 "mock": payload.mock,

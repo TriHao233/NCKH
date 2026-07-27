@@ -59,6 +59,7 @@ class ReviewCreateRequest(BaseModel):
 
 class MoodlePublicationRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
+    target_id: str | None = Field(None, min_length=1, max_length=120)
     moodle_site_id: str = Field("demo-moodle", min_length=1, max_length=120)
     course_id: str = Field("ctdl-demo", min_length=1, max_length=120)
     category_id: str = Field("qbank-demo", min_length=1, max_length=120)

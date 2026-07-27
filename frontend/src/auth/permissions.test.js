@@ -9,12 +9,14 @@ test("admin can access business superuser routes", () => {
   assert.equal(canAccessPath("Admin", "/lam-de-thi/abc123"), true);
   assert.equal(canAccessPath("Admin", "/kiem-duyet"), true);
   assert.equal(canAccessPath("Admin", "/quan-ly-job"), true);
+  assert.equal(canAccessPath("Admin", "/quan-ly-moodle"), true);
 });
 
 test("teacher cannot access reviewer or admin-only routes", () => {
   assert.equal(canAccessPath("Teacher", "/kiem-duyet"), false);
   assert.equal(canAccessPath("Teacher", "/quan-ly-nguoi-dung"), false);
   assert.equal(canAccessPath("Teacher", "/quan-ly-job"), false);
+  assert.equal(canAccessPath("Teacher", "/quan-ly-moodle"), false);
 });
 
 test("direct URL permission and landing path use the same route map", () => {

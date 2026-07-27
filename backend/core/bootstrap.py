@@ -33,6 +33,7 @@ RAG_COLLECTIONS = (
     "question_evaluations",
     "question_reviews",
     "audit_logs",
+    "moodle_targets",
     "moodle_publications",
     "exams",
     "exam_variants",
@@ -270,6 +271,40 @@ VALIDATORS = {
             },
         }
     },
+    "moodle_targets": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "schema_version",
+                "site_key",
+                "site_name",
+                "mode",
+                "default_course_id",
+                "default_category_id",
+                "allowed_roles",
+                "is_active",
+                "created_at",
+                "updated_at",
+            ],
+            "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
+                "site_key": {"bsonType": "string", "minLength": 1},
+                "site_name": {"bsonType": "string", "minLength": 1},
+                "mode": {"enum": ["MOCK", "REST_API"]},
+                "base_url": {"bsonType": "string"},
+                "token_env_var": {"bsonType": "string"},
+                "default_course_id": {"bsonType": "string", "minLength": 1},
+                "default_category_id": {"bsonType": "string", "minLength": 1},
+                "allowed_roles": {"bsonType": "array"},
+                "is_active": {"bsonType": "bool"},
+                "last_check": {"bsonType": ["object", "null"]},
+                "created_by_user_id": {"bsonType": ["objectId", "null"]},
+                "updated_by_user_id": {"bsonType": ["objectId", "null"]},
+                "created_at": {"bsonType": "date"},
+                "updated_at": {"bsonType": "date"},
+            },
+        }
+    },
 }
 
 
@@ -448,10 +483,18 @@ def _ensure_indexes() -> None:
         [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],
         name="ix_audit_entity",
     )
-    rag_db.moodle_publications.create_index(
-        [("idempotency_key", ASCENDING)],
-        unique=True,
-        name="uq_publication_idempotency",
+    rag_db.moodle_targets.create_indexes(
+        [
+            IndexModel([("site_key", ASCENDING)], unique=True, name="uq_moodle_target_site_key"),
+            IndexModel([("is_active", ASCENDING), ("mode", ASCENDING)], name="ix_moodle_targets_active_mode"),
+        ]
+    )
+    rag_db.moodle_publications.create_indexes(
+        [
+            IndexModel([("idempotency_key", ASCENDING)], unique=True, name="uq_publication_idempotency"),
+            IndexModel([("target.moodle_site_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_target_status"),
+            IndexModel([("question_id", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_question"),
+        ]
     )
     rag_db.migration_id_map.create_index(
         [("source_collection", ASCENDING), ("source_id", ASCENDING)],
@@ -496,6 +539,28 @@ def _seed_reference_data() -> None:
                 "thresholds": {"yellow_min": 0.60, "green_min": 0.80, "pass_min": 0.80},
                 "is_active": True,
                 "created_at": now,
+            }
+        },
+        upsert=True,
+    )
+    db.moodle_targets.update_one(
+        {"site_key": "demo-moodle"},
+        {
+            "$setOnInsert": {
+                "schema_version": SCHEMA_VERSION,
+                "site_name": "Demo Moodle",
+                "mode": "MOCK",
+                "base_url": "",
+                "token_env_var": "",
+                "default_course_id": "ctdl-demo",
+                "default_category_id": "qbank-demo",
+                "allowed_roles": ["Admin", "Reviewer"],
+                "is_active": True,
+                "last_check": None,
+                "created_by_user_id": None,
+                "updated_by_user_id": None,
+                "created_at": now,
+                "updated_at": now,
             }
         },
         upsert=True,

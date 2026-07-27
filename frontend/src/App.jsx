@@ -8,6 +8,7 @@ import ManagePage from './pages/ManagePage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
 import CatalogAdminPage from './pages/CatalogAdminPage';
 import AdminJobsPage from './pages/AdminJobsPage';
+import AdminMoodlePage from './pages/AdminMoodlePage';
 import UsersAdminPage from './pages/UsersAdminPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -97,6 +98,14 @@ function App() {
                     element={(
                         <RequireRole roles={PERMISSIONS.adminWorkspace}>
                             <AdminJobsPage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/quan-ly-moodle"
+                    element={(
+                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                            <AdminMoodlePage />
                         </RequireRole>
                     )}
                 />

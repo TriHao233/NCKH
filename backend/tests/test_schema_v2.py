@@ -15,6 +15,7 @@ from modules.admin.jobs_service import (
     _parse_object_id,
     _uppercase_status_filter,
 )
+from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
@@ -242,7 +243,29 @@ class SchemaV2Tests(unittest.TestCase):
     def test_moodle_publication_request_has_demo_defaults(self):
         payload = MoodlePublicationRequest(expected_version=1)
         self.assertEqual(payload.moodle_site_id, "demo-moodle")
+        self.assertIsNone(payload.target_id)
         self.assertTrue(payload.mock)
+
+    def test_moodle_target_payload_requires_real_api_config(self):
+        with self.assertRaises(ValidationError):
+            MoodleTargetPayload(
+                site_key="ctu",
+                site_name="CTU Moodle",
+                mode="REST_API",
+                default_course_id="ctdl",
+                default_category_id="qbank",
+            )
+
+        payload = MoodleTargetPayload(
+            site_key="ctu",
+            site_name="CTU Moodle",
+            mode="REST_API",
+            base_url="https://moodle.example.edu/",
+            token_env_var="MOODLE_TOKEN",
+            default_course_id="ctdl",
+            default_category_id="qbank",
+        )
+        self.assertEqual(payload.base_url, "https://moodle.example.edu")
 
     def test_demo_login_route_registration_follows_demo_mode(self):
         route_paths = {route.path for route in auth_login.router.routes}
@@ -434,7 +457,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("Lưu thiếu 2 câu so với yêu cầu.", summary.warnings)
 
     def test_key_validators_require_schema_version(self):
-        for collection in ("users", "documents", "questions", "question_versions", "evaluation_jobs"):
+        for collection in ("users", "documents", "questions", "question_versions", "evaluation_jobs", "moodle_targets"):
             required = VALIDATORS[collection]["$jsonSchema"]["required"]
             self.assertIn("schema_version", required)
 
