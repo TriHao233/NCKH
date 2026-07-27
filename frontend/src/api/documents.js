@@ -13,6 +13,12 @@ export function getDocument(id) {
   return apiRequest(`/documents/${id}`);
 }
 
+export function listDocumentJobs(id, { limit = 20 } = {}) {
+  const params = new URLSearchParams();
+  params.set('limit', limit);
+  return apiRequest(`/documents/${id}/jobs?${params.toString()}`);
+}
+
 export function updateDocument(id, payload) {
   return apiRequest(`/documents/${id}`, { method: 'PATCH', body: payload });
 }

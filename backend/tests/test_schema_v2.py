@@ -1401,6 +1401,50 @@ class SchemaV2Tests(unittest.TestCase):
         result = service.get_exam(str(exam["_id"]), owner)
         self.assertEqual(result["id"], str(exam["_id"]))
 
+    def test_document_job_history_enforces_document_ownership(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        document_id = ObjectId()
+        job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeDocumentJobRepository:
+            def find_by_id(self, _document_id):
+                return {
+                    "_id": document_id,
+                    "uploaded_by_user_id": owner.id,
+                    "schema_version": SCHEMA_VERSION,
+                    "archived_at": None,
+                }
+
+            def list_jobs(self, _document_id, *, limit=20):
+                return [
+                    {
+                        "_id": job_id,
+                        "document_id": document_id,
+                        "document_version": 1,
+                        "job_type": "OCR",
+                        "attempt_no": 2,
+                        "status": "FAILED",
+                        "progress": 40,
+                        "stats": {"pages": 3},
+                        "error": {"message": "OCR timeout", "at": now},
+                        "queued_at": now,
+                        "started_at": now,
+                        "finished_at": now,
+                    }
+                ][:limit]
+
+        service = DocumentService(FakeDocumentJobRepository())
+
+        with self.assertRaises(PermissionError):
+            service.list_jobs(str(document_id), other_teacher)
+
+        result = service.list_jobs(str(document_id), owner)
+        self.assertEqual(result["items"][0]["id"], str(job_id))
+        self.assertEqual(result["items"][0]["document_id"], str(document_id))
+        self.assertEqual(result["items"][0]["error"]["message"], "OCR timeout")
+
     def test_admin_can_access_any_teacher_exam(self):
         owner = _current_user("Teacher")
         admin = _current_user("Admin")

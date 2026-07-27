@@ -47,6 +47,25 @@ class DocumentResponse(BaseModel):
     updated_at: datetime
 
 
+class DocumentJobResponse(BaseModel):
+    id: str
+    document_id: str
+    document_version: int | None = None
+    job_type: str
+    attempt_no: int | None = None
+    status: str
+    progress: int | None = None
+    stats: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    queued_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class DocumentJobListResponse(BaseModel):
+    items: list[DocumentJobResponse]
+
+
 class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
     total: int

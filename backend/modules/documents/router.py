@@ -4,6 +4,7 @@ from core.config import settings
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.schemas import (
     DocumentCreateRequest,
+    DocumentJobListResponse,
     DocumentListResponse,
     DocumentResponse,
     DocumentStatus,
@@ -77,6 +78,24 @@ def get_document(
     if not document:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
     return document
+
+
+@router.get("/{document_id}/jobs", response_model=DocumentJobListResponse)
+def list_document_jobs(
+    document_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        result = service.list_jobs(document_id, current_user, limit=limit)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+    return result
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)

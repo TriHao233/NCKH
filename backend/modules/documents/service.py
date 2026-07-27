@@ -4,6 +4,7 @@ from modules.documents.repository import (
     DocumentRepository,
     MongoDocumentRepository,
     serialize_document,
+    serialize_document_job,
 )
 from modules.documents.schemas import DocumentCreateRequest, DocumentUpdateRequest
 
@@ -72,6 +73,20 @@ class DocumentService:
         if current_user:
             self._ensure_access(self.repository.find_by_id(document_id), current_user)
         return self.repository.archive(document_id)
+
+    def list_jobs(
+        self,
+        document_id: str,
+        current_user: CurrentUser,
+        *,
+        limit: int = 20,
+    ) -> dict | None:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            return None
+        self._ensure_access(record, current_user)
+        jobs = self.repository.list_jobs(document_id, limit=limit)
+        return {"items": [serialize_document_job(job) for job in jobs]}
 
     def can_use(self, document_id: str, current_user: CurrentUser) -> bool:
         record = self.repository.find_by_id(document_id)

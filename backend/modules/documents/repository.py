@@ -55,6 +55,25 @@ def serialize_document(document: dict) -> dict:
     )
 
 
+def serialize_document_job(job: dict) -> dict:
+    return json_safe(
+        {
+            "id": job["_id"],
+            "document_id": job.get("document_id"),
+            "document_version": job.get("document_version"),
+            "job_type": job.get("job_type"),
+            "attempt_no": job.get("attempt_no"),
+            "status": job.get("status"),
+            "progress": job.get("progress"),
+            "stats": job.get("stats"),
+            "error": job.get("error"),
+            "queued_at": job.get("queued_at"),
+            "started_at": job.get("started_at"),
+            "finished_at": job.get("finished_at"),
+        }
+    )
+
+
 class DocumentRepository(Protocol):
     def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict: ...
 
@@ -73,6 +92,8 @@ class DocumentRepository(Protocol):
     def update(self, document_id: str | ObjectId, fields: dict) -> dict | None: ...
 
     def archive(self, document_id: str | ObjectId) -> bool: ...
+
+    def list_jobs(self, document_id: str | ObjectId, *, limit: int = 20) -> list[dict]: ...
 
 
 class MongoDocumentRepository:
@@ -232,6 +253,14 @@ class MongoDocumentRepository:
             {"$set": {"status": "ARCHIVED", "archived_at": now, "updated_at": now}},
         )
         return result.matched_count == 1
+
+    def list_jobs(self, document_id: str | ObjectId, *, limit: int = 20) -> list[dict]:
+        document_oid = object_id(document_id, "document_id")
+        return list(
+            self.db.document_jobs.find({"document_id": document_oid})
+            .sort("queued_at", -1)
+            .limit(limit)
+        )
 
     def attach_original_artifact(
         self,

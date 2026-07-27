@@ -15,7 +15,7 @@ import {
   submitQuestionForReview,
   updateQuestion,
 } from '../api/questions';
-import { deleteDocument, listDocuments, updateDocument } from '../api/documents';
+import { deleteDocument, listDocumentJobs, listDocuments, updateDocument } from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
@@ -53,6 +53,21 @@ const DOC_STATUS_LABEL = {
   READY: 'Đã xử lý',
   FAILED: 'Thất bại',
   ARCHIVED: 'Đã lưu trữ',
+};
+
+const JOB_STATUS_LABEL = {
+  NOT_STARTED: 'Chưa chạy',
+  QUEUED: 'Chờ chạy',
+  PROCESSING: 'Đang chạy',
+  COMPLETED: 'Hoàn tất',
+  FAILED: 'Lỗi',
+  CANCELLED: 'Đã hủy',
+};
+
+const PIPELINE_STEP_LABEL = {
+  ocr_status: 'OCR',
+  chunk_status: 'Chunk',
+  index_status: 'Index',
 };
 
 const EVALUATION_STATUS_LABEL = {
@@ -105,6 +120,33 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString('vi-VN');
+}
+
+function pipelineStatusClass(value) {
+  const status = String(value || 'NOT_STARTED').toUpperCase();
+  if (status === 'COMPLETED') return 'done';
+  if (status === 'FAILED') return 'failed';
+  if (['QUEUED', 'PROCESSING'].includes(status)) return 'active';
+  if (status === 'CANCELLED') return 'cancelled';
+  return 'idle';
+}
+
+function documentPipelineSteps(document) {
+  const summary = document?.pipeline_summary || {};
+  return Object.entries(PIPELINE_STEP_LABEL).map(([key, label]) => {
+    const status = summary[key] || 'NOT_STARTED';
+    return { key, label, status };
+  });
+}
+
+function documentErrorMessage(document) {
+  const error = document?.latest_error || {};
+  return error.message || error.detail || '';
+}
+
+function jobErrorMessage(job) {
+  const error = job?.error || {};
+  return error.message || error.detail || '';
 }
 
 function formatScore(value) {
@@ -332,6 +374,10 @@ function ManagePage() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [documentsError, setDocumentsError] = useState('');
+  const [documentJobsById, setDocumentJobsById] = useState({});
+  const [documentJobsLoadingId, setDocumentJobsLoadingId] = useState('');
+  const [documentJobsError, setDocumentJobsError] = useState(null);
+  const [expandedDocumentId, setExpandedDocumentId] = useState('');
   const [subjects, setSubjects] = useState([]);
   const [subjectsError, setSubjectsError] = useState('');
 
@@ -684,6 +730,31 @@ function ManagePage() {
       alert('Xoá tài liệu thất bại: ' + error.message);
     } finally {
       setDeletingDocId(null);
+    }
+  };
+
+  const toggleDocumentJobs = async (doc) => {
+    if (expandedDocumentId === doc.id) {
+      setExpandedDocumentId('');
+      return;
+    }
+    setExpandedDocumentId(doc.id);
+    setDocumentJobsError(null);
+    if (documentJobsById[doc.id]) return;
+    setDocumentJobsLoadingId(doc.id);
+    try {
+      const result = await listDocumentJobs(doc.id, { limit: 12 });
+      setDocumentJobsById((current) => ({
+        ...current,
+        [doc.id]: result.items || [],
+      }));
+    } catch (error) {
+      setDocumentJobsError({
+        documentId: doc.id,
+        message: error.message || 'Không tải được lịch sử job tài liệu',
+      });
+    } finally {
+      setDocumentJobsLoadingId('');
     }
   };
 
@@ -1315,7 +1386,56 @@ function ManagePage() {
 	                          <span className="doc-meta">
 	                            {d.page_count ? `${d.page_count} trang · ` : ''}{DOC_STATUS_LABEL[d.status] || d.status}
 	                          </span>
+                            <div className="doc-pipeline" aria-label="Trạng thái pipeline tài liệu">
+                              {documentPipelineSteps(d).map((step) => (
+                                <span
+                                  className={`doc-pipeline-chip doc-pipeline-chip--${pipelineStatusClass(step.status)}`}
+                                  key={step.key}
+                                >
+                                  {step.label}: {JOB_STATUS_LABEL[step.status] || step.status}
+                                </span>
+                              ))}
+                            </div>
+                            {documentErrorMessage(d) && (
+                              <span className="doc-error">
+                                {d.latest_error?.job_type || 'Job'}: {documentErrorMessage(d)}
+                              </span>
+                            )}
+                            {expandedDocumentId === d.id && (
+                              <div className="doc-jobs-panel">
+                                {documentJobsLoadingId === d.id ? (
+                                  <span className="doc-job-note">Đang tải lịch sử job...</span>
+                                ) : (
+                                  <>
+                                    {documentJobsError?.documentId === d.id && (
+                                      <span className="doc-job-note doc-job-note--error">{documentJobsError.message}</span>
+                                    )}
+                                    {(documentJobsById[d.id] || []).map((job) => (
+                                      <div className="doc-job-row" key={job.id}>
+                                        <div>
+                                          <b>{job.job_type} #{job.attempt_no || 1}</b>
+                                          <span>{JOB_STATUS_LABEL[job.status] || job.status} · {job.progress ?? 0}%</span>
+                                        </div>
+                                        <small>{jobErrorMessage(job) || formatDateTime(job.finished_at || job.started_at || job.queued_at)}</small>
+                                      </div>
+                                    ))}
+                                    {documentJobsError?.documentId !== d.id && (documentJobsById[d.id] || []).length === 0 && (
+                                      <span className="doc-job-note">Chưa có job nào cho tài liệu này.</span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )}
 	                        </div>
+                          <button
+                            type="button"
+                            className="icon-btn doc-jobs-btn"
+                            title="Xem lịch sử job"
+                            disabled={documentJobsLoadingId === d.id}
+                            onClick={() => toggleDocumentJobs(d)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></svg>
+                          </button>
 	                        <button
 	                          type="button"
 	                          className="icon-btn doc-edit-btn"
