@@ -13,6 +13,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
   "/danh-muc": PERMISSIONS.adminWorkspace,
   "/quan-ly-nguoi-dung": PERMISSIONS.adminWorkspace,
+  "/nhat-ky-he-thong": PERMISSIONS.adminWorkspace,
   "/quan-ly-job": PERMISSIONS.adminWorkspace,
   "/quan-ly-moodle": PERMISSIONS.adminWorkspace,
   "/lich-cong-viec": PERMISSIONS.authenticated,

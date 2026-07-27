@@ -7,6 +7,7 @@ import GeneratePage from './pages/GeneratePage';
 import ManagePage from './pages/ManagePage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
 import CatalogAdminPage from './pages/CatalogAdminPage';
+import AdminAuditPage from './pages/AdminAuditPage';
 import AdminJobsPage from './pages/AdminJobsPage';
 import AdminMoodlePage from './pages/AdminMoodlePage';
 import UsersAdminPage from './pages/UsersAdminPage';
@@ -90,6 +91,14 @@ function App() {
                     element={(
                         <RequireRole roles={PERMISSIONS.adminWorkspace}>
                             <UsersAdminPage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/nhat-ky-he-thong"
+                    element={(
+                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                            <AdminAuditPage />
                         </RequireRole>
                     )}
                 />

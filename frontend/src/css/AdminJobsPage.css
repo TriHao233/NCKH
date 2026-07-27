@@ -127,6 +127,10 @@
   padding: 14px;
 }
 
+.jobs-toolbar--audit {
+  grid-template-columns: minmax(220px, 1fr) 210px 170px 170px 170px 160px 160px;
+}
+
 .toolbar-field {
   display: flex;
   flex-direction: column;
@@ -422,6 +426,12 @@
   border-top: 1px solid #eaf3fc;
   padding-top: 13px;
   margin-top: 13px;
+}
+
+.audit-json-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .job-detail-json pre {

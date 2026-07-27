@@ -493,6 +493,18 @@ def _ensure_indexes() -> None:
         [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],
         name="ix_audit_entity",
     )
+    rag_db.audit_logs.create_index(
+        [("entity_type", ASCENDING), ("entity_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_audit_entity_flat",
+    )
+    rag_db.audit_logs.create_index(
+        [("actor_user_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_audit_actor_flat",
+    )
+    rag_db.audit_logs.create_index(
+        [("action", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_audit_action",
+    )
     rag_db.moodle_targets.create_indexes(
         [
             IndexModel([("site_key", ASCENDING)], unique=True, name="uq_moodle_target_site_key"),

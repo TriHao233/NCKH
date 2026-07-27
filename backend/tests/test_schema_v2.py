@@ -15,6 +15,7 @@ from modules.admin.jobs_service import (
     _parse_object_id,
     _uppercase_status_filter,
 )
+from modules.admin.audit_service import AdminAuditService
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
@@ -732,6 +733,81 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
         self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+
+    def test_admin_audit_service_normalizes_flat_and_nested_records(self):
+        class FakeCursor(list):
+            def sort(self, *_args):
+                return self
+
+            def skip(self, *_args):
+                return self
+
+            def limit(self, *_args):
+                return self
+
+        class FakeAuditLogs:
+            def __init__(self, records):
+                self.records = records
+                self.match = None
+
+            def count_documents(self, match):
+                self.match = match
+                return len(self.records)
+
+            def find(self, match):
+                self.match = match
+                return FakeCursor(self.records)
+
+        class FakeDatabase:
+            def __init__(self, records):
+                self.audit_logs = FakeAuditLogs(records)
+
+        now = datetime.now(timezone.utc)
+        actor_id = ObjectId()
+        question_id = ObjectId()
+        review_id = ObjectId()
+        records = [
+            {
+                "_id": ObjectId(),
+                "action": "user.admin_update",
+                "actor_user_id": str(actor_id),
+                "actor_role": "Admin",
+                "entity_type": "user",
+                "entity_id": "user-1",
+                "before": {"role": "Teacher"},
+                "after": {"role": "Reviewer"},
+                "created_at": now,
+            },
+            {
+                "_id": ObjectId(),
+                "action": "QUESTION_APPROVED",
+                "actor": {"type": "USER", "user_id": actor_id},
+                "entity": {"type": "QUESTION", "id": question_id, "version_id": ObjectId()},
+                "changes": [{"path": "review_status", "old_value": "PENDING", "new_value": "APPROVED"}],
+                "metadata": {"review_id": review_id},
+                "created_at": now,
+            },
+        ]
+        db = FakeDatabase(records)
+        service = AdminAuditService(db)
+
+        result = service.list(
+            page=1,
+            page_size=10,
+            actor_user_id=str(actor_id),
+            entity_type="question",
+            entity_id=str(question_id),
+            action="QUESTION_APPROVED",
+            search="approved",
+        )
+
+        self.assertEqual(result["total"], 2)
+        self.assertIn("$and", db.audit_logs.match)
+        self.assertEqual(result["items"][0]["actor"]["role"], "Admin")
+        self.assertEqual(result["items"][0]["before"], {"role": "Teacher"})
+        self.assertEqual(result["items"][1]["actor"]["user_id"], str(actor_id))
+        self.assertEqual(result["items"][1]["entity"]["id"], str(question_id))
+        self.assertEqual(result["items"][1]["metadata"]["review_id"], str(review_id))
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(
