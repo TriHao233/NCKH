@@ -1450,6 +1450,77 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
         self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
 
+    def test_admin_audit_list_filters_legacy_and_nested_records(self):
+        actor_id = ObjectId()
+        entity_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeAuditDatabase:
+            def __init__(self):
+                self.audit_logs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "action": "admin.job_cancel",
+                            "actor_user_id": str(actor_id),
+                            "actor_role": "Admin",
+                            "entity_type": "generation",
+                            "entity_id": str(entity_id),
+                            "before": {"status": "processing"},
+                            "after": {"status": "failed"},
+                            "metadata": {"reason": "manual cancel"},
+                            "created_at": now,
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "action": "user.update",
+                            "actor": {"user_id": actor_id, "role": "Admin"},
+                            "entity": {"type": "user", "id": entity_id, "version_id": version_id},
+                            "before": {"role": "Teacher"},
+                            "after": {"role": "Reviewer"},
+                            "changes": [{"field": "role"}],
+                            "created_at": now - timedelta(minutes=5),
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "action": "auth.demo_login",
+                            "actor_user_id": str(ObjectId()),
+                            "actor_role": "Teacher",
+                            "entity_type": "auth",
+                            "entity_id": "demo",
+                            "created_at": now - timedelta(days=2),
+                        },
+                    ]
+                )
+
+        service = AdminAuditService(FakeAuditDatabase())
+
+        actor_result = service.list(page=1, page_size=10, actor_user_id=str(actor_id))
+        entity_result = service.list(
+            page=1,
+            page_size=10,
+            entity_type="user",
+            entity_id=str(entity_id),
+        )
+        search_result = service.list(page=1, page_size=10, search="manual cancel")
+        date_result = service.list(
+            page=1,
+            page_size=10,
+            date_from=now - timedelta(hours=1),
+            date_to=now + timedelta(seconds=1),
+        )
+        paged = service.list(page=2, page_size=1)
+
+        self.assertEqual(actor_result["total"], 2)
+        self.assertEqual([item["action"] for item in actor_result["items"]], ["admin.job_cancel", "user.update"])
+        self.assertEqual(entity_result["total"], 1)
+        self.assertEqual(entity_result["items"][0]["entity"]["version_id"], str(version_id))
+        self.assertEqual(search_result["total"], 1)
+        self.assertEqual(search_result["items"][0]["metadata"]["reason"], "manual cancel")
+        self.assertEqual(date_result["total"], 2)
+        self.assertEqual(paged["items"][0]["action"], "user.update")
+
     def test_admin_job_list_filters_user_status_and_stale_jobs(self):
         owner_id = ObjectId()
         other_id = ObjectId()

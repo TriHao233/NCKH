@@ -126,6 +126,14 @@ class AdminAuditService:
                         {"entity_id": regex},
                         {"actor.service_name": regex},
                         {"entity.type": regex},
+                        {"before.status": regex},
+                        {"before.role": regex},
+                        {"after.status": regex},
+                        {"after.role": regex},
+                        {"changes.field": regex},
+                        {"metadata.reason": regex},
+                        {"metadata.message": regex},
+                        {"metadata.error": regex},
                     ]
                 }
             )
