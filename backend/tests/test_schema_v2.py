@@ -12,6 +12,7 @@ from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
 from core.dependencies import CurrentUser
 from core import job_recovery
+from modules.admin import jobs_service as admin_jobs_module
 from modules.admin.jobs_service import (
     AdminJobService,
     _generation_status_filter,
@@ -1448,6 +1449,159 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
         self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+
+    def test_admin_job_list_filters_user_status_and_stale_jobs(self):
+        owner_id = ObjectId()
+        other_id = ObjectId()
+        owner_document_id = ObjectId()
+        other_document_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(minutes=settings.job_recovery_timeout_minutes + 10)
+
+        class FakeJobDatabase:
+            def __init__(self):
+                self.generation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "status": "processing",
+                            "requested_by_user_id": owner_id,
+                            "request": {"document_id": str(owner_document_id)},
+                            "created_at": old,
+                            "updated_at": old,
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "status": "failed",
+                            "requested_by_user_id": other_id,
+                            "request": {"document_id": str(other_document_id)},
+                            "error_message": "Model timeout",
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    ]
+                )
+                self.evaluation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "status": "ERROR",
+                            "requested_by_user_id": owner_id,
+                            "question_id": ObjectId(),
+                            "question_version": 2,
+                            "error": {"message": "Evaluator failed"},
+                            "queued_at": now,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.documents = InMemoryCollection(
+                    [
+                        {"_id": owner_document_id, "uploaded_by_user_id": owner_id, "title": "Owner PDF"},
+                        {"_id": other_document_id, "uploaded_by_user_id": other_id, "title": "Other PDF"},
+                    ]
+                )
+                self.document_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "document_id": owner_document_id,
+                            "job_type": "OCR",
+                            "status": "PROCESSING",
+                            "queued_at": old,
+                            "updated_at": old,
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "document_id": other_document_id,
+                            "job_type": "OCR",
+                            "status": "FAILED",
+                            "queued_at": now,
+                            "updated_at": now,
+                        },
+                    ]
+                )
+
+        service = AdminJobService(FakeJobDatabase())
+
+        active = service.list_jobs(
+            page=1,
+            page_size=10,
+            status="active",
+            user_id=str(owner_id),
+        )
+        stale = service.list_jobs(page=1, page_size=10, stale_only=True)
+        retryable = service.list_jobs(page=1, page_size=10, status="retryable")
+
+        self.assertEqual(active["summary"]["total"], 2)
+        self.assertEqual(active["summary"]["long_running"], 2)
+        self.assertEqual({item["kind"] for item in active["items"]}, {"generation", "document"})
+        self.assertEqual(stale["summary"]["long_running"], 2)
+        self.assertEqual(retryable["summary"]["failed"], 3)
+
+    def test_admin_job_cancel_updates_jobs_questions_and_audit(self):
+        admin = _current_user("Admin")
+        generation_job_id = ObjectId()
+        evaluation_job_id = ObjectId()
+        question_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeJobDatabase:
+            def __init__(self):
+                self.generation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": generation_job_id,
+                            "status": "processing",
+                            "requested_by_user_id": ObjectId(),
+                            "request": {},
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.evaluation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": evaluation_job_id,
+                            "status": "PROCESSING",
+                            "question_id": question_id,
+                            "requested_by_user_id": ObjectId(),
+                            "queued_at": now,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            "_id": question_id,
+                            "evaluation_status": "PROCESSING",
+                            "quality_summary": {"latest_evaluation_job_id": evaluation_job_id},
+                            "updated_at": now,
+                        }
+                    ]
+                )
+
+        db = FakeJobDatabase()
+        audit_events = []
+        original_audit = admin_jobs_module.record_audit_event
+        try:
+            admin_jobs_module.record_audit_event = lambda **kwargs: audit_events.append(kwargs)
+            service = AdminJobService(db)
+            generation_result = service.cancel_job("generation", str(generation_job_id), admin)
+            evaluation_result = service.cancel_job("evaluation", str(evaluation_job_id), admin)
+        finally:
+            admin_jobs_module.record_audit_event = original_audit
+
+        self.assertEqual(generation_result["job"]["status"], "failed")
+        self.assertIn("Cancelled by admin", generation_result["job"]["error_message"])
+        self.assertEqual(evaluation_result["job"]["status"], "STALE")
+        question = db.questions.find_one({"_id": question_id})
+        self.assertEqual(question["evaluation_status"], "STALE")
+        self.assertIn("Cancelled by admin", question["quality_summary"]["error"]["message"])
+        self.assertEqual([event["action"] for event in audit_events], ["admin.job_cancel", "admin.job_cancel"])
+        self.assertEqual({event["entity_type"] for event in audit_events}, {"generation", "evaluation"})
 
     def test_admin_overview_summarizes_operational_state(self):
         now = datetime.now(timezone.utc)
