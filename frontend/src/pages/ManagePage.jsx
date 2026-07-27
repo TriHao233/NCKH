@@ -19,6 +19,7 @@ import {
   cancelDocumentJob,
   deleteDocument,
   listDocumentJobs,
+  listDocumentPages,
   listDocuments,
   retryDocumentJob,
   updateDocument,
@@ -157,6 +158,10 @@ function documentErrorMessage(document) {
 function jobErrorMessage(job) {
   const error = job?.error || {};
   return error.message || error.detail || '';
+}
+
+function pageTextPreview(page) {
+  return page?.cleaned_text || page?.raw_text || '';
 }
 
 function canRetryDocumentJob(job) {
@@ -398,7 +403,11 @@ function ManagePage() {
   const [documentJobsLoadingId, setDocumentJobsLoadingId] = useState('');
   const [documentJobActionKey, setDocumentJobActionKey] = useState('');
   const [documentJobsError, setDocumentJobsError] = useState(null);
+  const [documentPagesById, setDocumentPagesById] = useState({});
+  const [documentPagesLoadingId, setDocumentPagesLoadingId] = useState('');
+  const [documentPagesError, setDocumentPagesError] = useState(null);
   const [expandedDocumentId, setExpandedDocumentId] = useState('');
+  const [expandedDocumentPagesId, setExpandedDocumentPagesId] = useState('');
   const [subjects, setSubjects] = useState([]);
   const [subjectsError, setSubjectsError] = useState('');
 
@@ -776,6 +785,31 @@ function ManagePage() {
       });
     } finally {
       setDocumentJobsLoadingId('');
+    }
+  };
+
+  const toggleDocumentPages = async (doc) => {
+    if (expandedDocumentPagesId === doc.id) {
+      setExpandedDocumentPagesId('');
+      return;
+    }
+    setExpandedDocumentPagesId(doc.id);
+    setDocumentPagesError(null);
+    if (documentPagesById[doc.id]) return;
+    setDocumentPagesLoadingId(doc.id);
+    try {
+      const result = await listDocumentPages(doc.id, { limit: 12 });
+      setDocumentPagesById((current) => ({
+        ...current,
+        [doc.id]: result.items || [],
+      }));
+    } catch (error) {
+      setDocumentPagesError({
+        documentId: doc.id,
+        message: error.message || 'Không tải được OCR pages',
+      });
+    } finally {
+      setDocumentPagesLoadingId('');
     }
   };
 
@@ -1517,6 +1551,31 @@ function ManagePage() {
                                 )}
                               </div>
                             )}
+                            {expandedDocumentPagesId === d.id && (
+                              <div className="doc-pages-panel">
+                                {documentPagesLoadingId === d.id ? (
+                                  <span className="doc-job-note">Đang tải OCR pages...</span>
+                                ) : (
+                                  <>
+                                    {documentPagesError?.documentId === d.id && (
+                                      <span className="doc-job-note doc-job-note--error">{documentPagesError.message}</span>
+                                    )}
+                                    {(documentPagesById[d.id] || []).map((page) => (
+                                      <div className="doc-page-row" key={page.id}>
+                                        <b>Trang {page.page_number}</b>
+                                        <p>{pageTextPreview(page) || 'Chưa có nội dung OCR.'}</p>
+                                        {(page.formula_blocks || []).length > 0 && (
+                                          <small>{page.formula_blocks.length} công thức</small>
+                                        )}
+                                      </div>
+                                    ))}
+                                    {documentPagesError?.documentId !== d.id && (documentPagesById[d.id] || []).length === 0 && (
+                                      <span className="doc-job-note">Chưa có OCR pages cho tài liệu này.</span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )}
 	                        </div>
                           <button
                             type="button"
@@ -1526,6 +1585,15 @@ function ManagePage() {
                             onClick={() => toggleDocumentJobs(d)}
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></svg>
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn doc-pages-btn"
+                            title="Xem OCR pages"
+                            disabled={documentPagesLoadingId === d.id}
+                            onClick={() => toggleDocumentPages(d)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
                           </button>
 	                        <button
 	                          type="button"

@@ -1447,6 +1447,52 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertTrue(result["items"][0]["can_retry"])
         self.assertFalse(result["items"][0]["can_cancel"])
 
+    def test_document_pages_enforce_document_ownership(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        document_id = ObjectId()
+        page_id = ObjectId()
+        ocr_job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeDocumentPageRepository:
+            def find_by_id(self, _document_id):
+                return {
+                    "_id": document_id,
+                    "uploaded_by_user_id": owner.id,
+                    "current_version": 2,
+                    "schema_version": SCHEMA_VERSION,
+                    "archived_at": None,
+                }
+
+            def list_pages(self, _document_id, *, document_version=None, limit=100):
+                self.requested_version = document_version
+                return [
+                    {
+                        "_id": page_id,
+                        "document_id": document_id,
+                        "document_version": 2,
+                        "ocr_job_id": ocr_job_id,
+                        "page_number": 1,
+                        "raw_text": "raw OCR",
+                        "cleaned_text": "clean OCR",
+                        "formula_blocks": [{"latex": "x^2"}],
+                        "created_at": now,
+                    }
+                ][:limit]
+
+        repository = FakeDocumentPageRepository()
+        service = DocumentService(repository)
+
+        with self.assertRaises(PermissionError):
+            service.list_pages(str(document_id), other_teacher)
+
+        result = service.list_pages(str(document_id), owner)
+        self.assertEqual(repository.requested_version, 2)
+        self.assertEqual(result["items"][0]["id"], str(page_id))
+        self.assertEqual(result["items"][0]["document_id"], str(document_id))
+        self.assertEqual(result["items"][0]["cleaned_text"], "clean OCR")
+
     def test_document_job_retry_and_cancel_enforce_document_ownership(self):
         owner = _current_user("Teacher")
         other_teacher = _current_user("Teacher")

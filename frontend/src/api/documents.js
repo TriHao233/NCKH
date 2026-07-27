@@ -19,6 +19,12 @@ export function listDocumentJobs(id, { limit = 20 } = {}) {
   return apiRequest(`/documents/${id}/jobs?${params.toString()}`);
 }
 
+export function listDocumentPages(id, { limit = 100 } = {}) {
+  const params = new URLSearchParams();
+  params.set('limit', limit);
+  return apiRequest(`/documents/${id}/pages?${params.toString()}`);
+}
+
 export function retryDocumentJob(documentId, jobId) {
   return apiRequest(`/documents/${documentId}/jobs/${jobId}/retry`, { method: 'POST' });
 }

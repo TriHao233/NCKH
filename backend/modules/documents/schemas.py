@@ -72,6 +72,22 @@ class DocumentJobActionResponse(BaseModel):
     job: DocumentJobResponse
 
 
+class DocumentPageResponse(BaseModel):
+    id: str
+    document_id: str
+    document_version: int | None = None
+    ocr_job_id: str | None = None
+    page_number: int
+    raw_text: str | None = None
+    cleaned_text: str | None = None
+    formula_blocks: list[Any] = Field(default_factory=list)
+    created_at: datetime | None = None
+
+
+class DocumentPageListResponse(BaseModel):
+    items: list[DocumentPageResponse]
+
+
 class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
     total: int

@@ -81,6 +81,22 @@ def serialize_document_job(job: dict) -> dict:
     )
 
 
+def serialize_document_page(page: dict) -> dict:
+    return json_safe(
+        {
+            "id": page["_id"],
+            "document_id": page.get("document_id"),
+            "document_version": page.get("document_version"),
+            "ocr_job_id": page.get("ocr_job_id"),
+            "page_number": page.get("page_number"),
+            "raw_text": page.get("raw_text"),
+            "cleaned_text": page.get("cleaned_text"),
+            "formula_blocks": page.get("formula_blocks") or [],
+            "created_at": page.get("created_at"),
+        }
+    )
+
+
 class DocumentRepository(Protocol):
     def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict: ...
 
@@ -101,6 +117,14 @@ class DocumentRepository(Protocol):
     def archive(self, document_id: str | ObjectId) -> bool: ...
 
     def list_jobs(self, document_id: str | ObjectId, *, limit: int = 20) -> list[dict]: ...
+
+    def list_pages(
+        self,
+        document_id: str | ObjectId,
+        *,
+        document_version: int | None = None,
+        limit: int = 100,
+    ) -> list[dict]: ...
 
     def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict: ...
 
@@ -283,6 +307,22 @@ class MongoDocumentRepository:
             .limit(limit)
         )
 
+    def list_pages(
+        self,
+        document_id: str | ObjectId,
+        *,
+        document_version: int | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        query: dict = {"document_id": object_id(document_id, "document_id")}
+        if document_version is not None:
+            query["document_version"] = document_version
+        return list(
+            self.db.document_pages.find(query)
+            .sort("page_number", 1)
+            .limit(limit)
+        )
+
     def attach_original_artifact(
         self,
         document_id: str | ObjectId,
@@ -437,6 +477,9 @@ class MongoDocumentRepository:
             }
             for page in pages
         ]
+        self.db.document_pages.delete_many(
+            {"document_id": document_oid, "document_version": job["document_version"]}
+        )
         if records:
             self.db.document_pages.insert_many(records, ordered=True)
         self.collection.update_one(

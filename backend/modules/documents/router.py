@@ -7,6 +7,7 @@ from modules.documents.schemas import (
     DocumentJobActionResponse,
     DocumentJobListResponse,
     DocumentListResponse,
+    DocumentPageListResponse,
     DocumentResponse,
     DocumentStatus,
     DocumentUpdateRequest,
@@ -90,6 +91,24 @@ def list_document_jobs(
 ):
     try:
         result = service.list_jobs(document_id, current_user, limit=limit)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not result:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+    return result
+
+
+@router.get("/{document_id}/pages", response_model=DocumentPageListResponse)
+def list_document_pages(
+    document_id: str,
+    limit: int = Query(100, ge=1, le=300),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        result = service.list_pages(document_id, current_user, limit=limit)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:

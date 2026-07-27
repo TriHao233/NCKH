@@ -12,6 +12,7 @@ from modules.documents.repository import (
     RETRYABLE_DOCUMENT_JOB_STATUSES,
     serialize_document,
     serialize_document_job,
+    serialize_document_page,
 )
 from modules.documents.schemas import DocumentCreateRequest, DocumentUpdateRequest
 
@@ -94,6 +95,24 @@ class DocumentService:
         self._ensure_access(record, current_user)
         jobs = self.repository.list_jobs(document_id, limit=limit)
         return {"items": [serialize_document_job(job) for job in jobs]}
+
+    def list_pages(
+        self,
+        document_id: str,
+        current_user: CurrentUser,
+        *,
+        limit: int = 100,
+    ) -> dict | None:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            return None
+        self._ensure_access(record, current_user)
+        pages = self.repository.list_pages(
+            document_id,
+            document_version=record.get("current_version"),
+            limit=limit,
+        )
+        return {"items": [serialize_document_page(page) for page in pages]}
 
     def retry_job(
         self,
