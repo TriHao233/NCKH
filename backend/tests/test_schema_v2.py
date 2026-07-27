@@ -20,6 +20,7 @@ from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
+from modules.exams.schemas import ExamStatusUpdateRequest, ExamVariantCreateRequest
 from modules.generation.schemas import (
     BloomLevel,
     GeneratedQuestion,
@@ -141,6 +142,31 @@ class FakeExamVariantRepository:
 
     def delete(self, variant_id):
         return self.variants.pop(str(variant_id), None) is not None
+
+
+class FakeExamQuestionRepository:
+    def __init__(self, pairs=None):
+        self.pairs = {str(question["_id"]): (question, version) for question, version in (pairs or [])}
+
+    def find_pair(self, question_id):
+        return self.pairs.get(str(question_id))
+
+    def list(self, page, page_size, review_status, search, **filters):
+        pairs = list(self.pairs.values())
+        if review_status:
+            pairs = [
+                pair for pair in pairs
+                if pair[0].get("review_status") == review_status
+            ]
+        subject_id = filters.get("subject_id")
+        if subject_id:
+            pairs = [
+                pair for pair in pairs
+                if str((pair[1].get("classification") or {}).get("subject", {}).get("id")) == str(subject_id)
+            ]
+        total = len(pairs)
+        start = (page - 1) * page_size
+        return pairs[start:start + page_size], total
 
 
 def _user_doc(role="Admin", is_active=True):
@@ -528,6 +554,102 @@ class SchemaV2Tests(unittest.TestCase):
 
         result = service.get_exam(str(exam["_id"]), admin)
         self.assertEqual(result["created_by_user_id"], str(owner.id))
+
+    def test_exam_lifecycle_requires_exact_current_approved_questions(self):
+        owner = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        question_id = ObjectId()
+        version_id = ObjectId()
+        question = {
+            "_id": question_id,
+            "question_code": "Q-1",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": version_id,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "APPROVED",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {},
+            "review_assignment": {"status": "UNASSIGNED"},
+            "latest_review_id": None,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+        version = {
+            "_id": version_id,
+            "question_id": question_id,
+            "document_id": None,
+            "content": "Queue uses FIFO",
+            "question_data": {"options": {"A": "FIFO"}, "correct_answer": "A"},
+            "classification": {"subject": {"id": exam["subject_id"]}, "assessment_type": "TRAC_NGHIEM"},
+            "clos": [],
+            "sources": [],
+            "content_hash": "hash",
+        }
+        service = ExamService(
+            FakeExamRepository([exam]),
+            FakeExamQuestionRepository([(question, version)]),
+        )
+
+        with self.assertRaises(ValueError):
+            service.update_status(str(exam["_id"]), ExamStatusUpdateRequest(status="READY"), owner)
+
+        exam["questions"] = [
+            {
+                "question_id": question_id,
+                "version_id": version_id,
+                "content_snapshot": {"content": "Queue uses FIFO"},
+            }
+        ]
+        ready = service.update_status(
+            str(exam["_id"]),
+            ExamStatusUpdateRequest(status="READY"),
+            owner,
+        )
+        result = service.update_status(
+            str(exam["_id"]),
+            ExamStatusUpdateRequest(status="FINALIZED"),
+            owner,
+        )
+
+        self.assertEqual(ready["status"], "READY")
+        self.assertEqual(result["status"], "FINALIZED")
+        self.assertIn("finalized_snapshot", exam)
+
+    def test_variant_creation_requires_finalized_exam(self):
+        owner = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        question_id = ObjectId()
+        version_id = ObjectId()
+        exam["questions"] = [
+            {
+                "question_id": question_id,
+                "version_id": version_id,
+                "content_snapshot": {
+                    "content": "Queue uses FIFO",
+                    "question_data": {"options": {"A": "FIFO"}, "correct_answer": "A"},
+                },
+            }
+        ]
+        exams = FakeExamRepository([exam])
+        service = ExamVariantService(exams, FakeExamVariantRepository())
+
+        with self.assertRaises(ValueError):
+            service.create_variant(
+                str(exam["_id"]),
+                ExamVariantCreateRequest(exam_code="A01"),
+                owner,
+            )
+
+        exam["status"] = "FINALIZED"
+        exam["finalized_snapshot"] = {"questions": exam["questions"]}
+        result = service.create_variant(
+            str(exam["_id"]),
+            ExamVariantCreateRequest(exam_code="A01"),
+            owner,
+        )
+        self.assertEqual(result["exam_code"], "A01")
 
     def test_variant_preview_enforces_exam_ownership(self):
         owner = _current_user("Teacher")

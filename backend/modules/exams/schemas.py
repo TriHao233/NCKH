@@ -28,6 +28,13 @@ class QuestionDifficulty(str, Enum):
     KHO = "kho"
 
 
+class ExamStatus(str, Enum):
+    DRAFT = "DRAFT"
+    READY = "READY"
+    FINALIZED = "FINALIZED"
+    ARCHIVED = "ARCHIVED"
+
+
 class ExamHeaderConfig(BaseModel):
     school_name: str = Field("", max_length=300)
     faculty_name: str = Field("", max_length=300)
@@ -74,6 +81,10 @@ class ExamUpdateRequest(BaseModel):
     header: ExamHeaderConfig | None = None
 
 
+class ExamStatusUpdateRequest(BaseModel):
+    status: ExamStatus
+
+
 class AddQuestionsManualRequest(BaseModel):
     question_ids: list[str] = Field(..., min_length=1)
 
@@ -106,6 +117,13 @@ class ExamResponse(BaseModel):
 
 class ExamListResponse(BaseModel):
     items: list[ExamResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class ExamQuestionPoolResponse(BaseModel):
+    items: list[dict[str, Any]]
     total: int
     page: int
     page_size: int

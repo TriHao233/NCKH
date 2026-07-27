@@ -11,9 +11,19 @@ function refId(value) {
 }
 
 const STATUS_LABEL = {
+  DRAFT: 'Nháp',
+  READY: 'Sẵn sàng',
+  FINALIZED: 'Đã chốt',
+  ARCHIVED: 'Lưu trữ',
   draft: 'Nháp',
+  ready: 'Sẵn sàng',
   finalized: 'Hoàn tất',
+  archived: 'Lưu trữ',
 };
+
+function statusClass(status) {
+  return String(status || 'DRAFT').toLowerCase();
+}
 
 function ExamListPage() {
   const navigate = useNavigate();
@@ -127,7 +137,7 @@ function ExamListPage() {
                 <div className="card exam-card" key={exam.id}>
                   <div className="exam-card-header">
                     <h3>{exam.name}</h3>
-                    <span className={`status-badge status--${exam.status}`}>
+                    <span className={`status-badge status--${statusClass(exam.status)}`}>
                       {STATUS_LABEL[exam.status] || exam.status}
                     </span>
                   </div>

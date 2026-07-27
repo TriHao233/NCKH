@@ -23,6 +23,8 @@ from modules.exams.schemas import (
     AddQuestionsManualRequest,
     ExamCreateRequest,
     ExamMatrixRequest,
+    ExamStatus,
+    ExamStatusUpdateRequest,
     ExamUpdateRequest,
     ExamVariantCreateRequest,
     MatrixCell,
@@ -30,6 +32,19 @@ from modules.exams.schemas import (
 from modules.questions.repository import MongoQuestionRepository, serialize_question
 
 APPROVED_STATUS = "APPROVED"
+EDITABLE_EXAM_STATUSES = {"DRAFT", "READY"}
+LOCKED_EXAM_STATUSES = {"FINALIZED", "ARCHIVED"}
+STATUS_ALIASES = {
+    "draft": "DRAFT",
+    "ready": "READY",
+    "finalized": "FINALIZED",
+    "archived": "ARCHIVED",
+}
+
+
+def _exam_status(exam: dict) -> str:
+    raw_status = str(exam.get("status") or "DRAFT")
+    return STATUS_ALIASES.get(raw_status, raw_status.upper())
 
 
 def _matrix_cell_dict(cell: MatrixCell) -> dict:
@@ -52,7 +67,7 @@ def serialize_exam(exam: dict, variant_count: int = 0) -> dict:
             "header": exam["header"],
             "matrix": exam.get("matrix", []),
             "questions": exam.get("questions", []),
-            "status": exam["status"],
+            "status": _exam_status(exam),
             "variant_count": variant_count,
             "delivery_mode": exam.get("delivery_mode", "paper"),
             "time_limit_seconds": exam.get("time_limit_seconds"),
@@ -104,6 +119,57 @@ class ExamService:
         self._assert_can_access(exam, current_user)
         return exam
 
+    @staticmethod
+    def _assert_mutable(exam: dict) -> None:
+        if _exam_status(exam) in LOCKED_EXAM_STATUSES:
+            raise ValueError("Đề thi đã chốt hoặc lưu trữ, không thể chỉnh sửa nội dung")
+
+    @staticmethod
+    def _question_subject_id(version: dict) -> str | None:
+        subject = (version.get("classification") or {}).get("subject") or {}
+        subject_id = subject.get("id") if isinstance(subject, dict) else subject
+        return str(subject_id) if subject_id else None
+
+    def _assert_question_can_join_exam(self, exam: dict, question: dict, version: dict) -> None:
+        if question.get("review_status") != APPROVED_STATUS:
+            raise ValueError(f"Câu hỏi {question.get('question_code')} chưa được duyệt")
+        if str(question.get("current_version_id")) != str(version["_id"]):
+            raise ValueError(f"Câu hỏi {question.get('question_code')} đã có version mới hơn")
+        question_subject_id = self._question_subject_id(version)
+        if question_subject_id and question_subject_id != str(exam["subject_id"]):
+            raise ValueError(f"Câu hỏi {question.get('question_code')} không thuộc môn của đề thi")
+
+    def _validate_ready_payload(self, exam: dict) -> None:
+        questions = exam.get("questions", [])
+        if len(questions) != int(exam["question_count"]):
+            raise ValueError(
+                f"Đề thi cần đúng {exam['question_count']} câu trước khi chốt"
+            )
+        matrix_total = sum(int(cell.get("count", 0)) for cell in exam.get("matrix", []))
+        if exam.get("matrix") and matrix_total != int(exam["question_count"]):
+            raise ValueError("Tổng số câu trong ma trận phải bằng số câu của đề thi")
+        for ref in questions:
+            pair = self.question_repository.find_pair(str(ref["question_id"]))
+            if not pair:
+                raise ValueError("Một câu hỏi trong đề không còn tồn tại")
+            question, version = pair
+            if str(ref.get("version_id")) != str(version["_id"]):
+                raise ValueError(
+                    f"Câu hỏi {question.get('question_code')} không còn ở version đã chọn"
+                )
+            self._assert_question_can_join_exam(exam, question, version)
+
+    @staticmethod
+    def _finalized_snapshot(exam: dict) -> dict:
+        return {
+            "subject_id": exam["subject_id"],
+            "question_count": exam["question_count"],
+            "header": exam["header"],
+            "matrix": exam.get("matrix", []),
+            "questions": exam.get("questions", []),
+            "created_at": utc_now(),
+        }
+
     def create_exam(self, payload: ExamCreateRequest, created_by_user_id: ObjectId) -> dict:
         now = utc_now()
         exam = {
@@ -116,7 +182,7 @@ class ExamService:
             "header": payload.header.model_dump(),
             "matrix": [],
             "questions": [],
-            "status": "draft",
+            "status": ExamStatus.DRAFT.value,
             "delivery_mode": "paper",
             "time_limit_seconds": None,
             "scoring_config": None,
@@ -145,8 +211,93 @@ class ExamService:
         ]
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 
+    def question_pool(
+        self,
+        exam_id: str,
+        current_user: CurrentUser,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        search: str | None = None,
+        question_type: str | None = None,
+        bloom_level: int | None = None,
+        chapter_id: str | None = None,
+        difficulty: str | None = None,
+    ) -> dict:
+        exam = self._get_for_user_or_404(exam_id, current_user)
+        owner_user_id = (
+            current_user.id
+            if current_user and current_user.role == "Teacher"
+            else None
+        )
+        pairs, total = self.question_repository.list(
+            page,
+            page_size,
+            APPROVED_STATUS,
+            search,
+            question_type=question_type,
+            bloom_level=bloom_level,
+            subject_id=str(exam["subject_id"]),
+            chapter_id=chapter_id,
+            difficulty=difficulty,
+            owner_user_id=owner_user_id,
+        )
+        selected_ids = {str(ref["question_id"]) for ref in exam.get("questions", [])}
+        return {
+            "items": [
+                {
+                    **serialize_question(question, version),
+                    "in_exam": str(question["_id"]) in selected_ids,
+                }
+                for question, version in pairs
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def update_status(
+        self,
+        exam_id: str,
+        payload: ExamStatusUpdateRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        exam = self._get_for_user_or_404(exam_id, current_user)
+        current_status = _exam_status(exam)
+        target_status = payload.status.value
+        if current_status == "ARCHIVED":
+            raise ValueError("Đề thi đã lưu trữ")
+        if target_status == current_status:
+            return serialize_exam(exam, self.repository.count_variants(exam_id))
+        if target_status == "DRAFT":
+            if current_status == "FINALIZED":
+                raise ValueError("Đề thi đã chốt, không thể quay lại nháp")
+            updates = {"status": ExamStatus.DRAFT.value}
+        elif target_status == "READY":
+            if current_status == "FINALIZED":
+                raise ValueError("Đề thi đã chốt")
+            self._validate_ready_payload(exam)
+            updates = {"status": ExamStatus.READY.value}
+        elif target_status == "FINALIZED":
+            if current_status != "READY":
+                raise ValueError("Cần chuyển đề thi sang READY trước khi chốt")
+            self._validate_ready_payload(exam)
+            updates = {
+                "status": ExamStatus.FINALIZED.value,
+                "finalized_snapshot": self._finalized_snapshot(exam),
+            }
+        elif target_status == "ARCHIVED":
+            if current_status != "FINALIZED":
+                raise ValueError("Chỉ lưu trữ đề thi đã chốt")
+            updates = {"status": ExamStatus.ARCHIVED.value}
+        else:
+            raise ValueError("Trạng thái đề thi không hợp lệ")
+        updated = self.repository.update(exam_id, updates)
+        return serialize_exam(updated, self.repository.count_variants(exam_id))
+
     def update_exam(self, exam_id: str, payload: ExamUpdateRequest, current_user: CurrentUser) -> dict:
-        self._get_for_user_or_404(exam_id, current_user)
+        current_exam = self._get_for_user_or_404(exam_id, current_user)
+        self._assert_mutable(current_exam)
         updates: dict[str, Any] = {}
         if payload.name is not None:
             updates["name"] = payload.name
@@ -156,6 +307,8 @@ class ExamService:
             updates["question_count"] = payload.question_count
         if payload.header is not None:
             updates["header"] = payload.header.model_dump()
+        if payload.question_count is not None and _exam_status(current_exam) == "READY":
+            updates["status"] = ExamStatus.DRAFT.value
         exam = self.repository.update(exam_id, updates) if updates else self._get_or_404(exam_id)
         return serialize_exam(exam, self.repository.count_variants(exam_id))
 
@@ -166,14 +319,31 @@ class ExamService:
         self.repository.delete(exam_id)
 
     def save_matrix(self, exam_id: str, payload: ExamMatrixRequest, current_user: CurrentUser) -> dict:
-        self._get_for_user_or_404(exam_id, current_user)
+        current_exam = self._get_for_user_or_404(exam_id, current_user)
+        self._assert_mutable(current_exam)
         cells = [_matrix_cell_dict(cell) for cell in payload.cells]
-        exam = self.repository.update(exam_id, {"matrix": cells})
+        total_count = sum(cell["count"] for cell in cells)
+        if total_count > int(current_exam["question_count"]):
+            raise ValueError("Tổng số câu trong ma trận vượt quá số câu của đề thi")
+        updates: dict[str, Any] = {"matrix": cells}
+        if _exam_status(current_exam) == "READY":
+            updates["status"] = ExamStatus.DRAFT.value
+        exam = self.repository.update(exam_id, updates)
         return serialize_exam(exam, self.repository.count_variants(exam_id))
 
-    def _find_approved_for_cell(self, exam: dict, cell: dict) -> list[tuple[dict, dict]]:
+    def _find_approved_for_cell(
+        self,
+        exam: dict,
+        cell: dict,
+        current_user: CurrentUser | None = None,
+    ) -> list[tuple[dict, dict]]:
         bloom_level = COGNITIVE_LEVEL_TO_BLOOM.get(cell["cognitive_level"])
         chapter_id = str(cell["chapter_id"]) if cell.get("chapter_id") else None
+        owner_user_id = (
+            current_user.id
+            if current_user and current_user.role == "Teacher"
+            else None
+        )
         pairs, _total = self.question_repository.list(
             1,
             1000,
@@ -183,6 +353,7 @@ class ExamService:
             subject_id=str(exam["subject_id"]),
             chapter_id=chapter_id,
             difficulty=cell["difficulty"],
+            owner_user_id=owner_user_id,
         )
         return pairs
 
@@ -190,7 +361,7 @@ class ExamService:
         exam = self._get_for_user_or_404(exam_id, current_user)
         results = []
         for cell in exam.get("matrix", []):
-            pairs = self._find_approved_for_cell(exam, cell)
+            pairs = self._find_approved_for_cell(exam, cell, current_user)
             available = len(pairs)
             results.append(
                 {
@@ -206,6 +377,7 @@ class ExamService:
 
     def auto_generate_pool(self, exam_id: str, current_user: CurrentUser) -> dict:
         exam = self._get_for_user_or_404(exam_id, current_user)
+        self._assert_mutable(exam)
         matrix = exam.get("matrix", [])
         if not matrix:
             raise ValueError("Chưa cấu hình ma trận đề thi")
@@ -213,7 +385,7 @@ class ExamService:
         selected_refs: list[dict] = []
         shortages: list[dict] = []
         for cell in matrix:
-            pairs = self._find_approved_for_cell(exam, cell)
+            pairs = self._find_approved_for_cell(exam, cell, current_user)
             pool = [pair for pair in pairs if str(pair[0]["_id"]) not in selected_ids]
             if len(pool) < cell["count"]:
                 shortages.append(
@@ -243,11 +415,15 @@ class ExamService:
             )
         if len(selected_refs) > exam["question_count"]:
             selected_refs = selected_refs[: exam["question_count"]]
-        updated = self.repository.update(exam_id, {"questions": selected_refs})
+        updates: dict[str, Any] = {"questions": selected_refs}
+        if _exam_status(exam) == "READY":
+            updates["status"] = ExamStatus.DRAFT.value
+        updated = self.repository.update(exam_id, updates)
         return serialize_exam(updated, self.repository.count_variants(exam_id))
 
     def add_questions_manual(self, exam_id: str, payload: AddQuestionsManualRequest, current_user: CurrentUser) -> dict:
         exam = self._get_for_user_or_404(exam_id, current_user)
+        self._assert_mutable(exam)
         existing_refs = list(exam.get("questions", []))
         existing_ids = {str(ref["question_id"]) for ref in existing_refs}
         new_refs = []
@@ -258,10 +434,7 @@ class ExamService:
             if not pair:
                 raise ValueError(f"Câu hỏi không tồn tại: {question_id}")
             question, version = pair
-            if question.get("review_status") != APPROVED_STATUS:
-                raise ValueError(
-                    f"Câu hỏi {question.get('question_code')} chưa được duyệt"
-                )
+            self._assert_question_can_join_exam(exam, question, version)
             existing_ids.add(question_id)
             new_refs.append(
                 {
@@ -275,17 +448,24 @@ class ExamService:
             raise ValueError(
                 f"Tổng số câu hỏi ({len(total)}) vượt quá số câu đã khai báo ({exam['question_count']})"
             )
-        updated = self.repository.update(exam_id, {"questions": total})
+        updates: dict[str, Any] = {"questions": total}
+        if _exam_status(exam) == "READY":
+            updates["status"] = ExamStatus.DRAFT.value
+        updated = self.repository.update(exam_id, updates)
         return serialize_exam(updated, self.repository.count_variants(exam_id))
 
     def remove_question(self, exam_id: str, question_id: str, current_user: CurrentUser) -> dict:
         exam = self._get_for_user_or_404(exam_id, current_user)
+        self._assert_mutable(exam)
         remaining = [
             ref
             for ref in exam.get("questions", [])
             if str(ref["question_id"]) != question_id
         ]
-        updated = self.repository.update(exam_id, {"questions": remaining})
+        updates: dict[str, Any] = {"questions": remaining}
+        if _exam_status(exam) == "READY":
+            updates["status"] = ExamStatus.DRAFT.value
+        updated = self.repository.update(exam_id, updates)
         return serialize_exam(updated, self.repository.count_variants(exam_id))
 
 
@@ -319,9 +499,13 @@ class ExamVariantService:
 
     def create_variant(self, exam_id: str, payload: ExamVariantCreateRequest, current_user: CurrentUser) -> dict:
         exam = self._get_exam_for_user_or_404(exam_id, current_user)
-        questions = exam.get("questions", [])
+        if _exam_status(exam) != "FINALIZED":
+            raise ValueError("Chỉ có thể tạo mã đề sau khi chốt đề thi")
+        questions = (exam.get("finalized_snapshot") or {}).get("questions") or exam.get("questions", [])
         if not questions:
             raise ValueError("Đề thi chưa có câu hỏi, không thể tạo mã đề")
+        if len(questions) != int(exam["question_count"]):
+            raise ValueError("Đề thi chưa đủ số câu, không thể tạo mã đề")
         if self.exams.count_variants(exam_id) >= MAX_VARIANTS_PER_EXAM:
             raise ValueError(f"Đã đạt tối đa {MAX_VARIANTS_PER_EXAM} mã đề cho kỳ thi này")
 

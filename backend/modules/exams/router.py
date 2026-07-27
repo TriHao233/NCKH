@@ -6,10 +6,12 @@ from modules.exams.pdf_service import VALID_EXPORT_TYPES, render_exam_pdf
 from modules.exams.schemas import (
     AddQuestionsManualRequest,
     ExamCreateRequest,
+    ExamQuestionPoolResponse,
     ExamListResponse,
     ExamMatrixRequest,
     ExamPreviewResponse,
     ExamResponse,
+    ExamStatusUpdateRequest,
     ExamUpdateRequest,
     ExamVariantCreateRequest,
     ExamVariantResponse,
@@ -82,6 +84,19 @@ def update_exam(
         _translate(exc)
 
 
+@router.post("/{exam_id}/status", response_model=ExamResponse)
+def update_exam_status(
+    exam_id: str,
+    payload: ExamStatusUpdateRequest,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: ExamService = Depends(get_exam_service),
+):
+    try:
+        return service.update_status(exam_id, payload, current_user)
+    except Exception as exc:
+        _translate(exc)
+
+
 @router.delete("/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_exam(
     exam_id: str,
@@ -90,6 +105,35 @@ def delete_exam(
 ):
     try:
         service.delete_exam(exam_id, current_user)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.get("/{exam_id}/question-pool", response_model=ExamQuestionPoolResponse)
+def question_pool(
+    exam_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None),
+    question_type: str | None = Query(None),
+    bloom_level: int | None = Query(None, ge=1, le=6),
+    chapter_id: str | None = Query(None),
+    difficulty: str | None = Query(None),
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: ExamService = Depends(get_exam_service),
+):
+    try:
+        return service.question_pool(
+            exam_id,
+            current_user,
+            page=page,
+            page_size=page_size,
+            search=search,
+            question_type=question_type,
+            bloom_level=bloom_level,
+            chapter_id=chapter_id,
+            difficulty=difficulty,
+        )
     except Exception as exc:
         _translate(exc)
 

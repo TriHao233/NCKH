@@ -24,6 +24,10 @@ export function updateExam(examId, payload) {
   return apiRequest(`/exams/${examId}`, { method: 'PATCH', body: payload });
 }
 
+export function updateExamStatus(examId, status) {
+  return apiRequest(`/exams/${examId}/status`, { method: 'POST', body: { status } });
+}
+
 export function deleteExam(examId) {
   return apiRequest(`/exams/${examId}`, { method: 'DELETE' });
 }
@@ -38,6 +42,26 @@ export function getMatrixAvailability(examId) {
 
 export function autoGenerateQuestions(examId) {
   return apiRequest(`/exams/${examId}/questions/auto-generate`, { method: 'POST' });
+}
+
+export function listExamQuestionPool(examId, {
+  page = 1,
+  pageSize = 20,
+  search,
+  questionType,
+  bloomLevel,
+  chapterId,
+  difficulty,
+} = {}) {
+  const params = new URLSearchParams();
+  params.set('page', page);
+  params.set('page_size', pageSize);
+  if (search) params.set('search', search);
+  if (questionType) params.set('question_type', questionType);
+  if (bloomLevel) params.set('bloom_level', bloomLevel);
+  if (chapterId) params.set('chapter_id', chapterId);
+  if (difficulty) params.set('difficulty', difficulty);
+  return apiRequest(`/exams/${examId}/question-pool?${params.toString()}`);
 }
 
 export function addQuestionsManual(examId, questionIds) {

@@ -9,12 +9,13 @@ import {
   getExam,
   getMatrixAvailability,
   getVariantPreview,
+  listExamQuestionPool,
   listVariants,
   removeQuestion,
   saveMatrix,
+  updateExamStatus,
   updateExam,
 } from '../api/exams';
-import { listQuestions } from '../api/questions';
 import { listSubjects } from '../api/catalog';
 import { questionTypeLabel } from '../constants/generationEnums';
 import '../css/ExamBuilderPage.css';
@@ -37,6 +38,30 @@ const DIFFICULTIES = [
   { value: 'trung_binh', label: 'Trung bình' },
   { value: 'kho', label: 'Khó' },
 ];
+
+const COGNITIVE_TO_BLOOM = {
+  nhan_biet: 1,
+  thong_hieu: 2,
+  van_dung: 3,
+  van_dung_cao: 4,
+};
+
+const EXAM_STATUS_LABEL = {
+  DRAFT: 'Nháp',
+  READY: 'Sẵn sàng',
+  FINALIZED: 'Đã chốt',
+  ARCHIVED: 'Lưu trữ',
+};
+
+const QUESTION_POOL_PAGE_SIZE = 20;
+
+function examStatus(exam) {
+  return String(exam?.status || 'DRAFT').toUpperCase();
+}
+
+function isExamLocked(exam) {
+  return ['FINALIZED', 'ARCHIVED'].includes(examStatus(exam));
+}
 
 const STEPS = [
   { id: 'info', label: '1. Thông tin đề thi' },
@@ -84,6 +109,23 @@ function ExamBuilderPage() {
     [subjects, exam],
   );
   const chapters = subject?.chapters || [];
+  const statusValue = examStatus(exam);
+  const locked = isExamLocked(exam);
+
+  const handleStatusChange = async (targetStatus) => {
+    if (targetStatus === 'FINALIZED' && !window.confirm('Chốt đề thi và khóa ma trận/danh sách câu hỏi?')) {
+      return;
+    }
+    if (targetStatus === 'ARCHIVED' && !window.confirm('Lưu trữ đề thi này?')) {
+      return;
+    }
+    try {
+      const updated = await updateExamStatus(exam.id, targetStatus);
+      setExam(updated);
+    } catch (err) {
+      alert('Cập nhật trạng thái đề thi thất bại: ' + err.message);
+    }
+  };
 
   if (loading) return <main className="exam-builder-page"><p className="empty-note">Đang tải đề thi...</p></main>;
   if (error) return <main className="exam-builder-page"><p className="exam-error">{error}</p></main>;
@@ -117,10 +159,20 @@ function ExamBuilderPage() {
           </nav>
 
           <div className="builder-content card">
-            {step === 'info' && <InfoStep exam={exam} onSaved={setExam} />}
-            {step === 'header' && <HeaderStep exam={exam} onSaved={setExam} />}
-            {step === 'matrix' && <MatrixStep exam={exam} chapters={chapters} onSaved={setExam} />}
-            {step === 'questions' && <QuestionsStep exam={exam} onSaved={setExam} />}
+            <LifecycleBar
+              exam={exam}
+              status={statusValue}
+              onStatusChange={handleStatusChange}
+            />
+            {locked && (
+              <p className="locked-note">
+                Đề thi đã {statusValue === 'ARCHIVED' ? 'lưu trữ' : 'chốt'}; thông tin, ma trận và danh sách câu hỏi đang được khóa.
+              </p>
+            )}
+            {step === 'info' && <InfoStep exam={exam} onSaved={setExam} readOnly={locked} />}
+            {step === 'header' && <HeaderStep exam={exam} onSaved={setExam} readOnly={locked} />}
+            {step === 'matrix' && <MatrixStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} />}
+            {step === 'questions' && <QuestionsStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} />}
             {step === 'variants' && <VariantsStep exam={exam} />}
             {step === 'preview' && <PreviewStep exam={exam} />}
             {step === 'export' && <ExportStep exam={exam} />}
@@ -131,7 +183,51 @@ function ExamBuilderPage() {
   );
 }
 
-function InfoStep({ exam, onSaved }) {
+function LifecycleBar({ exam, status, onStatusChange }) {
+  const selectedCount = exam.questions?.length || 0;
+  const hasExactQuestionCount = selectedCount === exam.question_count;
+  const canReady = status === 'DRAFT' && hasExactQuestionCount;
+  const canFinalize = status === 'READY' && hasExactQuestionCount;
+  const canArchive = status === 'FINALIZED';
+
+  return (
+    <section className="lifecycle-bar">
+      <div>
+        <span className={`exam-status-pill exam-status-pill--${status.toLowerCase()}`}>
+          {EXAM_STATUS_LABEL[status] || status}
+        </span>
+        <b>{selectedCount}/{exam.question_count} câu</b>
+        {!hasExactQuestionCount && (
+          <small>Cần đủ đúng số câu để chuyển sẵn sàng hoặc chốt đề.</small>
+        )}
+      </div>
+      <div className="lifecycle-actions">
+        {status === 'READY' && (
+          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('DRAFT')}>
+            Mở chỉnh
+          </button>
+        )}
+        {status === 'DRAFT' && (
+          <button type="button" className="btn btn--outline" disabled={!canReady} onClick={() => onStatusChange('READY')}>
+            Đánh dấu sẵn sàng
+          </button>
+        )}
+        {status === 'READY' && (
+          <button type="button" className="btn btn--primary" disabled={!canFinalize} onClick={() => onStatusChange('FINALIZED')}>
+            Chốt đề
+          </button>
+        )}
+        {canArchive && (
+          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('ARCHIVED')}>
+            Lưu trữ
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function InfoStep({ exam, onSaved, readOnly }) {
   const [name, setName] = useState(exam.name);
   const [examTitle, setExamTitle] = useState(exam.exam_title);
   const [questionCount, setQuestionCount] = useState(exam.question_count);
@@ -139,6 +235,7 @@ function InfoStep({ exam, onSaved }) {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (readOnly) return;
     setSaving(true);
     try {
       const updated = await updateExam(exam.id, {
@@ -159,22 +256,22 @@ function InfoStep({ exam, onSaved }) {
       <h3 className="step-title">Thông tin đề thi</h3>
       <div className="field-group">
         <label className="field-label">Tên đề thi</label>
-        <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Tên kỳ thi</label>
-        <input className="field-input" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} />
+        <input className="field-input" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Số lượng câu hỏi</label>
-        <input type="number" min={1} max={200} className="field-input" value={questionCount} onChange={(e) => setQuestionCount(e.target.value)} />
+        <input type="number" min={1} max={200} className="field-input" value={questionCount} onChange={(e) => setQuestionCount(e.target.value)} disabled={readOnly} />
       </div>
-      <button type="submit" className="btn btn--primary" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu'}</button>
+      <button type="submit" className="btn btn--primary" disabled={saving || readOnly}>{saving ? 'Đang lưu...' : 'Lưu'}</button>
     </form>
   );
 }
 
-function HeaderStep({ exam, onSaved }) {
+function HeaderStep({ exam, onSaved, readOnly }) {
   const [header, setHeader] = useState({ ...exam.header });
   const [saving, setSaving] = useState(false);
 
@@ -182,6 +279,7 @@ function HeaderStep({ exam, onSaved }) {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (readOnly) return;
     setSaving(true);
     try {
       const updated = await updateExam(exam.id, { header });
@@ -198,42 +296,42 @@ function HeaderStep({ exam, onSaved }) {
       <h3 className="step-title">Cấu hình đầu trang đề thi</h3>
       <div className="field-group">
         <label className="field-label">Tên Trường/Đại học</label>
-        <input className="field-input" value={header.school_name || ''} onChange={(e) => setField('school_name', e.target.value)} />
+        <input className="field-input" value={header.school_name || ''} onChange={(e) => setField('school_name', e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Tên Khoa/Bộ môn</label>
-        <input className="field-input" value={header.faculty_name || ''} onChange={(e) => setField('faculty_name', e.target.value)} />
+        <input className="field-input" value={header.faculty_name || ''} onChange={(e) => setField('faculty_name', e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Tên kỳ thi (hiển thị trên đầu trang)</label>
-        <input className="field-input" value={header.exam_name || ''} onChange={(e) => setField('exam_name', e.target.value)} />
+        <input className="field-input" value={header.exam_name || ''} onChange={(e) => setField('exam_name', e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Tên môn học/học phần</label>
-        <input className="field-input" value={header.subject_name || ''} onChange={(e) => setField('subject_name', e.target.value)} />
+        <input className="field-input" value={header.subject_name || ''} onChange={(e) => setField('subject_name', e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Thời gian làm bài (phút)</label>
-        <input type="number" min={1} className="field-input" value={header.duration_minutes || 60} onChange={(e) => setField('duration_minutes', Number(e.target.value))} />
+        <input type="number" min={1} className="field-input" value={header.duration_minutes || 60} onChange={(e) => setField('duration_minutes', Number(e.target.value))} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Lớp (tuỳ chọn)</label>
-        <input className="field-input" value={header.class_name || ''} onChange={(e) => setField('class_name', e.target.value)} />
+        <input className="field-input" value={header.class_name || ''} onChange={(e) => setField('class_name', e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Phòng thi (tuỳ chọn)</label>
-        <input className="field-input" value={header.room || ''} onChange={(e) => setField('room', e.target.value)} />
+        <input className="field-input" value={header.room || ''} onChange={(e) => setField('room', e.target.value)} disabled={readOnly} />
       </div>
       <div className="field-group">
         <label className="field-label">Ngày thi (tuỳ chọn)</label>
-        <input className="field-input" value={header.exam_date || ''} onChange={(e) => setField('exam_date', e.target.value)} placeholder="dd/mm/yyyy" />
+        <input className="field-input" value={header.exam_date || ''} onChange={(e) => setField('exam_date', e.target.value)} placeholder="dd/mm/yyyy" disabled={readOnly} />
       </div>
-      <button type="submit" className="btn btn--primary" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu đầu trang'}</button>
+      <button type="submit" className="btn btn--primary" disabled={saving || readOnly}>{saving ? 'Đang lưu...' : 'Lưu đầu trang'}</button>
     </form>
   );
 }
 
-function MatrixStep({ exam, chapters, onSaved }) {
+function MatrixStep({ exam, chapters, onSaved, readOnly }) {
   const [cells, setCells] = useState(exam.matrix?.length ? exam.matrix : [emptyCell()]);
   const [saving, setSaving] = useState(false);
   const [availability, setAvailability] = useState(null);
@@ -248,6 +346,7 @@ function MatrixStep({ exam, chapters, onSaved }) {
   const totalCount = cells.reduce((sum, cell) => sum + Number(cell.count || 0), 0);
 
   const handleSave = async () => {
+    if (readOnly) return;
     setSaving(true);
     try {
       const payload = cells.map((cell) => ({
@@ -300,7 +399,7 @@ function MatrixStep({ exam, chapters, onSaved }) {
           {cells.map((cell, index) => (
             <tr key={index}>
               <td>
-                <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })}>
+                <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly}>
                   <option value="">Tất cả chương</option>
                   {chapters.map((chapter) => (
                     <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
@@ -310,31 +409,31 @@ function MatrixStep({ exam, chapters, onSaved }) {
                 </select>
               </td>
               <td>
-                <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })}>
+                <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly}>
                   {COGNITIVE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
                 </select>
               </td>
               <td>
-                <select className="field-select" value={cell.difficulty} onChange={(e) => updateCell(index, { difficulty: e.target.value })}>
+                <select className="field-select" value={cell.difficulty} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly}>
                   {DIFFICULTIES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
                 </select>
               </td>
               <td>
-                <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} />
+                <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly} />
               </td>
               <td>
-                <button type="button" className="icon-btn icon-btn--danger" onClick={() => removeRow(index)}>×</button>
+                <button type="button" className="icon-btn icon-btn--danger" onClick={() => removeRow(index)} disabled={readOnly}>×</button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       <div className="step-actions">
-        <button type="button" className="btn btn--outline" onClick={addRow}>+ Thêm nhóm</button>
+        <button type="button" className="btn btn--outline" onClick={addRow} disabled={readOnly}>+ Thêm nhóm</button>
         <button type="button" className="btn btn--outline" onClick={handleCheck} disabled={checking}>
           {checking ? 'Đang kiểm tra...' : 'Kiểm tra đủ câu hỏi'}
         </button>
-        <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving}>
+        <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving || readOnly}>
           {saving ? 'Đang lưu...' : 'Lưu ma trận'}
         </button>
       </div>
@@ -352,43 +451,66 @@ function MatrixStep({ exam, chapters, onSaved }) {
   );
 }
 
-function QuestionsStep({ exam, onSaved }) {
+function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
   const [mode, setMode] = useState('auto');
   const [busy, setBusy] = useState(false);
-  const [approved, setApproved] = useState([]);
+  const [poolItems, setPoolItems] = useState([]);
+  const [poolTotal, setPoolTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState([]);
   const [loadingApproved, setLoadingApproved] = useState(false);
+  const [poolPage, setPoolPage] = useState(1);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [chapterFilter, setChapterFilter] = useState('');
+  const [cognitiveFilter, setCognitiveFilter] = useState('');
+  const [difficultyFilter, setDifficultyFilter] = useState('');
 
   const poolIds = new Set((exam.questions || []).map((q) => q.question_id));
+  const poolPages = Math.max(1, Math.ceil(poolTotal / QUESTION_POOL_PAGE_SIZE));
+  const visiblePoolItems = poolItems.filter((q) => !poolIds.has(q.id) && !q.in_exam);
 
-  const loadApproved = async () => {
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearchTerm(searchInput.trim());
+      setPoolPage(1);
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  const loadApproved = useCallback(async () => {
+    if (mode !== 'manual') return;
     setLoadingApproved(true);
     try {
-      const result = await listQuestions({
-        page: 1,
-        pageSize: 200,
-        reviewStatus: 'APPROVED',
+      const result = await listExamQuestionPool(exam.id, {
+        page: poolPage,
+        pageSize: QUESTION_POOL_PAGE_SIZE,
+        search: searchTerm || undefined,
+        chapterId: chapterFilter || undefined,
+        bloomLevel: cognitiveFilter ? COGNITIVE_TO_BLOOM[cognitiveFilter] : undefined,
+        difficulty: difficultyFilter || undefined,
       });
-      setApproved((result.items || []).filter((q) => refIdOf(q.classification?.subject?.id) === exam.subject_id || !q.classification?.subject?.id));
+      setPoolItems(result.items || []);
+      setPoolTotal(result.total || 0);
     } catch (err) {
       alert('Tải câu hỏi thất bại: ' + err.message);
+      setPoolItems([]);
+      setPoolTotal(0);
     } finally {
       setLoadingApproved(false);
     }
-  };
-
-  function refIdOf(value) {
-    if (!value) return '';
-    if (typeof value === 'string') return value;
-    return value.id || value._id || '';
-  }
+  }, [chapterFilter, cognitiveFilter, difficultyFilter, exam.id, mode, poolPage, searchTerm]);
 
   useEffect(() => {
-    if (mode === 'manual') loadApproved();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+    loadApproved();
+  }, [loadApproved]);
+
+  useEffect(() => {
+    setPoolPage(1);
+    setSelectedIds([]);
+  }, [chapterFilter, cognitiveFilter, difficultyFilter]);
 
   const handleAutoGenerate = async () => {
+    if (readOnly) return;
     setBusy(true);
     try {
       const updated = await autoGenerateQuestions(exam.id);
@@ -406,12 +528,13 @@ function QuestionsStep({ exam, onSaved }) {
   };
 
   const handleAddManual = async () => {
-    if (selectedIds.length === 0) return;
+    if (readOnly || selectedIds.length === 0) return;
     setBusy(true);
     try {
       const updated = await addQuestionsManual(exam.id, selectedIds);
       onSaved(updated);
       setSelectedIds([]);
+      await loadApproved();
     } catch (err) {
       alert('Thêm câu hỏi thất bại: ' + err.message);
     } finally {
@@ -420,6 +543,7 @@ function QuestionsStep({ exam, onSaved }) {
   };
 
   const handleRemove = async (questionId) => {
+    if (readOnly) return;
     setBusy(true);
     try {
       const updated = await removeQuestion(exam.id, questionId);
@@ -441,7 +565,7 @@ function QuestionsStep({ exam, onSaved }) {
 
       {mode === 'auto' && (
         <div className="step-actions">
-          <button type="button" className="btn btn--primary" onClick={handleAutoGenerate} disabled={busy}>
+          <button type="button" className="btn btn--primary" onClick={handleAutoGenerate} disabled={busy || readOnly}>
             {busy ? 'Đang sinh đề...' : 'Tự sinh câu hỏi theo ma trận'}
           </button>
         </div>
@@ -449,23 +573,62 @@ function QuestionsStep({ exam, onSaved }) {
 
       {mode === 'manual' && (
         <div>
+          <div className="pool-toolbar">
+            <input
+              className="field-input"
+              placeholder="Tìm câu hỏi..."
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+            />
+            <select className="field-select" value={chapterFilter} onChange={(event) => setChapterFilter(event.target.value)}>
+              <option value="">Tất cả chương</option>
+              {chapters.map((chapter) => (
+                <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
+                  {chapter.chapter_name}
+                </option>
+              ))}
+            </select>
+            <select className="field-select" value={cognitiveFilter} onChange={(event) => setCognitiveFilter(event.target.value)}>
+              <option value="">Tất cả mức</option>
+              {COGNITIVE_LEVELS.map((level) => (
+                <option key={level.value} value={level.value}>{level.label}</option>
+              ))}
+            </select>
+            <select className="field-select" value={difficultyFilter} onChange={(event) => setDifficultyFilter(event.target.value)}>
+              <option value="">Tất cả độ khó</option>
+              {DIFFICULTIES.map((difficulty) => (
+                <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
+              ))}
+            </select>
+          </div>
           {loadingApproved ? (
             <p className="empty-note">Đang tải câu hỏi đã duyệt...</p>
           ) : (
             <div className="question-pick-list">
-              {approved.filter((q) => !poolIds.has(q.id)).map((q) => (
+              {visiblePoolItems.map((q) => (
                 <label className="question-pick-item" key={q.id}>
-                  <input type="checkbox" checked={selectedIds.includes(q.id)} onChange={() => toggleSelect(q.id)} />
+                  <input type="checkbox" checked={selectedIds.includes(q.id)} onChange={() => toggleSelect(q.id)} disabled={readOnly} />
                   <span>
                     <b>{questionTypeLabel((q.classification?.assessment_type || '').toLowerCase())}</b> — {q.content}
                   </span>
                 </label>
               ))}
-              {approved.length === 0 && <p className="empty-note">Không có câu hỏi đã duyệt phù hợp.</p>}
+              {visiblePoolItems.length === 0 && <p className="empty-note">Không có câu hỏi đã duyệt phù hợp.</p>}
             </div>
           )}
+          <div className="pool-pagination">
+            <span>{poolTotal} câu phù hợp · Trang {poolPage}/{poolPages}</span>
+            <div>
+              <button type="button" className="btn btn--outline" disabled={poolPage <= 1 || loadingApproved} onClick={() => setPoolPage((page) => Math.max(1, page - 1))}>
+                Trước
+              </button>
+              <button type="button" className="btn btn--outline" disabled={poolPage >= poolPages || loadingApproved} onClick={() => setPoolPage((page) => Math.min(poolPages, page + 1))}>
+                Sau
+              </button>
+            </div>
+          </div>
           <div className="step-actions">
-            <button type="button" className="btn btn--primary" onClick={handleAddManual} disabled={busy || selectedIds.length === 0}>
+            <button type="button" className="btn btn--primary" onClick={handleAddManual} disabled={busy || readOnly || selectedIds.length === 0}>
               Thêm {selectedIds.length > 0 ? `(${selectedIds.length})` : ''} vào đề thi
             </button>
           </div>
@@ -477,7 +640,7 @@ function QuestionsStep({ exam, onSaved }) {
         {exam.questions.map((ref, index) => (
           <div className="question-pool-item" key={ref.question_id}>
             <span>Câu {index + 1}. {ref.content_snapshot?.content}</span>
-            <button type="button" className="icon-btn icon-btn--danger" onClick={() => handleRemove(ref.question_id)}>×</button>
+            <button type="button" className="icon-btn icon-btn--danger" onClick={() => handleRemove(ref.question_id)} disabled={readOnly}>×</button>
           </div>
         ))}
         {exam.questions.length === 0 && <p className="empty-note">Chưa có câu hỏi nào trong đề.</p>}
@@ -492,6 +655,7 @@ function VariantsStep({ exam }) {
   const [examCode, setExamCode] = useState('');
   const [shuffle, setShuffle] = useState(true);
   const [busy, setBusy] = useState(false);
+  const finalized = examStatus(exam) === 'FINALIZED';
 
   const load = async () => {
     setLoading(true);
@@ -512,7 +676,7 @@ function VariantsStep({ exam }) {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!examCode.trim()) return;
+    if (!finalized || !examCode.trim()) return;
     setBusy(true);
     try {
       await createVariant(exam.id, examCode.trim(), shuffle);
@@ -541,6 +705,9 @@ function VariantsStep({ exam }) {
   return (
     <div>
       <h3 className="step-title">Quản lý mã đề (tối đa 4 mã đề / kỳ thi)</h3>
+      {!finalized && (
+        <p className="locked-note">Cần chốt đề trước khi tạo mã đề để khóa snapshot câu hỏi.</p>
+      )}
       {loading ? (
         <p className="empty-note">Đang tải...</p>
       ) : (
@@ -556,12 +723,12 @@ function VariantsStep({ exam }) {
       )}
       {variants.length < 4 ? (
         <form className="variant-form" onSubmit={handleCreate}>
-          <input className="field-input" placeholder="Mã đề (VD: 132)" value={examCode} onChange={(e) => setExamCode(e.target.value)} />
+          <input className="field-input" placeholder="Mã đề (VD: 132)" value={examCode} onChange={(e) => setExamCode(e.target.value)} disabled={!finalized} />
           <label className="variant-shuffle-check">
-            <input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} />
+            <input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} disabled={!finalized} />
             Xáo trộn thứ tự câu hỏi/đáp án
           </label>
-          <button type="submit" className="btn btn--primary" disabled={busy}>Tạo mã đề</button>
+          <button type="submit" className="btn btn--primary" disabled={busy || !finalized}>Tạo mã đề</button>
         </form>
       ) : (
         <p className="matrix-warning">Đã đạt tối đa 4 mã đề cho kỳ thi này.</p>
