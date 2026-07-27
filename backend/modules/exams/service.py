@@ -313,7 +313,8 @@ class ExamService:
         return serialize_exam(exam, self.repository.count_variants(exam_id))
 
     def delete_exam(self, exam_id: str, current_user: CurrentUser) -> None:
-        self._get_for_user_or_404(exam_id, current_user)
+        exam = self._get_for_user_or_404(exam_id, current_user)
+        self._assert_mutable(exam)
         if self.repository.count_variants(exam_id) > 0:
             raise ValueError("Không thể xoá đề thi đã có mã đề, hãy xoá mã đề trước")
         self.repository.delete(exam_id)

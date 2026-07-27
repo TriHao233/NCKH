@@ -39,7 +39,13 @@ from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
-from modules.exams.schemas import ExamStatusUpdateRequest, ExamVariantCreateRequest
+from modules.exams.schemas import (
+    AddQuestionsManualRequest,
+    ExamMatrixRequest,
+    ExamStatusUpdateRequest,
+    ExamUpdateRequest,
+    ExamVariantCreateRequest,
+)
 from modules.generation.schemas import (
     BloomLevel,
     GeneratedQuestion,
@@ -1261,6 +1267,66 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(ready["status"], "READY")
         self.assertEqual(result["status"], "FINALIZED")
         self.assertIn("finalized_snapshot", exam)
+
+    def test_finalized_exam_cannot_be_hard_deleted_or_edited(self):
+        owner = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        question_id = ObjectId()
+        version_id = ObjectId()
+        snapshot = {
+            "id": str(question_id),
+            "question_code": "Q-1",
+            "content": "Queue uses FIFO",
+            "question_data": {"options": {"A": "FIFO"}, "correct_answer": "A"},
+            "classification": {"subject": {"id": str(exam["subject_id"])}},
+        }
+        exam.update(
+            {
+                "status": "FINALIZED",
+                "question_count": 1,
+                "matrix": [],
+                "questions": [
+                    {
+                        "question_id": question_id,
+                        "version_id": version_id,
+                        "content_snapshot": snapshot,
+                    }
+                ],
+                "finalized_snapshot": {
+                    "subject_id": exam["subject_id"],
+                    "question_count": 1,
+                    "matrix": [],
+                    "questions": [
+                        {
+                            "question_id": question_id,
+                            "version_id": version_id,
+                            "content_snapshot": snapshot,
+                        }
+                    ],
+                },
+            }
+        )
+        repository = FakeExamRepository([exam])
+        service = ExamService(repository, FakeExamQuestionRepository())
+
+        with self.assertRaises(ValueError):
+            service.update_exam(str(exam["_id"]), ExamUpdateRequest(name="Edited"), owner)
+        with self.assertRaises(ValueError):
+            service.save_matrix(str(exam["_id"]), ExamMatrixRequest(cells=[]), owner)
+        with self.assertRaises(ValueError):
+            service.auto_generate_pool(str(exam["_id"]), owner)
+        with self.assertRaises(ValueError):
+            service.add_questions_manual(
+                str(exam["_id"]),
+                AddQuestionsManualRequest(question_ids=[str(ObjectId())]),
+                owner,
+            )
+        with self.assertRaises(ValueError):
+            service.remove_question(str(exam["_id"]), str(question_id), owner)
+        with self.assertRaises(ValueError):
+            service.delete_exam(str(exam["_id"]), owner)
+
+        self.assertIsNotNone(repository.find(exam["_id"]))
 
     def test_variant_creation_requires_finalized_exam(self):
         owner = _current_user("Teacher")
