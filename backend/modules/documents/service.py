@@ -1,8 +1,15 @@
+from pathlib import Path
+
+from fastapi import BackgroundTasks
+
+from core.config import resolve_path, settings
 from core.database import get_database
 from core.dependencies import CurrentUser
 from modules.documents.repository import (
+    ACTIVE_DOCUMENT_JOB_STATUSES,
     DocumentRepository,
     MongoDocumentRepository,
+    RETRYABLE_DOCUMENT_JOB_STATUSES,
     serialize_document,
     serialize_document_job,
 )
@@ -88,12 +95,83 @@ class DocumentService:
         jobs = self.repository.list_jobs(document_id, limit=limit)
         return {"items": [serialize_document_job(job) for job in jobs]}
 
+    def retry_job(
+        self,
+        document_id: str,
+        job_id: str,
+        background_tasks: BackgroundTasks,
+        current_user: CurrentUser,
+    ) -> dict:
+        document, job = self._accessible_job(document_id, job_id, current_user)
+        if job.get("status") not in RETRYABLE_DOCUMENT_JOB_STATUSES or job.get("job_type") != "OCR":
+            raise ValueError("Hiện chỉ hỗ trợ retry OCR job đã lỗi")
+        upload_path = self._original_pdf_path(document)
+        new_job = self.repository.create_job(document["_id"], "OCR", config=job.get("config") or {})
+
+        from modules.ocr.ocr import process_ocr_background
+
+        output_path = resolve_path(settings.ocr_output_dir) / f"{document['_id']}_result.md"
+        background_tasks.add_task(
+            process_ocr_background,
+            document_id=str(document["_id"]),
+            job_id=str(new_job["_id"]),
+            upload_path=str(Path(upload_path)),
+            output_path=str(output_path),
+            document_title=document.get("title") or document.get("original_filename") or "Document",
+        )
+        return {"job": serialize_document_job(new_job)}
+
+    def cancel_job(
+        self,
+        document_id: str,
+        job_id: str,
+        current_user: CurrentUser,
+    ) -> dict:
+        _document, job = self._accessible_job(document_id, job_id, current_user)
+        if job.get("status") not in ACTIVE_DOCUMENT_JOB_STATUSES:
+            raise ValueError("Job không ở trạng thái có thể hủy")
+        updated = self.repository.update_job(
+            job_id,
+            "CANCELLED",
+            error_message=f"Cancelled by {current_user.role} {current_user.email}",
+        )
+        return {"job": serialize_document_job(updated)}
+
     def can_use(self, document_id: str, current_user: CurrentUser) -> bool:
         record = self.repository.find_by_id(document_id)
         if not record:
             return False
         self._ensure_access(record, current_user)
         return True
+
+    def _accessible_job(
+        self,
+        document_id: str,
+        job_id: str,
+        current_user: CurrentUser,
+    ) -> tuple[dict, dict]:
+        document = self.repository.find_by_id(document_id)
+        if not document:
+            raise LookupError("Không tìm thấy tài liệu")
+        self._ensure_access(document, current_user)
+        job = self.repository.find_job(job_id)
+        if not job or str(job.get("document_id")) != str(document["_id"]):
+            raise LookupError("Không tìm thấy job tài liệu")
+        return document, job
+
+    @staticmethod
+    def _original_pdf_path(document: dict) -> str:
+        artifact = next(
+            (
+                item for item in document.get("artifacts", [])
+                if item.get("type") == "ORIGINAL_PDF" and item.get("is_current", True)
+            ),
+            None,
+        )
+        upload_path = ((artifact or {}).get("storage") or {}).get("uri")
+        if not upload_path:
+            raise ValueError("Không tìm thấy file PDF gốc để retry OCR")
+        return upload_path
 
 
 def get_document_service() -> DocumentService:

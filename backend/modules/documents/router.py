@@ -4,6 +4,7 @@ from core.config import settings
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.schemas import (
     DocumentCreateRequest,
+    DocumentJobActionResponse,
     DocumentJobListResponse,
     DocumentListResponse,
     DocumentResponse,
@@ -96,6 +97,45 @@ def list_document_jobs(
     if not result:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
     return result
+
+
+@router.post(
+    "/{document_id}/jobs/{job_id}/retry",
+    response_model=DocumentJobActionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_document_job(
+    document_id: str,
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        return service.retry_job(document_id, job_id, background_tasks, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{document_id}/jobs/{job_id}/cancel", response_model=DocumentJobActionResponse)
+def cancel_document_job(
+    document_id: str,
+    job_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        return service.cancel_job(document_id, job_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)

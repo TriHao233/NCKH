@@ -9,6 +9,9 @@ from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
 
+ACTIVE_DOCUMENT_JOB_STATUSES = {"QUEUED", "PROCESSING"}
+RETRYABLE_DOCUMENT_JOB_STATUSES = {"FAILED", "ERROR", "STALE"}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -56,6 +59,8 @@ def serialize_document(document: dict) -> dict:
 
 
 def serialize_document_job(job: dict) -> dict:
+    status = job.get("status")
+    job_type = job.get("job_type")
     return json_safe(
         {
             "id": job["_id"],
@@ -67,6 +72,8 @@ def serialize_document_job(job: dict) -> dict:
             "progress": job.get("progress"),
             "stats": job.get("stats"),
             "error": job.get("error"),
+            "can_retry": status in RETRYABLE_DOCUMENT_JOB_STATUSES and job_type == "OCR",
+            "can_cancel": status in ACTIVE_DOCUMENT_JOB_STATUSES,
             "queued_at": job.get("queued_at"),
             "started_at": job.get("started_at"),
             "finished_at": job.get("finished_at"),
@@ -94,6 +101,20 @@ class DocumentRepository(Protocol):
     def archive(self, document_id: str | ObjectId) -> bool: ...
 
     def list_jobs(self, document_id: str | ObjectId, *, limit: int = 20) -> list[dict]: ...
+
+    def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict: ...
+
+    def find_job(self, job_id: str | ObjectId) -> dict | None: ...
+
+    def update_job(
+        self,
+        job_id: str | ObjectId,
+        status: str,
+        *,
+        progress: int | None = None,
+        stats: dict | None = None,
+        error_message: str | None = None,
+    ) -> dict | None: ...
 
 
 class MongoDocumentRepository:
@@ -332,6 +353,7 @@ class MongoDocumentRepository:
                 "$set": {
                     "status": "PROCESSING",
                     f"pipeline_summary.{normalized_type.lower()}_status": "QUEUED",
+                    "latest_error": None,
                     "updated_at": now,
                     **(
                         {"current_processing.ocr_job_id": record["_id"]}
@@ -360,6 +382,8 @@ class MongoDocumentRepository:
             return None
         now = utc_now()
         normalized = status.upper()
+        if job.get("status") == "CANCELLED" and normalized != "CANCELLED":
+            return job
         fields: dict = {"status": normalized}
         if progress is not None:
             fields["progress"] = max(0, min(100, progress))
@@ -378,12 +402,13 @@ class MongoDocumentRepository:
             f"pipeline_summary.{job['job_type'].lower()}_status": normalized,
             "updated_at": now,
         }
-        if normalized == "FAILED":
+        if normalized in {"FAILED", "CANCELLED"}:
+            message = error_message or ("Job đã bị hủy" if normalized == "CANCELLED" else None)
             document_fields["status"] = "FAILED"
             document_fields["latest_error"] = {
                 "job_id": job["_id"],
                 "job_type": job["job_type"],
-                "message": error_message,
+                "message": message,
                 "at": now,
             }
         self.collection.update_one(

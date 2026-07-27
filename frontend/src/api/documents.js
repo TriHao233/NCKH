@@ -19,6 +19,14 @@ export function listDocumentJobs(id, { limit = 20 } = {}) {
   return apiRequest(`/documents/${id}/jobs?${params.toString()}`);
 }
 
+export function retryDocumentJob(documentId, jobId) {
+  return apiRequest(`/documents/${documentId}/jobs/${jobId}/retry`, { method: 'POST' });
+}
+
+export function cancelDocumentJob(documentId, jobId) {
+  return apiRequest(`/documents/${documentId}/jobs/${jobId}/cancel`, { method: 'POST' });
+}
+
 export function updateDocument(id, payload) {
   return apiRequest(`/documents/${id}`, { method: 'PATCH', body: payload });
 }

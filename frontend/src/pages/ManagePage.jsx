@@ -15,7 +15,14 @@ import {
   submitQuestionForReview,
   updateQuestion,
 } from '../api/questions';
-import { deleteDocument, listDocumentJobs, listDocuments, updateDocument } from '../api/documents';
+import {
+  cancelDocumentJob,
+  deleteDocument,
+  listDocumentJobs,
+  listDocuments,
+  retryDocumentJob,
+  updateDocument,
+} from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
@@ -69,6 +76,9 @@ const PIPELINE_STEP_LABEL = {
   chunk_status: 'Chunk',
   index_status: 'Index',
 };
+
+const ACTIVE_DOCUMENT_JOB_STATUSES = new Set(['QUEUED', 'PROCESSING']);
+const RETRYABLE_DOCUMENT_JOB_STATUSES = new Set(['FAILED', 'ERROR', 'STALE']);
 
 const EVALUATION_STATUS_LABEL = {
   NOT_STARTED: 'Chưa đánh giá',
@@ -147,6 +157,16 @@ function documentErrorMessage(document) {
 function jobErrorMessage(job) {
   const error = job?.error || {};
   return error.message || error.detail || '';
+}
+
+function canRetryDocumentJob(job) {
+  return Boolean(job?.can_retry) || (
+    job?.job_type === 'OCR' && RETRYABLE_DOCUMENT_JOB_STATUSES.has(job?.status)
+  );
+}
+
+function canCancelDocumentJob(job) {
+  return Boolean(job?.can_cancel) || ACTIVE_DOCUMENT_JOB_STATUSES.has(job?.status);
 }
 
 function formatScore(value) {
@@ -376,6 +396,7 @@ function ManagePage() {
   const [documentsError, setDocumentsError] = useState('');
   const [documentJobsById, setDocumentJobsById] = useState({});
   const [documentJobsLoadingId, setDocumentJobsLoadingId] = useState('');
+  const [documentJobActionKey, setDocumentJobActionKey] = useState('');
   const [documentJobsError, setDocumentJobsError] = useState(null);
   const [expandedDocumentId, setExpandedDocumentId] = useState('');
   const [subjects, setSubjects] = useState([]);
@@ -755,6 +776,56 @@ function ManagePage() {
       });
     } finally {
       setDocumentJobsLoadingId('');
+    }
+  };
+
+  const refreshDocumentJobState = async (documentId) => {
+    setDocumentJobsLoadingId(documentId);
+    setDocumentJobsError(null);
+    try {
+      const [documentsResult, jobsResult] = await Promise.all([
+        listDocuments({ page: 1, pageSize: 100 }),
+        listDocumentJobs(documentId, { limit: 12 }),
+      ]);
+      setDocuments(documentsResult.items || []);
+      setDocumentJobsById((current) => ({
+        ...current,
+        [documentId]: jobsResult.items || [],
+      }));
+    } catch (error) {
+      setDocumentJobsError({
+        documentId,
+        message: error.message || 'Không tải được trạng thái job tài liệu',
+      });
+    } finally {
+      setDocumentJobsLoadingId('');
+    }
+  };
+
+  const handleRetryDocumentJob = async (doc, job) => {
+    const actionKey = `retry:${job.id}`;
+    setDocumentJobActionKey(actionKey);
+    try {
+      await retryDocumentJob(doc.id, job.id);
+      await refreshDocumentJobState(doc.id);
+    } catch (error) {
+      alert('Retry OCR job thất bại: ' + error.message);
+    } finally {
+      setDocumentJobActionKey('');
+    }
+  };
+
+  const handleCancelDocumentJob = async (doc, job) => {
+    if (!window.confirm(`Hủy job ${job.job_type || 'Document'} #${job.attempt_no || 1}?`)) return;
+    const actionKey = `cancel:${job.id}`;
+    setDocumentJobActionKey(actionKey);
+    try {
+      await cancelDocumentJob(doc.id, job.id);
+      await refreshDocumentJobState(doc.id);
+    } catch (error) {
+      alert('Hủy job thất bại: ' + error.message);
+    } finally {
+      setDocumentJobActionKey('');
     }
   };
 
@@ -1417,6 +1488,26 @@ function ManagePage() {
                                           <span>{JOB_STATUS_LABEL[job.status] || job.status} · {job.progress ?? 0}%</span>
                                         </div>
                                         <small>{jobErrorMessage(job) || formatDateTime(job.finished_at || job.started_at || job.queued_at)}</small>
+                                        <div className="doc-job-actions">
+                                          <button
+                                            type="button"
+                                            className="icon-btn doc-job-action"
+                                            title="Retry OCR job"
+                                            disabled={!canRetryDocumentJob(job) || Boolean(documentJobActionKey)}
+                                            onClick={() => handleRetryDocumentJob(d, job)}
+                                          >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="icon-btn icon-btn--danger doc-job-action"
+                                            title="Hủy job"
+                                            disabled={!canCancelDocumentJob(job) || Boolean(documentJobActionKey)}
+                                            onClick={() => handleCancelDocumentJob(d, job)}
+                                          >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                                          </button>
+                                        </div>
                                       </div>
                                     ))}
                                     {documentJobsError?.documentId !== d.id && (documentJobsById[d.id] || []).length === 0 && (

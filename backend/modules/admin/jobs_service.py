@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from bson import ObjectId
@@ -10,12 +9,12 @@ from fastapi import BackgroundTasks
 from pymongo import ReturnDocument
 
 from core.audit import record_audit_event
-from core.config import resolve_path, settings
+from core.config import settings
 from core.dependencies import CurrentUser
-from modules.documents.repository import MongoDocumentRepository, object_id as document_object_id
+from modules.documents.repository import MongoDocumentRepository
+from modules.documents.service import DocumentService
 from modules.generation.generate import process_generate_background
 from modules.generation.mongodb import create_generation_job, get_generation_job
-from modules.ocr.ocr import process_ocr_background
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
     process_evaluation_job_background,
@@ -397,33 +396,9 @@ class AdminJobService:
         job = repository.find_job(job_id)
         if not job:
             raise LookupError("Không tìm thấy job")
-        if job.get("status") not in RETRYABLE_STATUSES or job.get("job_type") != "OCR":
-            raise ValueError("Hiện chỉ hỗ trợ retry OCR job đã lỗi")
-        document = repository.find_by_id(job["document_id"])
-        if not document:
-            raise LookupError("Không tìm thấy tài liệu của job")
-        artifact = next(
-            (
-                item for item in document.get("artifacts", [])
-                if item.get("type") == "ORIGINAL_PDF" and item.get("is_current", True)
-            ),
-            None,
-        )
-        upload_path = ((artifact or {}).get("storage") or {}).get("uri")
-        if not upload_path:
-            raise ValueError("Không tìm thấy file PDF gốc để retry OCR")
-        new_job = repository.create_job(document["_id"], "OCR", config=job.get("config") or {})
-        output_path = resolve_path(settings.ocr_output_dir) / f"{document['_id']}_result.md"
-        background_tasks.add_task(
-            process_ocr_background,
-            document_id=str(document["_id"]),
-            job_id=str(new_job["_id"]),
-            upload_path=str(Path(upload_path)),
-            output_path=str(output_path),
-            document_title=document.get("title") or document.get("original_filename") or "Document",
-        )
-        self._audit(current_user, "admin.job_retry", "document", job_id, {"new_job_id": new_job["_id"]})
-        return {"job": json_safe(new_job)}
+        result = DocumentService(repository).retry_job(str(job["document_id"]), job_id, background_tasks, current_user)
+        self._audit(current_user, "admin.job_retry", "document", job_id, {"new_job_id": result["job"]["id"]})
+        return result
 
     def _cancel_generation(self, job_id: str, current_user: CurrentUser) -> dict:
         now = utc_now()
@@ -472,16 +447,12 @@ class AdminJobService:
 
     def _cancel_document(self, job_id: str, current_user: CurrentUser) -> dict:
         repository = MongoDocumentRepository(self.db)
-        job = repository.find_job(document_object_id(job_id, "job_id"))
-        if not job or job.get("status") not in ACTIVE_STATUSES:
-            raise ValueError("Job không ở trạng thái có thể hủy")
-        updated = repository.update_job(
-            job_id,
-            "CANCELLED",
-            error_message=f"Cancelled by admin {current_user.email}",
-        )
+        job = repository.find_job(job_id)
+        if not job:
+            raise LookupError("Không tìm thấy job")
+        result = DocumentService(repository).cancel_job(str(job["document_id"]), job_id, current_user)
         self._audit(current_user, "admin.job_cancel", "document", job_id)
-        return {"job": json_safe(updated)}
+        return result
 
     @staticmethod
     def _audit(

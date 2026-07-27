@@ -306,8 +306,9 @@
 }
 .manage-page .doc-job-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
   border-bottom: 1px solid #EAF3FC;
   padding-bottom: 6px;
 }
@@ -315,11 +316,14 @@
 .manage-page .doc-job-row b,
 .manage-page .doc-job-row span,
 .manage-page .doc-job-row small { display: block; min-width: 0; overflow-wrap: anywhere; }
+.manage-page .doc-job-row small { grid-column: 1 / -1; }
 .manage-page .doc-job-row b { color: var(--text, #13253f); font-size: 0.74rem; }
 .manage-page .doc-job-row span,
 .manage-page .doc-job-row small,
 .manage-page .doc-job-note { color: var(--text-muted, #5c6f89); font-size: 0.7rem; }
 .manage-page .doc-job-note--error { color: #DC2626; font-weight: 800; }
+.manage-page .doc-job-actions { display: flex; gap: 4px; align-items: center; grid-column: 2; grid-row: 1; }
+.manage-page .doc-job-action { width: 22px; height: 22px; }
 .manage-page .doc-upload-btn { width: 100%; }
 
 .manage-page .side-note { font-size: 0.84rem; color: var(--text-muted, #5c6f89); line-height: 1.6; margin-bottom: 16px; }

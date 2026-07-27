@@ -1444,6 +1444,127 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(result["items"][0]["id"], str(job_id))
         self.assertEqual(result["items"][0]["document_id"], str(document_id))
         self.assertEqual(result["items"][0]["error"]["message"], "OCR timeout")
+        self.assertTrue(result["items"][0]["can_retry"])
+        self.assertFalse(result["items"][0]["can_cancel"])
+
+    def test_document_job_retry_and_cancel_enforce_document_ownership(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        document_id = ObjectId()
+        failed_job_id = ObjectId()
+        active_job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeBackgroundTasks:
+            def __init__(self):
+                self.tasks = []
+
+            def add_task(self, func, *args, **kwargs):
+                self.tasks.append({"func": func, "args": args, "kwargs": kwargs})
+
+        class FakeDocumentActionRepository:
+            def __init__(self):
+                self.document = {
+                    "_id": document_id,
+                    "uploaded_by_user_id": owner.id,
+                    "title": "Owner PDF",
+                    "original_filename": "owner.pdf",
+                    "current_version": 1,
+                    "artifacts": [
+                        {
+                            "type": "ORIGINAL_PDF",
+                            "is_current": True,
+                            "storage": {"provider": "LOCAL", "uri": "backend/data/uploads/owner.pdf"},
+                        }
+                    ],
+                }
+                self.jobs = {
+                    str(failed_job_id): {
+                        "_id": failed_job_id,
+                        "document_id": document_id,
+                        "document_version": 1,
+                        "job_type": "OCR",
+                        "attempt_no": 1,
+                        "status": "FAILED",
+                        "progress": 20,
+                        "stats": None,
+                        "error": {"message": "timeout", "at": now},
+                        "config": {"lang": "vi"},
+                        "queued_at": now,
+                        "started_at": now,
+                        "finished_at": now,
+                    },
+                    str(active_job_id): {
+                        "_id": active_job_id,
+                        "document_id": document_id,
+                        "document_version": 1,
+                        "job_type": "OCR",
+                        "attempt_no": 1,
+                        "status": "PROCESSING",
+                        "progress": 30,
+                        "stats": None,
+                        "error": None,
+                        "queued_at": now,
+                        "started_at": now,
+                        "finished_at": None,
+                    },
+                }
+
+            def find_by_id(self, _document_id):
+                return self.document
+
+            def list_jobs(self, _document_id, *, limit=20):
+                return list(self.jobs.values())[:limit]
+
+            def find_job(self, job_id):
+                return self.jobs.get(str(job_id))
+
+            def create_job(self, document_id_arg, job_type, config=None):
+                new_id = ObjectId()
+                job = {
+                    "_id": new_id,
+                    "document_id": document_id_arg,
+                    "document_version": 1,
+                    "job_type": job_type,
+                    "attempt_no": 2,
+                    "status": "QUEUED",
+                    "progress": 0,
+                    "stats": None,
+                    "error": None,
+                    "config": config or {},
+                    "queued_at": now,
+                    "started_at": None,
+                    "finished_at": None,
+                }
+                self.jobs[str(new_id)] = job
+                return job
+
+            def update_job(self, job_id, status, *, progress=None, stats=None, error_message=None):
+                job = self.jobs[str(job_id)]
+                job["status"] = status
+                job["progress"] = progress if progress is not None else job.get("progress")
+                job["stats"] = stats if stats is not None else job.get("stats")
+                job["error"] = {"message": error_message, "at": now} if error_message else job.get("error")
+                job["finished_at"] = now
+                return job
+
+        background_tasks = FakeBackgroundTasks()
+        service = DocumentService(FakeDocumentActionRepository())
+
+        with self.assertRaises(PermissionError):
+            service.retry_job(str(document_id), str(failed_job_id), background_tasks, other_teacher)
+
+        retried = service.retry_job(str(document_id), str(failed_job_id), background_tasks, owner)
+        self.assertEqual(retried["job"]["attempt_no"], 2)
+        self.assertEqual(retried["job"]["status"], "QUEUED")
+        self.assertEqual(background_tasks.tasks[0]["kwargs"]["document_id"], str(document_id))
+
+        with self.assertRaises(PermissionError):
+            service.cancel_job(str(document_id), str(active_job_id), other_teacher)
+
+        cancelled = service.cancel_job(str(document_id), str(active_job_id), owner)
+        self.assertEqual(cancelled["job"]["status"], "CANCELLED")
+        self.assertIn("Cancelled by Teacher", cancelled["job"]["error"]["message"])
 
     def test_admin_can_access_any_teacher_exam(self):
         owner = _current_user("Teacher")

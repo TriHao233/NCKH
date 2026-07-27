@@ -32,6 +32,11 @@ _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _ocr_job_cancelled(job_id: str) -> bool:
+    status = get_document_status(job_id)
+    return ((status or {}).get("job") or {}).get("status") == "CANCELLED"
+
+
 async def process_ocr_background(
     document_id: str,
     job_id: str,
@@ -41,6 +46,8 @@ async def process_ocr_background(
 ):
     try:
         async with gpu_semaphore:
+            if _ocr_job_cancelled(job_id):
+                return
             update_document_status(document_id, job_id, status="processing")
             started_at = time.time()
             result = await run_in_threadpool(
@@ -49,12 +56,18 @@ async def process_ocr_background(
                 output_path=output_path,
                 document_title=document_title,
             )
+            if _ocr_job_cancelled(job_id):
+                return
             stats = result["stats"]
             stats["processing_time"] = round(time.time() - started_at, 1)
             save_document_pages(document_id, job_id, result["pages"])
+            if _ocr_job_cancelled(job_id):
+                return
             update_document_status(document_id, job_id, status="completed", stats=stats)
     except Exception as exc:
         logger.exception("OCR job %s failed", job_id)
+        if _ocr_job_cancelled(job_id):
+            return
         update_document_status(
             document_id,
             job_id,

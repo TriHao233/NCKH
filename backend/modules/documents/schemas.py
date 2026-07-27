@@ -57,6 +57,8 @@ class DocumentJobResponse(BaseModel):
     progress: int | None = None
     stats: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
+    can_retry: bool = False
+    can_cancel: bool = False
     queued_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -64,6 +66,10 @@ class DocumentJobResponse(BaseModel):
 
 class DocumentJobListResponse(BaseModel):
     items: list[DocumentJobResponse]
+
+
+class DocumentJobActionResponse(BaseModel):
+    job: DocumentJobResponse
 
 
 class DocumentListResponse(BaseModel):
