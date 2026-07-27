@@ -435,6 +435,7 @@ class QuestionService:
         evaluation_status: str | None = None,
         assignment_status: str | None = None,
         assigned_to: str | None = None,
+        creator_user_id: str | None = None,
         current_user: CurrentUser | None = None,
     ) -> dict:
         owner_user_id = (
@@ -447,6 +448,11 @@ class QuestionService:
             assigned_reviewer_user_id = current_user.id
         elif assigned_to:
             assigned_reviewer_user_id = object_id(assigned_to, "assigned_to")
+        creator_oid = (
+            object_id(creator_user_id, "creator_user_id")
+            if creator_user_id
+            else None
+        )
 
         pairs, total = self.repository.list(
             page,
@@ -466,6 +472,7 @@ class QuestionService:
             evaluation_status=evaluation_status,
             assignment_status=assignment_status,
             assigned_reviewer_user_id=assigned_reviewer_user_id,
+            creator_user_id=creator_oid,
             owner_user_id=owner_user_id,
         )
         return {

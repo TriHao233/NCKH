@@ -220,6 +220,21 @@ class FakeUserRepository:
     def find_by_id(self, user_id):
         return self.users.get(str(user_id))
 
+    def list(self, page, page_size, role, search):
+        records = list(self.users.values())
+        if role:
+            records = [user for user in records if user.get("role") == role]
+        if search:
+            search_text = search.lower()
+            records = [
+                user for user in records
+                if search_text in user.get("display_name", "").lower()
+                or search_text in user.get("email", "").lower()
+            ]
+        total = len(records)
+        start = (page - 1) * page_size
+        return records[start:start + page_size], total
+
     def update(self, user_id, fields):
         user = self.find_by_id(user_id)
         if not user:
@@ -1642,6 +1657,25 @@ class SchemaV2Tests(unittest.TestCase):
             )
         self.assertEqual(identity.disabled_calls, [])
 
+    def test_user_service_lists_teacher_options_for_review_filters(self):
+        teacher = _user_doc("Teacher", True)
+        inactive_teacher = _user_doc("Teacher", False)
+        reviewer = _user_doc("Reviewer", True)
+        service = UserService(
+            FakeUserRepository([teacher, inactive_teacher, reviewer]),
+            FakeIdentityGateway(),
+            FakeSessions(),
+        )
+
+        result = service.list_teacher_options()
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(
+            {item["id"] for item in result["items"]},
+            {str(teacher["_id"]), str(inactive_teacher["_id"])},
+        )
+        self.assertNotIn(str(reviewer["_id"]), {item["id"] for item in result["items"]})
+
     def test_catalog_lifecycle_counts_usage_and_blocks_duplicate_codes(self):
         subject_id = ObjectId()
         other_subject_id = ObjectId()
@@ -2959,6 +2993,7 @@ class SchemaV2Tests(unittest.TestCase):
         chapter_id = ObjectId()
         clo_id = ObjectId()
         reviewer_id = ObjectId()
+        creator_id = ObjectId()
 
         pairs, total = repo.list(
             2,
@@ -2978,6 +3013,7 @@ class SchemaV2Tests(unittest.TestCase):
             evaluation_status="PASSED",
             assignment_status="IN_REVIEW",
             assigned_reviewer_user_id=reviewer_id,
+            creator_user_id=creator_id,
         )
 
         self.assertEqual(pairs, [])
@@ -2993,7 +3029,11 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(question_match["quality_summary.color"], "GREEN")
         self.assertEqual(question_match["quality_summary.overall_score"], {"$gte": 0.8})
 
-        version_match = pipeline[3]["$match"]
+        creator_match = pipeline[3]["$match"]
+        self.assertIn({"created_by_user_id": creator_id}, creator_match["$or"])
+        self.assertIn({"version.created_by_user_id": creator_id}, creator_match["$or"])
+
+        version_match = pipeline[4]["$match"]
         self.assertEqual(version_match["version.classification.assessment_type"], "TRAC_NGHIEM")
         self.assertEqual(version_match["version.classification.bloom.level"], 3)
         self.assertEqual(version_match["version.document_id"], document_id)
@@ -3002,7 +3042,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(version_match["version.clos.id"], clo_id)
         self.assertEqual(version_match["version.classification.difficulty"], "kho")
 
-        search_match = pipeline[4]["$match"]
+        search_match = pipeline[5]["$match"]
         self.assertIn({"question_code": {"$regex": "queue", "$options": "i"}}, search_match["$or"])
         self.assertIn({"version.content": {"$regex": "queue", "$options": "i"}}, search_match["$or"])
         facet = pipeline[-1]["$facet"]

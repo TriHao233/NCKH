@@ -46,6 +46,7 @@ def list_questions(
     evaluation_status: str | None = Query(None),
     assignment_status: str | None = Query(None),
     assigned_to: str | None = Query(None),
+    creator_user_id: str | None = Query(None),
     current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
@@ -67,6 +68,7 @@ def list_questions(
         evaluation_status=evaluation_status,
         assignment_status=assignment_status,
         assigned_to=assigned_to,
+        creator_user_id=creator_user_id,
         current_user=current_user,
     )
 

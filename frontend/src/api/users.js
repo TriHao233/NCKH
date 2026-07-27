@@ -21,6 +21,13 @@ export function listUsers({ page = 1, pageSize = 20, role, search } = {}) {
   return apiRequest(`/users?${params.toString()}`);
 }
 
+export function listTeacherOptions({ search } = {}) {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  const query = params.toString();
+  return apiRequest(`/users/teachers${query ? `?${query}` : ''}`);
+}
+
 export function getUser(id) {
   return apiRequest(`/users/${id}`);
 }

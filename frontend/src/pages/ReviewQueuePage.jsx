@@ -18,6 +18,7 @@ import {
   reviewQuestion,
 } from '../api/questions';
 import { listSubjects } from '../api/catalog';
+import { listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ReviewQueuePage.css';
@@ -324,6 +325,7 @@ function ReviewQueuePage() {
   const [cloFilter, setCloFilter] = useState('all');
   const [evaluationStatusFilter, setEvaluationStatusFilter] = useState('all');
   const [publicationStatusFilter, setPublicationStatusFilter] = useState('all');
+  const [creatorFilter, setCreatorFilter] = useState('all');
   const [minScore, setMinScore] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -331,6 +333,8 @@ function ReviewQueuePage() {
   const [total, setTotal] = useState(0);
   const [catalogSubjects, setCatalogSubjects] = useState([]);
   const [catalogFilterError, setCatalogFilterError] = useState('');
+  const [teacherOptions, setTeacherOptions] = useState([]);
+  const [teacherFilterError, setTeacherFilterError] = useState('');
   const [selected, setSelected] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -375,6 +379,7 @@ function ReviewQueuePage() {
         minScore: Number.isFinite(numericMinScore) ? numericMinScore : undefined,
         evaluationStatus: evaluationStatusFilter === 'all' ? undefined : evaluationStatusFilter,
         publicationStatus: publicationStatusFilter === 'all' ? undefined : publicationStatusFilter,
+        creatorUserId: creatorFilter === 'all' ? undefined : creatorFilter,
         search: searchTerm || undefined,
         assignmentStatus,
         assignedTo: assignmentFilter === 'mine' ? 'me' : undefined,
@@ -401,6 +406,17 @@ function ReviewQueuePage() {
     } catch (err) {
       setCatalogFilterError(err.message || 'Không tải được bộ lọc môn học');
       setCatalogSubjects([]);
+    }
+  };
+
+  const fetchTeacherFilters = async () => {
+    setTeacherFilterError('');
+    try {
+      const result = await listTeacherOptions();
+      setTeacherOptions(result.items || []);
+    } catch (err) {
+      setTeacherFilterError(err.message || 'Không tải được bộ lọc Teacher');
+      setTeacherOptions([]);
     }
   };
 
@@ -487,12 +503,14 @@ function ReviewQueuePage() {
     cloFilter,
     evaluationStatusFilter,
     publicationStatusFilter,
+    creatorFilter,
     minScore,
     searchTerm,
   ]);
 
   useEffect(() => {
     fetchCatalogFilters();
+    fetchTeacherFilters();
     fetchDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1122,6 +1140,14 @@ function ReviewQueuePage() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+            <select value={creatorFilter} onChange={(event) => updateFilter(setCreatorFilter)(event.target.value)}>
+              <option value="all">Mọi Teacher</option>
+              {teacherOptions.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.display_name || teacher.email}
+                </option>
+              ))}
+            </select>
             <input
               type="number"
               min="0"
@@ -1139,6 +1165,7 @@ function ReviewQueuePage() {
           </div>
 
           {catalogFilterError && <p className="review-error review-error--filters">{catalogFilterError}</p>}
+          {teacherFilterError && <p className="review-error review-error--filters">{teacherFilterError}</p>}
           {error && <p className="review-error">{error}</p>}
           {loading ? (
             <p className="review-empty">Đang tải hàng đợi...</p>

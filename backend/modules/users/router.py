@@ -3,7 +3,13 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, get_current_user, require_admin, require_teacher_or_admin
+from core.dependencies import (
+    CurrentUser,
+    get_current_user,
+    require_admin,
+    require_reviewer_or_admin,
+    require_teacher_or_admin,
+)
 from modules.users.schemas import (
     CalendarResponse,
     GenerationPresetListResponse,
@@ -12,6 +18,7 @@ from modules.users.schemas import (
     RoleEnum,
     TaskCalendarPayload,
     TaskCalendarUpdateRequest,
+    TeacherOptionListResponse,
     UserAdminUpdateRequest,
     UserCreateRequest,
     UserListResponse,
@@ -175,6 +182,15 @@ def list_users(
     service: UserService = Depends(get_user_service),
 ):
     return service.list(page, page_size, role.value if role else None, search)
+
+
+@router.get("/teachers", response_model=TeacherOptionListResponse)
+def list_teacher_options(
+    search: str | None = None,
+    _reviewer: CurrentUser = Depends(require_reviewer_or_admin),
+    service: UserService = Depends(get_user_service),
+):
+    return service.list_teacher_options(search)
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

@@ -23,6 +23,7 @@ export function listQuestions({
   evaluationStatus,
   assignmentStatus,
   assignedTo,
+  creatorUserId,
 } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -42,6 +43,7 @@ export function listQuestions({
   if (evaluationStatus) params.set('evaluation_status', evaluationStatus);
   if (assignmentStatus) params.set('assignment_status', assignmentStatus);
   if (assignedTo) params.set('assigned_to', assignedTo);
+  if (creatorUserId) params.set('creator_user_id', creatorUserId);
   return apiRequest(`/questions?${params.toString()}`);
 }
 

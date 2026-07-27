@@ -85,6 +85,7 @@ class QuestionRepository(Protocol):
         evaluation_status: str | None = None,
         assignment_status: str | None = None,
         assigned_reviewer_user_id: ObjectId | None = None,
+        creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]: ...
 
@@ -199,6 +200,7 @@ class MongoQuestionRepository:
         evaluation_status: str | None = None,
         assignment_status: str | None = None,
         assigned_reviewer_user_id: ObjectId | None = None,
+        creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
@@ -235,6 +237,17 @@ class MongoQuestionRepository:
                         "$or": [
                             {"created_by_user_id": owner_user_id},
                             {"version.created_by_user_id": owner_user_id},
+                        ]
+                    }
+                }
+            )
+        if creator_user_id is not None:
+            pipeline.append(
+                {
+                    "$match": {
+                        "$or": [
+                            {"created_by_user_id": creator_user_id},
+                            {"version.created_by_user_id": creator_user_id},
                         ]
                     }
                 }

@@ -88,6 +88,18 @@ class UserAdminUpdateRequest(UserSelfUpdateRequest):
     is_active: Optional[bool] = None
 
 
+class TeacherOptionResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    is_active: bool = True
+
+
+class TeacherOptionListResponse(BaseModel):
+    items: list[TeacherOptionResponse]
+    total: int
+
+
 class GenerationPresetPlanItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
