@@ -157,6 +157,16 @@ class DocumentService:
             )
             new_job = self.repository.find_job(queued["chunk_job_id"])
             return {"job": serialize_document_job(new_job)}
+        if job.get("job_type") == "INDEX":
+            from modules.rag.chunking import queue_document_reindex
+
+            queued = queue_document_reindex(
+                background_tasks,
+                document_id=str(document["_id"]),
+                collection_name=(job.get("config") or {}).get("collection_name"),
+            )
+            new_job = self.repository.find_job(queued["index_job_id"])
+            return {"job": serialize_document_job(new_job)}
 
         upload_path = self._original_pdf_path(document)
         new_job = self.repository.create_job(document["_id"], "OCR", config=job.get("config") or {})
@@ -189,6 +199,26 @@ class DocumentService:
             error_message=f"Cancelled by {current_user.role} {current_user.email}",
         )
         return {"job": serialize_document_job(updated)}
+
+    def reindex(
+        self,
+        document_id: str,
+        background_tasks: BackgroundTasks,
+        current_user: CurrentUser,
+    ) -> dict:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            raise LookupError("Không tìm thấy tài liệu")
+        self._ensure_access(record, current_user)
+        summary = record.get("pipeline_summary") or {}
+        current_processing = record.get("current_processing") or {}
+        if not current_processing.get("chunk_set_id") or summary.get("chunk_status") != "COMPLETED":
+            raise ValueError("Tài liệu cần chunk thành công trước khi re-index")
+        from modules.rag.chunking import queue_document_reindex
+
+        queued = queue_document_reindex(background_tasks, document_id=str(record["_id"]))
+        new_job = self.repository.find_job(queued["index_job_id"])
+        return {"job": serialize_document_job(new_job)}
 
     def can_use(self, document_id: str, current_user: CurrentUser) -> bool:
         record = self.repository.find_by_id(document_id)

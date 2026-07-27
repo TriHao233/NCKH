@@ -178,6 +178,27 @@ def cancel_document_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post(
+    "/{document_id}/reindex",
+    response_model=DocumentJobActionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def reindex_document(
+    document_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        return service.reindex(document_id, background_tasks, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.patch("/{document_id}", response_model=DocumentResponse)
 def update_document(
     document_id: str,

@@ -270,7 +270,8 @@
 .manage-page .doc-delete-btn,
 .manage-page .doc-edit-btn,
 .manage-page .doc-jobs-btn,
-.manage-page .doc-pages-btn { width: 26px; height: 26px; flex-shrink: 0; }
+.manage-page .doc-pages-btn,
+.manage-page .doc-reindex-btn { width: 26px; height: 26px; flex-shrink: 0; }
 .manage-page .doc-name { font-size: 0.84rem; font-weight: 600; color: var(--text, #13253f); }
 .manage-page .doc-meta { font-size: 0.74rem; color: var(--text-muted, #5c6f89); }
 .manage-page .doc-pipeline {

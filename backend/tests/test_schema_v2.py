@@ -1802,6 +1802,78 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(document["pipeline_summary"]["chunk_status"], "CANCELLED")
         self.assertEqual(document["status"], "FAILED")
 
+    def test_document_reindex_requires_owner_and_completed_chunks(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        document_id = ObjectId()
+        chunk_set_id = ObjectId()
+        new_job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeBackgroundTasks:
+            def __init__(self):
+                self.tasks = []
+
+            def add_task(self, func, *args, **kwargs):
+                self.tasks.append({"func": func, "args": args, "kwargs": kwargs})
+
+        class FakeReindexRepository:
+            def __init__(self):
+                self.document = {
+                    "_id": document_id,
+                    "uploaded_by_user_id": owner.id,
+                    "current_version": 1,
+                    "current_processing": {"chunk_set_id": chunk_set_id},
+                    "pipeline_summary": {"chunk_status": "COMPLETED"},
+                }
+                self.jobs = {}
+
+            def find_by_id(self, _document_id):
+                return self.document
+
+            def find_job(self, job_id):
+                return self.jobs.get(str(job_id))
+
+        repository = FakeReindexRepository()
+
+        def fake_queue_document_reindex(background_tasks, document_id, collection_name=None):
+            repository.jobs[str(new_job_id)] = {
+                "_id": new_job_id,
+                "document_id": ObjectId(document_id),
+                "document_version": 1,
+                "job_type": "INDEX",
+                "attempt_no": 1,
+                "status": "QUEUED",
+                "progress": 0,
+                "stats": None,
+                "error": None,
+                "queued_at": now,
+                "started_at": None,
+                "finished_at": None,
+            }
+            background_tasks.add_task(lambda: None)
+            return {"index_job_id": str(new_job_id)}
+
+        import modules.rag.chunking as chunking_module
+
+        original_queue = chunking_module.queue_document_reindex
+        try:
+            chunking_module.queue_document_reindex = fake_queue_document_reindex
+            service = DocumentService(repository)
+            with self.assertRaises(PermissionError):
+                service.reindex(str(document_id), FakeBackgroundTasks(), other_teacher)
+
+            result = service.reindex(str(document_id), FakeBackgroundTasks(), owner)
+        finally:
+            chunking_module.queue_document_reindex = original_queue
+
+        self.assertEqual(result["job"]["id"], str(new_job_id))
+        self.assertTrue(result["job"]["can_cancel"])
+
+        repository.document["pipeline_summary"]["chunk_status"] = "FAILED"
+        with self.assertRaises(ValueError):
+            DocumentService(repository).reindex(str(document_id), FakeBackgroundTasks(), owner)
+
     def test_admin_can_access_any_teacher_exam(self):
         owner = _current_user("Teacher")
         admin = _current_user("Admin")

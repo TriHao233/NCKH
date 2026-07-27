@@ -37,6 +37,10 @@ export function cancelDocumentJob(documentId, jobId) {
   return apiRequest(`/documents/${documentId}/jobs/${jobId}/cancel`, { method: 'POST' });
 }
 
+export function reindexDocument(documentId) {
+  return apiRequest(`/documents/${documentId}/reindex`, { method: 'POST' });
+}
+
 export function updateDocument(id, payload) {
   return apiRequest(`/documents/${id}`, { method: 'PATCH', body: payload });
 }

@@ -21,6 +21,7 @@ import {
   listDocumentJobs,
   listDocumentPages,
   listDocuments,
+  reindexDocument,
   retryDocumentJob,
   updateDocument,
   updateDocumentPage,
@@ -179,6 +180,10 @@ function canEditDocumentOcr(document) {
   const summary = document?.pipeline_summary || {};
   const blockingStatuses = new Set(['QUEUED', 'PROCESSING', 'COMPLETED']);
   return !blockingStatuses.has(summary.chunk_status) && !blockingStatuses.has(summary.index_status);
+}
+
+function canReindexDocument(document) {
+  return document?.pipeline_summary?.chunk_status === 'COMPLETED';
 }
 
 function formatScore(value) {
@@ -896,6 +901,20 @@ function ManagePage() {
       await refreshDocumentJobState(doc.id);
     } catch (error) {
       alert('Hủy job thất bại: ' + error.message);
+    } finally {
+      setDocumentJobActionKey('');
+    }
+  };
+
+  const handleReindexDocument = async (doc) => {
+    const actionKey = `reindex:${doc.id}`;
+    setDocumentJobActionKey(actionKey);
+    try {
+      await reindexDocument(doc.id);
+      setExpandedDocumentId(doc.id);
+      await refreshDocumentJobState(doc.id);
+    } catch (error) {
+      alert('Re-index tài liệu thất bại: ' + error.message);
     } finally {
       setDocumentJobActionKey('');
     }
@@ -1653,6 +1672,15 @@ function ManagePage() {
                             onClick={() => toggleDocumentPages(d)}
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn doc-reindex-btn"
+                            title="Re-index"
+                            disabled={!canReindexDocument(d) || Boolean(documentJobActionKey)}
+                            onClick={() => handleReindexDocument(d)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></svg>
                           </button>
 	                        <button
 	                          type="button"

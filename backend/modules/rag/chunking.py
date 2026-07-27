@@ -3,13 +3,19 @@ import logging
 import re
 import unicodedata
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Iterable
 
+from bson import ObjectId
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.concurrency import run_in_threadpool
+from pymongo import ReturnDocument
 
+from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
+from core.database import get_database
 from core.dependencies import CurrentUser, require_teacher_or_admin
+from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.documents.service import DocumentService, get_document_service
 from modules.dictionary.dictionary import run_dictionary_auto_learning
 from modules.dictionary.mongodb import get_active_keywords
@@ -28,6 +34,10 @@ from modules.rag.schemas import ChunkingStats, DocumentChunkRequest, DocumentChu
 
 router = APIRouter(prefix=f"{settings.api_prefix}/chunk", tags=["chunking"])
 logger = logging.getLogger(__name__)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 PAGE_MARKER_PATTERN = re.compile(r"<!--\s*PAGE:(\d+)\s*-->")
 CODE_BLOCK_PATTERN = re.compile(r"```[^\n]*\n[\s\S]*?```")
@@ -163,6 +173,240 @@ def queue_chunk_retry(background_tasks: BackgroundTasks, document_id: str, confi
         run_config=run_config,
     )
     return {"chunk_job_id": chunk_job_id, "chunk_set_id": chunk_set_id}
+
+
+def _model_collection_name(collection_name: str) -> str:
+    suffix = hashlib.sha256(settings.embedding_model_name.encode("utf-8")).hexdigest()[:8]
+    return f"{collection_name}_{suffix}"
+
+
+def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, str]:
+    db = get_database()
+    now = utc_now()
+    record = db.vector_collections.find_one(
+        {"provider": "CHROMA", "collection_name": collection_name, "is_active": True},
+        sort=[("created_at", -1)],
+    )
+    model_name = (record.get("embedding_model") or {}).get("model_name") if record else None
+    resolved_collection = collection_name
+    if record and model_name != settings.embedding_model_name:
+        resolved_collection = _model_collection_name(collection_name)
+        record = db.vector_collections.find_one(
+            {"provider": "CHROMA", "collection_name": resolved_collection, "is_active": True},
+            sort=[("created_at", -1)],
+        )
+    if record:
+        return record, resolved_collection
+    record = db.vector_collections.find_one_and_update(
+        {"provider": "CHROMA", "collection_name": resolved_collection},
+        {
+            "$setOnInsert": {
+                "_id": ObjectId(),
+                "schema_version": SCHEMA_VERSION,
+                "persist_uri": settings.chromadb_path,
+                "embedding_model": {
+                    "provider": "SENTENCE_TRANSFORMERS",
+                    "model_name": settings.embedding_model_name,
+                    "normalize_embeddings": True,
+                },
+                "distance_metric": "COSINE",
+                "is_active": True,
+                "created_at": now,
+                "retired_at": None,
+            }
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return record, resolved_collection
+
+
+def _heading_path_text(path: list | None) -> str:
+    return " > ".join(str(item) for item in (path or []) if item)
+
+
+def _metadata_for_existing_chunk(chunk: dict, vector_id: ObjectId) -> dict:
+    heading = chunk.get("heading") or {}
+    heading_path = heading.get("path") or []
+    page_range = chunk.get("page_range") or {}
+    return {
+        "document_id": str(chunk["document_id"]),
+        "chunk_id": str(chunk["_id"]),
+        "chunk_set_id": str(chunk["chunk_set_id"]),
+        "vector_collection_id": str(vector_id),
+        "content_hash": chunk.get("content_hash"),
+        "heading": heading.get("title") or "",
+        "heading_path": heading_path,
+        "heading_path_text": _heading_path_text(heading_path),
+        "heading_norm": heading.get("normalized") or "",
+        "page_start": page_range.get("start"),
+        "page_end": page_range.get("end"),
+        "page_marks": page_range.get("pages") or [],
+        "content_type": chunk.get("content_type", "text"),
+        "semantic_type": chunk.get("semantic_type", "theory"),
+        "information_density": chunk.get("information_density", 0),
+        "token_count": chunk.get("token_count", 0),
+    }
+
+
+def _reindex_payload(chunks: list[dict], vector: dict) -> tuple[list[str], list[str], list[dict], list[ObjectId]]:
+    db = get_database()
+    now = utc_now()
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict] = []
+    embedding_ids: list[ObjectId] = []
+    for chunk in chunks:
+        external_id = f"{chunk['_id']}:{vector['_id']}"
+        embedding = db.chunk_embeddings.find_one_and_update(
+            {
+                "chunk_id": chunk["_id"],
+                "chunk_set_id": chunk["chunk_set_id"],
+                "vector_collection_id": vector["_id"],
+            },
+            {
+                "$setOnInsert": {
+                    "_id": ObjectId(),
+                    "schema_version": SCHEMA_VERSION,
+                    "chunk_id": chunk["_id"],
+                    "chunk_set_id": chunk["chunk_set_id"],
+                    "vector_collection_id": vector["_id"],
+                    "external_vector_id": external_id,
+                    "chunk_content_hash": chunk.get("content_hash"),
+                    "created_at": now,
+                },
+                "$set": {
+                    "status": "PENDING",
+                    "embedding_content_hash": None,
+                    "error": None,
+                    "updated_at": now,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        ids.append(embedding.get("external_vector_id") or external_id)
+        documents.append(chunk.get("content", ""))
+        metadatas.append(_metadata_for_existing_chunk(chunk, vector["_id"]))
+        embedding_ids.append(embedding["_id"])
+    return ids, documents, metadatas, embedding_ids
+
+
+def _mark_embeddings_cancelled(embedding_ids: list[ObjectId], message: str = "Index job cancelled") -> None:
+    if not embedding_ids:
+        return
+    get_database().chunk_embeddings.update_many(
+        {"_id": {"$in": embedding_ids}, "status": "PENDING"},
+        {
+            "$set": {
+                "status": "CANCELLED",
+                "error": {"message": message, "at": utc_now()},
+                "updated_at": utc_now(),
+            }
+        },
+    )
+
+
+def process_document_reindex_background(
+    document_id: str,
+    index_job_id: str,
+    collection_name: str,
+) -> None:
+    repository = MongoDocumentRepository(get_database())
+    try:
+        document = repository.find_by_id(document_id)
+        if not document:
+            raise ValueError("Không tìm thấy tài liệu")
+        chunk_set_id = (document.get("current_processing") or {}).get("chunk_set_id")
+        if not chunk_set_id:
+            raise ValueError("Tài liệu chưa có chunk set để re-index")
+        if is_document_job_cancelled(index_job_id):
+            return
+        repository.update_job(index_job_id, "PROCESSING", progress=5)
+        chunks = list(
+            get_database().document_chunks.find(
+                {
+                    "document_id": document["_id"],
+                    "chunk_set_id": object_id(chunk_set_id, "chunk_set_id"),
+                }
+            ).sort("chunk_no", 1)
+        )
+        if not chunks:
+            raise ValueError("Chunk set hiện hành chưa có chunks")
+        vector, resolved_collection = _vector_collection_for_current_model(collection_name)
+        ids, documents, metadatas, embedding_ids = _reindex_payload(chunks, vector)
+        if is_document_job_cancelled(index_job_id):
+            _mark_embeddings_cancelled(embedding_ids)
+            return
+        stored_chunks = store_chunks(ids, documents, metadatas, resolved_collection)
+        now = utc_now()
+        if is_document_job_cancelled(index_job_id):
+            _mark_embeddings_cancelled(embedding_ids)
+            return
+        get_database().chunk_embeddings.update_many(
+            {"_id": {"$in": embedding_ids}},
+            [
+                {
+                    "$set": {
+                        "status": "INDEXED",
+                        "embedding_content_hash": "$chunk_content_hash",
+                        "indexed_at": now,
+                        "updated_at": now,
+                        "error": None,
+                    }
+                }
+            ],
+        )
+        repository.update_job(
+            index_job_id,
+            "COMPLETED",
+            progress=100,
+            stats={
+                "total_chunks": len(chunks),
+                "stored_chunks": stored_chunks,
+                "collection_name": resolved_collection,
+                "vector_collection_id": str(vector["_id"]),
+                "embedding_model_name": settings.embedding_model_name,
+            },
+        )
+        get_database().documents.update_one(
+            {"_id": document["_id"], "archived_at": None},
+            {
+                "$set": {
+                    "current_processing.vector_collection_id": vector["_id"],
+                    "pipeline_summary.index_status": "COMPLETED",
+                    "status": "READY",
+                    "updated_at": now,
+                }
+            },
+        )
+    except Exception as exc:
+        logger.exception("Re-index job %s failed", index_job_id)
+        repository.update_job(index_job_id, "FAILED", error_message=str(exc))
+
+
+def queue_document_reindex(
+    background_tasks: BackgroundTasks,
+    document_id: str,
+    collection_name: str | None = None,
+) -> dict:
+    resolved_collection = collection_name or settings.chromadb_collection_name
+    repository = MongoDocumentRepository(get_database())
+    job = repository.create_job(
+        document_id,
+        "INDEX",
+        config={
+            "collection_name": resolved_collection,
+            "embedding_model_name": settings.embedding_model_name,
+        },
+    )
+    background_tasks.add_task(
+        process_document_reindex_background,
+        document_id=document_id,
+        index_job_id=str(job["_id"]),
+        collection_name=resolved_collection,
+    )
+    return {"index_job_id": str(job["_id"])}
 
 
 def chunk_document_and_store(
