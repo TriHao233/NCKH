@@ -1328,6 +1328,55 @@ class SchemaV2Tests(unittest.TestCase):
 
         self.assertIsNotNone(repository.find(exam["_id"]))
 
+    def test_exam_question_pool_uses_server_side_filters(self):
+        owner = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        chapter_id = ObjectId()
+
+        class RecordingQuestionRepository:
+            def __init__(self):
+                self.calls = []
+
+            def list(self, page, page_size, review_status, search, **filters):
+                self.calls.append(
+                    {
+                        "page": page,
+                        "page_size": page_size,
+                        "review_status": review_status,
+                        "search": search,
+                        "filters": filters,
+                    }
+                )
+                return [], 0
+
+        question_repository = RecordingQuestionRepository()
+        service = ExamService(FakeExamRepository([exam]), question_repository)
+
+        result = service.question_pool(
+            str(exam["_id"]),
+            owner,
+            page=3,
+            page_size=15,
+            search="queue",
+            question_type="trac_nghiem",
+            bloom_level=2,
+            chapter_id=str(chapter_id),
+            difficulty="de",
+        )
+
+        self.assertEqual(result["page"], 3)
+        self.assertEqual(result["page_size"], 15)
+        self.assertEqual(result["total"], 0)
+        call = question_repository.calls[0]
+        self.assertEqual(call["review_status"], "APPROVED")
+        self.assertEqual(call["search"], "queue")
+        self.assertEqual(call["filters"]["question_type"], "trac_nghiem")
+        self.assertEqual(call["filters"]["bloom_level"], 2)
+        self.assertEqual(call["filters"]["subject_id"], str(exam["subject_id"]))
+        self.assertEqual(call["filters"]["chapter_id"], str(chapter_id))
+        self.assertEqual(call["filters"]["difficulty"], "de")
+        self.assertEqual(call["filters"]["owner_user_id"], owner.id)
+
     def test_variant_creation_requires_finalized_exam(self):
         owner = _current_user("Teacher")
         exam = _exam_doc(owner.id)
