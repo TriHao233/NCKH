@@ -42,6 +42,11 @@ DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
 EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
 EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
 EVALUATION_SOURCE_LIMIT = 3
+MOODLE_MOCK_STATUS_DETAIL = "SIMULATED_LOCAL_RECORD"
+MOODLE_MOCK_MESSAGE = (
+    "Mô phỏng Moodle: hệ thống chỉ ghi nhận publication cục bộ kèm payload "
+    "export GIFT/XML, chưa gửi dữ liệu sang Moodle thật."
+)
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
 evaluation_semaphore = asyncio.Semaphore(1)
 
@@ -1376,11 +1381,14 @@ class QuestionWorkflowService:
                 course_id = target_config.get("default_course_id") or course_id
             if payload.category_id == "qbank-demo":
                 category_id = target_config.get("default_category_id") or category_id
+        configured_mode = (target_config or {}).get("mode", "MOCK" if payload.mock else "REST_API")
+        publication_mode = "MOCK" if payload.mock else configured_mode
         target = {
             "target_id": target_config.get("_id") if target_config else None,
             "moodle_site_id": moodle_site_id,
             "site_name": (target_config or {}).get("site_name"),
-            "mode": (target_config or {}).get("mode", "MOCK" if payload.mock else "REST_API"),
+            "mode": publication_mode,
+            "configured_mode": configured_mode,
             "course_id": course_id,
             "category_id": category_id,
         }
@@ -1405,6 +1413,9 @@ class QuestionWorkflowService:
             "question_version": version["version"],
             "publisher_user_id": user_id,
             "target": target,
+            "publication_mode": publication_mode,
+            "external_sync": False,
+            "status_detail": MOODLE_MOCK_STATUS_DETAIL,
             "published_content_hash": published_content_hash,
             "idempotency_key": idempotency_key,
             "status": "PUBLISHED",
@@ -1418,11 +1429,16 @@ class QuestionWorkflowService:
                 "export_format": payload.export_format,
                 "exports": exports,
                 "mock": payload.mock,
+                "publication_mode": publication_mode,
+                "external_sync": False,
                 "target": json_safe(target),
             },
             "response_payload": {
                 "mock": payload.mock,
-                "message": "Simulated Moodle publication recorded locally with export payload",
+                "publication_mode": publication_mode,
+                "external_sync": False,
+                "status_detail": MOODLE_MOCK_STATUS_DETAIL,
+                "message": MOODLE_MOCK_MESSAGE,
                 "export_formats": list(exports.keys()),
             },
             "error": None,

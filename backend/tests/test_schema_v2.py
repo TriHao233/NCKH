@@ -16,6 +16,7 @@ from modules.admin.jobs_service import (
     _uppercase_status_filter,
 )
 from modules.admin.audit_service import AdminAuditService
+from modules.admin.moodle_service import _safe_publication_item
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.catalog.schemas import (
     AiModelActivationPayload,
@@ -665,6 +666,41 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(payload.moodle_site_id, "demo-moodle")
         self.assertIsNone(payload.target_id)
         self.assertTrue(payload.mock)
+
+    def test_moodle_publication_item_marks_mock_record(self):
+        record = {
+            "_id": ObjectId(),
+            "question_id": ObjectId(),
+            "question_version_id": ObjectId(),
+            "question_version": 2,
+            "publisher_user_id": ObjectId(),
+            "target": {
+                "moodle_site_id": "demo-moodle",
+                "site_name": "Demo Moodle",
+                "mode": "REST_API",
+                "configured_mode": "REST_API",
+            },
+            "status": "PUBLISHED",
+            "moodle_question_ref_id": "mock-demo-version",
+            "request_payload": {
+                "question_code": "Q-001",
+                "export_format": "BOTH",
+                "mock": True,
+            },
+            "response_payload": {
+                "message": "Mô phỏng Moodle: chỉ ghi nhận publication cục bộ, chưa gửi dữ liệu sang Moodle thật.",
+                "export_formats": ["gift", "xml"],
+            },
+        }
+
+        item = _safe_publication_item(record)
+
+        self.assertEqual(item["publication_mode"], "MOCK")
+        self.assertEqual(item["configured_mode"], "REST_API")
+        self.assertFalse(item["external_sync"])
+        self.assertEqual(item["status_detail"], "SIMULATED_LOCAL_RECORD")
+        self.assertEqual(item["status_label"], "Đã ghi mô phỏng")
+        self.assertIn("chưa gửi", item["message"])
 
     def test_moodle_target_payload_requires_real_api_config(self):
         with self.assertRaises(ValidationError):

@@ -38,6 +38,20 @@ def _error_message(error: Any) -> str | None:
     return None
 
 
+def _publication_status_label(status: str | None, publication_mode: str | None, external_sync: bool | None) -> str:
+    if status == "PUBLISHED" and publication_mode == "MOCK":
+        return "Đã ghi mô phỏng"
+    if status == "PUBLISHED" and external_sync is False:
+        return "Đã ghi cục bộ"
+    if status == "PUBLISHED":
+        return "Đã đồng bộ"
+    if status == "FAILED":
+        return "Lỗi"
+    if status in {"QUEUED", "PROCESSING"}:
+        return "Đang xử lý"
+    return status or "Chưa rõ"
+
+
 def _target_public(record: dict | None) -> dict | None:
     if not record:
         return None
@@ -49,6 +63,21 @@ def _target_public(record: dict | None) -> dict | None:
 def _safe_publication_item(record: dict) -> dict:
     request_payload = record.get("request_payload") or {}
     response_payload = record.get("response_payload") or {}
+    target = record.get("target") or {}
+    publication_mode = record.get("publication_mode") or response_payload.get("publication_mode")
+    if not publication_mode:
+        publication_mode = "MOCK" if request_payload.get("mock") else target.get("mode")
+    external_sync = record.get("external_sync")
+    if external_sync is None:
+        external_sync = response_payload.get("external_sync")
+    if external_sync is None and publication_mode == "MOCK":
+        external_sync = False
+    status_detail = record.get("status_detail") or response_payload.get("status_detail")
+    if not status_detail and publication_mode == "MOCK" and record.get("status") == "PUBLISHED":
+        status_detail = "SIMULATED_LOCAL_RECORD"
+    message = response_payload.get("message")
+    if not message and publication_mode == "MOCK":
+        message = "Mô phỏng Moodle: chỉ ghi nhận publication cục bộ, chưa gửi dữ liệu sang Moodle thật."
     return json_safe(
         {
             "id": record.get("_id"),
@@ -56,7 +85,13 @@ def _safe_publication_item(record: dict) -> dict:
             "question_version_id": record.get("question_version_id"),
             "question_version": record.get("question_version"),
             "publisher_user_id": record.get("publisher_user_id"),
-            "target": record.get("target") or {},
+            "target": target,
+            "publication_mode": publication_mode,
+            "configured_mode": target.get("configured_mode") or target.get("mode"),
+            "external_sync": external_sync,
+            "status_detail": status_detail,
+            "status_label": _publication_status_label(record.get("status"), publication_mode, external_sync),
+            "message": message,
             "published_content_hash": record.get("published_content_hash"),
             "status": record.get("status"),
             "attempt_no": record.get("attempt_no"),
@@ -242,9 +277,18 @@ class MoodleTargetService:
 
     def _publication_summary(self, site_key: str | None = None) -> dict:
         match = {} if not site_key or site_key == "all" else {"target.moodle_site_id": site_key}
+        simulated_match = {
+            **match,
+            "$or": [
+                {"publication_mode": "MOCK"},
+                {"response_payload.publication_mode": "MOCK"},
+                {"request_payload.mock": True},
+            ],
+        }
         return {
             "total": self.db.moodle_publications.count_documents(match),
             "published": self.db.moodle_publications.count_documents({**match, "status": "PUBLISHED"}),
+            "simulated": self.db.moodle_publications.count_documents(simulated_match),
             "failed": self.db.moodle_publications.count_documents({**match, "status": "FAILED"}),
             "pending": self.db.moodle_publications.count_documents({**match, "status": {"$in": ["QUEUED", "PROCESSING"]}}),
         }

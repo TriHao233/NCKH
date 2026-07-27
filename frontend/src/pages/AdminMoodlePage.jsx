@@ -32,7 +32,7 @@ const emptyForm = {
 
 const STATUS_LABEL = {
   all: 'Tất cả trạng thái',
-  PUBLISHED: 'Đã ghi',
+  PUBLISHED: 'Đã ghi nhận',
   FAILED: 'Lỗi',
   QUEUED: 'Đang chờ',
   PROCESSING: 'Đang xử lý',
@@ -67,7 +67,7 @@ function publicationStatusClass(status) {
 function AdminMoodlePage() {
   const [targets, setTargets] = useState([]);
   const [publications, setPublications] = useState([]);
-  const [publicationSummary, setPublicationSummary] = useState({ total: 0, published: 0, failed: 0, pending: 0 });
+  const [publicationSummary, setPublicationSummary] = useState({ total: 0, published: 0, simulated: 0, failed: 0, pending: 0 });
   const [publicationTotal, setPublicationTotal] = useState(0);
   const [form, setForm] = useState(emptyForm);
   const [selectedKey, setSelectedKey] = useState('');
@@ -115,7 +115,7 @@ function AdminMoodlePage() {
         search: searchTerm,
       });
       setPublications(result.items || []);
-      setPublicationSummary(result.summary || { total: 0, published: 0, failed: 0, pending: 0 });
+      setPublicationSummary(result.summary || { total: 0, published: 0, simulated: 0, failed: 0, pending: 0 });
       setPublicationTotal(result.total || 0);
     } catch (err) {
       setError(err.message || 'Không tải được publication Moodle');
@@ -208,7 +208,7 @@ function AdminMoodlePage() {
         <div>
           <span>Quản trị hệ thống</span>
           <h1>Moodle target</h1>
-          <p>Quản lý site, course, category và theo dõi publication Moodle ở chế độ mô phỏng hoặc REST API.</p>
+          <p>Quản lý site, course, category và theo dõi publication Moodle theo mode MOCK hoặc REST API.</p>
         </div>
         <button type="button" className="moodle-primary-button" onClick={() => { loadTargets(); loadPublications(); }} disabled={loading || publicationsLoading}>
           <FontAwesomeIcon icon={faRotateRight} />
@@ -223,7 +223,7 @@ function AdminMoodlePage() {
         </button>
         <button type="button" onClick={() => setPublicationStatus('PUBLISHED')}>
           <b>{publicationSummary.published}</b>
-          <span>Đã ghi</span>
+          <span>{publicationSummary.simulated || 0} mô phỏng</span>
         </button>
         <button type="button" className="summary-danger" onClick={() => setPublicationStatus('FAILED')}>
           <b>{publicationSummary.failed}</b>
@@ -384,7 +384,7 @@ function AdminMoodlePage() {
             </select>
             <label>
               <FontAwesomeIcon icon={faSearch} />
-              <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Mã câu hỏi, ref, lỗi..." />
+              <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Mã câu hỏi, ref, ghi chú..." />
             </label>
           </div>
         </div>
@@ -399,7 +399,7 @@ function AdminMoodlePage() {
                 <th>Ref</th>
                 <th>Export</th>
                 <th>Thời gian</th>
-                <th>Lỗi</th>
+                <th>Ghi chú</th>
               </tr>
             </thead>
             <tbody>
@@ -411,17 +411,20 @@ function AdminMoodlePage() {
                   </td>
                   <td>
                     <span>{item.target?.site_name || item.target?.moodle_site_id || 'Target'}</span>
-                    <small>{item.target?.course_id}/{item.target?.category_id}</small>
+                    <small>{item.publication_mode || item.target?.mode || 'MOCK'} · {item.target?.course_id}/{item.target?.category_id}</small>
                   </td>
                   <td>
                     <span className={`publication-status publication-status--${publicationStatusClass(item.status)}`}>
-                      {STATUS_LABEL[item.status] || item.status || 'Chưa rõ'}
+                      {item.status_label || STATUS_LABEL[item.status] || item.status || 'Chưa rõ'}
                     </span>
                   </td>
-                  <td>{item.moodle_question_ref_id || 'Chưa có'}</td>
+                  <td>
+                    <span>{item.moodle_question_ref_id || 'Chưa có'}</span>
+                    {item.publication_mode === 'MOCK' && <small>Mock local, không phải Moodle ID thật</small>}
+                  </td>
                   <td>{item.export_formats?.length ? item.export_formats.join(', ') : item.export_format}</td>
                   <td>{formatDateTime(item.created_at)}</td>
-                  <td className="publication-error">{item.error_message || 'Không có'}</td>
+                  <td className="publication-error">{item.error_message || item.message || (item.external_sync === false ? 'Ghi nhận cục bộ' : 'Không có')}</td>
                 </tr>
               ))}
             </tbody>
