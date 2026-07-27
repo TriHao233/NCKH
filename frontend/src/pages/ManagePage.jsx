@@ -39,6 +39,12 @@ import {
   optionEntriesForQuestion,
   validateQuestionAnswer,
 } from '../utils/questionOptions';
+import {
+  QUESTION_FILTER_DEFAULTS,
+  encodeSavedQuestionFilters,
+  parseSavedQuestionFilters,
+  questionFilterStorageKey,
+} from '../utils/questionFilterPresets';
 import '../css/ManagePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -254,6 +260,18 @@ function stringifyComparable(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function persistSavedQuestionFilters(storageKey, items) {
+  window.localStorage.setItem(
+    storageKey,
+    encodeSavedQuestionFilters(items),
+  );
+}
+
+function makeSavedFilterId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `filter-${Date.now()}`;
+}
+
 function versionDiffRows(left, right) {
   if (!left || !right) return [];
   const leftClassification = versionClassification(left);
@@ -437,6 +455,9 @@ function ManagePage() {
   const [publicationFilter, setPublicationFilter] = useState('all-publications');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [savedQuestionFilters, setSavedQuestionFilters] = useState([]);
+  const [selectedSavedFilterId, setSelectedSavedFilterId] = useState('');
+  const [savedFilterName, setSavedFilterName] = useState('');
 
   const [editing, setEditing] = useState(null);
   const [editContent, setEditContent] = useState('');
@@ -482,6 +503,111 @@ function ManagePage() {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
     return () => clearTimeout(handle);
   }, [searchInput]);
+
+  const savedFilterStorageKey = useMemo(
+    () => questionFilterStorageKey(user),
+    [user?.email, user?.id, user?.uid],
+  );
+
+  const currentQuestionFilter = useMemo(() => ({
+    statusFilter,
+    typeFilter,
+    documentFilter,
+    subjectFilter,
+    chapterFilter,
+    cloFilter,
+    bloomFilter,
+    difficultyFilter,
+    evaluationFilter,
+    publicationFilter,
+    searchInput,
+  }), [
+    statusFilter,
+    typeFilter,
+    documentFilter,
+    subjectFilter,
+    chapterFilter,
+    cloFilter,
+    bloomFilter,
+    difficultyFilter,
+    evaluationFilter,
+    publicationFilter,
+    searchInput,
+  ]);
+
+  const applyQuestionFilter = (filters, { selectId = '', name = '' } = {}) => {
+    const next = { ...QUESTION_FILTER_DEFAULTS, ...(filters || {}) };
+    setStatusFilter(next.statusFilter);
+    setTypeFilter(next.typeFilter);
+    setDocumentFilter(next.documentFilter);
+    setSubjectFilter(next.subjectFilter);
+    setChapterFilter(next.chapterFilter);
+    setCloFilter(next.cloFilter);
+    setBloomFilter(next.bloomFilter);
+    setDifficultyFilter(next.difficultyFilter);
+    setEvaluationFilter(next.evaluationFilter);
+    setPublicationFilter(next.publicationFilter);
+    setSearchInput(next.searchInput);
+    setSearchTerm(next.searchInput.trim());
+    setSelectedSavedFilterId(selectId);
+    setSavedFilterName(name);
+  };
+
+  const updateSavedQuestionFilters = (items) => {
+    setSavedQuestionFilters(items);
+    persistSavedQuestionFilters(savedFilterStorageKey, items);
+  };
+
+  const handleSaveQuestionFilter = () => {
+    const name = savedFilterName.trim();
+    if (!name) {
+      alert('Vui lòng nhập tên bộ lọc.');
+      return;
+    }
+    const existing = savedQuestionFilters.find((item) => item.id === selectedSavedFilterId);
+    const record = {
+      id: existing?.id || makeSavedFilterId(),
+      name,
+      filters: currentQuestionFilter,
+      updated_at: new Date().toISOString(),
+    };
+    const nextItems = existing
+      ? savedQuestionFilters.map((item) => (item.id === existing.id ? record : item))
+      : [record, ...savedQuestionFilters].slice(0, 12);
+    updateSavedQuestionFilters(nextItems);
+    setSelectedSavedFilterId(record.id);
+    setSavedFilterName(record.name);
+  };
+
+  const handleSelectSavedQuestionFilter = (filterId) => {
+    if (!filterId) {
+      setSelectedSavedFilterId('');
+      setSavedFilterName('');
+      return;
+    }
+    const saved = savedQuestionFilters.find((item) => item.id === filterId);
+    if (!saved) return;
+    applyQuestionFilter(saved.filters, { selectId: saved.id, name: saved.name });
+  };
+
+  const handleDeleteSavedQuestionFilter = () => {
+    const saved = savedQuestionFilters.find((item) => item.id === selectedSavedFilterId);
+    if (!saved) return;
+    if (!window.confirm(`Xóa bộ lọc "${saved.name}"?`)) return;
+    updateSavedQuestionFilters(savedQuestionFilters.filter((item) => item.id !== saved.id));
+    setSelectedSavedFilterId('');
+    setSavedFilterName('');
+  };
+
+  const handleResetQuestionFilters = () => {
+    applyQuestionFilter(QUESTION_FILTER_DEFAULTS);
+  };
+
+  useEffect(() => {
+    setSavedQuestionFilters(parseSavedQuestionFilters(window.localStorage.getItem(savedFilterStorageKey)));
+    setSelectedSavedFilterId('');
+    setSavedFilterName('');
+  }, [savedFilterStorageKey]);
 
   const fetchQuestions = async (search) => {
     setQuestionsLoading(true);
@@ -1403,6 +1529,39 @@ function ManagePage() {
                     onChange={(e) => setSearchInput(e.target.value)}
                   />
                 </div>
+              </div>
+
+              <div className="saved-filter-bar">
+                <select
+                  className="field-select field-select--wide"
+                  value={selectedSavedFilterId}
+                  onChange={(event) => handleSelectSavedQuestionFilter(event.target.value)}
+                >
+                  <option value="">Bộ lọc đã lưu</option>
+                  {savedQuestionFilters.map((filter) => (
+                    <option key={filter.id} value={filter.id}>{filter.name}</option>
+                  ))}
+                </select>
+                <input
+                  className="field-input saved-filter-name"
+                  placeholder="Tên bộ lọc"
+                  value={savedFilterName}
+                  onChange={(event) => setSavedFilterName(event.target.value)}
+                />
+                <button type="button" className="btn btn--outline" onClick={handleSaveQuestionFilter}>
+                  Lưu bộ lọc
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--outline"
+                  disabled={!selectedSavedFilterId}
+                  onClick={handleDeleteSavedQuestionFilter}
+                >
+                  Xóa
+                </button>
+                <button type="button" className="btn btn--outline" onClick={handleResetQuestionFilters}>
+                  Đặt lại
+                </button>
               </div>
 
               {questionsError && <p className="manage-error">{questionsError}</p>}

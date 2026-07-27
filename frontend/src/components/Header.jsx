@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faBell, faCheckDouble, faRightToBracket } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
-import { PERMISSIONS } from '../auth/permissions';
+import { canAccessPath } from '../auth/permissions';
 import {
   getUnreadNotificationCount,
   listNotifications,
@@ -122,7 +122,6 @@ const Header = () => {
     {
       id: 'teacher',
       label: 'Giảng viên',
-      roles: PERMISSIONS.teacherWorkspace,
       items: [
         { path: '/sinh-cau-hoi', label: 'Sinh câu hỏi' },
         { path: '/quan-ly', label: 'Quản lý câu hỏi' },
@@ -132,7 +131,6 @@ const Header = () => {
     {
       id: 'reviewer',
       label: 'Người duyệt',
-      roles: PERMISSIONS.reviewerWorkspace,
       items: [
         { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
       ],
@@ -140,7 +138,6 @@ const Header = () => {
     {
       id: 'admin',
       label: 'Quản trị',
-      roles: PERMISSIONS.adminWorkspace,
       items: [
         { path: '/tong-quan', label: 'Tổng quan' },
         { path: '/danh-muc', label: 'Danh mục' },
@@ -151,11 +148,12 @@ const Header = () => {
       ],
     },
   ];
-  const visibleNavGroups = navGroups.filter((group) => {
-    if (!group.roles) return true;
-    if (!signedIn) return false;
-    return group.roles.includes(role);
-  });
+  const visibleNavGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !role || canAccessPath(role, item.path)),
+    }))
+    .filter((group) => group.id === 'public' || (signedIn && group.items.length > 0));
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
 
   return (

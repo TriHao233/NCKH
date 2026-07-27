@@ -1,7 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
+import { PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
+
+const PROTECTED_APP_ROUTES = [
+  "/sinh-cau-hoi",
+  "/quan-ly",
+  "/lam-de-thi",
+  "/lam-de-thi/:examId",
+  "/kiem-duyet",
+  "/tong-quan",
+  "/danh-muc",
+  "/quan-ly-nguoi-dung",
+  "/nhat-ky-he-thong",
+  "/quan-ly-job",
+  "/quan-ly-moodle",
+  "/lich-cong-viec",
+  "/ho-so",
+];
 
 test("admin can access business superuser routes", () => {
   assert.equal(canAccessPath("Admin", "/sinh-cau-hoi"), true);
@@ -28,4 +44,8 @@ test("direct URL permission and landing path use the same route map", () => {
   assert.equal(landingPathForRole("Admin"), "/tong-quan");
   assert.equal(landingPathForRole("Admin", "/kiem-duyet?status=PENDING"), "/kiem-duyet?status=PENDING");
   assert.equal(landingPathForRole("Teacher", "/kiem-duyet"), "/sinh-cau-hoi");
+});
+
+test("protected app routes are declared in the central permission map", () => {
+  assert.deepEqual(Object.keys(PROTECTED_ROUTE_ROLES), PROTECTED_APP_ROUTES);
 });

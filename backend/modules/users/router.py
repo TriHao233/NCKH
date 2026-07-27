@@ -193,6 +193,15 @@ def list_teacher_options(
     return service.list_teacher_options(search)
 
 
+@router.get("/reviewers", response_model=TeacherOptionListResponse)
+def list_reviewer_options(
+    search: str | None = None,
+    _reviewer: CurrentUser = Depends(require_reviewer_or_admin),
+    service: UserService = Depends(get_user_service),
+):
+    return service.list_reviewer_options(search)
+
+
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreateRequest,

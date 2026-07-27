@@ -18,6 +18,8 @@ def _translate(exc: Exception):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, RuntimeError) and str(exc) == "VERSION_CONFLICT":
         raise HTTPException(status_code=409, detail="Phiên bản câu hỏi đã thay đổi") from exc
+    if isinstance(exc, PermissionError):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     raise exc

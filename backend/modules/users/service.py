@@ -158,6 +158,24 @@ class UserService:
             "total": total,
         }
 
+    def list_reviewer_options(self, search: str | None = None) -> dict:
+        records = []
+        for role in ("Reviewer", "Admin"):
+            role_records, _total = self.repository.list(1, 100, role, search)
+            records.extend(user for user in role_records if user.get("is_active", True))
+        return {
+            "items": [
+                {
+                    "id": str(user["_id"]),
+                    "email": user.get("email", ""),
+                    "display_name": user.get("display_name", ""),
+                    "is_active": user.get("is_active", True),
+                }
+                for user in records
+            ],
+            "total": len(records),
+        }
+
     def update_self(self, user_id: str, payload: UserSelfUpdateRequest) -> dict | None:
         fields: dict = {}
         if payload.display_name is not None:

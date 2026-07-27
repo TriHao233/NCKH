@@ -11,7 +11,10 @@ class MoodleTargetPayload(BaseModel):
     token_env_var: str = Field("", max_length=120)
     default_course_id: str = Field(..., min_length=1, max_length=120)
     default_category_id: str = Field(..., min_length=1, max_length=120)
-    allowed_roles: list[Literal["Admin", "Reviewer"]] = Field(default_factory=lambda: ["Admin", "Reviewer"])
+    allowed_roles: list[Literal["Admin", "Reviewer"]] = Field(
+        default_factory=lambda: ["Admin", "Reviewer"],
+        min_length=1,
+    )
     is_active: bool = True
 
     @field_validator("site_key", "site_name", "base_url", "token_env_var", "default_course_id", "default_category_id")

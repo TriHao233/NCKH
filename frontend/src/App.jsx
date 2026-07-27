@@ -21,7 +21,7 @@ import TaskCalendarPage from './pages/TaskCalendarPage';
 import ExamListPage from './pages/ExamListPage';
 import ExamBuilderPage from './pages/ExamBuilderPage';
 import { AuthContext } from './context/AuthContext';
-import { PERMISSIONS } from './auth/permissions';
+import { rolesForPath } from './auth/permissions';
 
 function RequireRole({ roles, children }) {
     const { user, loading } = useContext(AuthContext);
@@ -30,6 +30,14 @@ function RequireRole({ roles, children }) {
     if (!user) return <Navigate to="/dang-nhap" replace state={{ from: `${location.pathname}${location.search}` }} />;
     if (!roles.includes(user.role)) return <Navigate to="/trang-chu" replace />;
     return children;
+}
+
+function ProtectedPage({ path, children }) {
+    return (
+        <RequireRole roles={rolesForPath(path) || []}>
+            {children}
+        </RequireRole>
+    );
 }
 
 function App() {
@@ -42,97 +50,97 @@ function App() {
                 <Route
                     path="/sinh-cau-hoi"
                     element={(
-                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
+                        <ProtectedPage path="/sinh-cau-hoi">
                             <GeneratePage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/quan-ly"
                     element={(
-                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
+                        <ProtectedPage path="/quan-ly">
                             <ManagePage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/lam-de-thi"
                     element={(
-                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
+                        <ProtectedPage path="/lam-de-thi">
                             <ExamListPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/lam-de-thi/:examId"
                     element={(
-                        <RequireRole roles={PERMISSIONS.teacherWorkspace}>
+                        <ProtectedPage path="/lam-de-thi/:examId">
                             <ExamBuilderPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/kiem-duyet"
                     element={(
-                        <RequireRole roles={PERMISSIONS.reviewerWorkspace}>
+                        <ProtectedPage path="/kiem-duyet">
                             <ReviewQueuePage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/tong-quan"
                     element={(
-                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                        <ProtectedPage path="/tong-quan">
                             <AdminOverviewPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/danh-muc"
                     element={(
-                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                        <ProtectedPage path="/danh-muc">
                             <CatalogAdminPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/quan-ly-nguoi-dung"
                     element={(
-                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                        <ProtectedPage path="/quan-ly-nguoi-dung">
                             <UsersAdminPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/nhat-ky-he-thong"
                     element={(
-                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                        <ProtectedPage path="/nhat-ky-he-thong">
                             <AdminAuditPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/quan-ly-job"
                     element={(
-                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                        <ProtectedPage path="/quan-ly-job">
                             <AdminJobsPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/quan-ly-moodle"
                     element={(
-                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                        <ProtectedPage path="/quan-ly-moodle">
                             <AdminMoodlePage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route
                     path="/lich-cong-viec"
                     element={(
-                        <RequireRole roles={PERMISSIONS.authenticated}>
+                        <ProtectedPage path="/lich-cong-viec">
                             <TaskCalendarPage />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
                 <Route path="/huong-dan" element={<GuidePage />} />
@@ -140,9 +148,9 @@ function App() {
                 <Route
                     path="/ho-so"
                     element={(
-                        <RequireRole roles={PERMISSIONS.authenticated}>
+                        <ProtectedPage path="/ho-so">
                             <UserProfile />
-                        </RequireRole>
+                        </ProtectedPage>
                     )}
                 />
             </Route>

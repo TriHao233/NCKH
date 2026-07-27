@@ -236,6 +236,10 @@
   gap: 10px;
 }
 
+.overview-breakdown--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .overview-breakdown div {
   min-height: 62px;
   padding: 11px 12px;
@@ -265,6 +269,10 @@
   width: 100%;
   min-width: 760px;
   border-collapse: collapse;
+}
+
+.overview-table--compact {
+  min-width: 620px;
 }
 
 .overview-table th {

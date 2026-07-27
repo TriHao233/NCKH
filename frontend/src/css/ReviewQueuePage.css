@@ -248,6 +248,25 @@
   font-size: 0.8rem;
 }
 
+.review-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  border: 1px solid #d9e6f2;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fafcff;
+  color: #13253f;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.review-filter-toggle input {
+  width: auto;
+  min-height: 0;
+}
+
 .review-list {
   display: flex;
   flex-direction: column;

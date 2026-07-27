@@ -24,6 +24,8 @@ export function listQuestions({
   assignmentStatus,
   assignedTo,
   creatorUserId,
+  waitingHoursMin,
+  overdueOnly = false,
 } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -44,6 +46,8 @@ export function listQuestions({
   if (assignmentStatus) params.set('assignment_status', assignmentStatus);
   if (assignedTo) params.set('assigned_to', assignedTo);
   if (creatorUserId) params.set('creator_user_id', creatorUserId);
+  if (waitingHoursMin) params.set('waiting_hours_min', waitingHoursMin);
+  if (overdueOnly) params.set('overdue_only', 'true');
   return apiRequest(`/questions?${params.toString()}`);
 }
 

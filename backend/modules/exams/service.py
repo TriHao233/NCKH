@@ -135,9 +135,18 @@ class ExamService:
             raise ValueError(f"Câu hỏi {question.get('question_code')} chưa được duyệt")
         if str(question.get("current_version_id")) != str(version["_id"]):
             raise ValueError(f"Câu hỏi {question.get('question_code')} đã có version mới hơn")
+        if str(question.get("approved_version_id")) != str(version["_id"]):
+            raise ValueError(f"Câu hỏi {question.get('question_code')} chưa chốt version đã duyệt")
         question_subject_id = self._question_subject_id(version)
-        if question_subject_id and question_subject_id != str(exam["subject_id"]):
+        if not question_subject_id or question_subject_id != str(exam["subject_id"]):
             raise ValueError(f"Câu hỏi {question.get('question_code')} không thuộc môn của đề thi")
+
+    def _is_question_usable_for_exam(self, exam: dict, question: dict, version: dict) -> bool:
+        try:
+            self._assert_question_can_join_exam(exam, question, version)
+        except ValueError:
+            return False
+        return True
 
     def _validate_ready_payload(self, exam: dict) -> None:
         questions = exam.get("questions", [])
@@ -241,6 +250,7 @@ class ExamService:
             chapter_id=chapter_id,
             difficulty=difficulty,
             owner_user_id=owner_user_id,
+            approved_current_only=True,
         )
         selected_ids = {str(ref["question_id"]) for ref in exam.get("questions", [])}
         return {
@@ -355,8 +365,13 @@ class ExamService:
             chapter_id=chapter_id,
             difficulty=cell["difficulty"],
             owner_user_id=owner_user_id,
+            approved_current_only=True,
         )
-        return pairs
+        return [
+            pair
+            for pair in pairs
+            if self._is_question_usable_for_exam(exam, pair[0], pair[1])
+        ]
 
     def matrix_availability(self, exam_id: str, current_user: CurrentUser) -> list[dict]:
         exam = self._get_for_user_or_404(exam_id, current_user)

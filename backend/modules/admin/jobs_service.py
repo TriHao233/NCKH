@@ -54,6 +54,28 @@ def _seconds_since(value: datetime | None) -> int | None:
     return max(0, int((utc_now() - value).total_seconds()))
 
 
+def _as_utc_datetime(value: datetime | str | None, field_name: str = "date") -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} không hợp lệ") from exc
+    else:
+        raise ValueError(f"{field_name} không hợp lệ")
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _error_message(error: Any) -> str | None:
     if isinstance(error, dict):
         return error.get("message") or error.get("detail")
@@ -107,10 +129,16 @@ class AdminJobService:
         user_id: str | None = None,
         stale_only: bool = False,
         search: str | None = None,
+        date_from: datetime | str | None = None,
+        date_to: datetime | str | None = None,
     ) -> dict:
         jobs = []
         requested_kinds = {job_kind.lower()} if job_kind else {"generation", "evaluation", "document"}
         user_oid = _parse_object_id(user_id, "user_id") if user_id else None
+        date_from_utc = _as_utc_datetime(date_from, "date_from")
+        date_to_utc = _as_utc_datetime(date_to, "date_to")
+        if date_from_utc and date_to_utc and date_from_utc > date_to_utc:
+            raise ValueError("Khoảng thời gian job không hợp lệ")
 
         if "generation" in requested_kinds:
             jobs.extend(self._generation_jobs(status, user_oid))
@@ -124,6 +152,11 @@ class AdminJobService:
         if search:
             term = search.strip().lower()
             jobs = [job for job in jobs if self._matches_search(job, term)]
+        if date_from_utc or date_to_utc:
+            jobs = [
+                job for job in jobs
+                if self._matches_date_range(job, date_from_utc, date_to_utc)
+            ]
 
         jobs.sort(key=lambda item: item.get("sort_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         total = len(jobs)
@@ -321,6 +354,21 @@ class AdminJobService:
             (job.get("entity") or {}).get("label"),
         ]
         return any(term in str(value).lower() for value in fields if value is not None)
+
+    @staticmethod
+    def _matches_date_range(
+        job: dict,
+        date_from: datetime | None,
+        date_to: datetime | None,
+    ) -> bool:
+        job_time = _as_utc_datetime(job.get("sort_at"))
+        if not job_time:
+            return False
+        if date_from and job_time < date_from:
+            return False
+        if date_to and job_time > date_to:
+            return False
+        return True
 
     @staticmethod
     def _public_item(job: dict) -> dict:

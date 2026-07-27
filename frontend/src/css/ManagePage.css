@@ -103,6 +103,15 @@
 .manage-page .list-toolbar .field-select { max-width: 180px; }
 .manage-page .list-toolbar .field-select--wide { max-width: 220px; }
 .manage-page .search-input { width: 160px; }
+.manage-page .saved-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: -4px 0 18px;
+}
+.manage-page .saved-filter-bar .field-select { min-width: 180px; }
+.manage-page .saved-filter-name { width: 180px; }
 
 .manage-page .question-list { display: flex; flex-direction: column; gap: 12px; }
 .manage-page .question-item {
@@ -531,5 +540,8 @@
   .manage-page .question-side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; }
   .manage-page .list-toolbar { width: 100%; }
   .manage-page .list-toolbar .field-select,
-  .manage-page .search-input { width: 100%; max-width: none; }
+  .manage-page .search-input,
+  .manage-page .saved-filter-bar .field-select,
+  .manage-page .saved-filter-name { width: 100%; max-width: none; }
+  .manage-page .saved-filter-bar .btn { flex: 1; }
 }

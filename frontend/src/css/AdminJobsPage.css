@@ -117,7 +117,7 @@
 
 .jobs-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 190px 220px 170px;
+  grid-template-columns: minmax(220px, 1fr) 150px 190px 170px 140px 140px 135px;
   gap: 10px;
   align-items: end;
   margin-bottom: 14px;

@@ -8,6 +8,8 @@ export function listAdminJobs({
   userId,
   staleOnly = false,
   search,
+  dateFrom,
+  dateTo,
 } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -17,6 +19,8 @@ export function listAdminJobs({
   if (userId) params.set('user_id', userId);
   if (staleOnly) params.set('stale_only', 'true');
   if (search) params.set('search', search);
+  if (dateFrom) params.set('date_from', `${dateFrom}T00:00:00`);
+  if (dateTo) params.set('date_to', `${dateTo}T23:59:59`);
   return apiRequest(`/admin/jobs?${params.toString()}`);
 }
 

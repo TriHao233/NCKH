@@ -31,6 +31,16 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function formatPercent(value) {
+  return typeof value === 'number' ? `${Math.round(value * 100)}%` : '--';
+}
+
+function formatLatency(value) {
+  if (typeof value !== 'number') return '--';
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+  return `${Math.round(value)}ms`;
+}
+
 function compactId(value) {
   if (!value) return 'Chưa có';
   const text = String(value);
@@ -107,6 +117,10 @@ function AdminOverviewPage() {
   const attention = overview?.attention || [];
   const recentJobs = overview?.recent_jobs || [];
   const recentAudit = overview?.recent_audit || [];
+  const quality = overview?.questions?.quality || {};
+  const publications = overview?.moodle?.publications || {};
+  const jobBreakdown = overview?.jobs?.breakdown || [];
+  const modelPerformance = overview?.model_performance || [];
 
   return (
     <main className="admin-overview-page">
@@ -164,10 +178,18 @@ function AdminOverviewPage() {
             </div>
             <FontAwesomeIcon icon={faClipboardCheck} />
           </div>
-          <dl className="overview-breakdown">
+          <dl className="overview-breakdown overview-breakdown--three">
             <div>
               <dt>Draft</dt>
               <dd>{formatNumber(overview?.questions?.draft)}</dd>
+            </div>
+            <div>
+              <dt>Pending</dt>
+              <dd>{formatNumber(overview?.questions?.pending)}</dd>
+            </div>
+            <div>
+              <dt>Approved</dt>
+              <dd>{formatNumber(overview?.questions?.approved)}</dd>
             </div>
             <div>
               <dt>Needs revision</dt>
@@ -182,6 +204,136 @@ function AdminOverviewPage() {
               <dd>{formatNumber(overview?.questions?.published)}</dd>
             </div>
           </dl>
+        </section>
+
+        <section className="overview-panel">
+          <div className="overview-panel-heading">
+            <div>
+              <span>Quality</span>
+              <h2>Màu đánh giá</h2>
+            </div>
+            <FontAwesomeIcon icon={faClipboardCheck} />
+          </div>
+          <dl className="overview-breakdown">
+            <div>
+              <dt>Green</dt>
+              <dd>{formatNumber(quality.green)}</dd>
+            </div>
+            <div>
+              <dt>Yellow</dt>
+              <dd>{formatNumber(quality.yellow)}</dd>
+            </div>
+            <div>
+              <dt>Red</dt>
+              <dd>{formatNumber(quality.red)}</dd>
+            </div>
+            <div>
+              <dt>Chưa chấm</dt>
+              <dd>{formatNumber(quality.not_evaluated)}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="overview-panel">
+          <div className="overview-panel-heading">
+            <div>
+              <span>Publication</span>
+              <h2>Moodle status</h2>
+            </div>
+            <FontAwesomeIcon icon={faPlugCircleCheck} />
+          </div>
+          <dl className="overview-breakdown">
+            <div>
+              <dt>Published</dt>
+              <dd>{formatNumber(publications.published)}</dd>
+            </div>
+            <div>
+              <dt>Failed</dt>
+              <dd>{formatNumber(publications.failed)}</dd>
+            </div>
+            <div>
+              <dt>Pending</dt>
+              <dd>{formatNumber(publications.pending)}</dd>
+            </div>
+            <div>
+              <dt>Mock</dt>
+              <dd>{formatNumber(publications.simulated)}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="overview-panel overview-panel--wide">
+          <div className="overview-panel-heading">
+            <div>
+              <span>Pipeline</span>
+              <h2>Job theo loại</h2>
+            </div>
+            <Link to="/quan-ly-job">Mở job</Link>
+          </div>
+          <div className="overview-table-wrap">
+            <table className="overview-table overview-table--compact">
+              <thead>
+                <tr>
+                  <th>Loại</th>
+                  <th>Tổng</th>
+                  <th>Đang chạy</th>
+                  <th>Lỗi</th>
+                  <th>Quá ngưỡng</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobBreakdown.map((item) => (
+                  <tr key={item.key}>
+                    <td><strong>{item.label}</strong></td>
+                    <td>{formatNumber(item.total)}</td>
+                    <td>{formatNumber(item.active)}</td>
+                    <td>{formatNumber(item.failed)}</td>
+                    <td>{formatNumber(item.long_running)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!loading && jobBreakdown.length === 0 && <p className="overview-empty">Chưa có job vận hành.</p>}
+          </div>
+        </section>
+
+        <section className="overview-panel overview-panel--wide">
+          <div className="overview-panel-heading">
+            <div>
+              <span>30 ngày gần nhất</span>
+              <h2>Latency/error theo model</h2>
+            </div>
+            <FontAwesomeIcon icon={faServer} />
+          </div>
+          <div className="overview-table-wrap">
+            <table className="overview-table overview-table--compact">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Luồng</th>
+                  <th>Tổng</th>
+                  <th>Hoàn tất</th>
+                  <th>Lỗi</th>
+                  <th>Error rate</th>
+                  <th>Latency TB</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modelPerformance.map((item) => (
+                  <tr key={item.key}>
+                    <td><strong>{item.model_code}</strong></td>
+                    <td>{item.kind_label}</td>
+                    <td>{formatNumber(item.total)}</td>
+                    <td>{formatNumber(item.completed)}</td>
+                    <td>{formatNumber(item.failed)}</td>
+                    <td>{formatPercent(item.error_rate)}</td>
+                    <td>{formatLatency(item.avg_latency_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!loading && modelPerformance.length === 0 && <p className="overview-empty">Chưa có dữ liệu model trong 30 ngày.</p>}
+          </div>
         </section>
 
         <section className="overview-panel overview-panel--wide">

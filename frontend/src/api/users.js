@@ -28,6 +28,13 @@ export function listTeacherOptions({ search } = {}) {
   return apiRequest(`/users/teachers${query ? `?${query}` : ''}`);
 }
 
+export function listReviewerOptions({ search } = {}) {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  const query = params.toString();
+  return apiRequest(`/users/reviewers${query ? `?${query}` : ''}`);
+}
+
 export function getUser(id) {
   return apiRequest(`/users/${id}`);
 }

@@ -87,6 +87,9 @@ class QuestionRepository(Protocol):
         assigned_reviewer_user_id: ObjectId | None = None,
         creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
+        approved_current_only: bool = False,
+        waiting_since: datetime | None = None,
+        overdue_at: datetime | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]: ...
 
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]: ...
@@ -202,6 +205,9 @@ class MongoQuestionRepository:
         assigned_reviewer_user_id: ObjectId | None = None,
         creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
+        approved_current_only: bool = False,
+        waiting_since: datetime | None = None,
+        overdue_at: datetime | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
         if review_status:
@@ -218,6 +224,10 @@ class MongoQuestionRepository:
             match["quality_summary.color"] = quality_color.upper()
         if min_score is not None:
             match["quality_summary.overall_score"] = {"$gte": float(min_score)}
+        if waiting_since is not None:
+            match["updated_at"] = {"$lte": waiting_since}
+        if overdue_at is not None:
+            match["review_assignment.lock_expires_at"] = {"$lte": overdue_at}
         pipeline: list[dict] = [
             {"$match": match},
             {
@@ -230,6 +240,14 @@ class MongoQuestionRepository:
             },
             {"$unwind": "$version"},
         ]
+        if approved_current_only:
+            pipeline.append(
+                {
+                    "$match": {
+                        "$expr": {"$eq": ["$approved_version_id", "$current_version_id"]}
+                    }
+                }
+            )
         if owner_user_id is not None:
             pipeline.append(
                 {

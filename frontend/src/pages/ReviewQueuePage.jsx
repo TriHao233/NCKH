@@ -18,7 +18,7 @@ import {
   reviewQuestion,
 } from '../api/questions';
 import { listSubjects } from '../api/catalog';
-import { listTeacherOptions } from '../api/users';
+import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ReviewQueuePage.css';
@@ -317,6 +317,8 @@ function ReviewQueuePage() {
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('PENDING');
   const [assignmentFilter, setAssignmentFilter] = useState('all');
+  const [waitingFilter, setWaitingFilter] = useState('all');
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
   const [bloomFilter, setBloomFilter] = useState('all');
   const [colorFilter, setColorFilter] = useState('all');
@@ -335,6 +337,8 @@ function ReviewQueuePage() {
   const [catalogFilterError, setCatalogFilterError] = useState('');
   const [teacherOptions, setTeacherOptions] = useState([]);
   const [teacherFilterError, setTeacherFilterError] = useState('');
+  const [reviewerOptions, setReviewerOptions] = useState([]);
+  const [reviewerFilterError, setReviewerFilterError] = useState('');
   const [selected, setSelected] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -383,6 +387,8 @@ function ReviewQueuePage() {
         search: searchTerm || undefined,
         assignmentStatus,
         assignedTo: assignmentFilter === 'mine' ? 'me' : undefined,
+        waitingHoursMin: waitingFilter === 'all' ? undefined : waitingFilter,
+        overdueOnly,
       });
       const items = result.items || [];
       setQuestions(items);
@@ -417,6 +423,17 @@ function ReviewQueuePage() {
     } catch (err) {
       setTeacherFilterError(err.message || 'Không tải được bộ lọc Teacher');
       setTeacherOptions([]);
+    }
+  };
+
+  const fetchReviewerOptions = async () => {
+    setReviewerFilterError('');
+    try {
+      const result = await listReviewerOptions();
+      setReviewerOptions(result.items || []);
+    } catch (err) {
+      setReviewerFilterError(err.message || 'Không tải được danh sách Reviewer');
+      setReviewerOptions([]);
     }
   };
 
@@ -495,6 +512,8 @@ function ReviewQueuePage() {
     page,
     statusFilter,
     assignmentFilter,
+    waitingFilter,
+    overdueOnly,
     typeFilter,
     bloomFilter,
     colorFilter,
@@ -511,6 +530,7 @@ function ReviewQueuePage() {
   useEffect(() => {
     fetchCatalogFilters();
     fetchTeacherFilters();
+    fetchReviewerOptions();
     fetchDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1079,6 +1099,20 @@ function ReviewQueuePage() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
+            <select value={waitingFilter} onChange={(event) => updateFilter(setWaitingFilter)(event.target.value)}>
+              <option value="all">Mọi thời gian chờ</option>
+              <option value="24">Chờ từ 24h</option>
+              <option value="72">Chờ từ 72h</option>
+              <option value="168">Chờ từ 7 ngày</option>
+            </select>
+            <label className="review-filter-toggle">
+              <input
+                type="checkbox"
+                checked={overdueOnly}
+                onChange={(event) => updateFilter(setOverdueOnly)(event.target.checked)}
+              />
+              Quá hạn lock
+            </label>
             <select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
               <option value="all">Mọi dạng câu hỏi</option>
               {QUESTION_TYPES.map((type) => (
@@ -1166,6 +1200,7 @@ function ReviewQueuePage() {
 
           {catalogFilterError && <p className="review-error review-error--filters">{catalogFilterError}</p>}
           {teacherFilterError && <p className="review-error review-error--filters">{teacherFilterError}</p>}
+          {reviewerFilterError && <p className="review-error review-error--filters">{reviewerFilterError}</p>}
           {error && <p className="review-error">{error}</p>}
           {loading ? (
             <p className="review-empty">Đang tải hàng đợi...</p>
@@ -1635,14 +1670,27 @@ function ReviewQueuePage() {
               <button type="button" onClick={() => setAssignmentDraft(null)}>Đóng</button>
             </div>
             <label className="review-form-field">
-              <span>Reviewer/Admin ID</span>
-              <input
+              <span>Reviewer/Admin active</span>
+              <select
                 value={assignmentDraft.reviewerUserId}
                 onChange={(event) => setAssignmentDraft((current) => ({
                   ...current,
                   reviewerUserId: event.target.value,
                 }))}
-              />
+              >
+                <option value="">Bỏ gán reviewer</option>
+                {reviewerOptions.map((reviewer) => (
+                  <option key={reviewer.id} value={reviewer.id}>
+                    {reviewer.display_name || reviewer.email || reviewer.id}
+                  </option>
+                ))}
+                {assignmentDraft.reviewerUserId
+                  && !reviewerOptions.some((reviewer) => reviewer.id === assignmentDraft.reviewerUserId) && (
+                  <option value={assignmentDraft.reviewerUserId}>
+                    ID hiện tại: {assignmentDraft.reviewerUserId}
+                  </option>
+                )}
+              </select>
             </label>
             <label className="review-form-field">
               <span>Ghi chú</span>

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from core.config import settings
@@ -29,6 +31,8 @@ def list_jobs(
     user_id: str | None = None,
     stale_only: bool = False,
     search: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     _admin: CurrentUser = Depends(require_admin),
     service: AdminJobService = Depends(get_admin_job_service),
 ):
@@ -41,6 +45,8 @@ def list_jobs(
             user_id=user_id,
             stale_only=stale_only,
             search=search,
+            date_from=date_from,
+            date_to=date_to,
         )
     except Exception as exc:
         _translate(exc)

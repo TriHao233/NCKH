@@ -47,6 +47,8 @@ def list_questions(
     assignment_status: str | None = Query(None),
     assigned_to: str | None = Query(None),
     creator_user_id: str | None = Query(None),
+    waiting_hours_min: float | None = Query(None, ge=0),
+    overdue_only: bool = Query(False),
     current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
@@ -69,6 +71,8 @@ def list_questions(
         assignment_status=assignment_status,
         assigned_to=assigned_to,
         creator_user_id=creator_user_id,
+        waiting_hours_min=waiting_hours_min,
+        overdue_only=overdue_only,
         current_user=current_user,
     )
 

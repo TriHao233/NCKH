@@ -103,6 +103,9 @@ function AdminJobsPage() {
   const [kindFilter, setKindFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [staleOnly, setStaleOnly] = useState(false);
+  const [userIdFilter, setUserIdFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -129,6 +132,9 @@ function AdminJobsPage() {
         status: statusFilter,
         staleOnly,
         search: searchTerm,
+        userId: userIdFilter.trim(),
+        dateFrom,
+        dateTo,
       });
       setJobs(result.items || []);
       setSummary(result.summary || { total: 0, active: 0, failed: 0, long_running: 0 });
@@ -141,7 +147,7 @@ function AdminJobsPage() {
     } finally {
       setLoading(false);
     }
-  }, [kindFilter, page, searchTerm, staleOnly, statusFilter]);
+  }, [dateFrom, dateTo, kindFilter, page, searchTerm, staleOnly, statusFilter, userIdFilter]);
 
   useEffect(() => {
     fetchJobs();
@@ -176,6 +182,21 @@ function AdminJobsPage() {
 
   const toggleStaleOnly = () => {
     setStaleOnly((current) => !current);
+    setPage(1);
+  };
+
+  const updateUserIdFilter = (value) => {
+    setUserIdFilter(value);
+    setPage(1);
+  };
+
+  const updateDateFrom = (value) => {
+    setDateFrom(value);
+    setPage(1);
+  };
+
+  const updateDateTo = (value) => {
+    setDateTo(value);
     setPage(1);
   };
 
@@ -293,6 +314,35 @@ function AdminJobsPage() {
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
+        </div>
+        <div className="toolbar-field">
+          <label htmlFor="job-user">Người tạo</label>
+          <input
+            id="job-user"
+            value={userIdFilter}
+            onChange={(event) => updateUserIdFilter(event.target.value)}
+            placeholder="User ID"
+          />
+        </div>
+        <div className="toolbar-field">
+          <label htmlFor="job-date-from">Từ ngày</label>
+          <input
+            id="job-date-from"
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(event) => updateDateFrom(event.target.value)}
+          />
+        </div>
+        <div className="toolbar-field">
+          <label htmlFor="job-date-to">Đến ngày</label>
+          <input
+            id="job-date-to"
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => updateDateTo(event.target.value)}
+          />
         </div>
         <label className="jobs-toggle">
           <input type="checkbox" checked={staleOnly} onChange={toggleStaleOnly} />

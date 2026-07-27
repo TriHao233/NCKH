@@ -1366,7 +1366,13 @@ class QuestionWorkflowService:
             "media_type": "application/xml" if normalized == "xml" else "text/plain",
         }
 
-    def publish_to_moodle(self, question_id: str, payload: MoodlePublicationRequest, user_id) -> dict:
+    def publish_to_moodle(
+        self,
+        question_id: str,
+        payload: MoodlePublicationRequest,
+        user_id,
+        publisher_role: str | None = None,
+    ) -> dict:
         if not payload.mock:
             raise ValueError("Tích hợp Moodle thật chưa được cấu hình; hãy dùng export GIFT/XML")
         if settings.app_env == "production" and not settings.demo_mode:
@@ -1383,6 +1389,9 @@ class QuestionWorkflowService:
             raise LookupError("Không tìm thấy Moodle target")
         if target_config and not target_config.get("is_active", True):
             raise ValueError("Moodle target đang bị khóa")
+        allowed_roles = (target_config or {}).get("allowed_roles") or ["Admin", "Reviewer"]
+        if target_config and publisher_role and publisher_role not in allowed_roles:
+            raise PermissionError("Role hiện tại không được phép publish tới Moodle target này")
 
         moodle_site_id = (target_config or {}).get("site_key") or payload.moodle_site_id
         course_id = payload.course_id
@@ -1402,6 +1411,7 @@ class QuestionWorkflowService:
             "configured_mode": configured_mode,
             "course_id": course_id,
             "category_id": category_id,
+            "allowed_roles": allowed_roles,
         }
         published_content_hash = version["content_hash"]
         idempotency_material = "|".join(

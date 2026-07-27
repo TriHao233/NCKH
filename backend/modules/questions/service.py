@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import timedelta
 from pathlib import Path
 
 from bson import ObjectId
@@ -436,6 +437,8 @@ class QuestionService:
         assignment_status: str | None = None,
         assigned_to: str | None = None,
         creator_user_id: str | None = None,
+        waiting_hours_min: float | None = None,
+        overdue_only: bool = False,
         current_user: CurrentUser | None = None,
     ) -> dict:
         owner_user_id = (
@@ -453,6 +456,12 @@ class QuestionService:
             if creator_user_id
             else None
         )
+        waiting_since = None
+        if waiting_hours_min is not None:
+            if waiting_hours_min < 0:
+                raise ValueError("waiting_hours_min không hợp lệ")
+            waiting_since = utc_now() - timedelta(hours=waiting_hours_min)
+        overdue_at = utc_now() if overdue_only else None
 
         pairs, total = self.repository.list(
             page,
@@ -474,6 +483,8 @@ class QuestionService:
             assigned_reviewer_user_id=assigned_reviewer_user_id,
             creator_user_id=creator_oid,
             owner_user_id=owner_user_id,
+            waiting_since=waiting_since,
+            overdue_at=overdue_at,
         )
         return {
             "items": [serialize_question(question, version) for question, version in pairs],

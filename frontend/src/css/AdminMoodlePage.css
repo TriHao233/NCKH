@@ -287,6 +287,41 @@
   grid-column: 1 / -1;
 }
 
+.role-toggle-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #5c6f89;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.role-toggle-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.role-toggle-group label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #d9e6f2;
+  border-radius: 8px;
+  background: #fafcff;
+  color: #13253f;
+  font-size: 0.8rem;
+}
+
+.role-toggle-group input {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+}
+
 .form-actions {
   display: flex;
   justify-content: space-between;

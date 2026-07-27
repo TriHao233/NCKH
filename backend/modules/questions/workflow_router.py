@@ -164,7 +164,7 @@ def publish_question_to_moodle(
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        return service.publish_to_moodle(question_id, payload, current_user.id)
+        return service.publish_to_moodle(question_id, payload, current_user.id, current_user.role)
     except Exception as exc:
         _translate_workflow_error(exc)
 

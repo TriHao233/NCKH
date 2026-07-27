@@ -31,6 +31,11 @@ const emptyForm = {
   is_active: true,
 };
 
+const PUBLISH_ROLES = [
+  { value: 'Admin', label: 'Admin' },
+  { value: 'Reviewer', label: 'Reviewer' },
+];
+
 const STATUS_LABEL = {
   all: 'Tất cả trạng thái',
   PUBLISHED: 'Đã ghi nhận',
@@ -65,6 +70,14 @@ function publicationStatusClass(status) {
   return 'muted';
 }
 
+function formFromTarget(target = {}) {
+  return {
+    ...emptyForm,
+    ...target,
+    allowed_roles: target.allowed_roles?.length ? target.allowed_roles : emptyForm.allowed_roles,
+  };
+}
+
 function AdminMoodlePage() {
   const [targets, setTargets] = useState([]);
   const [publications, setPublications] = useState([]);
@@ -97,7 +110,7 @@ function AdminMoodlePage() {
       setTargets(items);
       if (!selectedKey && items[0]) {
         setSelectedKey(items[0].site_key);
-        setForm({ ...emptyForm, ...items[0] });
+        setForm(formFromTarget(items[0]));
       }
     } catch (err) {
       setError(err.message || 'Không tải được Moodle target');
@@ -143,16 +156,34 @@ function AdminMoodlePage() {
 
   const pickTarget = (target) => {
     setSelectedKey(target.site_key);
-    setForm({ ...emptyForm, ...target });
+    setForm(formFromTarget(target));
   };
 
   const newTarget = () => {
     setSelectedKey('');
-    setForm(emptyForm);
+    setForm(formFromTarget());
   };
 
   const updateForm = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const toggleAllowedRole = (role) => {
+    setForm((current) => {
+      const currentRoles = current.allowed_roles?.length ? current.allowed_roles : emptyForm.allowed_roles;
+      const nextSet = new Set(currentRoles);
+      if (nextSet.has(role) && nextSet.size > 1) {
+        nextSet.delete(role);
+      } else {
+        nextSet.add(role);
+      }
+      return {
+        ...current,
+        allowed_roles: PUBLISH_ROLES
+          .map((item) => item.value)
+          .filter((item) => nextSet.has(item)),
+      };
+    });
   };
 
   const handleSave = async (event) => {
@@ -162,10 +193,10 @@ function AdminMoodlePage() {
     try {
       const saved = await saveMoodleTarget({
         ...form,
-        allowed_roles: ['Admin', 'Reviewer'],
+        allowed_roles: form.allowed_roles?.length ? form.allowed_roles : ['Admin'],
       });
       setSelectedKey(saved.site_key);
-      setForm({ ...emptyForm, ...saved });
+      setForm(formFromTarget(saved));
       await loadTargets();
     } catch (err) {
       setError(err.message || 'Lưu Moodle target thất bại');
@@ -285,6 +316,7 @@ function AdminMoodlePage() {
                   <div className="target-meta">
                     <span>{target.mode}</span>
                     <span>{target.is_active ? 'Active' : 'Locked'}</span>
+                    <span>{(target.allowed_roles?.length ? target.allowed_roles : emptyForm.allowed_roles).join(', ')}</span>
                     <span>{formatDateTime(target.last_check?.checked_at)}</span>
                   </div>
                   <div className="target-actions">
@@ -364,6 +396,21 @@ function AdminMoodlePage() {
               Category ID
               <input value={form.default_category_id} onChange={(event) => updateForm('default_category_id', event.target.value)} />
             </label>
+            <div className="form-span role-toggle-group">
+              <span>Được publish</span>
+              <div>
+                {PUBLISH_ROLES.map((role) => (
+                  <label key={role.value}>
+                    <input
+                      type="checkbox"
+                      checked={(form.allowed_roles || emptyForm.allowed_roles).includes(role.value)}
+                      onChange={() => toggleAllowedRole(role.value)}
+                    />
+                    {role.label}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="form-actions">
             {selectedTarget?.last_check && (
