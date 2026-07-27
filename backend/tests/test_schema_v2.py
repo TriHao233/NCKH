@@ -991,7 +991,12 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(updated_question["approved_version_id"], version_id)
         self.assertEqual(updated_question["review_assignment"]["status"], "UNASSIGNED")
         self.assertEqual(len(db.question_reviews.records), 1)
-        self.assertEqual(len(db.notifications.records), 1)
+        self.assertEqual(len(db.notifications.records), 2)
+        self.assertEqual(db.notifications.records[0]["recipient_user_id"], reviewer.id)
+        self.assertEqual(db.notifications.records[0]["type"], "QUESTION_REVIEW_ASSIGNED")
+        self.assertEqual(db.notifications.records[0]["link"], f"/kiem-duyet?questionId={question_id}")
+        self.assertEqual(db.notifications.records[1]["recipient_user_id"], teacher.id)
+        self.assertEqual(db.notifications.records[1]["type"], "QUESTION_APPROVED")
         self.assertEqual(
             [event["action"] for event in db.audit_logs.records],
             ["QUESTION_REVIEW_ASSIGNED", "QUESTION_REVIEW_CLAIMED", "QUESTION_APPROVED"],

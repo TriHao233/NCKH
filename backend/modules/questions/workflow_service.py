@@ -17,7 +17,10 @@ from core.dependencies import CurrentUser
 from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
-from modules.notifications.service import safe_notify_review_decision
+from modules.notifications.service import (
+    safe_notify_review_assigned,
+    safe_notify_review_decision,
+)
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
@@ -1049,6 +1052,14 @@ class QuestionWorkflowService:
             after=assignment,
             metadata={"note": payload.note},
         )
+        if payload.reviewer_user_id:
+            safe_notify_review_assigned(
+                database=self.db,
+                question=updated,
+                version=version,
+                reviewer_user_id=assignment["reviewer_user_id"],
+                actor_user_id=current_user.id,
+            )
         return serialize_question(updated, version)
 
     def review(self, question_id: str, payload: ReviewCreateRequest, current_user: CurrentUser) -> dict:

@@ -173,6 +173,29 @@ class NotificationService:
             entity=self._question_entity(question, version),
         )
 
+    def notify_review_assigned(
+        self,
+        *,
+        question: dict,
+        version: dict,
+        reviewer_user_id: str | ObjectId | None,
+        actor_user_id: ObjectId,
+    ) -> dict | None:
+        if reviewer_user_id is None:
+            return None
+        if reviewer_user_id == actor_user_id:
+            return None
+        question_code = question.get("question_code", "Câu hỏi")
+        return self.create(
+            recipient_user_id=reviewer_user_id,
+            actor_user_id=actor_user_id,
+            type="QUESTION_REVIEW_ASSIGNED",
+            title=f"{question_code} được phân công kiểm duyệt",
+            body="Admin đã phân công câu hỏi này cho bạn.",
+            link=f"/kiem-duyet?questionId={question['_id']}",
+            entity=self._question_entity(question, version),
+        )
+
     def notify_question_resubmitted(
         self,
         *,
@@ -230,6 +253,13 @@ def safe_notify_review_decision(**kwargs) -> None:
         NotificationService(kwargs.pop("database")).notify_review_decision(**kwargs)
     except Exception as exc:
         logger.warning("Failed to notify review decision: %s", exc)
+
+
+def safe_notify_review_assigned(**kwargs) -> None:
+    try:
+        NotificationService(kwargs.pop("database")).notify_review_assigned(**kwargs)
+    except Exception as exc:
+        logger.warning("Failed to notify review assignment: %s", exc)
 
 
 def safe_notify_question_resubmitted(**kwargs) -> None:
