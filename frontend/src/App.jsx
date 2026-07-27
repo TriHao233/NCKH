@@ -7,6 +7,7 @@ import GeneratePage from './pages/GeneratePage';
 import ManagePage from './pages/ManagePage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
 import CatalogAdminPage from './pages/CatalogAdminPage';
+import AdminJobsPage from './pages/AdminJobsPage';
 import UsersAdminPage from './pages/UsersAdminPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -88,6 +89,14 @@ function App() {
                     element={(
                         <RequireRole roles={PERMISSIONS.adminWorkspace}>
                             <UsersAdminPage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/quan-ly-job"
+                    element={(
+                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                            <AdminJobsPage />
                         </RequireRole>
                     )}
                 />

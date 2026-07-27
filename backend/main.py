@@ -13,6 +13,7 @@ from core.dependencies import require_teacher_or_admin
 from core.firebase import init_firebase
 from core.job_recovery import recover_stale_jobs
 from core.logging import setup_logging
+from modules.admin.jobs_router import router as admin_jobs_router
 from modules.auth import login, profile, register
 from modules.catalog.router import router as catalog_router
 from modules.documents.router import router as documents_router
@@ -60,6 +61,7 @@ app.include_router(register.router, prefix=auth_prefix, tags=["Authentication"])
 app.include_router(login.router, prefix=auth_prefix, tags=["Authentication"])
 app.include_router(profile.router, prefix=auth_prefix, tags=["Authentication"])
 app.include_router(users_router)
+app.include_router(admin_jobs_router)
 app.include_router(catalog_router)
 app.include_router(documents_router)
 app.include_router(questions_router)

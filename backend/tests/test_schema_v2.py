@@ -9,6 +9,12 @@ from pydantic import ValidationError
 from core.bootstrap import VALIDATORS
 from core.config import settings
 from core.dependencies import CurrentUser
+from modules.admin.jobs_service import (
+    AdminJobService,
+    _generation_status_filter,
+    _parse_object_id,
+    _uppercase_status_filter,
+)
 from modules.auth import login as auth_login
 from modules.documents.schemas import DocumentStatus
 from modules.documents.service import DocumentService
@@ -304,6 +310,46 @@ class SchemaV2Tests(unittest.TestCase):
                 actor,
             )
         self.assertEqual(identity.disabled_calls, [])
+
+    def test_admin_job_summary_tracks_operational_states(self):
+        jobs = [
+            {"status": "queued", "is_long_running": False},
+            {"status": "PROCESSING", "is_long_running": True},
+            {"status": "ERROR", "is_long_running": False},
+            {"status": "STALE", "is_long_running": False},
+            {"status": "COMPLETED", "is_long_running": False},
+        ]
+
+        summary = AdminJobService._summary(jobs)
+
+        self.assertEqual(summary["total"], 5)
+        self.assertEqual(summary["active"], 2)
+        self.assertEqual(summary["failed"], 2)
+        self.assertEqual(summary["long_running"], 1)
+
+    def test_admin_job_search_matches_entity_and_error(self):
+        job = {
+            "id": "job-1",
+            "kind": "evaluation",
+            "type": "Evaluation",
+            "status": "ERROR",
+            "entity": {"id": "question-1", "label": "Binary tree"},
+            "error_message": "Model timeout",
+        }
+
+        self.assertTrue(AdminJobService._matches_search(job, "binary"))
+        self.assertTrue(AdminJobService._matches_search(job, "timeout"))
+        self.assertFalse(AdminJobService._matches_search(job, "moodle"))
+
+    def test_admin_job_rejects_invalid_object_id(self):
+        with self.assertRaises(ValueError):
+            _parse_object_id("not-an-object-id", "job_id")
+
+    def test_admin_job_status_filters_support_rollups(self):
+        self.assertEqual(_generation_status_filter("active"), {"$in": ["queued", "processing"]})
+        self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
+        self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
+        self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(

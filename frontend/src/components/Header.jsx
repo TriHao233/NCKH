@@ -51,6 +51,7 @@ const Header = () => {
       items: [
         { path: '/danh-muc', label: 'Danh mục' },
         { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
+        { path: '/quan-ly-job', label: 'Job' },
       ],
     },
   ];
