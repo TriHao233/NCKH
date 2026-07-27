@@ -87,7 +87,7 @@
 /* ─── List card ──────────────────────────────────────────────── */
 .manage-page .list-card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .manage-page .list-card-header h3 { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; color: var(--navy, #003a75); }
-.manage-page .list-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.manage-page .list-toolbar { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
 .manage-page .field-select,
 .manage-page .field-input {
   padding: 8px 12px;
@@ -100,6 +100,8 @@
   outline: none;
 }
 .manage-page .field-select:focus, .manage-page .field-input:focus { border-color: var(--primary, #0c78d4); }
+.manage-page .list-toolbar .field-select { max-width: 180px; }
+.manage-page .list-toolbar .field-select--wide { max-width: 220px; }
 .manage-page .search-input { width: 160px; }
 
 .manage-page .question-list { display: flex; flex-direction: column; gap: 12px; }
@@ -423,5 +425,6 @@
   .manage-page .question-item { flex-direction: column; }
   .manage-page .question-side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; }
   .manage-page .list-toolbar { width: 100%; }
-  .manage-page .search-input { width: 100%; }
+  .manage-page .list-toolbar .field-select,
+  .manage-page .search-input { width: 100%; max-width: none; }
 }

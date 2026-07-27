@@ -1075,6 +1075,9 @@ class SchemaV2Tests(unittest.TestCase):
         fake_db = FakeDatabase()
         repo = MongoQuestionRepository(fake_db)
         document_id = ObjectId()
+        subject_id = ObjectId()
+        chapter_id = ObjectId()
+        clo_id = ObjectId()
         reviewer_id = ObjectId()
 
         pairs, total = repo.list(
@@ -1085,6 +1088,10 @@ class SchemaV2Tests(unittest.TestCase):
             question_type="trac_nghiem",
             bloom_level=3,
             document_id=str(document_id),
+            subject_id=str(subject_id),
+            chapter_id=str(chapter_id),
+            clo_id=str(clo_id),
+            difficulty="kho",
             quality_color="green",
             min_score=0.8,
             publication_status="NOT_PUBLISHED",
@@ -1110,6 +1117,10 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(version_match["version.classification.assessment_type"], "TRAC_NGHIEM")
         self.assertEqual(version_match["version.classification.bloom.level"], 3)
         self.assertEqual(version_match["version.document_id"], document_id)
+        self.assertEqual(version_match["version.classification.subject.id"], subject_id)
+        self.assertEqual(version_match["version.classification.chapter.id"], chapter_id)
+        self.assertEqual(version_match["version.clos.id"], clo_id)
+        self.assertEqual(version_match["version.classification.difficulty"], "kho")
 
         search_match = pipeline[4]["$match"]
         self.assertIn({"question_code": {"$regex": "queue", "$options": "i"}}, search_match["$or"])

@@ -77,6 +77,7 @@ class QuestionRepository(Protocol):
         document_id: str | None = None,
         subject_id: str | None = None,
         chapter_id: str | None = None,
+        clo_id: str | None = None,
         difficulty: str | None = None,
         quality_color: str | None = None,
         min_score: float | None = None,
@@ -190,6 +191,7 @@ class MongoQuestionRepository:
         document_id: str | None = None,
         subject_id: str | None = None,
         chapter_id: str | None = None,
+        clo_id: str | None = None,
         difficulty: str | None = None,
         quality_color: str | None = None,
         min_score: float | None = None,
@@ -248,6 +250,8 @@ class MongoQuestionRepository:
             version_match["version.classification.subject.id"] = object_id(subject_id, "subject_id")
         if chapter_id:
             version_match["version.classification.chapter.id"] = object_id(chapter_id, "chapter_id")
+        if clo_id:
+            version_match["version.clos.id"] = object_id(clo_id, "clo_id")
         if difficulty:
             version_match["version.classification.difficulty"] = difficulty
         if version_match:

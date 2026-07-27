@@ -13,6 +13,10 @@ export function listQuestions({
   questionType,
   bloomLevel,
   documentId,
+  subjectId,
+  chapterId,
+  cloId,
+  difficulty,
   qualityColor,
   minScore,
   publicationStatus,
@@ -28,6 +32,10 @@ export function listQuestions({
   if (questionType) params.set('question_type', questionType);
   if (bloomLevel) params.set('bloom_level', bloomLevel);
   if (documentId) params.set('document_id', documentId);
+  if (subjectId) params.set('subject_id', subjectId);
+  if (chapterId) params.set('chapter_id', chapterId);
+  if (cloId) params.set('clo_id', cloId);
+  if (difficulty) params.set('difficulty', difficulty);
   if (qualityColor) params.set('quality_color', qualityColor);
   if (minScore !== undefined && minScore !== null && minScore !== '') params.set('min_score', minScore);
   if (publicationStatus) params.set('publication_status', publicationStatus);

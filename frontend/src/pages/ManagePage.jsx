@@ -83,6 +83,12 @@ const QUALITY_COLOR_LABEL = {
   RED: 'Rủi ro cao',
 };
 
+const DIFFICULTIES = [
+  { value: 'de', label: 'Dễ' },
+  { value: 'trung_binh', label: 'Trung bình' },
+  { value: 'kho', label: 'Khó' },
+];
+
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
 
 const QUICK_REVIEW_RUBRIC = [
@@ -330,7 +336,13 @@ function ManagePage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all-type');
   const [documentFilter, setDocumentFilter] = useState('all-documents');
+  const [subjectFilter, setSubjectFilter] = useState('all-subjects');
+  const [chapterFilter, setChapterFilter] = useState('all-chapters');
+  const [cloFilter, setCloFilter] = useState('all-clos');
   const [bloomFilter, setBloomFilter] = useState('all-bloom');
+  const [difficultyFilter, setDifficultyFilter] = useState('all-difficulties');
+  const [evaluationFilter, setEvaluationFilter] = useState('all-evaluations');
+  const [publicationFilter, setPublicationFilter] = useState('all-publications');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -382,7 +394,21 @@ function ManagePage() {
     setQuestionsLoading(true);
     setQuestionsError('');
     try {
-      const result = await listQuestions({ page: 1, pageSize: 100, search: search || undefined });
+      const result = await listQuestions({
+        page: 1,
+        pageSize: 100,
+        search: search || undefined,
+        reviewStatus: statusFilter !== 'all' ? statusFilter : undefined,
+        questionType: typeFilter !== 'all-type' ? typeFilter : undefined,
+        bloomLevel: bloomFilter !== 'all-bloom' ? bloomFilter : undefined,
+        documentId: documentFilter !== 'all-documents' ? documentFilter : undefined,
+        subjectId: subjectFilter !== 'all-subjects' ? subjectFilter : undefined,
+        chapterId: chapterFilter !== 'all-chapters' ? chapterFilter : undefined,
+        cloId: cloFilter !== 'all-clos' ? cloFilter : undefined,
+        difficulty: difficultyFilter !== 'all-difficulties' ? difficultyFilter : undefined,
+        evaluationStatus: evaluationFilter !== 'all-evaluations' ? evaluationFilter : undefined,
+        publicationStatus: publicationFilter !== 'all-publications' ? publicationFilter : undefined,
+      });
       setQuestions(result.items || []);
     } catch (error) {
       setQuestionsError(error.message || 'Không tải được danh sách câu hỏi');
@@ -453,7 +479,19 @@ function ManagePage() {
   useEffect(() => {
     fetchQuestions(searchTerm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm]);
+  }, [
+    searchTerm,
+    statusFilter,
+    typeFilter,
+    documentFilter,
+    subjectFilter,
+    chapterFilter,
+    cloFilter,
+    bloomFilter,
+    difficultyFilter,
+    evaluationFilter,
+    publicationFilter,
+  ]);
 
   useEffect(() => {
     fetchDocuments();
@@ -504,6 +542,18 @@ function ManagePage() {
     subjects.forEach((subject) => items.set(refId(subject), subject));
     return items;
   }, [subjects]);
+
+  const selectedFilterSubject = subjectFilter !== 'all-subjects'
+    ? subjectById.get(subjectFilter)
+    : null;
+  const filterChapters = (selectedFilterSubject?.chapters || []).filter((chapter) => chapter.is_active !== false);
+  const filterLearningOutcomes = (selectedFilterSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
+
+  const handleSubjectFilterChange = (value) => {
+    setSubjectFilter(value);
+    setChapterFilter('all-chapters');
+    setCloFilter('all-clos');
+  };
 
   const editSubject = editing ? subjectById.get(questionSubjectId(editing)) : null;
   const editLearningOutcomes = (editSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
@@ -982,8 +1032,47 @@ function ManagePage() {
                       + Thêm câu hỏi
                     </button>
                   )}
-                  <select className="field-select" defaultValue="ctdl">
-                    <option value="ctdl">Cấu trúc dữ liệu</option>
+                  <select
+                    className="field-select field-select--wide"
+                    value={subjectFilter}
+                    onChange={(e) => handleSubjectFilterChange(e.target.value)}
+                  >
+                    <option value="all-subjects">Tất cả môn</option>
+                    {subjects.map((subject) => (
+                      <option key={refId(subject)} value={refId(subject)}>
+                        {subject.name || subject.title || refId(subject)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="field-select"
+                    value={chapterFilter}
+                    disabled={!selectedFilterSubject}
+                    onChange={(e) => setChapterFilter(e.target.value)}
+                  >
+                    <option value="all-chapters">
+                      {selectedFilterSubject ? 'Tất cả chương' : 'Chọn môn để lọc chương'}
+                    </option>
+                    {filterChapters.map((chapter) => (
+                      <option key={refId(chapter)} value={refId(chapter)}>
+                        {chapter.chapter_name || chapter.name || chapter.title || refId(chapter)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="field-select"
+                    value={cloFilter}
+                    disabled={!selectedFilterSubject}
+                    onChange={(e) => setCloFilter(e.target.value)}
+                  >
+                    <option value="all-clos">
+                      {selectedFilterSubject ? 'Tất cả CLO' : 'Chọn môn để lọc CLO'}
+                    </option>
+                    {filterLearningOutcomes.map((clo) => (
+                      <option key={refId(clo)} value={refId(clo)}>
+                        {clo.clo_code || clo.code || refId(clo)}
+                      </option>
+                    ))}
                   </select>
                   <select
                     className="field-select"
@@ -1017,6 +1106,36 @@ function ManagePage() {
                       <option key={bloom.level} value={String(bloom.level)}>
                         {bloom.label}
                       </option>
+                    ))}
+                  </select>
+                  <select
+                    className="field-select"
+                    value={difficultyFilter}
+                    onChange={(e) => setDifficultyFilter(e.target.value)}
+                  >
+                    <option value="all-difficulties">Tất cả độ khó</option>
+                    {DIFFICULTIES.map((difficulty) => (
+                      <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="field-select"
+                    value={evaluationFilter}
+                    onChange={(e) => setEvaluationFilter(e.target.value)}
+                  >
+                    <option value="all-evaluations">Tất cả AI</option>
+                    {Object.entries(EVALUATION_STATUS_LABEL).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="field-select"
+                    value={publicationFilter}
+                    onChange={(e) => setPublicationFilter(e.target.value)}
+                  >
+                    <option value="all-publications">Tất cả Moodle</option>
+                    {Object.entries(PUBLICATION_STATUS_LABEL).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
                   <input
