@@ -16,6 +16,7 @@ from core.logging import setup_logging
 from modules.admin.audit_router import router as admin_audit_router
 from modules.admin.jobs_router import router as admin_jobs_router
 from modules.admin.moodle_router import router as admin_moodle_router
+from modules.admin.overview_router import router as admin_overview_router
 from modules.auth import login, profile, register
 from modules.catalog.router import router as catalog_router
 from modules.documents.router import router as documents_router
@@ -64,6 +65,7 @@ app.include_router(register.router, prefix=auth_prefix, tags=["Authentication"])
 app.include_router(login.router, prefix=auth_prefix, tags=["Authentication"])
 app.include_router(profile.router, prefix=auth_prefix, tags=["Authentication"])
 app.include_router(users_router)
+app.include_router(admin_overview_router)
 app.include_router(admin_audit_router)
 app.include_router(admin_jobs_router)
 app.include_router(admin_moodle_router)

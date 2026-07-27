@@ -21,6 +21,7 @@ from modules.admin.jobs_service import (
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.moodle_service import _safe_publication_item
 from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.admin.overview_service import AdminOverviewService
 from modules.catalog.schemas import (
     AiModelActivationPayload,
     ChapterPayload,
@@ -1304,6 +1305,117 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
         self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+
+    def test_admin_overview_summarizes_operational_state(self):
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(minutes=settings.job_recovery_timeout_minutes + 5)
+
+        class FakeOverviewDatabase:
+            def __init__(self):
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": ObjectId(), "role": "Admin", "is_active": True},
+                        {"_id": ObjectId(), "role": "Teacher", "is_active": True},
+                        {"_id": ObjectId(), "role": "Reviewer", "is_active": True},
+                        {"_id": ObjectId(), "role": "Teacher", "is_active": False},
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "lifecycle_status": "ACTIVE",
+                            "review_status": "PENDING",
+                            "publication_status": "NOT_PUBLISHED",
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "lifecycle_status": "ACTIVE",
+                            "review_status": "APPROVED",
+                            "publication_status": "PUBLISHED",
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "lifecycle_status": "ARCHIVED",
+                            "review_status": "PENDING",
+                            "publication_status": "NOT_PUBLISHED",
+                        },
+                    ]
+                )
+                self.documents = InMemoryCollection(
+                    [
+                        {"_id": ObjectId(), "archived_at": None, "status": "PROCESSING"},
+                        {"_id": ObjectId(), "archived_at": None, "status": "FAILED"},
+                        {"_id": ObjectId(), "archived_at": now, "status": "FAILED"},
+                    ]
+                )
+                self.generation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "status": "failed",
+                            "request": {"document_id": "doc-1"},
+                            "error_message": "Model timeout",
+                            "created_at": old,
+                            "updated_at": old,
+                        },
+                        {
+                            "_id": ObjectId(),
+                            "status": "processing",
+                            "request": {"document_id": "doc-2"},
+                            "error_message": None,
+                            "created_at": old,
+                            "updated_at": old,
+                        },
+                    ]
+                )
+                self.evaluation_jobs = InMemoryCollection()
+                self.document_jobs = InMemoryCollection()
+                self.moodle_targets = InMemoryCollection(
+                    [
+                        {"_id": ObjectId(), "site_key": "demo", "is_active": True},
+                        {"_id": ObjectId(), "site_key": "old", "is_active": False},
+                    ]
+                )
+                self.moodle_publications = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "status": "PUBLISHED",
+                            "publication_mode": "MOCK",
+                            "request_payload": {"mock": True},
+                        },
+                        {"_id": ObjectId(), "status": "FAILED", "request_payload": {"mock": True}},
+                    ]
+                )
+                self.audit_logs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "action": "admin.job_retry",
+                            "actor_user_id": str(ObjectId()),
+                            "entity_type": "job",
+                            "entity_id": "job-1",
+                            "created_at": now,
+                        }
+                    ]
+                )
+
+        overview = AdminOverviewService(FakeOverviewDatabase()).overview()
+
+        self.assertEqual(overview["users"]["active"], 3)
+        self.assertEqual(overview["questions"]["pending"], 1)
+        self.assertEqual(overview["questions"]["published"], 1)
+        self.assertEqual(overview["documents"]["failed"], 1)
+        self.assertEqual(overview["jobs"]["failed"], 1)
+        self.assertEqual(overview["jobs"]["long_running"], 1)
+        self.assertEqual(overview["moodle"]["active_targets"], 1)
+        self.assertEqual(overview["moodle"]["publications"]["simulated"], 2)
+        self.assertEqual(overview["recent_jobs"][0]["error_message"], "Model timeout")
+        self.assertEqual(overview["recent_audit"][0]["action"], "admin.job_retry")
+        attention = {item["key"]: item for item in overview["attention"]}
+        self.assertEqual(attention["retryable_jobs"]["severity"], "danger")
+        self.assertEqual(attention["failed_documents"]["count"], 1)
 
     def test_job_recovery_marks_only_stale_active_jobs(self):
         now = datetime.now(timezone.utc)

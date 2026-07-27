@@ -142,6 +142,7 @@ const Header = () => {
       label: 'Quản trị',
       roles: PERMISSIONS.adminWorkspace,
       items: [
+        { path: '/tong-quan', label: 'Tổng quan' },
         { path: '/danh-muc', label: 'Danh mục' },
         { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
         { path: '/nhat-ky-he-thong', label: 'Audit' },

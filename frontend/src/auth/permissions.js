@@ -11,6 +11,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/lam-de-thi": PERMISSIONS.teacherWorkspace,
   "/lam-de-thi/:examId": PERMISSIONS.teacherWorkspace,
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
+  "/tong-quan": PERMISSIONS.adminWorkspace,
   "/danh-muc": PERMISSIONS.adminWorkspace,
   "/quan-ly-nguoi-dung": PERMISSIONS.adminWorkspace,
   "/nhat-ky-he-thong": PERMISSIONS.adminWorkspace,
@@ -21,7 +22,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
 });
 
 export const ROLE_LANDING_PATHS = Object.freeze({
-  Admin: "/danh-muc",
+  Admin: "/tong-quan",
   Reviewer: "/kiem-duyet",
   Teacher: "/sinh-cau-hoi",
 });

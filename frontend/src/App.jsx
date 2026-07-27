@@ -6,6 +6,7 @@ import AboutPage from './pages/AboutPage';
 import GeneratePage from './pages/GeneratePage';
 import ManagePage from './pages/ManagePage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
+import AdminOverviewPage from './pages/AdminOverviewPage';
 import CatalogAdminPage from './pages/CatalogAdminPage';
 import AdminAuditPage from './pages/AdminAuditPage';
 import AdminJobsPage from './pages/AdminJobsPage';
@@ -75,6 +76,14 @@ function App() {
                     element={(
                         <RequireRole roles={PERMISSIONS.reviewerWorkspace}>
                             <ReviewQueuePage />
+                        </RequireRole>
+                    )}
+                />
+                <Route
+                    path="/tong-quan"
+                    element={(
+                        <RequireRole roles={PERMISSIONS.adminWorkspace}>
+                            <AdminOverviewPage />
                         </RequireRole>
                     )}
                 />
