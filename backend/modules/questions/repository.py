@@ -54,6 +54,7 @@ def serialize_question(question: dict, version: dict) -> dict:
             "sources": version.get("sources") or [],
             "content_hash": version["content_hash"],
             "quality_summary": question.get("quality_summary") or {},
+            "review_assignment": question.get("review_assignment") or {"status": "UNASSIGNED"},
             "latest_review_id": question.get("latest_review_id"),
             "created_at": question["created_at"],
             "updated_at": question["updated_at"],
@@ -81,6 +82,8 @@ class QuestionRepository(Protocol):
         min_score: float | None = None,
         publication_status: str | None = None,
         evaluation_status: str | None = None,
+        assignment_status: str | None = None,
+        assigned_reviewer_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]: ...
 
@@ -169,6 +172,8 @@ class MongoQuestionRepository:
         min_score: float | None = None,
         publication_status: str | None = None,
         evaluation_status: str | None = None,
+        assignment_status: str | None = None,
+        assigned_reviewer_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
     ) -> tuple[list[tuple[dict, dict]], int]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
@@ -178,6 +183,10 @@ class MongoQuestionRepository:
             match["publication_status"] = publication_status
         if evaluation_status:
             match["evaluation_status"] = evaluation_status
+        if assignment_status:
+            match["review_assignment.status"] = assignment_status
+        if assigned_reviewer_user_id is not None:
+            match["review_assignment.reviewer_user_id"] = assigned_reviewer_user_id
         if quality_color:
             match["quality_summary.color"] = quality_color.upper()
         if min_score is not None:
@@ -297,6 +306,16 @@ class MongoQuestionRepository:
                             if question["publication_status"] == "PUBLISHED"
                             else question["publication_status"]
                         ),
+                        "review_assignment": {
+                            "status": "UNASSIGNED",
+                            "reviewer_user_id": None,
+                            "assigned_by_user_id": None,
+                            "assigned_at": None,
+                            "claimed_at": None,
+                            "lock_expires_at": None,
+                            "last_released_at": None,
+                            "release_reason": None,
+                        },
                         "quality_summary": {},
                         "updated_at": now,
                     }
@@ -326,6 +345,16 @@ class MongoQuestionRepository:
             {
                 "$set": {
                     "review_status": review_status,
+                    "review_assignment": {
+                        "status": "UNASSIGNED",
+                        "reviewer_user_id": None,
+                        "assigned_by_user_id": None,
+                        "assigned_at": None,
+                        "claimed_at": None,
+                        "lock_expires_at": None,
+                        "last_released_at": None,
+                        "release_reason": None,
+                    },
                     "updated_at": now,
                 }
             },

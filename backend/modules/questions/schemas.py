@@ -64,6 +64,7 @@ class QuestionResponse(BaseModel):
     sources: list[dict[str, Any]]
     content_hash: str
     quality_summary: dict[str, Any]
+    review_assignment: dict[str, Any] = Field(default_factory=dict)
     latest_review_id: str | None
     created_at: datetime
     updated_at: datetime

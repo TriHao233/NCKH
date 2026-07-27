@@ -296,6 +296,16 @@ class QuestionService:
             "review_status": initial_review_status,
             "publication_status": "NOT_PUBLISHED",
             "quality_summary": {},
+            "review_assignment": {
+                "status": "UNASSIGNED",
+                "reviewer_user_id": None,
+                "assigned_by_user_id": None,
+                "assigned_at": None,
+                "claimed_at": None,
+                "lock_expires_at": None,
+                "last_released_at": None,
+                "release_reason": None,
+            },
             "latest_review_id": None,
             "created_by_user_id": created_by_user_id,
             "created_at": now,
@@ -351,6 +361,8 @@ class QuestionService:
         min_score: float | None = None,
         publication_status: str | None = None,
         evaluation_status: str | None = None,
+        assignment_status: str | None = None,
+        assigned_to: str | None = None,
         current_user: CurrentUser | None = None,
     ) -> dict:
         owner_user_id = (
@@ -358,6 +370,12 @@ class QuestionService:
             if current_user and current_user.role == "Teacher"
             else None
         )
+        assigned_reviewer_user_id = None
+        if assigned_to == "me" and current_user:
+            assigned_reviewer_user_id = current_user.id
+        elif assigned_to:
+            assigned_reviewer_user_id = object_id(assigned_to, "assigned_to")
+
         pairs, total = self.repository.list(
             page,
             page_size,
@@ -373,6 +391,8 @@ class QuestionService:
             min_score=min_score,
             publication_status=publication_status,
             evaluation_status=evaluation_status,
+            assignment_status=assignment_status,
+            assigned_reviewer_user_id=assigned_reviewer_user_id,
             owner_user_id=owner_user_id,
         )
         return {

@@ -57,6 +57,11 @@ class ReviewCreateRequest(BaseModel):
     override: ReviewOverride = Field(default_factory=ReviewOverride)
 
 
+class ReviewAssignmentRequest(BaseModel):
+    reviewer_user_id: str | None = Field(None, min_length=1, max_length=120)
+    note: str = Field("", max_length=500)
+
+
 class MoodlePublicationRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
     target_id: str | None = Field(None, min_length=1, max_length=120)

@@ -1,6 +1,6 @@
 import inspect
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bson import ObjectId
@@ -31,14 +31,16 @@ from modules.generation.llm.deepseek import DeepseekProvider
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.question import _build_retry_prompt, _check_type_format
-from modules.questions.schemas import QuestionCreateRequest, QuestionUpdateRequest
+from modules.questions.schemas import QuestionCreateRequest, QuestionResponse, QuestionUpdateRequest
 from modules.questions.repository import MongoQuestionRepository
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     MoodlePublicationRequest,
+    ReviewAssignmentRequest,
     ReviewOverride,
 )
+from modules.questions.workflow_service import QuestionWorkflowService
 from modules.rag.search import _heading_matches_target, _normalize_heading_text
 from modules.users.schemas import (
     GenerationPresetPayload,
@@ -226,6 +228,79 @@ class SchemaV2Tests(unittest.TestCase):
     def test_review_override_requires_reason(self):
         with self.assertRaises(ValidationError):
             ReviewOverride(applied=True, score=0.9)
+
+    def test_review_assignment_request_allows_admin_unassign(self):
+        payload = ReviewAssignmentRequest(reviewer_user_id=None, note="unassign")
+        self.assertIsNone(payload.reviewer_user_id)
+        self.assertEqual(payload.note, "unassign")
+
+    def test_question_response_exposes_review_assignment(self):
+        now = datetime.now(timezone.utc)
+        response = QuestionResponse(
+            id=str(ObjectId()),
+            question_code="Q-1",
+            current_version=1,
+            current_version_id=str(ObjectId()),
+            approved_version_id=None,
+            document_id=None,
+            lifecycle_status="ACTIVE",
+            evaluation_status="PASSED",
+            review_status="PENDING",
+            publication_status="NOT_PUBLISHED",
+            content="Question",
+            question_data={},
+            classification={},
+            clos=[],
+            sources=[],
+            content_hash="hash",
+            quality_summary={},
+            review_assignment={
+                "status": "IN_REVIEW",
+                "reviewer_user_id": str(ObjectId()),
+            },
+            latest_review_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        self.assertEqual(response.review_assignment["status"], "IN_REVIEW")
+
+    def test_reviewer_must_hold_active_review_lock(self):
+        service = QuestionWorkflowService(database=None)
+        reviewer_id = ObjectId()
+        reviewer = _current_user("Reviewer", reviewer_id)
+        now = datetime.now(timezone.utc)
+
+        with self.assertRaises(PermissionError):
+            service._ensure_review_lock(
+                {"review_assignment": {"status": "ASSIGNED", "reviewer_user_id": reviewer_id}},
+                reviewer,
+                now,
+            )
+
+        service._ensure_review_lock(
+            {
+                "review_assignment": {
+                    "status": "IN_REVIEW",
+                    "reviewer_user_id": reviewer_id,
+                    "lock_expires_at": (now + timedelta(minutes=1)).replace(tzinfo=None),
+                }
+            },
+            reviewer,
+            now,
+        )
+
+        with self.assertRaises(ValueError):
+            service._ensure_review_lock(
+                {
+                    "review_assignment": {
+                        "status": "IN_REVIEW",
+                        "reviewer_user_id": reviewer_id,
+                        "lock_expires_at": now - timedelta(minutes=1),
+                    }
+                },
+                reviewer,
+                now,
+            )
 
     def test_auto_evaluation_requires_expected_version(self):
         with self.assertRaises(ValidationError):
@@ -487,6 +562,10 @@ class SchemaV2Tests(unittest.TestCase):
         question_properties = VALIDATORS["questions"]["$jsonSchema"]["properties"]
         self.assertEqual(question_properties["created_by_user_id"]["bsonType"], ["objectId", "null"])
 
+    def test_question_validator_allows_review_assignment_state(self):
+        question_properties = VALIDATORS["questions"]["$jsonSchema"]["properties"]
+        self.assertEqual(question_properties["review_assignment"]["bsonType"], "object")
+
     def test_auth_user_is_minimal_uid_and_token_link(self):
         schema = VALIDATORS["User"]["$jsonSchema"]
         self.assertEqual(set(schema["required"]), {"uid", "token"})
@@ -712,6 +791,7 @@ class SchemaV2Tests(unittest.TestCase):
         fake_db = FakeDatabase()
         repo = MongoQuestionRepository(fake_db)
         document_id = ObjectId()
+        reviewer_id = ObjectId()
 
         pairs, total = repo.list(
             2,
@@ -725,6 +805,8 @@ class SchemaV2Tests(unittest.TestCase):
             min_score=0.8,
             publication_status="NOT_PUBLISHED",
             evaluation_status="PASSED",
+            assignment_status="IN_REVIEW",
+            assigned_reviewer_user_id=reviewer_id,
         )
 
         self.assertEqual(pairs, [])
@@ -735,6 +817,8 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(question_match["review_status"], "PENDING")
         self.assertEqual(question_match["publication_status"], "NOT_PUBLISHED")
         self.assertEqual(question_match["evaluation_status"], "PASSED")
+        self.assertEqual(question_match["review_assignment.status"], "IN_REVIEW")
+        self.assertEqual(question_match["review_assignment.reviewer_user_id"], reviewer_id)
         self.assertEqual(question_match["quality_summary.color"], "GREEN")
         self.assertEqual(question_match["quality_summary.overall_score"], {"$gte": 0.8})
 

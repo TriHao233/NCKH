@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from html import escape
 
 from bson import ObjectId
@@ -16,12 +17,13 @@ from core.dependencies import CurrentUser
 from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
-from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, utc_now
+from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     EvaluationScores,
     MoodlePublicationRequest,
+    ReviewAssignmentRequest,
     ReviewCreateRequest,
 )
 
@@ -41,6 +43,27 @@ EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
 EVALUATION_SOURCE_LIMIT = 3
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
 evaluation_semaphore = asyncio.Semaphore(1)
+
+
+def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
+    return {
+        "status": "UNASSIGNED",
+        "reviewer_user_id": None,
+        "assigned_by_user_id": None,
+        "assigned_at": None,
+        "claimed_at": None,
+        "lock_expires_at": None,
+        "last_released_at": now,
+        "release_reason": reason,
+    }
+
+
+def _as_aware_utc(value):
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class QuestionWorkflowService:
@@ -813,7 +836,211 @@ class QuestionWorkflowService:
                 duration_ms=duration_ms,
             )
 
-    def review(self, question_id: str, payload: ReviewCreateRequest, user_id) -> dict:
+    def _lock_expires_at(self, now) -> object:
+        return now + timedelta(minutes=max(1, settings.review_lock_timeout_minutes))
+
+    def _assignment_available_filter(self, current_user: CurrentUser, now) -> list[dict]:
+        if current_user.role == "Admin":
+            return []
+        return [
+            {"review_assignment": {"$exists": False}},
+            {"review_assignment.status": "UNASSIGNED"},
+            {"review_assignment.reviewer_user_id": current_user.id},
+            {"review_assignment.lock_expires_at": None},
+            {"review_assignment.lock_expires_at": {"$lte": now}},
+        ]
+
+    def _ensure_review_lock(self, question: dict, current_user: CurrentUser, now) -> None:
+        if current_user.role == "Admin":
+            return
+        assignment = question.get("review_assignment") or {}
+        if assignment.get("status") != "IN_REVIEW":
+            raise PermissionError("Bạn cần claim câu hỏi trước khi kiểm duyệt")
+        if assignment.get("reviewer_user_id") != current_user.id:
+            raise PermissionError("Câu hỏi đang được Reviewer khác xử lý")
+        lock_expires_at = _as_aware_utc(assignment.get("lock_expires_at"))
+        if lock_expires_at and lock_expires_at <= _as_aware_utc(now):
+            raise ValueError("Review lock đã hết hạn; vui lòng claim lại")
+
+    def _find_assignable_reviewer(self, reviewer_user_id: str) -> dict:
+        reviewer_oid = object_id(reviewer_user_id, "reviewer_user_id")
+        reviewer = self.db.users.find_one(
+            {
+                "_id": reviewer_oid,
+                "role": {"$in": ["Reviewer", "Admin"]},
+                "is_active": True,
+            },
+            {"_id": 1, "display_name": 1, "email": 1, "role": 1},
+        )
+        if not reviewer:
+            raise ValueError("Reviewer không tồn tại hoặc không còn hoạt động")
+        return reviewer
+
+    def _assignment_audit(
+        self,
+        *,
+        action: str,
+        question: dict,
+        version: dict,
+        current_user: CurrentUser,
+        before: dict | None = None,
+        after: dict | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        self.db.audit_logs.insert_one(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "actor": {
+                    "type": "USER",
+                    "user_id": current_user.id,
+                    "model_id": None,
+                    "service_name": None,
+                },
+                "entity": {
+                    "type": "QUESTION",
+                    "id": question["_id"],
+                    "version_id": version["_id"],
+                },
+                "action": action,
+                "changes": [
+                    {
+                        "path": "review_assignment",
+                        "old_value": before or {},
+                        "new_value": after or {},
+                    }
+                ],
+                "before_hash": version["content_hash"],
+                "after_hash": version["content_hash"],
+                "metadata": metadata or {},
+                "created_at": utc_now(),
+            }
+        )
+
+    def claim_review(self, question_id: str, current_user: CurrentUser) -> dict:
+        pair = self._pair(question_id)
+        question, version = pair
+        if question["review_status"] != "PENDING":
+            raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể claim")
+        now = utc_now()
+        previous_assignment = question.get("review_assignment") or {}
+        assignment = {
+            "status": "IN_REVIEW",
+            "reviewer_user_id": current_user.id,
+            "assigned_by_user_id": previous_assignment.get("assigned_by_user_id")
+            or current_user.id,
+            "assigned_at": previous_assignment.get("assigned_at") or now,
+            "claimed_at": now,
+            "lock_expires_at": self._lock_expires_at(now),
+            "last_released_at": None,
+            "release_reason": None,
+        }
+        query = {
+            "_id": question["_id"],
+            "current_version_id": version["_id"],
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+        available_filter = self._assignment_available_filter(current_user, now)
+        if available_filter:
+            query["$or"] = available_filter
+        updated = self.db.questions.find_one_and_update(
+            query,
+            {"$set": {"review_assignment": assignment, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Câu hỏi đang được Reviewer khác xử lý")
+        self._assignment_audit(
+            action="QUESTION_REVIEW_CLAIMED",
+            question=updated,
+            version=version,
+            current_user=current_user,
+            before=question.get("review_assignment"),
+            after=assignment,
+        )
+        return serialize_question(updated, version)
+
+    def release_review(self, question_id: str, current_user: CurrentUser) -> dict:
+        pair = self._pair(question_id)
+        question, version = pair
+        now = utc_now()
+        query = {
+            "_id": question["_id"],
+            "current_version_id": version["_id"],
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+        if current_user.role != "Admin":
+            query["review_assignment.reviewer_user_id"] = current_user.id
+        assignment = _empty_review_assignment(now, "released")
+        updated = self.db.questions.find_one_and_update(
+            query,
+            {"$set": {"review_assignment": assignment, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Bạn không thể release assignment này")
+        self._assignment_audit(
+            action="QUESTION_REVIEW_RELEASED",
+            question=updated,
+            version=version,
+            current_user=current_user,
+            before=question.get("review_assignment"),
+            after=assignment,
+        )
+        return serialize_question(updated, version)
+
+    def assign_review(
+        self,
+        question_id: str,
+        payload: ReviewAssignmentRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        pair = self._pair(question_id)
+        question, version = pair
+        if question["review_status"] != "PENDING":
+            raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể phân công")
+        now = utc_now()
+        if payload.reviewer_user_id:
+            reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
+            assignment = {
+                "status": "ASSIGNED",
+                "reviewer_user_id": reviewer["_id"],
+                "assigned_by_user_id": current_user.id,
+                "assigned_at": now,
+                "claimed_at": None,
+                "lock_expires_at": self._lock_expires_at(now),
+                "last_released_at": None,
+                "release_reason": payload.note or None,
+            }
+            action = "QUESTION_REVIEW_ASSIGNED"
+        else:
+            assignment = _empty_review_assignment(now, payload.note or "unassigned")
+            action = "QUESTION_REVIEW_UNASSIGNED"
+        updated = self.db.questions.find_one_and_update(
+            {
+                "_id": question["_id"],
+                "current_version_id": version["_id"],
+                "lifecycle_status": "ACTIVE",
+                "review_status": "PENDING",
+            },
+            {"$set": {"review_assignment": assignment, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise RuntimeError("VERSION_CONFLICT")
+        self._assignment_audit(
+            action=action,
+            question=updated,
+            version=version,
+            current_user=current_user,
+            before=question.get("review_assignment"),
+            after=assignment,
+            metadata={"note": payload.note},
+        )
+        return serialize_question(updated, version)
+
+    def review(self, question_id: str, payload: ReviewCreateRequest, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
@@ -826,13 +1053,14 @@ class QuestionWorkflowService:
                 "Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override"
             )
         now = utc_now()
+        self._ensure_review_lock(question, current_user, now)
         review = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
             "question_id": question["_id"],
             "question_version_id": version["_id"],
             "question_version": version["version"],
-            "reviewer_user_id": user_id,
+            "reviewer_user_id": current_user.id,
             "decision": payload.decision,
             "note": payload.note,
             "override": payload.override.model_dump(),
@@ -845,6 +1073,10 @@ class QuestionWorkflowService:
             "review_status": payload.decision,
             "latest_review_id": review["_id"],
             "updated_at": now,
+            "review_assignment": _empty_review_assignment(
+                now,
+                f"review_{payload.decision.lower()}",
+            ),
         }
         if payload.decision == "APPROVED":
             question_fields["approved_version_id"] = version["_id"]
@@ -854,7 +1086,7 @@ class QuestionWorkflowService:
             "schema_version": SCHEMA_VERSION,
             "actor": {
                 "type": "USER",
-                "user_id": user_id,
+                "user_id": current_user.id,
                 "model_id": None,
                 "service_name": None,
             },
@@ -876,6 +1108,7 @@ class QuestionWorkflowService:
             "metadata": {
                 "review_id": review["_id"],
                 "correlation_id": str(review["_id"]),
+                "review_assignment": json_safe(question.get("review_assignment") or {}),
             },
             "created_at": now,
         }

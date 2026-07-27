@@ -12,6 +12,8 @@ export function listQuestions({
   minScore,
   publicationStatus,
   evaluationStatus,
+  assignmentStatus,
+  assignedTo,
 } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -25,6 +27,8 @@ export function listQuestions({
   if (minScore !== undefined && minScore !== null && minScore !== '') params.set('min_score', minScore);
   if (publicationStatus) params.set('publication_status', publicationStatus);
   if (evaluationStatus) params.set('evaluation_status', evaluationStatus);
+  if (assignmentStatus) params.set('assignment_status', assignmentStatus);
+  if (assignedTo) params.set('assigned_to', assignedTo);
   return apiRequest(`/questions?${params.toString()}`);
 }
 
@@ -58,6 +62,18 @@ export function listQuestionEvaluations(id) {
 
 export function reviewQuestion(id, payload) {
   return apiRequest(`/questions/${id}/reviews`, { method: 'POST', body: payload });
+}
+
+export function claimQuestionReview(id) {
+  return apiRequest(`/questions/${id}/review-assignment/claim`, { method: 'POST' });
+}
+
+export function releaseQuestionReview(id) {
+  return apiRequest(`/questions/${id}/review-assignment/release`, { method: 'POST' });
+}
+
+export function assignQuestionReview(id, payload) {
+  return apiRequest(`/questions/${id}/review-assignment`, { method: 'POST', body: payload });
 }
 
 export function listQuestionReviews(id) {

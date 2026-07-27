@@ -187,6 +187,7 @@ VALIDATORS = {
                 "publication_status": {
                     "enum": ["NOT_PUBLISHED", "PUBLISHED", "STALE", "FAILED"]
                 },
+                "review_assignment": {"bsonType": "object"},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
             },
@@ -448,6 +449,15 @@ def _ensure_indexes() -> None:
                     ("updated_at", DESCENDING),
                 ],
                 name="ix_questions_workflow",
+            ),
+            IndexModel(
+                [
+                    ("review_status", ASCENDING),
+                    ("review_assignment.status", ASCENDING),
+                    ("review_assignment.reviewer_user_id", ASCENDING),
+                    ("review_assignment.lock_expires_at", ASCENDING),
+                ],
+                name="ix_questions_review_assignment",
             ),
         ]
     )

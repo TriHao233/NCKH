@@ -60,7 +60,7 @@
 }
 
 .review-page .btn--primary,
-.detail-actions button:nth-child(2) {
+.detail-actions .detail-action-primary {
   background: #0c78d4;
   color: #fff;
   border-color: #0c78d4;
@@ -79,7 +79,7 @@
 
 .review-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -128,7 +128,7 @@
 
 .review-filters {
   display: grid;
-  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -221,6 +221,21 @@
   color: #15803d;
 }
 
+.review-row__meta .assignment-chip {
+  background: #fff7ed;
+  color: #b36500;
+}
+
+.review-row__meta .assignment-chip--in_review {
+  background: #eaf4ff;
+  color: #005bac;
+}
+
+.review-row__meta .assignment-chip--unassigned {
+  background: #f2f6fb;
+  color: #5c6f89;
+}
+
 .review-row p {
   color: #13253f;
   font-size: 0.88rem;
@@ -282,6 +297,39 @@
 
 .detail-clo-list b {
   color: #15803d;
+}
+
+.assignment-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+  border-top: 1px solid #eaf3fc;
+  padding-top: 12px;
+  margin: 0 0 12px;
+}
+
+.assignment-panel div {
+  border: 1px solid #eaf3fc;
+  border-radius: 8px;
+  background: #fafcff;
+  padding: 9px 10px;
+}
+
+.assignment-panel span {
+  display: block;
+  color: #5c6f89;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.assignment-panel b {
+  display: block;
+  color: #003a75;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
 }
 
 .evaluation-panel {

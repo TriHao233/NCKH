@@ -3,6 +3,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from core.config import settings
 from core.dependencies import (
     CurrentUser,
+    require_admin,
     require_reviewer_or_admin,
     require_teacher_reviewer_or_admin,
 )
@@ -10,6 +11,7 @@ from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     MoodlePublicationRequest,
+    ReviewAssignmentRequest,
     ReviewCreateRequest,
 )
 from modules.questions.workflow_service import (
@@ -89,7 +91,44 @@ def review_question(
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        return service.review(question_id, payload, current_user.id)
+        return service.review(question_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/review-assignment/claim")
+def claim_review_question(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.claim_review(question_id, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/review-assignment/release")
+def release_review_question(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.release_review(question_id, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/review-assignment")
+def assign_review_question(
+    question_id: str,
+    payload: ReviewAssignmentRequest,
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.assign_review(question_id, payload, current_user)
     except Exception as exc:
         _translate_workflow_error(exc)
 

@@ -1,14 +1,18 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
+  assignQuestionReview,
   autoEvaluateQuestion,
+  claimQuestionReview,
   exportQuestionMoodle,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
   listQuestionReviews,
   listQuestions,
   publishQuestionToMoodle,
+  releaseQuestionReview,
   reviewQuestion,
 } from '../api/questions';
+import { AuthContext } from '../context/AuthContext';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ReviewQueuePage.css';
 
@@ -43,6 +47,14 @@ const PUBLICATION_STATUS_LABEL = {
   PENDING: 'Đang chờ',
   PUBLISHED: 'Đã ghi mô phỏng',
   FAILED: 'Mô phỏng lỗi',
+};
+
+const ASSIGNMENT_STATUS_LABEL = {
+  all: 'Mọi phân công',
+  mine: 'Của tôi',
+  UNASSIGNED: 'Chưa claim',
+  ASSIGNED: 'Đã gán',
+  IN_REVIEW: 'Đang xử lý',
 };
 
 const PAGE_SIZE = 20;
@@ -112,6 +124,42 @@ function publicationStatusLabel(value) {
   return PUBLICATION_STATUS_LABEL[value] || value || '--';
 }
 
+function assignmentOf(question) {
+  const assignment = question?.review_assignment || {};
+  return {
+    status: assignment.status || 'UNASSIGNED',
+    reviewer_user_id: assignment.reviewer_user_id || '',
+    assigned_by_user_id: assignment.assigned_by_user_id || '',
+    assigned_at: assignment.assigned_at || null,
+    claimed_at: assignment.claimed_at || null,
+    lock_expires_at: assignment.lock_expires_at || null,
+    last_released_at: assignment.last_released_at || null,
+    release_reason: assignment.release_reason || '',
+  };
+}
+
+function isReviewLockExpired(assignment) {
+  if (!assignment?.lock_expires_at) return false;
+  const expiresAt = new Date(assignment.lock_expires_at);
+  return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now();
+}
+
+function isAssignmentMine(question, user) {
+  const reviewerId = assignmentOf(question).reviewer_user_id;
+  return Boolean(reviewerId && user?.id && String(reviewerId) === String(user.id));
+}
+
+function assignmentStatusLabel(question, user) {
+  const assignment = assignmentOf(question);
+  const mine = isAssignmentMine(question, user);
+  if (assignment.status === 'IN_REVIEW' && isReviewLockExpired(assignment)) {
+    return mine ? 'Lock của tôi hết hạn' : 'Lock hết hạn';
+  }
+  if (assignment.status === 'IN_REVIEW') return mine ? 'Tôi đang xử lý' : 'Đang xử lý';
+  if (assignment.status === 'ASSIGNED') return mine ? 'Đã gán cho tôi' : 'Đã gán';
+  return ASSIGNMENT_STATUS_LABEL[assignment.status] || assignment.status || 'Chưa claim';
+}
+
 function evaluatorModelLabel(model = {}) {
   if (model.model_name) return model.model_name;
   return model.model_code || '--';
@@ -142,10 +190,12 @@ function downloadMoodleExport(question, format, content) {
 }
 
 function ReviewQueuePage() {
+  const { user } = useContext(AuthContext);
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('PENDING');
+  const [assignmentFilter, setAssignmentFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [bloomFilter, setBloomFilter] = useState('all');
   const [colorFilter, setColorFilter] = useState('all');
@@ -167,6 +217,9 @@ function ReviewQueuePage() {
     setError('');
     try {
       const numericMinScore = minScore === '' ? undefined : Number(minScore);
+      const assignmentStatus = ['UNASSIGNED', 'ASSIGNED', 'IN_REVIEW'].includes(assignmentFilter)
+        ? assignmentFilter
+        : undefined;
       const result = await listQuestions({
         page,
         pageSize: PAGE_SIZE,
@@ -176,6 +229,8 @@ function ReviewQueuePage() {
         qualityColor: colorFilter === 'all' ? undefined : colorFilter,
         minScore: Number.isFinite(numericMinScore) ? numericMinScore : undefined,
         search: searchTerm || undefined,
+        assignmentStatus,
+        assignedTo: assignmentFilter === 'mine' ? 'me' : undefined,
       });
       const items = result.items || [];
       setQuestions(items);
@@ -221,7 +276,7 @@ function ReviewQueuePage() {
   useEffect(() => {
     fetchQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, statusFilter, typeFilter, bloomFilter, colorFilter, minScore, searchTerm]);
+  }, [page, statusFilter, assignmentFilter, typeFilter, bloomFilter, colorFilter, minScore, searchTerm]);
 
   useEffect(() => {
     if (!selected) return;
@@ -238,10 +293,11 @@ function ReviewQueuePage() {
 
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,
+    mine: questions.filter((item) => isAssignmentMine(item, user)).length,
     passed: questions.filter((item) => item.evaluation_status === 'PASSED').length,
     green: questions.filter((item) => item.quality_summary?.color === 'GREEN').length,
     publishable: questions.filter((item) => item.review_status === 'APPROVED' && item.publication_status !== 'PUBLISHED').length,
-  }), [questions]);
+  }), [questions, user]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -252,11 +308,99 @@ function ReviewQueuePage() {
     setPage(1);
   };
 
+  const canClaimQuestion = (question) => {
+    if (!question || question.review_status !== 'PENDING') return false;
+    const assignment = assignmentOf(question);
+    return (
+      assignment.status === 'UNASSIGNED'
+      || isAssignmentMine(question, user)
+      || isReviewLockExpired(assignment)
+      || user?.role === 'Admin'
+    );
+  };
+
+  const canReleaseQuestion = (question) => {
+    if (!question || question.review_status !== 'PENDING') return false;
+    const assignment = assignmentOf(question);
+    if (assignment.status === 'UNASSIGNED') return false;
+    return user?.role === 'Admin' || isAssignmentMine(question, user);
+  };
+
+  const canReviewQuestion = (question) => {
+    if (!question || question.review_status !== 'PENDING') return false;
+    if (user?.role === 'Admin') return true;
+    const assignment = assignmentOf(question);
+    return (
+      assignment.status === 'IN_REVIEW'
+      && isAssignmentMine(question, user)
+      && !isReviewLockExpired(assignment)
+    );
+  };
+
   const refreshAfterAction = async (question) => {
     const items = await fetchQuestions();
     const fresh = items.find((item) => item.id === question.id);
     if (fresh) {
       await loadHistory(fresh);
+    }
+  };
+
+  const claimReview = async (question) => {
+    setBusyId(question.id);
+    try {
+      await claimQuestionReview(question.id);
+      await refreshAfterAction(question);
+    } catch (err) {
+      alert('Claim review thất bại: ' + err.message);
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const releaseReview = async (question) => {
+    setBusyId(question.id);
+    try {
+      await releaseQuestionReview(question.id);
+      await refreshAfterAction(question);
+    } catch (err) {
+      alert('Release review thất bại: ' + err.message);
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const assignReview = async (question) => {
+    const currentReviewerId = assignmentOf(question).reviewer_user_id;
+    const reviewerId = window.prompt('Nhập ID Reviewer/Admin cần gán:', currentReviewerId || '');
+    if (reviewerId === null) return;
+    const note = window.prompt('Ghi chú phân công:', '') ?? '';
+    setBusyId(question.id);
+    try {
+      await assignQuestionReview(question.id, {
+        reviewer_user_id: reviewerId.trim() || null,
+        note,
+      });
+      await refreshAfterAction(question);
+    } catch (err) {
+      alert('Phân công review thất bại: ' + err.message);
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const unassignReview = async (question) => {
+    if (!window.confirm(`Bỏ phân công review cho ${question.question_code}?`)) return;
+    setBusyId(question.id);
+    try {
+      await assignQuestionReview(question.id, {
+        reviewer_user_id: null,
+        note: 'Admin bỏ phân công',
+      });
+      await refreshAfterAction(question);
+    } catch (err) {
+      alert('Bỏ phân công review thất bại: ' + err.message);
+    } finally {
+      setBusyId('');
     }
   };
 
@@ -276,6 +420,10 @@ function ReviewQueuePage() {
   };
 
   const submitReview = async (question, decision) => {
+    if (!canReviewQuestion(question)) {
+      alert('Bạn cần claim câu hỏi và giữ lock còn hiệu lực trước khi kiểm duyệt.');
+      return;
+    }
     const note = window.prompt(`Ghi chú ${REVIEW_STATUS_LABEL[decision]} cho ${question.question_code}:`, '');
     if (note === null) return;
     const payload = {
@@ -358,7 +506,11 @@ function ReviewQueuePage() {
 
   const runBulkApproveGreen = async () => {
     const targets = questions
-      .filter((question) => question.evaluation_status === 'PASSED' && question.quality_summary?.color === 'GREEN')
+      .filter((question) => (
+        canReviewQuestion(question)
+        && question.evaluation_status === 'PASSED'
+        && question.quality_summary?.color === 'GREEN'
+      ))
       .slice(0, 10);
     if (targets.length === 0) return;
     const note = window.prompt(`Duyệt ${targets.length} câu đạt tốt đang lọc. Ghi chú chung:`, 'Duyệt tự động các câu đạt tốt');
@@ -388,6 +540,7 @@ function ReviewQueuePage() {
   const overallScore = latestScores.overall ?? qualitySummary.overall_score;
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
   const latestModel = latestEvaluation?.evaluator_model || {};
+  const selectedAssignment = assignmentOf(selected);
 
   return (
     <main className="review-page">
@@ -411,6 +564,10 @@ function ReviewQueuePage() {
           <b>{statusFilter === 'PENDING' ? total : summary.pending}</b>
           <span>Chờ duyệt</span>
         </button>
+        <button type="button" onClick={() => updateFilter(setAssignmentFilter)('mine')}>
+          <b>{assignmentFilter === 'mine' ? total : summary.mine}</b>
+          <span>Của tôi</span>
+        </button>
         <button type="button" onClick={() => updateFilter(setColorFilter)('GREEN')}>
           <b>{colorFilter === 'GREEN' ? total : summary.green}</b>
           <span>Đạt tốt</span>
@@ -430,6 +587,11 @@ function ReviewQueuePage() {
           <div className="review-filters">
             <select value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
               {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <select value={assignmentFilter} onChange={(event) => updateFilter(setAssignmentFilter)(event.target.value)}>
+              {Object.entries(ASSIGNMENT_STATUS_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
@@ -482,6 +644,9 @@ function ReviewQueuePage() {
                       <span>{question.question_code}</span>
                       <span>{questionTypeLabel(assessmentType(question))}</span>
                       <span>{question.classification?.bloom?.name || 'Bloom --'}</span>
+                      <span className={`assignment-chip assignment-chip--${assignmentOf(question).status.toLowerCase()}`}>
+                        {assignmentStatusLabel(question, user)}
+                      </span>
                       {(question.clos || []).slice(0, 2).map((clo) => (
                         <span className="review-clo-chip" key={refId(clo.id || clo)}>
                           {clo.code || clo.clo_code || 'CLO'}
@@ -548,15 +713,56 @@ function ReviewQueuePage() {
                   </div>
                 )}
               </div>
+              <section className="assignment-panel">
+                <div>
+                  <span>Phân công</span>
+                  <b>{assignmentStatusLabel(selected, user)}</b>
+                </div>
+                <div>
+                  <span>Reviewer</span>
+                  <b>{selectedAssignment.reviewer_user_id || '--'}</b>
+                </div>
+                <div>
+                  <span>Claim lúc</span>
+                  <b>{formatDate(selectedAssignment.claimed_at || selectedAssignment.assigned_at)}</b>
+                </div>
+                <div>
+                  <span>Hết lock</span>
+                  <b>{formatDate(selectedAssignment.lock_expires_at)}</b>
+                </div>
+              </section>
               <div className="detail-actions">
+                <button type="button" disabled={busyId === selected.id || !canClaimQuestion(selected)} onClick={() => claimReview(selected)}>
+                  {selectedAssignment.status === 'IN_REVIEW' && isAssignmentMine(selected, user) ? 'Gia hạn claim' : 'Claim'}
+                </button>
+                <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => releaseReview(selected)}>
+                  Release
+                </button>
+                {user?.role === 'Admin' && (
+                  <button type="button" disabled={busyId === selected.id || selected.review_status !== 'PENDING'} onClick={() => assignReview(selected)}>
+                    Gán reviewer
+                  </button>
+                )}
+                {user?.role === 'Admin' && (
+                  <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => unassignReview(selected)}>
+                    Bỏ gán
+                  </button>
+                )}
                 <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
                   {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
                     ? 'Thử lại AI'
                     : 'AI đánh giá'}
                 </button>
-                <button type="button" disabled={busyId === selected.id || isEvaluationBusy(selected)} onClick={() => submitReview(selected, 'APPROVED')}>Duyệt</button>
-                <button type="button" disabled={busyId === selected.id} onClick={() => submitReview(selected, 'NEEDS_REVISION')}>Cần sửa</button>
-                <button type="button" disabled={busyId === selected.id} onClick={() => submitReview(selected, 'REJECTED')}>Từ chối</button>
+                <button
+                  type="button"
+                  className="detail-action-primary"
+                  disabled={busyId === selected.id || isEvaluationBusy(selected) || !canReviewQuestion(selected)}
+                  onClick={() => submitReview(selected, 'APPROVED')}
+                >
+                  Duyệt
+                </button>
+                <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => submitReview(selected, 'NEEDS_REVISION')}>Cần sửa</button>
+                <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => submitReview(selected, 'REJECTED')}>Từ chối</button>
                 <button
                   type="button"
                   disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'}

@@ -40,6 +40,8 @@ def list_questions(
     min_score: float | None = Query(None, ge=0, le=1),
     publication_status: str | None = Query(None),
     evaluation_status: str | None = Query(None),
+    assignment_status: str | None = Query(None),
+    assigned_to: str | None = Query(None),
     current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
@@ -58,6 +60,8 @@ def list_questions(
         min_score=min_score,
         publication_status=publication_status,
         evaluation_status=evaluation_status,
+        assignment_status=assignment_status,
+        assigned_to=assigned_to,
         current_user=current_user,
     )
 
