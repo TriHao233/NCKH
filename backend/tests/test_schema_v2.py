@@ -56,6 +56,7 @@ from modules.questions.schemas import (
     QuestionSourceViewerResponse,
     QuestionUpdateRequest,
 )
+from modules.questions import repository as question_repository_module
 from modules.questions.repository import MongoQuestionRepository
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
@@ -370,7 +371,7 @@ class InMemoryCollection:
                 item[field_key] = value
                 return
 
-    def insert_one(self, record):
+    def insert_one(self, record, *_args, **_kwargs):
         item = dict(record)
         self.records.append(item)
         return type("Result", (), {"inserted_id": item.get("_id")})()
@@ -496,6 +497,148 @@ class SchemaV2Tests(unittest.TestCase):
             source_chunk_ids=["507f1f77bcf86cd799439011", "507f1f77bcf86cd799439012"],
         )
         self.assertEqual(len(payload.source_chunk_ids), 2)
+
+    def test_question_restore_creates_new_version_and_resets_workflow(self):
+        owner = _current_user("Teacher")
+        question_id = ObjectId()
+        version1_id = ObjectId()
+        version2_id = ObjectId()
+        review_id = ObjectId()
+        reviewer_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        classification = {
+            "subject": {"id": None},
+            "chapter": {"id": None},
+            "assessment_type": "TRAC_NGHIEM",
+            "bloom": {"level": 2, "code": "UNDERSTAND", "name": "Understand"},
+            "difficulty": None,
+        }
+        version1_data = {
+            "content": "Original stack question",
+            "question_data": {
+                "options": {"A": "LIFO", "B": "FIFO"},
+                "correct_answer": "A",
+                "explanation": "Stack pops the newest item first.",
+            },
+        }
+        version2_data = {
+            "content": "Edited queue question",
+            "question_data": {
+                "options": {"A": "LIFO", "B": "FIFO"},
+                "correct_answer": "B",
+                "explanation": "Queue removes the oldest item first.",
+            },
+        }
+        versions = [
+            {
+                "_id": version1_id,
+                "schema_version": SCHEMA_VERSION,
+                "question_id": question_id,
+                "version": 1,
+                "origin": "MANUAL",
+                "generation_run_id": None,
+                "document_id": None,
+                "created_by_user_id": owner.id,
+                "generated_by_model_id": None,
+                "classification": classification,
+                "clos": [],
+                "sources": [],
+                "keywords": [],
+                "content_hash": stable_hash(
+                    {**version1_data, "classification": classification, "clos": [], "sources": []}
+                ),
+                "change_note": "Initial version",
+                "created_at": now - timedelta(minutes=2),
+                **version1_data,
+            },
+            {
+                "_id": version2_id,
+                "schema_version": SCHEMA_VERSION,
+                "question_id": question_id,
+                "version": 2,
+                "origin": "MANUAL",
+                "generation_run_id": None,
+                "document_id": None,
+                "created_by_user_id": owner.id,
+                "generated_by_model_id": None,
+                "classification": classification,
+                "clos": [],
+                "sources": [],
+                "keywords": [],
+                "content_hash": stable_hash(
+                    {**version2_data, "classification": classification, "clos": [], "sources": []}
+                ),
+                "change_note": "Teacher edit",
+                "created_at": now - timedelta(minutes=1),
+                **version2_data,
+            },
+        ]
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-RESTORE",
+            "current_version": 2,
+            "current_version_id": version2_id,
+            "approved_version_id": version2_id,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "APPROVED",
+            "publication_status": "PUBLISHED",
+            "quality_summary": {"overall_score": 0.92, "color": "GREEN"},
+            "review_assignment": {
+                "status": "CLAIMED",
+                "reviewer_user_id": reviewer_id,
+                "assigned_by_user_id": ObjectId(),
+                "assigned_at": now - timedelta(minutes=5),
+                "claimed_at": now - timedelta(minutes=4),
+                "lock_expires_at": now + timedelta(minutes=30),
+                "last_released_at": None,
+                "release_reason": None,
+            },
+            "latest_review_id": review_id,
+            "created_by_user_id": owner.id,
+            "created_at": now - timedelta(minutes=3),
+            "updated_at": now - timedelta(minutes=1),
+            "archived_at": None,
+        }
+        db = FakeCatalogDatabase(questions=[question], question_versions=versions)
+        original_transaction = question_repository_module.mongo_transaction
+        try:
+            question_repository_module.mongo_transaction = lambda: nullcontext(None)
+            service = QuestionService(MongoQuestionRepository(db), references=None)
+
+            history = service.versions(str(question_id), owner)
+            restored = service.update(
+                str(question_id),
+                QuestionUpdateRequest(
+                    expected_version=2,
+                    content=version1_data["content"],
+                    question_type=classification["assessment_type"],
+                    bloom_level=classification["bloom"]["level"],
+                    question_data=version1_data["question_data"],
+                    source_chunk_ids=[],
+                    clo_ids=[],
+                    change_note="Restore from version 1",
+                ),
+                owner.id,
+                actor_role=owner.role,
+            )
+            restored_history = service.versions(str(question_id), owner)
+        finally:
+            question_repository_module.mongo_transaction = original_transaction
+
+        self.assertEqual([item["version"] for item in history], [2, 1])
+        self.assertEqual(restored["current_version"], 3)
+        self.assertEqual(restored["content"], version1_data["content"])
+        self.assertEqual(restored["question_data"], version1_data["question_data"])
+        self.assertEqual(restored["evaluation_status"], "NOT_STARTED")
+        self.assertEqual(restored["review_status"], "PENDING")
+        self.assertEqual(restored["publication_status"], "STALE")
+        self.assertEqual(restored["quality_summary"], {})
+        self.assertEqual(restored["review_assignment"]["status"], "UNASSIGNED")
+        self.assertEqual([item["version"] for item in restored_history], [3, 2, 1])
+        self.assertEqual(restored_history[0]["change_note"], "Restore from version 1")
+        self.assertEqual(restored_history[0]["content"], version1_data["content"])
 
     def test_review_override_requires_reason(self):
         with self.assertRaises(ValidationError):
