@@ -127,6 +127,15 @@ class DocumentRepository(Protocol):
         limit: int = 100,
     ) -> list[dict]: ...
 
+    def update_page(
+        self,
+        document_id: str | ObjectId,
+        page_id: str | ObjectId,
+        *,
+        document_version: int,
+        cleaned_text: str,
+    ) -> dict | None: ...
+
     def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict: ...
 
     def find_job(self, job_id: str | ObjectId) -> dict | None: ...
@@ -323,6 +332,37 @@ class MongoDocumentRepository:
             .sort("page_number", 1)
             .limit(limit)
         )
+
+    def update_page(
+        self,
+        document_id: str | ObjectId,
+        page_id: str | ObjectId,
+        *,
+        document_version: int,
+        cleaned_text: str,
+    ) -> dict | None:
+        document_oid = object_id(document_id, "document_id")
+        now = utc_now()
+        page = self.db.document_pages.find_one_and_update(
+            {
+                "_id": object_id(page_id, "page_id"),
+                "document_id": document_oid,
+                "document_version": document_version,
+            },
+            {
+                "$set": {
+                    "cleaned_text": cleaned_text,
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if page:
+            self.collection.update_one(
+                {"_id": document_oid, "archived_at": None},
+                {"$set": {"updated_at": now}},
+            )
+        return page
 
     def attach_original_artifact(
         self,

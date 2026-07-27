@@ -8,6 +8,8 @@ from modules.documents.schemas import (
     DocumentJobListResponse,
     DocumentListResponse,
     DocumentPageListResponse,
+    DocumentPageResponse,
+    DocumentPageUpdateRequest,
     DocumentResponse,
     DocumentStatus,
     DocumentUpdateRequest,
@@ -116,6 +118,25 @@ def list_document_pages(
     if not result:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
     return result
+
+
+@router.patch("/{document_id}/pages/{page_id}", response_model=DocumentPageResponse)
+def update_document_page(
+    document_id: str,
+    page_id: str,
+    payload: DocumentPageUpdateRequest,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        page = service.update_page(document_id, page_id, payload, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not page:
+        raise HTTPException(status_code=404, detail="Không tìm thấy OCR page")
+    return page
 
 
 @router.post(

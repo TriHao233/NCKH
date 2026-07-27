@@ -38,7 +38,7 @@ from modules.catalog.service import CatalogService
 from modules.notifications.service import NotificationService
 from modules.auth import login as auth_login
 from modules.documents.repository import MongoDocumentRepository
-from modules.documents.schemas import DocumentStatus
+from modules.documents.schemas import DocumentPageUpdateRequest, DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
 from modules.exams.schemas import (
@@ -1493,6 +1493,56 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(result["items"][0]["id"], str(page_id))
         self.assertEqual(result["items"][0]["document_id"], str(document_id))
         self.assertEqual(result["items"][0]["cleaned_text"], "clean OCR")
+
+    def test_document_page_update_requires_owner_and_pre_chunk_state(self):
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        document_id = ObjectId()
+        page_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeDocumentPageUpdateRepository:
+            def __init__(self):
+                self.document = {
+                    "_id": document_id,
+                    "uploaded_by_user_id": owner.id,
+                    "current_version": 1,
+                    "pipeline_summary": {"chunk_status": "NOT_STARTED", "index_status": "NOT_STARTED"},
+                }
+                self.page = {
+                    "_id": page_id,
+                    "document_id": document_id,
+                    "document_version": 1,
+                    "ocr_job_id": ObjectId(),
+                    "page_number": 1,
+                    "raw_text": "raw",
+                    "cleaned_text": "old",
+                    "formula_blocks": [],
+                    "created_at": now,
+                }
+
+            def find_by_id(self, _document_id):
+                return self.document
+
+            def update_page(self, _document_id, _page_id, *, document_version, cleaned_text):
+                self.requested_version = document_version
+                self.page["cleaned_text"] = cleaned_text
+                return self.page
+
+        repository = FakeDocumentPageUpdateRepository()
+        service = DocumentService(repository)
+        payload = DocumentPageUpdateRequest(cleaned_text="new OCR")
+
+        with self.assertRaises(PermissionError):
+            service.update_page(str(document_id), str(page_id), payload, other_teacher)
+
+        result = service.update_page(str(document_id), str(page_id), payload, owner)
+        self.assertEqual(repository.requested_version, 1)
+        self.assertEqual(result["cleaned_text"], "new OCR")
+
+        repository.document["pipeline_summary"]["chunk_status"] = "COMPLETED"
+        with self.assertRaises(ValueError):
+            service.update_page(str(document_id), str(page_id), payload, owner)
 
     def test_document_job_retry_and_cancel_enforce_document_ownership(self):
         owner = _current_user("Teacher")

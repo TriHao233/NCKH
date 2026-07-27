@@ -15,7 +15,7 @@ from modules.documents.repository import (
     serialize_document_job,
     serialize_document_page,
 )
-from modules.documents.schemas import DocumentCreateRequest, DocumentUpdateRequest
+from modules.documents.schemas import DocumentCreateRequest, DocumentPageUpdateRequest, DocumentUpdateRequest
 
 
 class DocumentService:
@@ -115,6 +115,26 @@ class DocumentService:
         )
         return {"items": [serialize_document_page(page) for page in pages]}
 
+    def update_page(
+        self,
+        document_id: str,
+        page_id: str,
+        payload: DocumentPageUpdateRequest,
+        current_user: CurrentUser,
+    ) -> dict | None:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            return None
+        self._ensure_access(record, current_user)
+        self._ensure_ocr_editable(record)
+        page = self.repository.update_page(
+            document_id,
+            page_id,
+            document_version=record.get("current_version", 1),
+            cleaned_text=payload.cleaned_text,
+        )
+        return serialize_document_page(page) if page else None
+
     def retry_job(
         self,
         document_id: str,
@@ -205,6 +225,13 @@ class DocumentService:
         if not upload_path:
             raise ValueError("Không tìm thấy file PDF gốc để retry OCR")
         return upload_path
+
+    @staticmethod
+    def _ensure_ocr_editable(document: dict) -> None:
+        summary = document.get("pipeline_summary") or {}
+        blocking_statuses = {"QUEUED", "PROCESSING", "COMPLETED"}
+        if summary.get("chunk_status") in blocking_statuses or summary.get("index_status") in blocking_statuses:
+            raise ValueError("Chỉ sửa OCR trước khi chunk/index hoặc sau khi chunk/index lỗi/hủy")
 
 
 def get_document_service() -> DocumentService:

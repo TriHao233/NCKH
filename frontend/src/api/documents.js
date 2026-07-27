@@ -25,6 +25,10 @@ export function listDocumentPages(id, { limit = 100 } = {}) {
   return apiRequest(`/documents/${id}/pages?${params.toString()}`);
 }
 
+export function updateDocumentPage(documentId, pageId, payload) {
+  return apiRequest(`/documents/${documentId}/pages/${pageId}`, { method: 'PATCH', body: payload });
+}
+
 export function retryDocumentJob(documentId, jobId) {
   return apiRequest(`/documents/${documentId}/jobs/${jobId}/retry`, { method: 'POST' });
 }

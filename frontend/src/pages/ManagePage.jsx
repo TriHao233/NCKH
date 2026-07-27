@@ -23,6 +23,7 @@ import {
   listDocuments,
   retryDocumentJob,
   updateDocument,
+  updateDocumentPage,
 } from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
@@ -172,6 +173,12 @@ function canRetryDocumentJob(job) {
 
 function canCancelDocumentJob(job) {
   return Boolean(job?.can_cancel) || ACTIVE_DOCUMENT_JOB_STATUSES.has(job?.status);
+}
+
+function canEditDocumentOcr(document) {
+  const summary = document?.pipeline_summary || {};
+  const blockingStatuses = new Set(['QUEUED', 'PROCESSING', 'COMPLETED']);
+  return !blockingStatuses.has(summary.chunk_status) && !blockingStatuses.has(summary.index_status);
 }
 
 function formatScore(value) {
@@ -406,6 +413,8 @@ function ManagePage() {
   const [documentPagesById, setDocumentPagesById] = useState({});
   const [documentPagesLoadingId, setDocumentPagesLoadingId] = useState('');
   const [documentPagesError, setDocumentPagesError] = useState(null);
+  const [ocrPageDrafts, setOcrPageDrafts] = useState({});
+  const [savingOcrPageKey, setSavingOcrPageKey] = useState('');
   const [expandedDocumentId, setExpandedDocumentId] = useState('');
   const [expandedDocumentPagesId, setExpandedDocumentPagesId] = useState('');
   const [subjects, setSubjects] = useState([]);
@@ -810,6 +819,35 @@ function ManagePage() {
       });
     } finally {
       setDocumentPagesLoadingId('');
+    }
+  };
+
+  const handleOcrPageDraftChange = (pageId, value) => {
+    setOcrPageDrafts((current) => ({
+      ...current,
+      [pageId]: value,
+    }));
+  };
+
+  const handleSaveOcrPage = async (doc, page) => {
+    const actionKey = `${doc.id}:${page.id}`;
+    const cleanedText = ocrPageDrafts[page.id] ?? pageTextPreview(page);
+    setSavingOcrPageKey(actionKey);
+    try {
+      const updated = await updateDocumentPage(doc.id, page.id, { cleaned_text: cleanedText });
+      setDocumentPagesById((current) => ({
+        ...current,
+        [doc.id]: (current[doc.id] || []).map((item) => (item.id === updated.id ? updated : item)),
+      }));
+      setOcrPageDrafts((current) => {
+        const next = { ...current };
+        delete next[page.id];
+        return next;
+      });
+    } catch (error) {
+      alert('Lưu OCR page thất bại: ' + error.message);
+    } finally {
+      setSavingOcrPageKey('');
     }
   };
 
@@ -1563,7 +1601,28 @@ function ManagePage() {
                                     {(documentPagesById[d.id] || []).map((page) => (
                                       <div className="doc-page-row" key={page.id}>
                                         <b>Trang {page.page_number}</b>
-                                        <p>{pageTextPreview(page) || 'Chưa có nội dung OCR.'}</p>
+                                        {canEditDocumentOcr(d) ? (
+                                          <>
+                                            <textarea
+                                              value={ocrPageDrafts[page.id] ?? pageTextPreview(page)}
+                                              onChange={(event) => handleOcrPageDraftChange(page.id, event.target.value)}
+                                              disabled={savingOcrPageKey === `${d.id}:${page.id}`}
+                                            />
+                                            <button
+                                              type="button"
+                                              className="doc-page-save-btn"
+                                              disabled={
+                                                savingOcrPageKey === `${d.id}:${page.id}`
+                                                || (ocrPageDrafts[page.id] ?? pageTextPreview(page)) === pageTextPreview(page)
+                                              }
+                                              onClick={() => handleSaveOcrPage(d, page)}
+                                            >
+                                              {savingOcrPageKey === `${d.id}:${page.id}` ? 'Đang lưu' : 'Lưu OCR'}
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <p>{pageTextPreview(page) || 'Chưa có nội dung OCR.'}</p>
+                                        )}
                                         {(page.formula_blocks || []).length > 0 && (
                                           <small>{page.formula_blocks.length} công thức</small>
                                         )}

@@ -88,6 +88,10 @@ class DocumentPageListResponse(BaseModel):
     items: list[DocumentPageResponse]
 
 
+class DocumentPageUpdateRequest(BaseModel):
+    cleaned_text: str = Field(..., max_length=500_000)
+
+
 class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
     total: int
