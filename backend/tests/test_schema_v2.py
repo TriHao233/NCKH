@@ -6,7 +6,7 @@ from pathlib import Path
 from bson import ObjectId
 from pydantic import ValidationError
 
-from core.bootstrap import VALIDATORS
+from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
 from core.dependencies import CurrentUser
 from modules.admin.jobs_service import (
@@ -808,6 +808,154 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(result["items"][1]["actor"]["user_id"], str(actor_id))
         self.assertEqual(result["items"][1]["entity"]["id"], str(question_id))
         self.assertEqual(result["items"][1]["metadata"]["review_id"], str(review_id))
+
+    def test_reviewer_dashboard_summarizes_workload_and_reviews(self):
+        def get_path(record, path):
+            current = record
+            for part in path.split("."):
+                if not isinstance(current, dict) or part not in current:
+                    return None
+                current = current[part]
+            return current
+
+        def matches(record, match):
+            if "$and" in match:
+                return all(matches(record, clause) for clause in match["$and"])
+            if "$or" in match:
+                return any(matches(record, clause) for clause in match["$or"])
+            for key, expected in match.items():
+                actual = get_path(record, key)
+                if isinstance(expected, dict):
+                    if "$exists" in expected and (actual is not None) != expected["$exists"]:
+                        return False
+                    if "$in" in expected and actual not in expected["$in"]:
+                        return False
+                    if "$gte" in expected and (actual is None or actual < expected["$gte"]):
+                        return False
+                    if "$lte" in expected and (actual is None or actual > expected["$lte"]):
+                        return False
+                    continue
+                if actual != expected:
+                    return False
+            return True
+
+        class FakeCursor(list):
+            def sort(self, *_args):
+                return self
+
+            def limit(self, count):
+                return FakeCursor(self[:count])
+
+        class FakeCollection:
+            def __init__(self, records):
+                self.records = records
+
+            def count_documents(self, match):
+                return sum(1 for record in self.records if matches(record, match))
+
+            def find(self, match=None, *_args):
+                match = match or {}
+                return FakeCursor([record for record in self.records if matches(record, match)])
+
+        class FakeDatabase:
+            def __init__(self, **collections):
+                for name, records in collections.items():
+                    setattr(self, name, FakeCollection(records))
+
+        now = datetime.now(timezone.utc)
+        reviewer_id = ObjectId()
+        other_reviewer_id = ObjectId()
+        subject_id = ObjectId()
+        version_ids = [ObjectId(), ObjectId()]
+        base_question = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+        db = FakeDatabase(
+            questions=[
+                {**base_question, "_id": ObjectId(), "review_assignment": {"status": "UNASSIGNED"}},
+                {
+                    **base_question,
+                    "_id": ObjectId(),
+                    "review_assignment": {"status": "ASSIGNED", "reviewer_user_id": reviewer_id},
+                },
+                {
+                    **base_question,
+                    "_id": ObjectId(),
+                    "review_assignment": {
+                        "status": "IN_REVIEW",
+                        "reviewer_user_id": reviewer_id,
+                        "lock_expires_at": now - timedelta(minutes=5),
+                    },
+                },
+                {
+                    **base_question,
+                    "_id": ObjectId(),
+                    "review_assignment": {
+                        "status": "IN_REVIEW",
+                        "reviewer_user_id": other_reviewer_id,
+                        "lock_expires_at": now + timedelta(minutes=30),
+                    },
+                },
+            ],
+            question_reviews=[
+                {
+                    "_id": ObjectId(),
+                    "question_version_id": version_ids[0],
+                    "reviewer_user_id": reviewer_id,
+                    "decision": "APPROVED",
+                    "override": {"applied": True},
+                    "revision_issues": [],
+                    "reviewed_at": now - timedelta(days=1),
+                },
+                {
+                    "_id": ObjectId(),
+                    "question_version_id": version_ids[1],
+                    "reviewer_user_id": reviewer_id,
+                    "decision": "NEEDS_REVISION",
+                    "override": {"applied": False},
+                    "revision_issues": [{"title": "Sửa đáp án"}],
+                    "reviewed_at": now - timedelta(days=2),
+                },
+            ],
+            audit_logs=[
+                {
+                    "action": "QUESTION_APPROVED",
+                    "actor": {"user_id": reviewer_id},
+                    "metadata": {"review_assignment": {"claimed_at": now - timedelta(hours=2)}},
+                    "created_at": now,
+                },
+                {
+                    "action": "QUESTION_NEEDS_REVISION",
+                    "actor": {"user_id": reviewer_id},
+                    "metadata": {"review_assignment": {"assigned_at": now - timedelta(hours=4)}},
+                    "created_at": now,
+                },
+            ],
+            question_versions=[
+                {"_id": version_ids[0], "classification": {"subject": {"id": subject_id}}},
+                {"_id": version_ids[1], "classification": {"subject": {"id": subject_id}}},
+            ],
+            subjects=[
+                {"_id": subject_id, "subject_code": "CTDL", "subject_name": "Cấu trúc dữ liệu"},
+            ],
+        )
+        dashboard = QuestionWorkflowService(db).review_dashboard(_current_user("Reviewer", reviewer_id))
+
+        self.assertEqual(dashboard["workload"]["pending"], 4)
+        self.assertEqual(dashboard["workload"]["unassigned"], 1)
+        self.assertEqual(dashboard["workload"]["assigned"], 1)
+        self.assertEqual(dashboard["workload"]["in_review"], 2)
+        self.assertEqual(dashboard["workload"]["lock_expired"], 1)
+        self.assertEqual(dashboard["workload"]["mine"], 2)
+        self.assertEqual(dashboard["performance"]["reviews_30d"], 2)
+        self.assertEqual(dashboard["performance"]["approval_rate"], 0.5)
+        self.assertEqual(dashboard["performance"]["override_count"], 1)
+        self.assertEqual(dashboard["performance"]["revision_issues"], 1)
+        self.assertEqual(dashboard["performance"]["average_review_hours"], 3.0)
+        self.assertEqual(dashboard["subjects"][0]["label"], "CTDL")
+        self.assertEqual(dashboard["subjects"][0]["reviewed"], 2)
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(

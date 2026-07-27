@@ -59,8 +59,13 @@ def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
 
 
 def _as_aware_utc(value):
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     if not isinstance(value, datetime):
-        return value
+        return None
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
@@ -1465,6 +1470,155 @@ class QuestionWorkflowService:
                 {"question_id": question["_id"]}
             ).sort("reviewed_at", -1)
         return [json_safe(item) for item in cursor]
+
+    def review_dashboard(self, current_user: CurrentUser) -> dict:
+        now = utc_now()
+        since_7d = now - timedelta(days=7)
+        since_30d = now - timedelta(days=30)
+        is_admin = current_user.role == "Admin"
+        pending_base = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+
+        def pending_count(extra: dict | None = None) -> int:
+            if not extra:
+                return self.db.questions.count_documents(pending_base)
+            return self.db.questions.count_documents({"$and": [pending_base, extra]})
+
+        workload = {
+            "pending": pending_count(),
+            "unassigned": pending_count(
+                {
+                    "$or": [
+                        {"review_assignment.status": {"$exists": False}},
+                        {"review_assignment.status": "UNASSIGNED"},
+                    ]
+                }
+            ),
+            "assigned": pending_count({"review_assignment.status": "ASSIGNED"}),
+            "in_review": pending_count({"review_assignment.status": "IN_REVIEW"}),
+            "lock_expired": pending_count(
+                {
+                    "review_assignment.status": "IN_REVIEW",
+                    "review_assignment.lock_expires_at": {"$lte": now},
+                }
+            ),
+            "mine": pending_count(
+                {
+                    "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+                    "review_assignment.reviewer_user_id": current_user.id,
+                }
+            ),
+        }
+
+        review_match: dict = {"reviewed_at": {"$gte": since_30d}}
+        if not is_admin:
+            review_match["reviewer_user_id"] = current_user.id
+        reviews = list(
+            self.db.question_reviews.find(review_match).sort("reviewed_at", -1).limit(500)
+        )
+        decision_counts = {"APPROVED": 0, "NEEDS_REVISION": 0, "REJECTED": 0}
+        override_count = 0
+        revision_issues = 0
+        reviews_last_7d = 0
+        for review in reviews:
+            decision = review.get("decision")
+            if decision in decision_counts:
+                decision_counts[decision] += 1
+            if (review.get("override") or {}).get("applied"):
+                override_count += 1
+            revision_issues += len(review.get("revision_issues") or [])
+            reviewed_at = _as_aware_utc(review.get("reviewed_at"))
+            if reviewed_at and reviewed_at >= since_7d:
+                reviews_last_7d += 1
+
+        audit_match: dict = {
+            "action": {"$in": ["QUESTION_APPROVED", "QUESTION_REJECTED", "QUESTION_NEEDS_REVISION"]},
+            "created_at": {"$gte": since_30d},
+        }
+        if not is_admin:
+            audit_match["actor.user_id"] = current_user.id
+        durations: list[float] = []
+        for audit in self.db.audit_logs.find(audit_match, {"metadata.review_assignment": 1, "created_at": 1}):
+            assignment = ((audit.get("metadata") or {}).get("review_assignment") or {})
+            start = _as_aware_utc(assignment.get("claimed_at") or assignment.get("assigned_at"))
+            end = _as_aware_utc(audit.get("created_at"))
+            if start and end and end >= start:
+                durations.append((end - start).total_seconds() / 3600)
+        average_review_hours = (
+            round(sum(durations) / len(durations), 2)
+            if durations
+            else None
+        )
+
+        version_ids = [
+            review.get("question_version_id")
+            for review in reviews
+            if review.get("question_version_id")
+        ]
+        versions = list(
+            self.db.question_versions.find(
+                {"_id": {"$in": version_ids}},
+                {"classification.subject": 1},
+            )
+        ) if version_ids else []
+        subject_counts: dict[str, int] = {}
+        for version in versions:
+            subject = ((version.get("classification") or {}).get("subject") or {})
+            subject_id = subject.get("id") if isinstance(subject, dict) else None
+            key = str(subject_id) if subject_id else "unknown"
+            subject_counts[key] = subject_counts.get(key, 0) + 1
+        subject_oids = [
+            ObjectId(subject_id)
+            for subject_id in subject_counts
+            if subject_id != "unknown" and ObjectId.is_valid(subject_id)
+        ]
+        subject_records = list(
+            self.db.subjects.find(
+                {"_id": {"$in": subject_oids}},
+                {"subject_code": 1, "subject_name": 1},
+            )
+        ) if subject_oids else []
+        subject_labels = {
+            str(record["_id"]): (
+                record.get("subject_code")
+                or record.get("subject_name")
+                or str(record["_id"])
+            )
+            for record in subject_records
+        }
+        subjects = [
+            {
+                "subject_id": None if subject_id == "unknown" else subject_id,
+                "label": subject_labels.get(subject_id, "Chưa gắn môn"),
+                "reviewed": count,
+            }
+            for subject_id, count in sorted(subject_counts.items(), key=lambda item: item[1], reverse=True)[:6]
+        ]
+
+        total_reviews = len(reviews)
+        approved = decision_counts["APPROVED"]
+        performance = {
+            "reviews_7d": reviews_last_7d,
+            "reviews_30d": total_reviews,
+            "approval_rate": round(approved / total_reviews, 3) if total_reviews else None,
+            "override_count": override_count,
+            "revision_issues": revision_issues,
+            "average_review_hours": average_review_hours,
+            "duration_sample_size": len(durations),
+        }
+        return json_safe(
+            {
+                "workload": workload,
+                "performance": performance,
+                "decisions": decision_counts,
+                "subjects": subjects,
+                "generated_at": now,
+                "scope": "all_reviewers" if is_admin else "current_reviewer",
+            }
+        )
 
 
 def get_workflow_service() -> QuestionWorkflowService:

@@ -133,6 +133,10 @@ export function listQuestionReviews(id) {
   return apiRequest(`/questions/${id}/reviews`);
 }
 
+export function getReviewDashboard() {
+  return apiRequest('/questions/review-dashboard');
+}
+
 export function publishQuestionToMoodle(id, payload) {
   return apiRequest(`/questions/${id}/moodle-publications`, { method: 'POST', body: payload });
 }

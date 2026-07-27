@@ -35,6 +35,17 @@ def _translate_workflow_error(exc: Exception):
     raise exc
 
 
+@router.get("/review-dashboard")
+def review_dashboard(
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.review_dashboard(current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
 @router.post("/{question_id}/evaluations", status_code=201)
 def evaluate_question(
     question_id: str,

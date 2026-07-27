@@ -5,6 +5,7 @@ import {
   claimQuestionReview,
   exportQuestionMoodle,
   fetchQuestionSourcePdf,
+  getReviewDashboard,
   getQuestionSources,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
@@ -160,6 +161,10 @@ function score(value) {
 
 function percent(value) {
   return typeof value === 'number' ? `${Math.round(value * 100)}%` : '--';
+}
+
+function hours(value) {
+  return typeof value === 'number' ? `${value.toFixed(1)}h` : '--';
 }
 
 function formatDate(value) {
@@ -333,6 +338,9 @@ function ReviewQueuePage() {
   const [reviewFormError, setReviewFormError] = useState('');
   const [assignmentDraft, setAssignmentDraft] = useState(null);
   const [assignmentError, setAssignmentError] = useState('');
+  const [dashboard, setDashboard] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -365,6 +373,19 @@ function ReviewQueuePage() {
       return [];
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDashboard = async () => {
+    setDashboardLoading(true);
+    setDashboardError('');
+    try {
+      setDashboard(await getReviewDashboard());
+    } catch (err) {
+      setDashboardError(err.message || 'Không tải được dashboard reviewer');
+      setDashboard(null);
+    } finally {
+      setDashboardLoading(false);
     }
   };
 
@@ -427,6 +448,11 @@ function ReviewQueuePage() {
     fetchQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, statusFilter, assignmentFilter, typeFilter, bloomFilter, colorFilter, minScore, searchTerm]);
+
+  useEffect(() => {
+    fetchDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!selected) return;
@@ -565,7 +591,7 @@ function ReviewQueuePage() {
   };
 
   const refreshAfterAction = async (question) => {
-    const items = await fetchQuestions();
+    const [items] = await Promise.all([fetchQuestions(), fetchDashboard()]);
     const fresh = items.find((item) => item.id === question.id);
     if (fresh) {
       await loadHistory(fresh);
@@ -758,7 +784,7 @@ function ReviewQueuePage() {
           fallback_to_heuristic: false,
         });
       }
-      await fetchQuestions();
+      await Promise.all([fetchQuestions(), fetchDashboard()]);
     } catch (err) {
       alert('Đánh giá hàng loạt dừng lại: ' + err.message);
     } finally {
@@ -795,7 +821,7 @@ function ReviewQueuePage() {
           },
         });
       }
-      await fetchQuestions();
+      await Promise.all([fetchQuestions(), fetchDashboard()]);
     } catch (err) {
       alert('Duyệt hàng loạt dừng lại: ' + err.message);
     } finally {
@@ -804,6 +830,10 @@ function ReviewQueuePage() {
   };
 
   const latestEvaluation = evaluations[0];
+  const dashboardWorkload = dashboard?.workload || {};
+  const dashboardPerformance = dashboard?.performance || {};
+  const dashboardDecisions = dashboard?.decisions || {};
+  const dashboardSubjects = dashboard?.subjects || [];
   const latestEvidence = latestEvaluation?.evidence || {};
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
@@ -838,6 +868,85 @@ function ReviewQueuePage() {
           </button>
         </div>
       </section>
+
+      <section className="review-dashboard" aria-label="Dashboard công việc reviewer">
+        <div className="review-dashboard__group">
+          <div className="review-dashboard__head">
+            <span>Workload</span>
+            <b>{dashboardLoading ? 'Đang tải' : `${dashboardWorkload.pending || 0} câu chờ`}</b>
+          </div>
+          <div className="review-dashboard__metrics">
+            <div>
+              <b>{dashboardWorkload.unassigned || 0}</b>
+              <span>Chưa nhận</span>
+            </div>
+            <div>
+              <b>{dashboardWorkload.assigned || 0}</b>
+              <span>Đã gán</span>
+            </div>
+            <div>
+              <b>{dashboardWorkload.in_review || 0}</b>
+              <span>Đang xử lý</span>
+            </div>
+            <div>
+              <b>{dashboardWorkload.lock_expired || 0}</b>
+              <span>Quá hạn lock</span>
+            </div>
+            <div>
+              <b>{dashboardWorkload.mine || 0}</b>
+              <span>Của tôi</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="review-dashboard__group review-dashboard__group--performance">
+          <div className="review-dashboard__head">
+            <span>30 ngày gần nhất</span>
+            <b>{dashboardPerformance.reviews_30d || 0} review</b>
+          </div>
+          <div className="review-dashboard__metrics">
+            <div>
+              <b>{dashboardPerformance.reviews_7d || 0}</b>
+              <span>7 ngày</span>
+            </div>
+            <div>
+              <b>{percent(dashboardPerformance.approval_rate)}</b>
+              <span>Tỷ lệ duyệt</span>
+            </div>
+            <div>
+              <b>{dashboardPerformance.override_count || 0}</b>
+              <span>Override AI</span>
+            </div>
+            <div>
+              <b>{hours(dashboardPerformance.average_review_hours)}</b>
+              <span>TB xử lý</span>
+            </div>
+            <div>
+              <b>{dashboardPerformance.revision_issues || 0}</b>
+              <span>Lỗi cần sửa</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="review-dashboard__group review-dashboard__group--subjects">
+          <div className="review-dashboard__head">
+            <span>Theo môn</span>
+            <b>{dashboardDecisions.APPROVED || 0} duyệt</b>
+          </div>
+          <div className="review-subject-bars">
+            {dashboardSubjects.slice(0, 4).map((subject) => (
+              <div className="review-subject-bar" key={subject.subject_id || subject.label}>
+                <span>{subject.label}</span>
+                <b>{subject.reviewed}</b>
+              </div>
+            ))}
+            {dashboardSubjects.length === 0 && (
+              <p>{dashboardLoading ? 'Đang tính theo môn...' : 'Chưa có review theo môn.'}</p>
+            )}
+          </div>
+        </div>
+      </section>
+      {dashboardError && <p className="review-error review-error--dashboard">{dashboardError}</p>}
 
       <section className="review-summary">
         <button type="button" onClick={() => updateFilter(setStatusFilter)('PENDING')}>
