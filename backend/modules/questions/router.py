@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
 from core.config import settings
@@ -19,10 +19,8 @@ from modules.questions.schemas import (
 from modules.questions.service import QuestionService, get_question_service
 from modules.notifications.service import safe_notify_question_resubmitted
 from modules.questions.workflow_service import (
-    DEFAULT_EVALUATOR_MODEL_CODE,
     QuestionWorkflowService,
     get_workflow_service,
-    process_evaluation_job_background,
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Questions"])
@@ -242,7 +240,6 @@ def update_question_sharing(
 @router.post("/{question_id}/submit-review", response_model=QuestionResponse)
 def submit_question_for_review(
     question_id: str,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: QuestionService = Depends(get_question_service),
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
@@ -251,17 +248,6 @@ def submit_question_for_review(
         previous_question = service.get(question_id, current_user)
         previous_review_status = previous_question.get("review_status") if previous_question else None
         question = service.submit_for_review(question_id, current_user)
-        if question and question.get("evaluation_status") != "PASSED":
-            job = workflow_service.enqueue_auto_evaluation(
-                question_id,
-                expected_version=question["current_version"],
-                requested_by_user_id=current_user.id,
-                evaluator_model_code=DEFAULT_EVALUATOR_MODEL_CODE,
-                trigger="TEACHER_SUBMIT",
-            )
-            if job.get("status") == "QUEUED":
-                background_tasks.add_task(process_evaluation_job_background, job["_id"])
-            question = service.get(question_id, current_user) or question
         if question:
             safe_notify_question_resubmitted(
                 database=workflow_service.db,

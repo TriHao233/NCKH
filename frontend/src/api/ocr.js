@@ -5,7 +5,7 @@ export async function uploadOcrPdf(file, { subjectId, chapterId } = {}) {
   form.append('file', file);
   if (subjectId) form.append('subject_id', subjectId);
   if (chapterId) form.append('chapter_id', chapterId);
-  const response = await fetch(`${API_BASE_URL}/api/v1/documents/upload`, {
+  const response = await fetch(`${API_BASE_URL}/documents/upload`, {
     method: 'POST',
     headers: await authHeaders(),
     body: form,
@@ -19,5 +19,5 @@ export async function uploadOcrPdf(file, { subjectId, chapterId } = {}) {
 export const uploadSourceDocument = uploadOcrPdf;
 
 export function getOcrStatus(jobId, options = {}) {
-  return apiFetch(`/api/v1/ocr/status/${jobId}`, options);
+  return apiFetch(`/ocr/status/${jobId}`, options);
 }

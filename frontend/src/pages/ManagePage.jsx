@@ -12,7 +12,6 @@ import {
   listQuestionVersions,
   listQuestions,
   publishQuestionToMoodle,
-  reviewQuestion,
   submitQuestionForReview,
   updateQuestion,
   updateQuestionSharing,
@@ -158,14 +157,6 @@ const QUESTION_BANK_EXPORT_FORMATS = [
   { value: 'xml', label: 'XML Moodle' },
 ];
 const QUESTION_IMPORT_ACCEPT = '.csv,.xlsx,.gift,.txt,.xml';
-
-const QUICK_REVIEW_RUBRIC = [
-  { key: 'source_alignment', label: 'Bám sát nguồn' },
-  { key: 'answer_correctness', label: 'Đáp án đúng' },
-  { key: 'bloom_clo_alignment', label: 'Đúng Bloom/CLO' },
-  { key: 'language_quality', label: 'Diễn đạt rõ' },
-  { key: 'moodle_readiness', label: 'Sẵn sàng Moodle' },
-];
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -533,6 +524,7 @@ function ManagePage() {
   const [deletingDocId, setDeletingDocId] = useState(null);
   const [workflowBusyId, setWorkflowBusyId] = useState(null);
   const [selectedQuestion, setSelectedQuestion] = useState(null);
+  const [viewingQuestion, setViewingQuestion] = useState(null);
   const [evaluationHistory, setEvaluationHistory] = useState([]);
   const [reviewHistory, setReviewHistory] = useState([]);
   const [publicationHistory, setPublicationHistory] = useState([]);
@@ -541,8 +533,6 @@ function ManagePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
   const [restoringVersionId, setRestoringVersionId] = useState('');
-  const [quickReviewDraft, setQuickReviewDraft] = useState(null);
-  const [quickReviewError, setQuickReviewError] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
 
   const [creatingQuestion, setCreatingQuestion] = useState(false);
@@ -924,6 +914,15 @@ function ManagePage() {
     ? latestRevisionReview(reviewHistory)
     : null;
   const activeRevisionIssues = activeRevisionReview ? reviewIssuesOf(activeRevisionReview) : [];
+  const viewingEntries = viewingQuestion
+    ? optionEntriesForQuestion({
+      questionType: questionAssessmentType(viewingQuestion),
+      rawOptions: viewingQuestion.question_data?.options,
+    })
+    : [];
+  const viewingCorrectKeys = viewingQuestion
+    ? correctAnswerValues(viewingQuestion.question_data?.correct_answer)
+    : [];
   const editingRevisionReview = editing
     && selectedQuestion
     && editing.id === selectedQuestion.id
@@ -1297,7 +1296,7 @@ function ManagePage() {
     setWorkflowBusyId(item.id);
     try {
       await submitQuestionForReview(item.id);
-      await refreshAfterWorkflow('Đã gửi duyệt và đưa vào hàng đợi AI đánh giá.', item);
+      await refreshAfterWorkflow('Đã gửi duyệt. Nhấn "Kiểm tra AI" để đưa câu hỏi vào hàng đợi thẩm định.', item);
     } catch (error) {
       alert('Gửi duyệt thất bại: ' + error.message);
     } finally {
@@ -1573,87 +1572,9 @@ function ManagePage() {
         expected_version: item.current_version,
         fallback_to_heuristic: false,
       });
-      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá.', item);
+      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá. Xem kết quả trong tab Duyệt AI.', item);
     } catch (error) {
-      alert('Đánh giá AI thất bại: ' + error.message);
-    } finally {
-      setWorkflowBusyId(null);
-    }
-  };
-
-  const openQuickReview = (item, decision) => {
-    setQuickReviewError('');
-    setQuickReviewDraft({
-      question: item,
-      decision,
-      note: '',
-      overrideReason: '',
-      issueTitle: '',
-      issueSeverity: 'MEDIUM',
-      issueDetail: '',
-    });
-  };
-
-  const submitQuickReview = async () => {
-    if (!quickReviewDraft?.question) return;
-    const item = quickReviewDraft.question;
-    const note = quickReviewDraft.note.trim();
-    const issueTitle = quickReviewDraft.issueTitle.trim();
-    const issueDetail = quickReviewDraft.issueDetail.trim();
-    const revisionIssues = issueTitle || issueDetail
-      ? [{
-        title: issueTitle || issueDetail.slice(0, 160),
-        severity: quickReviewDraft.issueSeverity,
-        detail: issueDetail,
-      }]
-      : [];
-    const needsOverride = quickReviewDraft.decision === 'APPROVED' && item.evaluation_status !== 'PASSED';
-    if (needsOverride && !quickReviewDraft.overrideReason.trim()) {
-      setQuickReviewError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
-      return;
-    }
-    if (quickReviewDraft.decision === 'REJECTED' && !note && revisionIssues.length === 0) {
-      setQuickReviewError('Cần ghi lý do khi từ chối câu hỏi.');
-      return;
-    }
-    if (quickReviewDraft.decision === 'NEEDS_REVISION' && revisionIssues.length === 0) {
-      setQuickReviewError('Cần thêm ít nhất một lỗi để giảng viên sửa.');
-      return;
-    }
-    const payload = {
-      expected_version: item.current_version,
-      decision: quickReviewDraft.decision,
-      note,
-      review_form: {
-        checklist: QUICK_REVIEW_RUBRIC.map((rubric) => ({
-          ...rubric,
-          passed: quickReviewDraft.decision === 'APPROVED',
-          note: '',
-        })),
-        overall_note: note,
-        revision_issues: revisionIssues,
-      },
-    };
-    if (needsOverride) {
-      payload.override = {
-        applied: true,
-        reason: quickReviewDraft.overrideReason.trim(),
-      };
-      if (typeof item.quality_summary?.overall_score === 'number') {
-        payload.override.score = item.quality_summary.overall_score;
-      }
-      if (item.quality_summary?.color) {
-        payload.override.color = item.quality_summary.color;
-      }
-    }
-    setWorkflowBusyId(item.id);
-    setQuickReviewError('');
-    try {
-      await reviewQuestion(item.id, payload);
-      setQuickReviewDraft(null);
-      await refreshAfterWorkflow('Đã cập nhật trạng thái kiểm duyệt.', item);
-    } catch (error) {
-      setQuickReviewError(error.message || 'Kiểm duyệt thất bại');
+      alert('Kiểm tra AI thất bại: ' + error.message);
     } finally {
       setWorkflowBusyId(null);
     }
@@ -2140,7 +2061,14 @@ function ManagePage() {
                             <span className="source-tag">Đang chia sẻ</span>
                           )}
                         </div>
-                        <p>{item.content}</p>
+                        <button
+                          type="button"
+                          className="question-content-preview"
+                          title="Xem nội dung đầy đủ"
+                          onClick={() => setViewingQuestion(item)}
+                        >
+                          {item.content}
+                        </button>
                         <div className="question-workflow-row">
                           <span className={`quality-pill ${QUALITY_COLOR_CLASS[item.quality_summary?.color] || ''}`}>
                             AI: {latestEvaluationText(item)}
@@ -2178,37 +2106,13 @@ function ManagePage() {
                             <>
                               <button
                                 type="button"
-                                className="mini-action"
+                                className="mini-action mini-action--approve"
                                 disabled={workflowBusyId === item.id || !canQueueEvaluation(item)}
                                 onClick={() => handleAutoEvaluate(item)}
                               >
                                 {item.evaluation_status === 'ERROR' || item.evaluation_status === 'FAILED' || item.evaluation_status === 'STALE'
-                                  ? 'Thử lại AI'
-                                  : 'AI đánh giá'}
-                              </button>
-                              <button
-                                type="button"
-                                className="mini-action mini-action--approve"
-                                disabled={workflowBusyId === item.id || isEvaluationBusy(item)}
-                                onClick={() => openQuickReview(item, 'APPROVED')}
-                              >
-                                Duyệt
-                              </button>
-                              <button
-                                type="button"
-                                className="mini-action"
-                                disabled={workflowBusyId === item.id}
-                                onClick={() => openQuickReview(item, 'NEEDS_REVISION')}
-                              >
-                                Cần sửa
-                              </button>
-                              <button
-                                type="button"
-                                className="mini-action mini-action--danger"
-                                disabled={workflowBusyId === item.id}
-                                onClick={() => openQuickReview(item, 'REJECTED')}
-                              >
-                                Từ chối
+                                  ? 'Kiểm tra lại AI'
+                                  : 'Kiểm tra AI'}
                               </button>
                               <button
                                 type="button"
@@ -2741,99 +2645,53 @@ function ManagePage() {
         </div>
       )}
 
-      {quickReviewDraft && (
-        <div className="modal-overlay" onClick={() => setQuickReviewDraft(null)}>
-          <form
-            className="modal-card quick-review-modal"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitQuickReview();
-            }}
-          >
-            <h3 className="profile-card-title">
-              {REVIEW_STATUS_LABEL[quickReviewDraft.decision] || quickReviewDraft.decision} · {quickReviewDraft.question.question_code}
-            </h3>
-            <label className="draft-edit-field">
-              <span>Ghi chú tổng</span>
-              <textarea
-                className="field-input"
-                rows={4}
-                value={quickReviewDraft.note}
-                onChange={(event) => setQuickReviewDraft((current) => ({
-                  ...current,
-                  note: event.target.value,
-                }))}
-              />
-            </label>
-            {quickReviewDraft.decision === 'APPROVED' && quickReviewDraft.question.evaluation_status !== 'PASSED' && (
-              <label className="draft-edit-field">
-                <span>Lý do override</span>
-                <textarea
-                  className="field-input"
-                  rows={3}
-                  required
-                  value={quickReviewDraft.overrideReason}
-                  onChange={(event) => setQuickReviewDraft((current) => ({
-                    ...current,
-                    overrideReason: event.target.value,
-                  }))}
-                />
-              </label>
-            )}
-            {quickReviewDraft.decision !== 'APPROVED' && (
-              <div className="quick-review-issue">
-                <label className="draft-edit-field">
-                  <span>Lỗi cần giảng viên sửa</span>
-                  <input
-                    className="field-input"
-                    value={quickReviewDraft.issueTitle}
-                    onChange={(event) => setQuickReviewDraft((current) => ({
-                      ...current,
-                      issueTitle: event.target.value,
-                    }))}
-                    placeholder="Ví dụ: Đáp án chưa khớp nguồn"
-                  />
-                </label>
-                <label className="draft-edit-field">
-                  <span>Mức độ</span>
-                  <select
-                    className="field-select"
-                    value={quickReviewDraft.issueSeverity}
-                    onChange={(event) => setQuickReviewDraft((current) => ({
-                      ...current,
-                      issueSeverity: event.target.value,
-                    }))}
-                  >
-                    <option value="LOW">Nhẹ</option>
-                    <option value="MEDIUM">Vừa</option>
-                    <option value="HIGH">Nghiêm trọng</option>
-                  </select>
-                </label>
-                <label className="draft-edit-field">
-                  <span>Chi tiết</span>
-                  <textarea
-                    className="field-input"
-                    rows={3}
-                    value={quickReviewDraft.issueDetail}
-                    onChange={(event) => setQuickReviewDraft((current) => ({
-                      ...current,
-                      issueDetail: event.target.value,
-                    }))}
-                  />
-                </label>
+      {viewingQuestion && (
+        <div className="modal-overlay" onClick={() => setViewingQuestion(null)}>
+          <div className="modal-card question-view-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close-btn"
+              title="Đóng"
+              aria-label="Đóng"
+              onClick={() => setViewingQuestion(null)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+
+            <div className="question-view-head">
+              <span className="q-id">{viewingQuestion.question_code}</span>
+              <span className="q-tag">{questionTypeLabel((viewingQuestion.classification?.assessment_type || '').toLowerCase())}</span>
+              <span className="bloom-tag">{viewingQuestion.classification?.bloom?.name || '—'}</span>
+              <span className={`status-badge ${REVIEW_STATUS_CLASS[viewingQuestion.review_status] || ''}`}>
+                {REVIEW_STATUS_LABEL[viewingQuestion.review_status] || viewingQuestion.review_status}
+              </span>
+            </div>
+
+            <p className="question-view-content">{viewingQuestion.content}</p>
+
+            {viewingEntries.length > 0 ? (
+              <ul className="question-view-options">
+                {viewingEntries.map((entry) => (
+                  <li key={entry.key} className={viewingCorrectKeys.includes(entry.key) ? 'is-correct' : ''}>
+                    <b>{entry.key}.</b>
+                    <span>{entry.value}</span>
+                    {viewingCorrectKeys.includes(entry.key) && <em>Đáp án đúng</em>}
+                  </li>
+                ))}
+              </ul>
+            ) : viewingQuestion.question_data?.correct_answer ? (
+              <p className="question-view-answer">
+                <b>Đáp án đúng:</b> {viewingQuestion.question_data.correct_answer}
+              </p>
+            ) : null}
+
+            {viewingQuestion.question_data?.explanation && (
+              <div className="question-view-explanation">
+                <b>Giải thích</b>
+                <p>{viewingQuestion.question_data.explanation}</p>
               </div>
             )}
-            {quickReviewError && <p className="manage-error">{quickReviewError}</p>}
-            <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={() => setQuickReviewDraft(null)}>
-                Hủy
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={workflowBusyId === quickReviewDraft.question.id}>
-                Lưu kết quả kiểm duyệt
-              </button>
-            </div>
-          </form>
+          </div>
         </div>
       )}
 

@@ -149,12 +149,30 @@ const Header = () => {
       ],
     },
   ];
-  const visibleNavGroups = navGroups
+  const adminNavGroup = {
+    id: 'admin',
+    label: 'Quản trị',
+    items: [
+      { path: '/tong-quan', label: 'Tổng quan' },
+      { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
+      { path: '/quan-ly', label: 'Câu hỏi' },
+      { path: '/duyet-ai', label: 'Duyệt AI' },
+      { path: '/lam-de-thi', label: 'Đề thi' },
+      { path: '/nhat-ky-he-thong', label: 'Lịch sử' },
+      { path: '/quan-ly-job', label: 'Thống kê' },
+      { path: '/quan-ly-moodle', label: 'Moodle' },
+    ],
+  };
+  const roleNavGroups = role === 'Admin' ? [adminNavGroup] : navGroups;
+  const visibleNavGroups = roleNavGroups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => !role || canAccessPath(user, item.path)),
     }))
-    .filter((group) => group.id === 'public' || (signedIn && group.items.length > 0));
+    .filter((group) => {
+      if (role === 'Admin' && group.id === 'public') return false;
+      return group.id === 'public' || (signedIn && group.items.length > 0);
+    });
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
 
   useEffect(() => {

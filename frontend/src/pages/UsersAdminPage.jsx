@@ -1,7 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faChevronLeft,
+  faChevronRight,
+  faCopy,
+  faEnvelope,
+  faFileImport,
+  faFilter,
+  faKey,
+  faLock,
+  faLockOpen,
+  faPen,
+  faPlus,
+  faRotateRight,
+  faSearch,
+  faXmark,
+} from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
 import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
+import '../css/AdminJobsPage.css';
 import '../css/UsersAdminPage.css';
+
+const PAGE_SIZE = 20;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const ROLE_LABEL = {
   Admin: 'Quản trị viên',
@@ -9,11 +30,21 @@ const ROLE_LABEL = {
   Reviewer: 'Người duyệt',
 };
 
+const ROLE_COLOR = {
+  Admin: '#DC2626',
+  Teacher: '#0c78d4',
+  Reviewer: '#087f5b',
+};
+
 const PERMISSION_OPTIONS = [
   { value: 'questions.generate', label: 'Sinh câu hỏi' },
   { value: 'questions.manage_own', label: 'Quản lý câu hỏi cá nhân' },
+  { value: 'questions.manage_all', label: 'Quản lý mọi câu hỏi' },
   { value: 'questions.share_bank', label: 'Chia sẻ ngân hàng câu hỏi' },
   { value: 'questions.use_shared_bank', label: 'Dùng ngân hàng được chia sẻ' },
+  { value: 'questions.read_review_queue', label: 'Xem hàng đợi kiểm duyệt' },
+  { value: 'questions.comment', label: 'Bình luận câu hỏi' },
+  { value: 'questions.export_moodle', label: 'Xuất câu hỏi ra Moodle' },
   { value: 'reviews.manage', label: 'Kiểm duyệt câu hỏi' },
   { value: 'documents.manage_own', label: 'Quản lý tài liệu cá nhân' },
   { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
@@ -48,10 +79,48 @@ function togglePermission(list, permission) {
   return Array.from(current);
 }
 
+function initials(name) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return '?';
+  const parts = trimmed.split(/\s+/);
+  const first = parts[0]?.[0] || '';
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+  return (first + last).toUpperCase() || '?';
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+}
+
+function parseImportRows(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [email = '', displayName, role = 'Teacher', permissions = ''] = line.split(',').map((part) => part.trim());
+      return {
+        email,
+        display_name: displayName || email,
+        role: ROLE_LABEL[role] ? role : 'Teacher',
+        permissions: permissions
+          ? permissions.split('|').map((item) => item.trim()).filter(Boolean)
+          : permissionsForRole(ROLE_LABEL[role] ? role : 'Teacher'),
+      };
+    });
+}
+
 function UsersAdminPage() {
   const [users, setUsers] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [stats, setStats] = useState({ all: 0, Admin: 0, Teacher: 0, Reviewer: 0 });
 
   const [roleFilter, setRoleFilter] = useState('all');
   const [searchInput, setSearchInput] = useState('');
@@ -74,47 +143,92 @@ function UsersAdminPage() {
   const [editPermissions, setEditPermissions] = useState([]);
   const [saving, setSaving] = useState(false);
 
-  const [deletingId, setDeletingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
   const [resettingId, setResettingId] = useState(null);
   const [resetResult, setResetResult] = useState(null);
+  const [copiedKey, setCopiedKey] = useState('');
 
   useEffect(() => {
-    const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
+    const handle = setTimeout(() => {
+      setPage(1);
+      setSearchTerm(searchInput.trim());
+    }, 400);
     return () => clearTimeout(handle);
   }, [searchInput]);
 
-  const fetchUsers = async (search) => {
+  const fetchUsers = async (pageArg = page) => {
     setLoading(true);
     setError('');
     try {
-      const result = await listUsers({ page: 1, pageSize: 100, search: search || undefined });
+      const result = await listUsers({
+        page: pageArg,
+        pageSize: PAGE_SIZE,
+        role: roleFilter === 'all' ? undefined : roleFilter,
+        search: searchTerm || undefined,
+      });
       setUsers(result.items || []);
+      setTotal(result.total || 0);
     } catch (err) {
       setError(err.message || 'Không tải được danh sách người dùng');
+      setUsers([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   };
 
+  const fetchStats = async () => {
+    try {
+      const [allRes, adminRes, teacherRes, reviewerRes] = await Promise.all([
+        listUsers({ page: 1, pageSize: 1 }),
+        listUsers({ page: 1, pageSize: 1, role: 'Admin' }),
+        listUsers({ page: 1, pageSize: 1, role: 'Teacher' }),
+        listUsers({ page: 1, pageSize: 1, role: 'Reviewer' }),
+      ]);
+      setStats({
+        all: allRes.total || 0,
+        Admin: adminRes.total || 0,
+        Teacher: teacherRes.total || 0,
+        Reviewer: reviewerRes.total || 0,
+      });
+    } catch {
+      // stat tiles are non-critical; keep the previously known values on failure
+    }
+  };
+
   useEffect(() => {
-    fetchUsers(searchTerm);
+    fetchUsers(page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm]);
+  }, [page, searchTerm, roleFilter]);
 
-  const filtered = useMemo(
-    () => users.filter((u) => roleFilter === 'all' || u.role === roleFilter),
-    [users, roleFilter],
-  );
+  useEffect(() => {
+    fetchStats();
+  }, []);
 
-  const counts = useMemo(
-    () => ({
-      all: users.length,
-      Admin: users.filter((u) => u.role === 'Admin').length,
-      Teacher: users.filter((u) => u.role === 'Teacher').length,
-      Reviewer: users.filter((u) => u.role === 'Reviewer').length,
-    }),
-    [users],
-  );
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const selectRoleFilter = (role) => {
+    setRoleFilter(role);
+    setPage(1);
+  };
+
+  const refreshAll = async (pageArg = page) => {
+    await Promise.all([fetchUsers(pageArg), fetchStats()]);
+  };
+
+  const importRows = useMemo(() => parseImportRows(importText), [importText]);
+  const importValidCount = importRows.filter((row) => EMAIL_RE.test(row.email)).length;
+  const importInvalidCount = importRows.length - importValidCount;
+
+  const copyToClipboard = async (text, key) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(''), 1500);
+    } catch {
+      // clipboard API may be unavailable (e.g. insecure context); user can still select the text manually
+    }
+  };
 
   const openCreate = (mode = 'direct') => {
     setCreateMode(mode);
@@ -129,14 +243,26 @@ function UsersAdminPage() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!createForm.email.trim() || !createForm.display_name.trim() || (createMode === 'direct' && !createForm.password)) {
-      alert('Vui lòng nhập đầy đủ email, mật khẩu và họ tên.');
+    const email = createForm.email.trim();
+    const displayName = createForm.display_name.trim();
+    if (!email || !displayName) {
+      alert('Vui lòng nhập đầy đủ email và họ tên.');
+      return;
+    }
+    if (!EMAIL_RE.test(email)) {
+      alert('Email không hợp lệ.');
+      return;
+    }
+    if (createMode === 'direct' && createForm.password.length < 6) {
+      alert('Mật khẩu phải có ít nhất 6 ký tự.');
       return;
     }
     setCreating(true);
     try {
       const payload = {
         ...createForm,
+        email,
+        display_name: displayName,
         permissions: createForm.permissions || [],
       };
       if (createMode === 'invite') {
@@ -151,7 +277,8 @@ function UsersAdminPage() {
         await createUser(payload);
         setShowCreate(false);
       }
-      await fetchUsers(searchTerm);
+      await refreshAll(1);
+      setPage(1);
     } catch (err) {
       alert('Tạo tài khoản thất bại: ' + err.message);
     } finally {
@@ -184,7 +311,7 @@ function UsersAdminPage() {
         permissions: editPermissions,
       });
       setEditing(null);
-      await fetchUsers(searchTerm);
+      await refreshAll();
     } catch (err) {
       alert('Cập nhật tài khoản thất bại: ' + err.message);
     } finally {
@@ -204,35 +331,19 @@ function UsersAdminPage() {
     }
   };
 
-  const parseImportRows = () => importText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [email, displayName, role = 'Teacher', permissions = ''] = line.split(',').map((part) => part.trim());
-      return {
-        email,
-        display_name: displayName || email,
-        role: ROLE_LABEL[role] ? role : 'Teacher',
-        permissions: permissions
-          ? permissions.split('|').map((item) => item.trim()).filter(Boolean)
-          : permissionsForRole(ROLE_LABEL[role] ? role : 'Teacher'),
-      };
-    });
-
   const handleImportUsers = async (event) => {
     event.preventDefault();
-    const rows = parseImportRows();
-    if (rows.length === 0) {
+    if (importRows.length === 0) {
       alert('Vui lòng nhập ít nhất một dòng CSV.');
       return;
     }
     setImporting(true);
     setImportResult(null);
     try {
-      const result = await importUsers({ users: rows });
+      const result = await importUsers({ users: importRows });
       setImportResult(result);
-      await fetchUsers(searchTerm);
+      await refreshAll(1);
+      setPage(1);
     } catch (err) {
       alert('Import tài khoản thất bại: ' + err.message);
     } finally {
@@ -240,133 +351,207 @@ function UsersAdminPage() {
     }
   };
 
-  const handleDelete = async (user) => {
-    if (!window.confirm(`Vô hiệu hoá tài khoản "${user.display_name}" (${user.email})?`)) {
-      return;
-    }
-    setDeletingId(user.id);
+  const handleToggleActive = async (user) => {
+    const activate = !user.is_active;
+    const confirmMessage = activate
+      ? `Kích hoạt lại tài khoản "${user.display_name}" (${user.email})?`
+      : `Vô hiệu hoá tài khoản "${user.display_name}" (${user.email})?`;
+    if (!window.confirm(confirmMessage)) return;
+    setTogglingId(user.id);
     try {
-      await deleteUser(user.id);
-      await fetchUsers(searchTerm);
+      if (activate) {
+        await updateUser(user.id, { is_active: true });
+      } else {
+        await deleteUser(user.id);
+      }
+      await refreshAll();
     } catch (err) {
-      alert('Vô hiệu hoá tài khoản thất bại: ' + err.message);
+      alert((activate ? 'Kích hoạt' : 'Vô hiệu hoá') + ' tài khoản thất bại: ' + err.message);
     } finally {
-      setDeletingId(null);
+      setTogglingId(null);
     }
   };
 
   return (
-    <main className="users-page">
-      <section className="page-hero">
-        <div className="container users-hero-row">
-          <div>
-            <div className="page-hero-badge">Khu vực quản trị</div>
-            <h1 className="page-hero-title">Quản lý người dùng</h1>
-            <p className="page-hero-desc">
-              Quản lý tài khoản giảng viên, người duyệt và quản trị viên trong hệ thống ngân hàng câu hỏi.
-            </p>
-          </div>
-          <div className="users-hero-actions">
-            <button type="button" className="btn btn--outline" onClick={() => setShowImport(true)}>
-              Import CSV
-            </button>
-            <button type="button" className="btn btn--outline" onClick={() => openCreate('invite')}>
-              Mời qua email
-            </button>
-            <button type="button" className="btn btn--primary" onClick={() => openCreate('direct')}>
-              + Tạo bằng mật khẩu
-            </button>
-          </div>
+    <main className="admin-jobs-page users-page">
+      <section className="jobs-header">
+        <div>
+          <span>Khu vực quản trị</span>
+          <h1>Quản lý người dùng</h1>
+          <p>Quản lý tài khoản giảng viên, người duyệt và quản trị viên trong hệ thống ngân hàng câu hỏi.</p>
+        </div>
+        <div className="jobs-header-actions">
+          <button type="button" className="jobs-secondary-button" onClick={() => refreshAll()} disabled={loading}>
+            <FontAwesomeIcon icon={faRotateRight} />
+            <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
+          </button>
+          <button type="button" className="jobs-secondary-button" onClick={() => setShowImport(true)}>
+            <FontAwesomeIcon icon={faFileImport} />
+            <span>Import CSV</span>
+          </button>
+          <button type="button" className="jobs-secondary-button" onClick={() => openCreate('invite')}>
+            <FontAwesomeIcon icon={faEnvelope} />
+            <span>Mời qua email</span>
+          </button>
+          <button type="button" className="jobs-primary-button" onClick={() => openCreate('direct')}>
+            <FontAwesomeIcon icon={faPlus} />
+            <span>Tạo tài khoản</span>
+          </button>
         </div>
       </section>
 
-      <section className="users-body">
-        <div className="container">
-          <div className="stats-row">
-            <button type="button" className={`stat-card ${roleFilter === 'all' ? 'stat-card--active' : ''}`} onClick={() => setRoleFilter('all')}>
-              <b>{counts.all}</b>
-              <span>Tổng tài khoản</span>
-            </button>
-            <button type="button" className={`stat-card ${roleFilter === 'Admin' ? 'stat-card--active' : ''}`} onClick={() => setRoleFilter('Admin')}>
-              <b>{counts.Admin}</b>
-              <span>Quản trị viên</span>
-            </button>
-            <button type="button" className={`stat-card ${roleFilter === 'Teacher' ? 'stat-card--active' : ''}`} onClick={() => setRoleFilter('Teacher')}>
-              <b>{counts.Teacher}</b>
-              <span>Giảng viên</span>
-            </button>
-            <button type="button" className={`stat-card ${roleFilter === 'Reviewer' ? 'stat-card--active' : ''}`} onClick={() => setRoleFilter('Reviewer')}>
-              <b>{counts.Reviewer}</b>
-              <span>Người duyệt</span>
-            </button>
-          </div>
+      <section className="jobs-summary">
+        <button type="button" className={`summary-tile ${roleFilter === 'all' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('all')}>
+          <b>{stats.all}</b>
+          <span>Tổng tài khoản</span>
+        </button>
+        <button type="button" className={`summary-tile ${roleFilter === 'Admin' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Admin')}>
+          <b>{stats.Admin}</b>
+          <span>Quản trị viên</span>
+        </button>
+        <button type="button" className={`summary-tile ${roleFilter === 'Teacher' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Teacher')}>
+          <b>{stats.Teacher}</b>
+          <span>Giảng viên</span>
+        </button>
+        <button type="button" className={`summary-tile ${roleFilter === 'Reviewer' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Reviewer')}>
+          <b>{stats.Reviewer}</b>
+          <span>Người duyệt</span>
+        </button>
+      </section>
 
-          <div className="card list-card">
-            <div className="list-card-header">
-              <h3>Danh sách người dùng</h3>
-              <div className="list-toolbar">
-                <input
-                  className="field-input search-input"
-                  placeholder="Tìm theo tên hoặc email..."
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {error && <p className="users-error">{error}</p>}
-
-            {loading ? (
-              <p className="empty-note">Đang tải danh sách người dùng...</p>
-            ) : (
-              <div className="user-list">
-                {filtered.map((u) => (
-                  <article key={u.id} className="user-item">
-                    <img
-                      className="user-avatar-sm"
-                      src={u.profile?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.display_name)}&background=0c78d4&color=fff`}
-                      alt=""
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="user-main">
-                      <div className="user-meta-row">
-                        <span className="user-name">{u.display_name}</span>
-                        <span className="role-tag">{ROLE_LABEL[u.role] || u.role}</span>
-                        {!u.is_active && <span className="status-badge status--revise">Đã khoá</span>}
-                      </div>
-                      <p className="user-email">{u.email}</p>
-                      <p className="user-email">{(u.permissions || []).length} quyền hiệu lực</p>
-                    </div>
-                    <div className="user-actions">
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="Tạo link reset mật khẩu"
-                        disabled={resettingId === u.id}
-                        onClick={() => handleResetPassword(u)}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7a4 4 0 1 0-4 4" /><path d="M21 2l-9.6 9.6" /><path d="M15 2h6v6" /></svg>
-                      </button>
-                      <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(u)}>
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn--danger"
-                        title="Vô hiệu hoá"
-                        disabled={deletingId === u.id}
-                        onClick={() => handleDelete(u)}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                {filtered.length === 0 && (
-                  <p className="empty-note">Không có người dùng nào phù hợp.</p>
-                )}
-              </div>
+      <section className="jobs-toolbar jobs-toolbar--users" aria-label="Bộ lọc người dùng">
+        <div className="toolbar-field toolbar-field--search">
+          <label htmlFor="users-search">
+            <FontAwesomeIcon icon={faSearch} />
+            Tìm kiếm
+          </label>
+          <div className="search-input-wrap">
+            <input
+              id="users-search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Tìm theo tên hoặc email..."
+            />
+            {searchInput && (
+              <button type="button" className="search-clear-btn" title="Xoá tìm kiếm" onClick={() => setSearchInput('')}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
             )}
+          </div>
+        </div>
+        <div className="toolbar-field">
+          <label htmlFor="users-role">
+            <FontAwesomeIcon icon={faFilter} />
+            Vai trò
+          </label>
+          <select id="users-role" value={roleFilter} onChange={(e) => selectRoleFilter(e.target.value)}>
+            <option value="all">Tất cả vai trò</option>
+            <option value="Admin">Quản trị viên</option>
+            <option value="Teacher">Giảng viên</option>
+            <option value="Reviewer">Người duyệt</option>
+          </select>
+        </div>
+      </section>
+
+      {error && <p className="jobs-error">{error}</p>}
+
+      <section className="jobs-layout jobs-layout--single">
+        <div className="jobs-table-panel">
+          <div className="jobs-table-header">
+            <div>
+              <h2>Danh sách người dùng</h2>
+              <span>{total} tài khoản</span>
+            </div>
+          </div>
+          <div className={`jobs-table-wrap ${loading && users.length > 0 ? 'is-loading' : ''}`}>
+            <table className="jobs-table users-table">
+              <thead>
+                <tr>
+                  <th>Người dùng</th>
+                  <th>Vai trò</th>
+                  <th>Quyền</th>
+                  <th>Trạng thái</th>
+                  <th>Ngày tạo</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td>
+                      <div className="user-cell">
+                        {u.profile?.avatar ? (
+                          <img className="user-avatar-img" src={u.profile.avatar} alt="" referrerPolicy="no-referrer" />
+                        ) : (
+                          <span className="user-avatar-initials" style={{ background: ROLE_COLOR[u.role] || '#5c6f89' }}>
+                            {initials(u.display_name)}
+                          </span>
+                        )}
+                        <div>
+                          <strong>{u.display_name}</strong>
+                          <small>{u.email}</small>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`role-pill role-pill--${(u.role || '').toLowerCase()}`}>{ROLE_LABEL[u.role] || u.role}</span>
+                    </td>
+                    <td>{(u.permissions || []).length} quyền</td>
+                    <td>
+                      {u.is_active ? (
+                        <span className="status-pill status-pill--success">Hoạt động</span>
+                      ) : (
+                        <span className="status-pill status-pill--danger">Đã khoá</span>
+                      )}
+                    </td>
+                    <td>{formatDate(u.created_at)}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          title="Tạo link reset mật khẩu"
+                          disabled={resettingId === u.id}
+                          onClick={() => handleResetPassword(u)}
+                        >
+                          <FontAwesomeIcon icon={faKey} />
+                        </button>
+                        <button type="button" title="Chỉnh sửa" onClick={() => openEdit(u)}>
+                          <FontAwesomeIcon icon={faPen} />
+                        </button>
+                        <button
+                          type="button"
+                          className={u.is_active ? 'danger-action' : ''}
+                          title={u.is_active ? 'Vô hiệu hoá tài khoản' : 'Kích hoạt lại tài khoản'}
+                          disabled={togglingId === u.id}
+                          onClick={() => handleToggleActive(u)}
+                        >
+                          <FontAwesomeIcon icon={u.is_active ? faLock : faLockOpen} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!loading && users.length === 0 && (
+              <p className="jobs-empty">
+                {searchTerm || roleFilter !== 'all'
+                  ? 'Không có người dùng nào khớp với bộ lọc hiện tại.'
+                  : 'Chưa có người dùng nào trong hệ thống.'}
+              </p>
+            )}
+            {loading && users.length === 0 && (
+              <p className="jobs-empty">Đang tải danh sách người dùng...</p>
+            )}
+          </div>
+          <div className="jobs-pagination">
+            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+              <FontAwesomeIcon icon={faChevronLeft} />
+            </button>
+            <span>Trang {page} / {pageCount}</span>
+            <button type="button" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
+              <FontAwesomeIcon icon={faChevronRight} />
+            </button>
           </div>
         </div>
       </section>
@@ -395,6 +580,7 @@ function UsersAdminPage() {
                   value={createForm.password}
                   onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                 />
+                <p className="field-hint">Tối thiểu 6 ký tự.</p>
               </div>
             )}
 
@@ -445,7 +631,13 @@ function UsersAdminPage() {
 
             {inviteResult?.reset_link && (
               <div className="users-result-box">
-                <b>Link đặt mật khẩu</b>
+                <div className="users-result-box-header">
+                  <b>Link đặt mật khẩu</b>
+                  <button type="button" className="copy-btn" onClick={() => copyToClipboard(inviteResult.reset_link, 'invite')}>
+                    <FontAwesomeIcon icon={faCopy} />
+                    {copiedKey === 'invite' ? 'Đã sao chép' : 'Sao chép'}
+                  </button>
+                </div>
                 <textarea className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
               </div>
             )}
@@ -475,6 +667,12 @@ function UsersAdminPage() {
                 onChange={(e) => setImportText(e.target.value)}
                 placeholder="email@ctu.edu.vn,Nguyễn Văn A,Teacher,questions.generate|questions.manage_own"
               />
+              <p className="field-hint">Mỗi dòng: email, họ tên, vai trò (Teacher/Reviewer/Admin), quyền cách nhau bởi dấu "|" (tuỳ chọn).</p>
+              {importRows.length > 0 && (
+                <p className={`field-hint ${importInvalidCount > 0 ? 'field-hint--warn' : ''}`}>
+                  {importRows.length} dòng ({importValidCount} hợp lệ{importInvalidCount > 0 ? `, ${importInvalidCount} thiếu email hợp lệ` : ''})
+                </p>
+              )}
             </div>
             {importResult && (
               <div className="users-result-box">
@@ -488,7 +686,7 @@ function UsersAdminPage() {
               <button type="button" className="btn btn--outline" onClick={() => setShowImport(false)} disabled={importing}>
                 Đóng
               </button>
-              <button type="submit" className="btn btn--primary" disabled={importing}>
+              <button type="submit" className="btn btn--primary" disabled={importing || importRows.length === 0}>
                 {importing ? 'Đang import...' : 'Import'}
               </button>
             </div>
@@ -501,6 +699,13 @@ function UsersAdminPage() {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">Link reset mật khẩu</h3>
             <p className="user-email">{resetResult.email}</p>
+            <div className="users-result-box-header">
+              <b>Link đặt lại mật khẩu</b>
+              <button type="button" className="copy-btn" onClick={() => copyToClipboard(resetResult.reset_link, 'reset')}>
+                <FontAwesomeIcon icon={faCopy} />
+                {copiedKey === 'reset' ? 'Đã sao chép' : 'Sao chép'}
+              </button>
+            </div>
             <textarea className="field-input" readOnly rows={4} value={resetResult.reset_link} />
             <div className="modal-actions">
               <button type="button" className="btn btn--primary" onClick={() => setResetResult(null)}>

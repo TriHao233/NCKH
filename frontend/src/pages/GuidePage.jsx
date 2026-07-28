@@ -94,7 +94,7 @@ function GuidePage() {
       <section className="page-hero">
         <div className="container">
           <div className="page-hero-badge">Hướng dẫn sử dụng</div>
-          <h1 className="page-hero-title">Bắt đầu với QBankCTU chỉ trong vài bước</h1>
+          <h1 className="page-hero-title">Bắt đầu với QBankCTU trong vài bước</h1>
           <p className="page-hero-desc">
             Từ tải tài liệu đến export câu hỏi theo chuẩn Moodle — quy trình được thiết kế đơn giản, rõ ràng, phù hợp cho
             cả giảng viên chưa quen thao tác kỹ thuật.

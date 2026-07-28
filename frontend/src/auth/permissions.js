@@ -1,5 +1,6 @@
 export const PERMISSIONS = Object.freeze({
   teacherWorkspace: Object.freeze(["Teacher"]),
+  teacherAdminWorkspace: Object.freeze(["Teacher", "Admin"]),
   reviewerWorkspace: Object.freeze(["Reviewer", "Admin"]),
   adminWorkspace: Object.freeze(["Admin"]),
   authenticated: Object.freeze(["Admin", "Teacher", "Reviewer"]),
@@ -13,6 +14,7 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
     "admin.audit",
     "admin.jobs",
     "admin.moodle",
+    "admin.ai_review",
     "documents.manage_all",
     "questions.manage_all",
     "questions.use_shared_bank",
@@ -40,6 +42,7 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/lam-de-thi": Object.freeze(["exams.manage_own"]),
   "/lam-de-thi/:examId": Object.freeze(["exams.manage_own"]),
   "/kiem-duyet": Object.freeze(["reviews.manage"]),
+  "/duyet-ai": Object.freeze(["admin.ai_review"]),
   "/tong-quan": Object.freeze(["admin.overview"]),
   "/danh-muc": Object.freeze(["admin.catalog"]),
   "/quan-ly-nguoi-dung": Object.freeze(["admin.users"]),
@@ -50,10 +53,11 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
 
 export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/sinh-cau-hoi": PERMISSIONS.teacherWorkspace,
-  "/quan-ly": PERMISSIONS.teacherWorkspace,
-  "/lam-de-thi": PERMISSIONS.teacherWorkspace,
-  "/lam-de-thi/:examId": PERMISSIONS.teacherWorkspace,
+  "/quan-ly": PERMISSIONS.teacherAdminWorkspace,
+  "/lam-de-thi": PERMISSIONS.teacherAdminWorkspace,
+  "/lam-de-thi/:examId": PERMISSIONS.teacherAdminWorkspace,
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
+  "/duyet-ai": PERMISSIONS.adminWorkspace,
   "/tong-quan": PERMISSIONS.adminWorkspace,
   "/danh-muc": PERMISSIONS.adminWorkspace,
   "/quan-ly-nguoi-dung": PERMISSIONS.adminWorkspace,
