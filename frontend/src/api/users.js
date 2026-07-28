@@ -43,8 +43,20 @@ export function createUser(payload) {
   return apiRequest('/users', { method: 'POST', body: payload });
 }
 
+export function inviteUser(payload) {
+  return apiRequest('/users/invite', { method: 'POST', body: payload });
+}
+
+export function importUsers(payload) {
+  return apiRequest('/users/import', { method: 'POST', body: payload });
+}
+
 export function updateUser(id, payload) {
   return apiRequest(`/users/${id}`, { method: 'PATCH', body: payload });
+}
+
+export function resetUserPassword(id) {
+  return apiRequest(`/users/${id}/password-reset`, { method: 'POST' });
 }
 
 export function deleteUser(id) {

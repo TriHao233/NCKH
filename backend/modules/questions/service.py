@@ -9,9 +9,10 @@ from pathlib import Path
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
+from core.audit import record_audit_event
 from core.config import resolve_path
 from core.database import get_database
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, has_permission
 from modules.questions.repository import (
     MongoQuestionRepository,
     MongoQuestionReferenceRepository,
@@ -22,7 +23,7 @@ from modules.questions.repository import (
     serialize_question,
     utc_now,
 )
-from modules.questions.schemas import QuestionCreateRequest, QuestionUpdateRequest
+from modules.questions.schemas import QuestionCreateRequest, QuestionSharingRequest, QuestionUpdateRequest
 
 BLOOM_LEVELS = {
     1: ("REMEMBER", "Nhớ"),
@@ -132,14 +133,38 @@ class QuestionService:
                 return True
         return False
 
+    @staticmethod
+    def _can_manage_all(current_user: CurrentUser) -> bool:
+        return current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
+
+    @staticmethod
+    def _can_review_all(current_user: CurrentUser) -> bool:
+        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+
+    @staticmethod
+    def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
+        shared_with = set(question.get("shared_with_user_ids") or [])
+        return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
+
+    @staticmethod
+    def _can_use_document(document: dict | None, current_user: CurrentUser) -> bool:
+        if not document:
+            return True
+        if current_user.role == "Admin" or has_permission(current_user, "documents.manage_all"):
+            return True
+        if document.get("uploaded_by_user_id") == current_user.id:
+            return True
+        shared_with = set(document.get("shared_with_user_ids") or [])
+        return current_user.id in shared_with or document.get("shared_scope") == "SUBJECT"
+
     def _ensure_read_access(
         self,
         pair: tuple[dict, dict] | None,
         current_user: CurrentUser | None,
     ) -> None:
-        if not pair or not current_user or current_user.role in {"Admin", "Reviewer"}:
+        if not pair or not current_user or self._can_manage_all(current_user) or self._can_review_all(current_user):
             return
-        if not self._owns_question(pair[0], pair[1], current_user.id):
+        if not self._owns_question(pair[0], pair[1], current_user.id) and not self._is_shared_question(pair[0], current_user):
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _ensure_write_access(
@@ -147,7 +172,7 @@ class QuestionService:
         pair: tuple[dict, dict] | None,
         current_user: CurrentUser | None,
     ) -> None:
-        if not pair or not current_user or current_user.role == "Admin":
+        if not pair or not current_user or self._can_manage_all(current_user):
             return
         if not self._owns_question(pair[0], pair[1], current_user.id):
             raise PermissionError("Bạn không có quyền chỉnh sửa câu hỏi này")
@@ -295,6 +320,7 @@ class QuestionService:
         created_by_user_id,
         *,
         actor_role: str | None = None,
+        current_user: CurrentUser | None = None,
         origin: str = "MANUAL",
         generation_run_id: ObjectId | None = None,
         initial_review_status: str = "PENDING",
@@ -316,10 +342,19 @@ class QuestionService:
         )
         if resolved_document_id and document is None:
             document = self._document(resolved_document_id)
+        actor = current_user
+        if actor is None and actor_role:
+            actor = CurrentUser(
+                id=created_by_user_id,
+                firebase_uid="",
+                email="",
+                role=actor_role,
+                is_active=True,
+            )
         if (
-            actor_role == "Teacher"
-            and document
-            and document.get("uploaded_by_user_id") != created_by_user_id
+            document
+            and actor
+            and not self._can_use_document(document, actor)
         ):
             raise PermissionError("Bạn không có quyền dùng tài liệu này để tạo câu hỏi")
         self._validate_active_sources(sources, document)
@@ -379,6 +414,9 @@ class QuestionService:
                 "last_released_at": None,
                 "release_reason": None,
             },
+            "shared_with_user_ids": [],
+            "shared_scope": "PRIVATE",
+            "secondary_review": {},
             "latest_review_id": None,
             "created_by_user_id": created_by_user_id,
             "created_at": now,
@@ -464,6 +502,9 @@ class QuestionService:
                 "last_released_at": None,
                 "release_reason": None,
             },
+            "shared_with_user_ids": [],
+            "shared_scope": "PRIVATE",
+            "secondary_review": {},
             "latest_review_id": None,
             "created_by_user_id": current_user.id,
             "created_at": now,
@@ -520,7 +561,9 @@ class QuestionService:
     ) -> dict:
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user
+            and not self._can_manage_all(current_user)
+            and not self._can_review_all(current_user)
             else None
         )
         assigned_reviewer_user_id = None
@@ -559,7 +602,7 @@ class QuestionService:
             assignment_status=assignment_status,
             assigned_reviewer_user_id=assigned_reviewer_user_id,
             creator_user_id=creator_oid,
-            owner_user_id=owner_user_id,
+            visible_to_user_id=owner_user_id,
             waiting_since=waiting_since,
             overdue_at=overdue_at,
         )
@@ -764,16 +807,28 @@ class QuestionService:
         payload: QuestionUpdateRequest,
         created_by_user_id,
         actor_role: str | None = None,
+        current_user: CurrentUser | None = None,
     ) -> dict | None:
         pair = self.repository.find_pair(question_id)
         if not pair:
             return None
-        if actor_role and actor_role != "Admin" and not self._owns_question(
+        if current_user:
+            self._ensure_write_access(pair, current_user)
+        elif actor_role and actor_role != "Admin" and not self._owns_question(
             pair[0],
             pair[1],
             created_by_user_id,
         ):
             raise PermissionError("Bạn không có quyền chỉnh sửa câu hỏi này")
+        actor = current_user
+        if actor is None and actor_role:
+            actor = CurrentUser(
+                id=created_by_user_id,
+                firebase_uid="",
+                email="",
+                role=actor_role,
+                is_active=True,
+            )
         _, current = pair
         classification = current["classification"]
         if any(
@@ -900,9 +955,9 @@ class QuestionService:
         if payload.source_chunk_ids is not None or payload.chunk_id is not None:
             document = self._document(resolved_document_id)
             if (
-                actor_role == "Teacher"
-                and document
-                and document.get("uploaded_by_user_id") != created_by_user_id
+                document
+                and actor
+                and not self._can_use_document(document, actor)
             ):
                 raise PermissionError("Bạn không có quyền dùng tài liệu này để cập nhật câu hỏi")
             self._validate_active_sources(sources, document)
@@ -932,6 +987,44 @@ class QuestionService:
                 "created_at": utc_now(),
             },
         )
+        return serialize_question(*updated) if updated else None
+
+    def update_sharing(
+        self,
+        question_id: str,
+        payload: QuestionSharingRequest,
+        current_user: CurrentUser,
+    ) -> dict | None:
+        pair = self.repository.find_pair(question_id)
+        if not pair:
+            return None
+        question, version = pair
+        self._ensure_write_access(pair, current_user)
+        before = {
+            "shared_with_user_ids": question.get("shared_with_user_ids") or [],
+            "shared_scope": question.get("shared_scope") or "PRIVATE",
+        }
+        updated = self.repository.update_sharing(
+            question_id,
+            {
+                "shared_with_user_ids": payload.shared_with_user_ids,
+                "shared_scope": payload.shared_scope,
+            },
+        )
+        if updated:
+            record_audit_event(
+                action="question.sharing_update",
+                entity_type="question",
+                entity_id=question["_id"],
+                actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                before=before,
+                after={
+                    "shared_with_user_ids": updated[0].get("shared_with_user_ids") or [],
+                    "shared_scope": updated[0].get("shared_scope") or "PRIVATE",
+                },
+                metadata={"version_id": str(version["_id"])},
+            )
         return serialize_question(*updated) if updated else None
 
     def submit_for_review(

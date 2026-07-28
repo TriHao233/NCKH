@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.config import settings
 from core.database import get_database
-from core.dependencies import CurrentUser, require_admin
+from core.dependencies import CurrentUser, require_permissions
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.admin.moodle_service import MoodleTargetService
 
@@ -28,7 +28,7 @@ def _translate(exc: Exception):
 @router.get("/targets")
 def list_targets(
     include_inactive: bool = True,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
     service: MoodleTargetService = Depends(get_moodle_target_service),
 ):
     return service.list_targets(include_inactive=include_inactive)
@@ -37,7 +37,7 @@ def list_targets(
 @router.post("/targets", status_code=status.HTTP_201_CREATED)
 def save_target(
     payload: MoodleTargetPayload,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("admin.moodle")),
     service: MoodleTargetService = Depends(get_moodle_target_service),
 ):
     try:
@@ -49,7 +49,7 @@ def save_target(
 @router.post("/targets/{target_id}/check")
 def check_target(
     target_id: str,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("admin.moodle")),
     service: MoodleTargetService = Depends(get_moodle_target_service),
 ):
     try:
@@ -61,7 +61,7 @@ def check_target(
 @router.delete("/targets/{target_id}")
 def deactivate_target(
     target_id: str,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("admin.moodle")),
     service: MoodleTargetService = Depends(get_moodle_target_service),
 ):
     try:
@@ -77,7 +77,7 @@ def list_publications(
     publication_status: str | None = Query(None, alias="status"),
     site_key: str | None = None,
     search: str | None = None,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
     service: MoodleTargetService = Depends(get_moodle_target_service),
 ):
     return service.list_publications(
@@ -92,7 +92,7 @@ def list_publications(
 @router.post("/publications/{publication_id}/retry")
 def retry_publication(
     publication_id: str,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("admin.moodle")),
     service: MoodleTargetService = Depends(get_moodle_target_service),
 ):
     try:

@@ -103,6 +103,10 @@ export function updateQuestion(id, payload) {
   return apiRequest(`/questions/${id}`, { method: 'PATCH', body: payload });
 }
 
+export function updateQuestionSharing(id, payload) {
+  return apiRequest(`/questions/${id}/sharing`, { method: 'PATCH', body: payload });
+}
+
 export function listQuestionVersions(id) {
   return apiRequest(`/questions/${id}/versions`);
 }
@@ -141,6 +145,18 @@ export function assignQuestionReview(id, payload) {
 
 export function listQuestionReviews(id) {
   return apiRequest(`/questions/${id}/reviews`);
+}
+
+export function listQuestionComments(id) {
+  return apiRequest(`/questions/${id}/comments`);
+}
+
+export function addQuestionComment(id, payload) {
+  return apiRequest(`/questions/${id}/comments`, { method: 'POST', body: payload });
+}
+
+export function setQuestionSecondaryReview(id, payload) {
+  return apiRequest(`/questions/${id}/secondary-review`, { method: 'POST', body: payload });
 }
 
 export function getReviewDashboard() {

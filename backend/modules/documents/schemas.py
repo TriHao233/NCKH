@@ -29,6 +29,12 @@ class DocumentUpdateRequest(BaseModel):
     chapter_id: str | None = None
 
 
+class DocumentSharingRequest(BaseModel):
+    owner_user_id: str | None = None
+    shared_with_user_ids: list[str] = Field(default_factory=list, max_length=100)
+    shared_scope: str = Field("PRIVATE", pattern="^(PRIVATE|SUBJECT)$")
+
+
 class DocumentResponse(BaseModel):
     id: str
     title: str
@@ -37,6 +43,8 @@ class DocumentResponse(BaseModel):
     subject_id: str | None
     chapter_id: str | None
     uploaded_by_user_id: str | None
+    shared_with_user_ids: list[str] = Field(default_factory=list)
+    shared_scope: str = "PRIVATE"
     current_version: int
     page_count: int | None
     artifacts: list[dict[str, Any]]

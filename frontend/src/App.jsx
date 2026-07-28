@@ -21,22 +21,22 @@ import TaskCalendarPage from './pages/TaskCalendarPage';
 import ExamListPage from './pages/ExamListPage';
 import ExamBuilderPage from './pages/ExamBuilderPage';
 import { AuthContext } from './context/AuthContext';
-import { rolesForPath } from './auth/permissions';
+import { canAccessPath } from './auth/permissions';
 
-function RequireRole({ roles, children }) {
+function RequireAccess({ path, children }) {
     const { user, loading } = useContext(AuthContext);
     const location = useLocation();
     if (loading) return <div className="route-loading">Đang kiểm tra phiên đăng nhập...</div>;
     if (!user) return <Navigate to="/dang-nhap" replace state={{ from: `${location.pathname}${location.search}` }} />;
-    if (!roles.includes(user.role)) return <Navigate to="/trang-chu" replace />;
+    if (!canAccessPath(user, path)) return <Navigate to="/trang-chu" replace />;
     return children;
 }
 
 function ProtectedPage({ path, children }) {
     return (
-        <RequireRole roles={rolesForPath(path) || []}>
+        <RequireAccess path={path}>
             {children}
-        </RequireRole>
+        </RequireAccess>
     );
 }
 

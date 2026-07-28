@@ -330,6 +330,27 @@
   font-size: 0.82rem;
 }
 
+.auth-notice {
+  margin: -8px 0 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.auth-notice--error {
+  color: #8a1f1f;
+  background: #fff2f2;
+  border: 1px solid #f3b9b9;
+}
+
+.auth-notice--info,
+.auth-notice--success {
+  color: #155a7a;
+  background: #edf8fd;
+  border: 1px solid #b9dfef;
+}
+
 /* Google button */
 .btn-google {
   display: flex;

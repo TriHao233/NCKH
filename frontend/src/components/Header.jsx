@@ -152,7 +152,7 @@ const Header = () => {
   const visibleNavGroups = navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !role || canAccessPath(role, item.path)),
+      items: group.items.filter((item) => !role || canAccessPath(user, item.path)),
     }))
     .filter((group) => group.id === 'public' || (signedIn && group.items.length > 0));
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;

@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from main import app
 from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, effective_permissions, require_permissions
 from core import job_recovery
 from modules.admin import jobs_service as admin_jobs_module
 from modules.admin.jobs_service import (
@@ -43,7 +43,7 @@ from modules.catalog.service import CatalogService
 from modules.notifications.service import NotificationService
 from modules.auth import login as auth_login
 from modules.documents.repository import MongoDocumentRepository
-from modules.documents.schemas import DocumentPageUpdateRequest, DocumentStatus
+from modules.documents.schemas import DocumentPageUpdateRequest, DocumentSharingRequest, DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
 from modules.exams.pdf_service import render_exam_docx
@@ -69,6 +69,7 @@ from modules.generation.question import _build_retry_prompt, _check_type_format
 from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionResponse,
+    QuestionSharingRequest,
     QuestionSourceViewerResponse,
     QuestionUpdateRequest,
 )
@@ -78,9 +79,11 @@ from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     MoodlePublicationRequest,
+    QuestionCommentCreateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
     ReviewOverride,
+    SecondaryReviewRequest,
 )
 from modules.questions import workflow_service as question_workflow_module
 from modules.questions.workflow_service import QuestionWorkflowService
@@ -90,11 +93,13 @@ from modules.users.schemas import (
     PublicRegisterRequest,
     RoleEnum,
     UserAdminUpdateRequest,
+    UserImportRequest,
+    UserInviteRequest,
 )
 from modules.users.service import UserService
 
 
-def _current_user(role="Teacher", user_id=None):
+def _current_user(role="Teacher", user_id=None, permissions=None):
     oid = user_id or ObjectId()
     return CurrentUser(
         id=oid,
@@ -102,6 +107,7 @@ def _current_user(role="Teacher", user_id=None):
         email=f"{role.lower()}@example.com",
         role=role,
         is_active=True,
+        permissions=tuple(permissions or ()),
     )
 
 
@@ -233,6 +239,29 @@ class FakeUserRepository:
     def find_by_id(self, user_id):
         return self.users.get(str(user_id))
 
+    def find_by_firebase_uid(self, firebase_uid):
+        return next(
+            (user for user in self.users.values() if user.get("firebase_uid") == firebase_uid),
+            None,
+        )
+
+    def create(self, data):
+        now = datetime.now(timezone.utc)
+        user = {
+            "_id": ObjectId(),
+            "firebase_uid": data["firebase_uid"],
+            "email": data["email"].lower(),
+            "display_name": data["display_name"],
+            "role": data.get("role", "Teacher"),
+            "permissions": data.get("permissions") or [],
+            "profile": data.get("profile") or {"school": "", "address": "", "avatar": ""},
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.users[str(user["_id"])] = user
+        return user
+
     def list(self, page, page_size, role, search):
         records = list(self.users.values())
         if role:
@@ -262,17 +291,28 @@ class FakeUserRepository:
             if user.get("role") == "Admin" and user.get("is_active", True)
         ])
 
+    def delete_by_id(self, user_id):
+        self.users.pop(str(user_id), None)
+
 
 class FakeIdentityGateway:
     def __init__(self):
         self.disabled_calls = []
         self.update_calls = []
+        self.created = []
+        self.reset_links = []
 
     def create_user(self, *, email, password, display_name):
-        raise NotImplementedError
+        uid = f"firebase-{len(self.created) + 1}"
+        self.created.append({"uid": uid, "email": email, "password": password, "display_name": display_name})
+        return type("FirebaseUser", (), {"uid": uid})()
 
     def update_user(self, firebase_uid, **fields):
         self.update_calls.append((firebase_uid, fields))
+
+    def generate_password_reset_link(self, email):
+        self.reset_links.append(email)
+        return f"https://reset.example/{email}"
 
     def set_user_disabled(self, firebase_uid, disabled):
         self.disabled_calls.append((firebase_uid, disabled))
@@ -513,6 +553,15 @@ class FakeCatalogDatabase:
 class SchemaV2Tests(unittest.TestCase):
     def test_only_admin_teacher_and_reviewer_roles_exist(self):
         self.assertEqual({role.value for role in RoleEnum}, {"Admin", "Teacher", "Reviewer"})
+
+    def test_require_permissions_allows_explicit_permission_without_admin_role(self):
+        permissions = effective_permissions({"role": "Teacher", "permissions": ["admin.users"]})
+        user_admin = _current_user("Teacher", permissions=permissions)
+
+        self.assertIs(require_permissions("admin.users")(user_admin), user_admin)
+        with self.assertRaises(HTTPException) as ctx:
+            require_permissions("admin.catalog")(user_admin)
+        self.assertEqual(ctx.exception.status_code, 403)
 
     def test_public_register_cannot_choose_role(self):
         with self.assertRaises(ValidationError):
@@ -1033,6 +1082,117 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(repository.created_version["origin"], "MANUAL")
         self.assertEqual(source_question["review_status"], "APPROVED")
 
+    def test_question_sharing_allows_read_without_write(self):
+        owner = _current_user("Teacher")
+        shared_teacher = _current_user("Teacher")
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-SHARE",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "NOT_STARTED",
+            "review_status": "DRAFT",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {},
+            "review_assignment": {"status": "UNASSIGNED"},
+            "shared_with_user_ids": [shared_teacher.id],
+            "shared_scope": "PRIVATE",
+            "latest_review_id": None,
+            "created_by_user_id": owner.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
+        version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": owner.id,
+            "generated_by_model_id": None,
+            "classification": {"subject": {"id": None}, "chapter": {"id": None}, "assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}, "difficulty": None},
+            "clos": [],
+            "content": "Shared question",
+            "question_data": {},
+            "sources": [],
+            "keywords": [],
+            "content_hash": "share-hash",
+            "change_note": "Initial version",
+            "created_at": now,
+        }
+
+        class SharingRepository:
+            def __init__(self):
+                self.fields = None
+
+            def find_pair(self, _question_id):
+                return question, version
+
+            def update_sharing(self, _question_id, fields):
+                self.fields = fields
+                question.update(fields)
+                return question, version
+
+        repository = SharingRepository()
+        service = QuestionService(repository=repository, references=object())
+
+        self.assertEqual(service.get(str(question_id), shared_teacher)["id"], str(question_id))
+        with self.assertRaises(PermissionError):
+            service.update(
+                str(question_id),
+                QuestionUpdateRequest(expected_version=1, content="Edited"),
+                shared_teacher.id,
+                actor_role="Teacher",
+            )
+        updated = service.update_sharing(
+            str(question_id),
+            QuestionSharingRequest(shared_with_user_ids=[str(shared_teacher.id)], shared_scope="SUBJECT"),
+            owner,
+        )
+        self.assertEqual(updated["shared_scope"], "SUBJECT")
+        self.assertEqual(repository.fields["shared_scope"], "SUBJECT")
+
+    def test_question_create_with_explicit_permission_still_checks_document_access(self):
+        owner = _current_user("Teacher")
+        actor = _current_user("Reviewer", permissions=["questions.generate"])
+        document_id = ObjectId()
+
+        class References:
+            def find_document(self, _document_id):
+                return {
+                    "_id": document_id,
+                    "title": "Private source",
+                    "original_filename": "private.pdf",
+                    "uploaded_by_user_id": owner.id,
+                    "shared_with_user_ids": [],
+                    "shared_scope": "PRIVATE",
+                }
+
+            def find_chunk(self, _chunk_id):
+                return None
+
+        service = QuestionService(repository=object(), references=References())
+
+        with self.assertRaises(PermissionError):
+            service.create(
+                QuestionCreateRequest(
+                    content="Question from a private document",
+                    document_id=str(document_id),
+                ),
+                actor.id,
+                actor_role=actor.role,
+                current_user=actor,
+            )
+
     def test_reviewer_must_hold_active_review_lock(self):
         service = QuestionWorkflowService(database=None)
         reviewer_id = ObjectId()
@@ -1198,6 +1358,129 @@ class SchemaV2Tests(unittest.TestCase):
             [event["action"] for event in db.audit_logs.records],
             ["QUESTION_REVIEW_ASSIGNED", "QUESTION_REVIEW_CLAIMED", "QUESTION_APPROVED"],
         )
+
+    def test_secondary_review_requires_a_different_reviewer_and_comments_notify_mentions(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        second_reviewer = _current_user("Reviewer")
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": teacher.id,
+            "generated_by_model_id": None,
+            "classification": {
+                "subject": {"id": None},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 2},
+                "difficulty": None,
+            },
+            "clos": [],
+            "content": "Queue follows which rule?",
+            "question_data": {"options": {"A": "FIFO"}, "correct_answer": "A"},
+            "sources": [],
+            "keywords": [],
+            "content_hash": "hash-secondary",
+            "change_note": "Initial version",
+            "created_at": now,
+        }
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-SECONDARY",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "PENDING",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {"overall_score": 0.9, "color": "GREEN"},
+            "review_assignment": {"status": "UNASSIGNED"},
+            "latest_review_id": None,
+            "created_by_user_id": teacher.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
+
+        class FakeWorkflowDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([question])
+                self.question_versions = InMemoryCollection([version])
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": teacher.id, "role": "Teacher", "is_active": True},
+                        {"_id": reviewer.id, "role": "Reviewer", "is_active": True},
+                        {"_id": second_reviewer.id, "role": "Reviewer", "is_active": True},
+                    ]
+                )
+                self.question_reviews = InMemoryCollection()
+                self.question_comments = InMemoryCollection()
+                self.audit_logs = InMemoryCollection()
+                self.notifications = InMemoryCollection()
+
+        db = FakeWorkflowDatabase()
+        original_transaction = question_workflow_module.mongo_transaction
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            service = QuestionWorkflowService(db)
+
+            service.claim_review(str(question_id), reviewer)
+            primary = service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    secondary_required=True,
+                    secondary_reason="Câu quan trọng",
+                ),
+                reviewer,
+            )
+            after_primary = dict(db.questions.find_one({"_id": question_id}))
+            service.claim_review(str(question_id), reviewer)
+            with self.assertRaises(ValueError):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    reviewer,
+                )
+            service.release_review(str(question_id), reviewer)
+            service.claim_review(str(question_id), second_reviewer)
+            secondary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                second_reviewer,
+            )
+            comment = service.add_comment(
+                str(question_id),
+                QuestionCommentCreateRequest(
+                    body="Nhờ giảng viên xem thêm ghi chú này",
+                    mention_user_ids=[str(teacher.id)],
+                ),
+                second_reviewer,
+            )
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+
+        self.assertEqual(primary["resulting_status"], "PENDING")
+        self.assertEqual(after_primary["review_status"], "PENDING")
+        self.assertEqual(after_primary["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(secondary["review_stage"], "SECONDARY")
+        final_question = db.questions.find_one({"_id": question_id})
+        self.assertEqual(final_question["review_status"], "APPROVED")
+        self.assertEqual(final_question["approved_version_id"], version_id)
+        self.assertEqual(final_question["secondary_review"]["status"], "COMPLETED")
+        self.assertEqual(comment["body"], "Nhờ giảng viên xem thêm ghi chú này")
+        self.assertEqual(db.notifications.records[-1]["type"], "QUESTION_MENTION")
 
     def test_auto_evaluation_requires_expected_version(self):
         with self.assertRaises(ValidationError):
@@ -1821,6 +2104,82 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(result["items"][0]["error"]["message"], "OCR timeout")
         self.assertTrue(result["items"][0]["can_retry"])
         self.assertFalse(result["items"][0]["can_cancel"])
+
+    def test_document_sharing_allows_read_and_limits_transfer_to_admin(self):
+        owner = _current_user("Teacher")
+        shared_teacher = _current_user("Teacher")
+        new_owner = _current_user("Teacher")
+        admin = _current_user("Admin", permissions=effective_permissions({"role": "Admin"}))
+        document_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeDocumentSharingRepository:
+            def __init__(self):
+                self.document = {
+                    "_id": document_id,
+                    "title": "Shared source",
+                    "original_filename": "shared.pdf",
+                    "status": "READY",
+                    "subject_id": None,
+                    "chapter_id": None,
+                    "uploaded_by_user_id": owner.id,
+                    "shared_with_user_ids": [],
+                    "shared_scope": "PRIVATE",
+                    "current_version": 1,
+                    "page_count": 1,
+                    "artifacts": [],
+                    "current_processing": {},
+                    "pipeline_summary": {},
+                    "latest_error": None,
+                    "created_at": now,
+                    "updated_at": now,
+                    "archived_at": None,
+                }
+                self.fields = None
+
+            def find_by_id(self, _document_id):
+                return self.document
+
+            def update(self, _document_id, fields):
+                normalized = dict(fields)
+                if normalized.get("owner_user_id"):
+                    normalized["uploaded_by_user_id"] = ObjectId(normalized.pop("owner_user_id"))
+                if normalized.get("uploaded_by_user_id"):
+                    normalized["uploaded_by_user_id"] = ObjectId(normalized["uploaded_by_user_id"])
+                if "shared_with_user_ids" in normalized:
+                    normalized["shared_with_user_ids"] = [
+                        ObjectId(user_id) for user_id in normalized.get("shared_with_user_ids") or []
+                    ]
+                self.fields = normalized
+                self.document.update(normalized)
+                return self.document
+
+        repository = FakeDocumentSharingRepository()
+        service = DocumentService(repository)
+
+        with self.assertRaises(PermissionError):
+            service.update_sharing(
+                str(document_id),
+                DocumentSharingRequest(owner_user_id=str(new_owner.id)),
+                owner,
+            )
+        shared = service.update_sharing(
+            str(document_id),
+            DocumentSharingRequest(
+                shared_with_user_ids=[str(shared_teacher.id)],
+                shared_scope="SUBJECT",
+            ),
+            owner,
+        )
+        self.assertEqual(shared["shared_scope"], "SUBJECT")
+        self.assertEqual(service.get(str(document_id), shared_teacher)["id"], str(document_id))
+
+        transferred = service.update_sharing(
+            str(document_id),
+            DocumentSharingRequest(owner_user_id=str(new_owner.id)),
+            admin,
+        )
+        self.assertEqual(transferred["uploaded_by_user_id"], str(new_owner.id))
 
     def test_document_pages_enforce_document_ownership(self):
         owner = _current_user("Teacher")
@@ -2905,6 +3264,59 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertNotIn(str(teacher["_id"]), {item["id"] for item in result["items"]})
         self.assertNotIn(str(inactive_reviewer["_id"]), {item["id"] for item in result["items"]})
 
+    def test_user_service_invites_resets_and_imports_users(self):
+        admin = _current_user("Admin")
+        repository = FakeUserRepository([])
+        identity = FakeIdentityGateway()
+        service = UserService(repository, identity, FakeSessions())
+
+        invited = service.invite_user(
+            UserInviteRequest(
+                email="new.teacher@example.com",
+                display_name="New Teacher",
+                role="Teacher",
+                permissions=["questions.generate", "questions.generate", ""],
+            ),
+            admin,
+        )
+
+        self.assertEqual(invited["user"]["email"], "new.teacher@example.com")
+        self.assertIn("questions.generate", invited["user"]["permissions"])
+        self.assertEqual(invited["reset_link"], "https://reset.example/new.teacher@example.com")
+        self.assertEqual(len(identity.created), 1)
+
+        reset = service.reset_password(invited["user"]["id"], admin)
+        self.assertEqual(reset["reset_link"], "https://reset.example/new.teacher@example.com")
+
+        imported = service.import_users(
+            UserImportRequest(
+                users=[
+                    {
+                        "email": "reviewer.import@example.com",
+                        "display_name": "Reviewer Import",
+                        "role": "Reviewer",
+                    }
+                ]
+            ),
+            admin,
+        )
+        self.assertEqual(imported["created"], 1)
+        self.assertEqual(imported["failed"], 0)
+
+    def test_user_admin_update_persists_fine_grained_permissions(self):
+        teacher = _user_doc("Teacher", True)
+        identity = FakeIdentityGateway()
+        service = UserService(FakeUserRepository([teacher]), identity, FakeSessions())
+
+        updated = service.update_admin(
+            str(teacher["_id"]),
+            UserAdminUpdateRequest(permissions=["reviews.manage", "reviews.manage", ""]),
+            _current_user("Admin"),
+        )
+
+        self.assertIn("reviews.manage", updated["permissions"])
+        self.assertEqual(identity.update_calls, [])
+
     def test_catalog_lifecycle_counts_usage_and_blocks_duplicate_codes(self):
         subject_id = ObjectId()
         other_subject_id = ObjectId()
@@ -3983,6 +4395,20 @@ class SchemaV2Tests(unittest.TestCase):
                     "reviewed_at": now - timedelta(days=2),
                 },
             ],
+            question_evaluations=[
+                {
+                    "_id": ObjectId(),
+                    "question_version_id": version_ids[0],
+                    "passed": True,
+                    "created_at": now - timedelta(hours=1),
+                },
+                {
+                    "_id": ObjectId(),
+                    "question_version_id": version_ids[1],
+                    "passed": True,
+                    "created_at": now - timedelta(hours=2),
+                },
+            ],
             audit_logs=[
                 {
                     "action": "QUESTION_APPROVED",
@@ -4018,6 +4444,10 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(dashboard["performance"]["override_count"], 1)
         self.assertEqual(dashboard["performance"]["revision_issues"], 1)
         self.assertEqual(dashboard["performance"]["average_review_hours"], 3.0)
+        self.assertEqual(dashboard["calibration"]["sample_size"], 2)
+        self.assertEqual(dashboard["calibration"]["agreements"], 1)
+        self.assertEqual(dashboard["calibration"]["disagreements"], 1)
+        self.assertEqual(dashboard["calibration"]["ai_passed_but_not_approved"], 1)
         self.assertEqual(dashboard["subjects"][0]["label"], "CTDL")
         self.assertEqual(dashboard["subjects"][0]["reviewed"], 2)
 

@@ -11,8 +11,10 @@ from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     MoodlePublicationRequest,
+    QuestionCommentCreateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    SecondaryReviewRequest,
 )
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
@@ -152,6 +154,44 @@ def review_history(
 ):
     try:
         return {"items": service.history(question_id, "reviews", current_user)}
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/{question_id}/comments")
+def comment_thread(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.list_comments(question_id, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/comments", status_code=201)
+def add_question_comment(
+    question_id: str,
+    payload: QuestionCommentCreateRequest,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.add_comment(question_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/{question_id}/secondary-review")
+def set_secondary_review(
+    question_id: str,
+    payload: SecondaryReviewRequest,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.set_secondary_review(question_id, payload, current_user)
     except Exception as exc:
         _translate_workflow_error(exc)
 

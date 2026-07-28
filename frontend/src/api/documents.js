@@ -45,6 +45,10 @@ export function updateDocument(id, payload) {
   return apiRequest(`/documents/${id}`, { method: 'PATCH', body: payload });
 }
 
+export function updateDocumentSharing(id, payload) {
+  return apiRequest(`/documents/${id}/sharing`, { method: 'PATCH', body: payload });
+}
+
 export function deleteDocument(id) {
   return apiRequest(`/documents/${id}`, { method: 'DELETE' });
 }

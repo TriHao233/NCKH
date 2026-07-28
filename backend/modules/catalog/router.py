@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_admin, require_teacher_reviewer_or_admin
+from core.dependencies import CurrentUser, require_permissions, require_teacher_reviewer_or_admin
 from modules.catalog.schemas import (
     AiModelActivationPayload,
     AiModelHealthCheckPayload,
@@ -42,7 +42,7 @@ def catalog_overview(
 
 @router.get("/runtime-config")
 def runtime_config(
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.runtime_config()
@@ -59,7 +59,7 @@ def list_subjects(
 @router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def upsert_subject(
     payload: SubjectPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -72,7 +72,7 @@ def upsert_subject(
 def update_subject(
     subject_id: str,
     payload: SubjectUpdatePayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -85,7 +85,7 @@ def update_subject(
 def add_chapter(
     subject_id: str,
     payload: ChapterPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -99,7 +99,7 @@ def update_chapter(
     subject_id: str,
     chapter_id: str,
     payload: ChapterUpdatePayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -112,7 +112,7 @@ def update_chapter(
 def add_learning_outcome(
     subject_id: str,
     payload: LearningOutcomePayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -126,7 +126,7 @@ def update_learning_outcome(
     subject_id: str,
     clo_id: str,
     payload: LearningOutcomeUpdatePayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -137,7 +137,7 @@ def update_learning_outcome(
 
 @router.get("/ai-models")
 def list_ai_models(
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return {"items": service.list_ai_models()}
@@ -146,7 +146,7 @@ def list_ai_models(
 @router.post("/ai-models", status_code=status.HTTP_201_CREATED)
 def upsert_ai_model(
     payload: AiModelPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.upsert_ai_model(payload)
@@ -155,7 +155,7 @@ def upsert_ai_model(
 @router.post("/ai-models/active")
 def set_ai_model_active(
     payload: AiModelActivationPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -167,7 +167,7 @@ def set_ai_model_active(
 @router.post("/ai-models/health-check")
 async def check_ai_model_health(
     payload: AiModelHealthCheckPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return await service.check_ai_model_health(payload)
@@ -175,7 +175,7 @@ async def check_ai_model_health(
 
 @router.get("/prompt-templates")
 def list_prompt_templates(
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return {"items": service.list_prompt_templates()}
@@ -184,7 +184,7 @@ def list_prompt_templates(
 @router.post("/prompt-templates", status_code=status.HTTP_201_CREATED)
 def save_prompt_template(
     payload: PromptTemplatePayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.save_prompt_template(payload)
@@ -193,7 +193,7 @@ def save_prompt_template(
 @router.post("/prompt-templates/active")
 def activate_prompt_template(
     payload: PromptTemplateActivationPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -205,7 +205,7 @@ def activate_prompt_template(
 @router.post("/prompt-templates/test-build")
 def test_prompt_template(
     payload: PromptTemplateTestPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -216,7 +216,7 @@ def test_prompt_template(
 
 @router.get("/evaluation-policies")
 def list_evaluation_policies(
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return {"items": service.list_evaluation_policies()}
@@ -225,7 +225,7 @@ def list_evaluation_policies(
 @router.post("/evaluation-policies", status_code=status.HTTP_201_CREATED)
 def save_evaluation_policy(
     payload: EvaluationPolicyPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.save_evaluation_policy(payload)
@@ -234,7 +234,7 @@ def save_evaluation_policy(
 @router.post("/evaluation-policies/active")
 def activate_evaluation_policy(
     payload: EvaluationPolicyActivationPayload,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:

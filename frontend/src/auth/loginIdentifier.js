@@ -30,6 +30,27 @@ export function validateLoginIdentifier(value, demoLoginEnabled = false) {
     : 'Vui lòng nhập email hợp lệ, ví dụ: example@ctu.edu.vn.';
 }
 
+function readableErrorDetail(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map(readableErrorDetail).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    return readableErrorDetail(value.message)
+      || readableErrorDetail(value.msg)
+      || readableErrorDetail(value.detail)
+      || (() => {
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return '';
+        }
+      })();
+  }
+  return String(value);
+}
+
 export function loginErrorMessage(error, demoLoginEnabled = false) {
   if (
     error?.code === 'auth/invalid-credential'
@@ -43,5 +64,9 @@ export function loginErrorMessage(error, demoLoginEnabled = false) {
       ? 'Email không hợp lệ. Bạn có thể nhập email đầy đủ hoặc tài khoản demo admin/reviewer.'
       : 'Email không hợp lệ. Vui lòng nhập email đầy đủ, ví dụ: example@ctu.edu.vn.';
   }
-  return `Đăng nhập thất bại: ${error?.message || 'Lỗi không xác định'}`;
+  const message = readableErrorDetail(error?.payload?.detail)
+    || readableErrorDetail(error?.payload?.message)
+    || readableErrorDetail(error?.message)
+    || 'Lỗi không xác định';
+  return `Đăng nhập thất bại: ${message}`;
 }

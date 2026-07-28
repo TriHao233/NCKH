@@ -47,6 +47,8 @@ def serialize_document(document: dict) -> dict:
             "subject_id": document.get("subject_id"),
             "chapter_id": document.get("chapter_id"),
             "uploaded_by_user_id": document.get("uploaded_by_user_id"),
+            "shared_with_user_ids": document.get("shared_with_user_ids") or [],
+            "shared_scope": document.get("shared_scope") or "PRIVATE",
             "current_version": document.get("current_version", 1),
             "page_count": document.get("page_count"),
             "artifacts": document.get("artifacts") or [],
@@ -111,6 +113,7 @@ class DocumentRepository(Protocol):
         search: str | None,
         *,
         uploaded_by_user_id: ObjectId | None = None,
+        visible_to_user_id: ObjectId | None = None,
     ) -> tuple[list[dict], int]: ...
 
     def update(self, document_id: str | ObjectId, fields: dict) -> dict | None: ...
@@ -211,6 +214,8 @@ class MongoDocumentRepository:
             "subject_id": subject_id,
             "chapter_id": chapter_id,
             "uploaded_by_user_id": uploaded_by_user_id,
+            "shared_with_user_ids": [],
+            "shared_scope": "PRIVATE",
             "title": data["title"],
             "original_filename": data["original_filename"],
             "status": "UPLOADED",
@@ -253,17 +258,35 @@ class MongoDocumentRepository:
         search: str | None,
         *,
         uploaded_by_user_id: ObjectId | None = None,
+        visible_to_user_id: ObjectId | None = None,
     ) -> tuple[list[dict], int]:
         query: dict = {"schema_version": SCHEMA_VERSION, "archived_at": None}
         if uploaded_by_user_id is not None:
             query["uploaded_by_user_id"] = uploaded_by_user_id
+        filters = []
+        if visible_to_user_id is not None:
+            filters.append(
+                {
+                    "$or": [
+                        {"uploaded_by_user_id": visible_to_user_id},
+                        {"shared_with_user_ids": visible_to_user_id},
+                        {"shared_scope": "SUBJECT"},
+                    ]
+                }
+            )
         if status:
             query["status"] = status
         if search:
-            query["$or"] = [
-                {"title": {"$regex": search, "$options": "i"}},
-                {"original_filename": {"$regex": search, "$options": "i"}},
-            ]
+            filters.append(
+                {
+                    "$or": [
+                        {"title": {"$regex": search, "$options": "i"}},
+                        {"original_filename": {"$regex": search, "$options": "i"}},
+                    ]
+                }
+            )
+        if filters:
+            query["$and"] = filters
         total = self.collection.count_documents(query)
         records = list(
             self.collection.find(query)
@@ -282,6 +305,16 @@ class MongoDocumentRepository:
             normalized["subject_id"] = object_id(normalized["subject_id"], "subject_id")
         if "chapter_id" in normalized:
             normalized["chapter_id"] = object_id(normalized["chapter_id"], "chapter_id")
+        if "uploaded_by_user_id" in normalized and normalized["uploaded_by_user_id"] is not None:
+            normalized["uploaded_by_user_id"] = object_id(
+                normalized["uploaded_by_user_id"],
+                "owner_user_id",
+            )
+        if "shared_with_user_ids" in normalized:
+            normalized["shared_with_user_ids"] = [
+                object_id(user_id, "shared_with_user_id")
+                for user_id in normalized.get("shared_with_user_ids") or []
+            ]
         self.validate_subject_chapter(
             normalized.get("subject_id", current.get("subject_id")),
             normalized.get("chapter_id", current.get("chapter_id")),

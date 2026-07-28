@@ -38,3 +38,14 @@ test('Firebase invalid-email is converted to a user-facing login message', () =>
     'Email hoặc mật khẩu không chính xác!',
   );
 });
+
+test('login errors render structured API details instead of object placeholders', () => {
+  assert.match(
+    loginErrorMessage({ message: { detail: [{ msg: 'Token khÃ´ng há»£p lá»‡' }] } }, false),
+    /Token khÃ´ng há»£p lá»‡/,
+  );
+  assert.doesNotMatch(
+    loginErrorMessage({ payload: { detail: { msg: 'PhiÃªn Ä‘Äƒng nháº­p háº¿t háº¡n' } } }, false),
+    /\[object Object\]/,
+  );
+});
