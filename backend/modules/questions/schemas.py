@@ -46,6 +46,11 @@ class QuestionUpdateRequest(BaseModel):
     change_note: str = Field("Question edited", min_length=1, max_length=500)
 
 
+class QuestionSharingRequest(BaseModel):
+    shared_with_user_ids: list[str] = Field(default_factory=list, max_length=100)
+    shared_scope: str = Field("PRIVATE", pattern="^(PRIVATE|SUBJECT)$")
+
+
 class QuestionResponse(BaseModel):
     id: str
     question_code: str
@@ -65,6 +70,9 @@ class QuestionResponse(BaseModel):
     content_hash: str
     quality_summary: dict[str, Any]
     review_assignment: dict[str, Any] = Field(default_factory=dict)
+    shared_with_user_ids: list[str] = Field(default_factory=list)
+    shared_scope: str = "PRIVATE"
+    secondary_review: dict[str, Any] = Field(default_factory=dict)
     latest_review_id: str | None
     created_at: datetime
     updated_at: datetime

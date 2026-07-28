@@ -5,6 +5,49 @@ export const PERMISSIONS = Object.freeze({
   authenticated: Object.freeze(["Admin", "Teacher", "Reviewer"]),
 });
 
+export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
+  Admin: Object.freeze([
+    "admin.overview",
+    "admin.users",
+    "admin.catalog",
+    "admin.audit",
+    "admin.jobs",
+    "admin.moodle",
+    "documents.manage_all",
+    "questions.manage_all",
+    "questions.use_shared_bank",
+    "reviews.manage",
+  ]),
+  Teacher: Object.freeze([
+    "documents.manage_own",
+    "questions.generate",
+    "questions.manage_own",
+    "questions.share_bank",
+    "questions.use_shared_bank",
+    "exams.manage_own",
+  ]),
+  Reviewer: Object.freeze([
+    "reviews.manage",
+    "questions.read_review_queue",
+    "questions.comment",
+    "questions.export_moodle",
+  ]),
+});
+
+export const ROUTE_PERMISSION_KEYS = Object.freeze({
+  "/sinh-cau-hoi": Object.freeze(["questions.generate"]),
+  "/quan-ly": Object.freeze(["questions.manage_own"]),
+  "/lam-de-thi": Object.freeze(["exams.manage_own"]),
+  "/lam-de-thi/:examId": Object.freeze(["exams.manage_own"]),
+  "/kiem-duyet": Object.freeze(["reviews.manage"]),
+  "/tong-quan": Object.freeze(["admin.overview"]),
+  "/danh-muc": Object.freeze(["admin.catalog"]),
+  "/quan-ly-nguoi-dung": Object.freeze(["admin.users"]),
+  "/nhat-ky-he-thong": Object.freeze(["admin.audit"]),
+  "/quan-ly-job": Object.freeze(["admin.jobs"]),
+  "/quan-ly-moodle": Object.freeze(["admin.moodle"]),
+});
+
 export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/sinh-cau-hoi": PERMISSIONS.teacherWorkspace,
   "/quan-ly": PERMISSIONS.teacherWorkspace,
@@ -47,9 +90,28 @@ export function rolesForPath(pathname) {
   return entry?.[1] || null;
 }
 
-export function canAccessPath(role, pathname) {
+export function permissionsForUser(userOrRole) {
+  const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
+  const explicit = typeof userOrRole === "string" ? [] : (userOrRole?.permissions || []);
+  return Array.from(new Set([...(ROLE_DEFAULT_PERMISSIONS[role] || []), ...explicit]));
+}
+
+export function permissionsForPath(pathname) {
+  const entry = Object.entries(ROUTE_PERMISSION_KEYS).find(([pattern]) => (
+    pathMatches(pattern, pathname)
+  ));
+  return entry?.[1] || null;
+}
+
+export function canAccessPath(userOrRole, pathname) {
   const roles = rolesForPath(pathname);
-  return !roles || roles.includes(role);
+  if (!roles) return true;
+  const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
+  if (roles.includes(role)) return true;
+  const requiredPermissions = permissionsForPath(pathname);
+  if (!requiredPermissions?.length) return false;
+  const permissions = permissionsForUser(userOrRole);
+  return requiredPermissions.every((permission) => permissions.includes(permission));
 }
 
 export function landingPathForRole(role, requestedPath) {

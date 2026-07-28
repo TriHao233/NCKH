@@ -1,10 +1,10 @@
 # Phân tích tổng quan hệ thống và backlog ưu tiên theo vai trò
 
-Cập nhật: 2026-07-27
+Cập nhật: 2026-07-28
 
 ## Handoff nhanh cho chat tiếp theo
 
-**Trạng thái mới nhất 2026-07-27:**
+**Trạng thái mới nhất 2026-07-28:**
 
 - Đã hoàn tất `P1-TEA-02 — Quản lý pipeline tài liệu`.
 - Đã audit/chốt `P1-TEA-03 — Hoàn thiện exam lifecycle`.
@@ -34,6 +34,13 @@ Cập nhật: 2026-07-27
 - Đã hoàn thiện/chốt `P2-TEA-04 — Hỗ trợ DOCX thật khi upload tài liệu`.
 - Đã hoàn thiện/chốt `P2-TEA-05 — Export đề DOCX bên cạnh PDF`.
 - Đã hoàn thiện/chốt `P2-TEA-06 — Dashboard độ phủ Bloom/CLO/chương`.
+- Đã hoàn thiện/chốt `P2-ADM-01 — Mời user/reset password/import user hàng loạt`.
+- Đã hoàn thiện/chốt `P2-ADM-02 — Phân quyền chi tiết theo permission`.
+- Đã hoàn thiện/chốt `P2-ADM-03 — Ownership/chia sẻ/chuyển giao tài liệu`.
+- Đã hoàn thiện/chốt `P2-REV-02 — Comment thread và mention`.
+- Đã hoàn thiện/chốt `P2-REV-03 — Secondary review/two-person approval`.
+- Đã hoàn thiện/chốt `P2-REV-04 — Calibration giữa Reviewer và AI`.
+- Đã hoàn thiện/chốt `P2-TEA-07 — Chia sẻ ngân hàng câu hỏi trong cùng môn/bộ môn`.
 - Đã hoàn thiện/chốt `P2-ADM-04 — Báo cáo sử dụng model/token/latency/chi phí`.
 - Đã hoàn thiện/chốt `P2-ADM-05 — Export báo cáo CSV/XLSX`.
 - Checklist `P1-TEA-02` hiện đã xong 6/6:
@@ -90,21 +97,25 @@ Cập nhật: 2026-07-27
   - thêm export báo cáo CSV/XLSX cho Admin Jobs và Audit log, gom toàn bộ kết quả theo filter qua pagination trước khi tải file.
   - thêm import/export ngân hàng câu hỏi trong `ManagePage`: export danh sách đang lọc hoặc câu đã chọn sang CSV/XLSX/GIFT/XML Moodle; import CSV/XLSX/GIFT/XML thành câu hỏi qua API hiện có, có parser kiểm lỗi theo dòng và map môn/chương/CLO từ catalog.
   - mở rộng Operations Dashboard thành báo cáo model usage 30 ngày: tổng request, token input/output/total, latency trung bình, error rate và cost USD theo model/luồng.
+  - thêm API/UI Admin mời user, tạo link reset password và import user hàng loạt với quyền chi tiết.
+  - mở rộng RBAC thành permission map backend/frontend; admin routers dùng permission cụ thể như `admin.users`, `admin.catalog`, `admin.audit`, `admin.jobs`, `admin.moodle`.
+  - thêm ownership/share/transfer tài liệu và share question bank theo user hoặc theo môn, có audit và enforce read/write access.
+  - thêm comment thread, mention notification, secondary review hai người và dashboard calibration AI-vs-human cho Reviewer.
 - Đã kiểm tra sau thay đổi cuối:
-  - backend `python -m pytest tests/test_schema_v2.py -q`: `99 passed`
-  - frontend `npm --prefix frontend test`: `33 passed`
+  - backend `python -m pytest tests/test_schema_v2.py -q`: `107 passed`
+  - frontend `npm --prefix frontend test`: `36 passed`
   - frontend `npm --prefix frontend run build`: pass, còn warning bundle >500 kB của Vite.
   - `git diff --check`: không có whitespace error, chỉ còn warning LF sẽ được Git đổi sang CRLF trên Windows.
 
 **Còn lại theo backlog trong file này:**
 
 - Nếu tính `P0 + P1` core backlog: còn `0` epic/mục chưa chốt trong file.
-- Nếu tính cả `P2`: còn `7` epic/mục.
+- Nếu tính cả `P2`: còn `0` epic/mục trong nhóm app/backlog chức năng của file này.
 - Chi tiết:
   - `P0`: 7 mục (`P0-01` đến `P0-07`); đã chốt toàn bộ, còn 0 mục.
   - `P1`: 17 mục tổng; toàn bộ Teacher/Admin/Reviewer P1 đã audit/chốt, còn 0 mục.
-  - `P2`: 17 mục mở rộng/năng suất; `P2-REV-01`, `P2-REV-05`, `P2-TEA-01`, `P2-TEA-02`, `P2-TEA-03`, `P2-TEA-04`, `P2-TEA-05`, `P2-TEA-06`, `P2-ADM-04` và `P2-ADM-05` đã xong, còn 7 mục.
-- Ghi chú tiếp theo: P0/P1 core, `P2-REV-01`, `P2-REV-05`, `P2-TEA-01`, `P2-TEA-02`, `P2-TEA-03`, `P2-TEA-04`, `P2-TEA-05`, `P2-TEA-06`, `P2-ADM-04` và `P2-ADM-05` đã xong; nếu làm tiếp thì chuyển sang P2 mở rộng/năng suất còn lại.
+  - `P2`: 17 mục mở rộng/năng suất đã xong toàn bộ trong phạm vi app hiện tại; còn lại chỉ là nhóm hạ tầng chung/dài hạn ở mục 9.4.
+- Ghi chú tiếp theo: P0/P1/P2 chức năng chính đã chốt; nếu làm tiếp thì chuyển sang hạ tầng chung, production hardening hoặc P3 nâng cao.
 
 **Lưu ý repo:**
 
@@ -772,8 +783,14 @@ không chỉ current version/source document.
 ### 9.1. Admin
 
 - `P2-ADM-01`: mời user qua email, reset password, import user hàng loạt.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** backend có `/users/invite`, `/users/import` và `/users/{user_id}/password-reset`; service tạo Firebase user bằng mật khẩu tạm, sinh password reset link, rollback app/Firebase user nếu lỗi và ghi audit `user.invite`/`user.password_reset`. `UsersAdminPage` có chế độ mời qua email, modal import CSV, nút tạo link reset mật khẩu và hiển thị kết quả import/reset để Admin gửi cho người dùng. Test backend phủ invite/reset/import.
 - `P2-ADM-02`: phân quyền chi tiết theo permission thay vì chỉ ba role.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** `CurrentUser` có `permissions` hiệu lực, backend có `DEFAULT_ROLE_PERMISSIONS`, `effective_permissions`, `has_permission` và `require_permissions`; các router quản trị dùng permission cụ thể (`admin.overview`, `admin.users`, `admin.catalog`, `admin.audit`, `admin.jobs`, `admin.moodle`) thay vì chỉ role `Admin`. Frontend có route permission map dùng chung cho guard/menu, UI Admin chỉnh permission theo user và test bảo đảm explicit permission có thể mở route ngoài base role.
 - `P2-ADM-03`: quản lý ownership/chia sẻ/chuyển giao tài liệu.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** document schema/repository/service có `shared_with_user_ids`, `shared_scope` và endpoint `/documents/{document_id}/sharing`; owner có thể chia sẻ riêng/theo môn, Admin hoặc user có `documents.manage_all` có thể chuyển owner. `DocumentService` tách read access và manage access để user được chia sẻ xem/tái sử dụng nhưng không sửa/xóa/retry pipeline. `ManagePage` có modal chia sẻ/chuyển giao tài liệu và test backend phủ shared read + transfer chỉ Admin.
 - `P2-ADM-04`: báo cáo sử dụng model, token, latency và chi phí.
 
   **Đã hoàn thiện/chốt 2026-07-27:** `AdminOverviewService` trả thêm `model_usage_summary` và mở rộng `model_performance` theo cửa sổ 30 ngày với request/completed/failed/active, error rate, latency trung bình, prompt/completion/total tokens và `cost_usd`. Backend đọc nhiều path usage phổ biến (`usage`, `token_usage`, `execution.usage`, `billing`, `metrics`) và nếu chưa có cost trực tiếp thì có thể ước tính từ pricing trong `model.config`/`evaluator_model.config`. `AdminOverviewPage` hiển thị KPI model usage 30 ngày và bảng theo model/luồng có token + cost. Backend test mở rộng fixture overview để phủ token/cost trực tiếp và cost ước tính theo giá per-1K.
@@ -785,8 +802,14 @@ không chỉ current version/source document.
 
 - `P2-REV-01`: bulk review theo batch với audit từng item. **Đã audit/chốt 2026-07-27:** UI `ReviewQueuePage` có thao tác “Duyệt câu đạt tốt”, chọn batch tối đa 10 câu đang lọc thỏa `canReviewQuestion`, `evaluation_status=PASSED`, `quality_summary.color=GREEN`, xác nhận trước khi chạy và gọi `reviewQuestion` từng item với structured review form. Backend `QuestionWorkflowService.review` tạo `question_reviews` và audit log `QUESTION_APPROVED` riêng cho từng câu trong transaction, nên mỗi item có dấu vết audit độc lập.
 - `P2-REV-02`: comment thread và mention.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** backend thêm collection/route comment thread qua `/questions/{question_id}/comments`, validate mention user active, ghi audit `QUESTION_COMMENT_ADDED` và tạo notification `QUESTION_MENTION` với deep link theo role. `ReviewQueuePage` hiển thị thread, form bình luận, chọn mention Teacher/Reviewer/Admin và refresh sau khi gửi. Test backend phủ comment + mention notification.
 - `P2-REV-03`: secondary review/two-person approval cho câu quan trọng.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** `ReviewCreateRequest` có `secondary_required`/`secondary_reason`; review approve lần đầu có thể chuyển câu về `PENDING` với `secondary_review.status=AWAITING_SECONDARY`, reviewer đã duyệt lần đầu bị chặn tự duyệt lần hai, reviewer thứ hai approve mới finalize `APPROVED`. Có endpoint `/questions/{question_id}/secondary-review` để cấu hình/assign duyệt lần hai và UI checkbox/lý do trong modal review. Test backend phủ primary/secondary reviewer khác nhau.
 - `P2-REV-04`: calibration giữa Reviewer và AI.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** `review_dashboard` tính calibration từ `question_reviews` so với evaluation mới nhất theo `question_version_id`, gồm sample size, agreement rate, số agreement/disagreement, AI failed nhưng human approved và AI passed nhưng human không approved. `ReviewQueuePage` thêm nhóm dashboard “Calibration AI”. Test backend phủ sample/agreement/disagreement.
 - `P2-REV-05`: mẫu nhận xét tái sử dụng.
 
   **Đã hoàn thiện/chốt 2026-07-27:** `ReviewQueuePage` có panel mẫu nhận xét trong modal review, gồm mẫu built-in theo quyết định (`APPROVED`, `NEEDS_REVISION`, `REJECTED`), áp dụng nhanh vào ghi chú tổng và lưu mẫu cá nhân theo user qua `localStorage`. Util `reviewCommentTemplates` chuẩn hóa/parse/encode payload, giới hạn nội dung và lọc mẫu theo decision; frontend test phủ storage key, round-trip/trim payload và filter decision.
@@ -812,6 +835,8 @@ không chỉ current version/source document.
 
   **Đã hoàn thiện/chốt 2026-07-27:** `ManagePage` có panel độ phủ theo danh sách câu hỏi đang lọc, gồm phân bố Bloom, chương và CLO, số câu đã duyệt, mục trống và tỷ lệ mục tiêu CLO nếu catalog có `target_weight`. Util `questionCoverage` tính coverage độc lập, giữ chapter/CLO active chưa có câu để nhìn rõ gap; frontend test phủ đếm Bloom/approved, catalog gap và fallback khi chưa chọn môn.
 - `P2-TEA-07`: chia sẻ ngân hàng câu hỏi trong cùng môn/bộ môn.
+
+  **Đã hoàn thiện/chốt 2026-07-28:** question schema/repository/service có `shared_with_user_ids`, `shared_scope` và endpoint `/questions/{question_id}/sharing`; danh sách câu hỏi của Teacher gồm câu tự tạo, câu được share riêng và câu share theo môn, còn quyền chỉnh sửa vẫn giữ owner/Admin. `ManagePage` có modal chia sẻ question bank theo giảng viên hoặc theo môn và hiển thị nhãn “Đang chia sẻ”. Test backend phủ user được share có quyền đọc nhưng không được sửa.
 
 ### 9.4. Hạ tầng chung
 

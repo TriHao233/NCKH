@@ -16,6 +16,56 @@ logger = logging.getLogger(__name__)
 # Keep in sync with modules/auth/login.py's TOKEN_CLOCK_SKEW_SECONDS.
 TOKEN_CLOCK_SKEW_SECONDS = 10
 
+DEFAULT_ROLE_PERMISSIONS = {
+    "Admin": {
+        "admin.overview",
+        "admin.users",
+        "admin.catalog",
+        "admin.audit",
+        "admin.jobs",
+        "admin.moodle",
+        "documents.manage_all",
+        "questions.manage_all",
+        "reviews.manage",
+        "questions.use_shared_bank",
+    },
+    "Teacher": {
+        "documents.manage_own",
+        "questions.generate",
+        "questions.manage_own",
+        "questions.share_bank",
+        "questions.use_shared_bank",
+        "exams.manage_own",
+    },
+    "Reviewer": {
+        "reviews.manage",
+        "questions.read_review_queue",
+        "questions.comment",
+        "questions.export_moodle",
+    },
+}
+
+ROLE_PERMISSION_ALIASES = {
+    "Admin": "admin.overview",
+    "Teacher": "questions.manage_own",
+    "Reviewer": "reviews.manage",
+}
+
+
+def effective_permissions(user: dict) -> tuple[str, ...]:
+    role = user.get("role")
+    permissions = set(DEFAULT_ROLE_PERMISSIONS.get(role, set()))
+    permissions.update(
+        permission
+        for permission in (user.get("permissions") or [])
+        if isinstance(permission, str) and permission.strip()
+    )
+    return tuple(sorted(permissions))
+
+
+def has_permission(current_user: "CurrentUser", permission: str) -> bool:
+    return permission in set(current_user.permissions)
+
 
 @dataclass(frozen=True)
 class CurrentUser:
@@ -24,6 +74,7 @@ class CurrentUser:
     email: str
     role: str
     is_active: bool
+    permissions: tuple[str, ...] = ()
 
 
 def get_current_user(
@@ -64,17 +115,37 @@ def get_current_user(
         email=user.get("email", ""),
         role=user["role"],
         is_active=user.get("is_active", True),
+        permissions=effective_permissions(user),
     )
 
 
 def require_roles(*roles: str) -> Callable:
     allowed = set(roles)
+    allowed_permissions = {
+        ROLE_PERMISSION_ALIASES[role]
+        for role in allowed
+        if role in ROLE_PERMISSION_ALIASES
+    }
 
     def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if current_user.role not in allowed:
+        if current_user.role not in allowed and not (set(current_user.permissions) & allowed_permissions):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Yêu cầu role: {', '.join(sorted(allowed))}",
+            )
+        return current_user
+
+    return dependency
+
+
+def require_permissions(*permissions: str) -> Callable:
+    allowed = set(permissions)
+
+    def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not allowed.issubset(set(current_user.permissions)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Yêu cầu quyền: {', '.join(sorted(allowed))}",
             )
         return current_user
 

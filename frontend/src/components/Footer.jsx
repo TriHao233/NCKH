@@ -17,7 +17,7 @@ const Footer = () => {
     { path: '/quan-ly', label: 'Quản lý' },
     { path: '/huong-dan', label: 'Hướng dẫn' },
     { path: '/lien-he', label: 'Liên hệ' },
-  ].filter((link) => !role ? canAccessPath(null, link.path) : canAccessPath(role, link.path));
+  ].filter((link) => !role ? canAccessPath(null, link.path) : canAccessPath(user, link.path));
 
   return (
     <footer className="footer">

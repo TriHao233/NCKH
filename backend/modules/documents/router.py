@@ -11,6 +11,7 @@ from modules.documents.schemas import (
     DocumentPageResponse,
     DocumentPageUpdateRequest,
     DocumentResponse,
+    DocumentSharingRequest,
     DocumentStatus,
     DocumentUpdateRequest,
 )
@@ -208,6 +209,24 @@ def update_document(
 ):
     try:
         document = service.update(document_id, payload, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not document:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+    return document
+
+
+@router.patch("/{document_id}/sharing", response_model=DocumentResponse)
+def update_document_sharing(
+    document_id: str,
+    payload: DocumentSharingRequest,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        document = service.update_sharing(document_id, payload, current_user)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:

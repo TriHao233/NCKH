@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 
 from core.config import settings
 from core.database import get_database
-from core.dependencies import CurrentUser, require_admin
+from core.dependencies import CurrentUser, require_permissions
 from modules.admin.jobs_service import AdminJobService
 
 router = APIRouter(prefix=f"{settings.api_prefix}/admin/jobs", tags=["Admin jobs"])
@@ -33,7 +33,7 @@ def list_jobs(
     search: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.jobs")),
     service: AdminJobService = Depends(get_admin_job_service),
 ):
     try:
@@ -57,7 +57,7 @@ def retry_job(
     kind: str,
     job_id: str,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("admin.jobs")),
     service: AdminJobService = Depends(get_admin_job_service),
 ):
     try:
@@ -70,7 +70,7 @@ def retry_job(
 def cancel_job(
     kind: str,
     job_id: str,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("admin.jobs")),
     service: AdminJobService = Depends(get_admin_job_service),
 ):
     try:

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from core.config import settings
 from core.database import get_database
-from core.dependencies import CurrentUser, require_admin
+from core.dependencies import CurrentUser, require_permissions
 from modules.admin.audit_schemas import AuditLogListResponse
 from modules.admin.audit_service import AdminAuditService
 
@@ -26,7 +26,7 @@ def list_audit_logs(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     search: str | None = Query(None),
-    _admin: CurrentUser = Depends(require_admin),
+    _admin: CurrentUser = Depends(require_permissions("admin.audit")),
     service: AdminAuditService = Depends(get_admin_audit_service),
 ):
     return service.list(

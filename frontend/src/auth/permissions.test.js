@@ -45,6 +45,21 @@ test("teacher cannot access reviewer or admin-only routes", () => {
   assert.equal(canAccessPath("Teacher", "/quan-ly-moodle"), false);
 });
 
+test("explicit permissions can grant access outside the base role", () => {
+  assert.equal(
+    canAccessPath({ role: "Teacher", permissions: ["admin.users"] }, "/quan-ly-nguoi-dung"),
+    true,
+  );
+  assert.equal(
+    canAccessPath({ role: "Reviewer", permissions: ["questions.generate"] }, "/sinh-cau-hoi"),
+    true,
+  );
+  assert.equal(
+    canAccessPath({ role: "Teacher", permissions: ["admin.users"] }, "/nhat-ky-he-thong"),
+    false,
+  );
+});
+
 test("anonymous users only access public routes", () => {
   assert.equal(canAccessPath(null, "/trang-chu"), true);
   assert.equal(canAccessPath(null, "/gioi-thieu"), true);

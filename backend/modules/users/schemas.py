@@ -49,6 +49,24 @@ class UserCreateRequest(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=120)
     role: RoleEnum = RoleEnum.TEACHER
     profile: UserProfile = Field(default_factory=UserProfile)
+    permissions: list[str] = Field(default_factory=list, max_length=50)
+
+
+class UserInviteRequest(BaseModel):
+    email: str = Field(
+        ...,
+        min_length=3,
+        max_length=320,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    )
+    display_name: str = Field(..., min_length=1, max_length=120)
+    role: RoleEnum = RoleEnum.TEACHER
+    profile: UserProfile = Field(default_factory=UserProfile)
+    permissions: list[str] = Field(default_factory=list, max_length=50)
+
+
+class UserImportRequest(BaseModel):
+    users: list[UserInviteRequest] = Field(..., min_length=1, max_length=200)
 
 
 class PublicRegisterRequest(BaseModel):
@@ -86,6 +104,32 @@ class UserSelfUpdateRequest(BaseModel):
 class UserAdminUpdateRequest(UserSelfUpdateRequest):
     role: Optional[RoleEnum] = None
     is_active: Optional[bool] = None
+    permissions: Optional[list[str]] = Field(None, max_length=50)
+
+
+class PasswordResetResponse(BaseModel):
+    user_id: str
+    email: str
+    reset_link: str
+
+
+class UserInviteResponse(BaseModel):
+    user: "UserResponse"
+    reset_link: str
+
+
+class UserImportItemResponse(BaseModel):
+    email: str
+    ok: bool
+    user: Optional["UserResponse"] = None
+    reset_link: Optional[str] = None
+    error: Optional[str] = None
+
+
+class UserImportResponse(BaseModel):
+    items: list[UserImportItemResponse]
+    created: int
+    failed: int
 
 
 class TeacherOptionResponse(BaseModel):
@@ -208,6 +252,7 @@ class UserResponse(BaseModel):
     email: str
     display_name: str
     role: RoleEnum
+    permissions: list[str] = Field(default_factory=list)
     profile: UserProfile
     is_active: bool
     created_at: datetime

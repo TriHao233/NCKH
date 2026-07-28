@@ -11,6 +11,7 @@ from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionListResponse,
     QuestionResponse,
+    QuestionSharingRequest,
     QuestionSourceViewerResponse,
     QuestionVersionResponse,
     QuestionUpdateRequest,
@@ -84,7 +85,12 @@ def create_question(
     service: QuestionService = Depends(get_question_service),
 ):
     try:
-        return service.create(payload, current_user.id, actor_role=current_user.role)
+        return service.create(
+            payload,
+            current_user.id,
+            actor_role=current_user.role,
+            current_user=current_user,
+        )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
@@ -200,11 +206,30 @@ def update_question(
             payload,
             current_user.id,
             actor_role=current_user.role,
+            current_user=current_user,
         )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
             raise HTTPException(status_code=409, detail="Câu hỏi đã được cập nhật bởi người khác") from exc
         raise
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not question:
+        raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
+    return question
+
+
+@router.patch("/{question_id}/sharing", response_model=QuestionResponse)
+def update_question_sharing(
+    question_id: str,
+    payload: QuestionSharingRequest,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: QuestionService = Depends(get_question_service),
+):
+    try:
+        question = service.update_sharing(question_id, payload, current_user)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:

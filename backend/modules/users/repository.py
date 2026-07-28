@@ -8,6 +8,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from core.dependencies import effective_permissions
 
 
 def utc_now() -> datetime:
@@ -40,6 +41,7 @@ def serialize_user(user: dict) -> dict:
         "email": user["email"],
         "display_name": user["display_name"],
         "role": user["role"],
+        "permissions": list(effective_permissions(user)),
         "profile": profile,
         "is_active": user.get("is_active", True),
         "created_at": user["created_at"],
@@ -103,6 +105,7 @@ class MongoUserRepository:
             "email": data["email"].lower(),
             "display_name": data["display_name"],
             "role": data.get("role", "Teacher"),
+            "permissions": data.get("permissions") or [],
             "profile": data.get("profile") or {"school": "", "address": "", "avatar": ""},
             "is_active": True,
             "created_at": now,
@@ -129,6 +132,7 @@ class MongoUserRepository:
                         "email": email,
                         "display_name": {"$ifNull": ["$display_name", display_name]},
                         "role": {"$ifNull": ["$role", "Teacher"]},
+                        "permissions": {"$ifNull": ["$permissions", []]},
                         "profile": {
                             "$mergeObjects": [
                                 profile_defaults,

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
@@ -55,6 +56,9 @@ def serialize_question(question: dict, version: dict) -> dict:
             "content_hash": version["content_hash"],
             "quality_summary": question.get("quality_summary") or {},
             "review_assignment": question.get("review_assignment") or {"status": "UNASSIGNED"},
+            "shared_with_user_ids": question.get("shared_with_user_ids") or [],
+            "shared_scope": question.get("shared_scope") or "PRIVATE",
+            "secondary_review": question.get("secondary_review") or {},
             "latest_review_id": question.get("latest_review_id"),
             "created_at": question["created_at"],
             "updated_at": question["updated_at"],
@@ -87,6 +91,7 @@ class QuestionRepository(Protocol):
         assigned_reviewer_user_id: ObjectId | None = None,
         creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
+        visible_to_user_id: ObjectId | None = None,
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
@@ -111,6 +116,8 @@ class QuestionRepository(Protocol):
     def archive(self, question_id: str | ObjectId) -> bool: ...
 
     def list_versions(self, question_id: str | ObjectId) -> list[dict]: ...
+
+    def update_sharing(self, question_id: str | ObjectId, fields: dict) -> tuple[dict, dict] | None: ...
 
 
 class QuestionReferenceRepository(Protocol):
@@ -205,6 +212,7 @@ class MongoQuestionRepository:
         assigned_reviewer_user_id: ObjectId | None = None,
         creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
+        visible_to_user_id: ObjectId | None = None,
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
@@ -255,6 +263,19 @@ class MongoQuestionRepository:
                         "$or": [
                             {"created_by_user_id": owner_user_id},
                             {"version.created_by_user_id": owner_user_id},
+                        ]
+                    }
+                }
+            )
+        if visible_to_user_id is not None:
+            pipeline.append(
+                {
+                    "$match": {
+                        "$or": [
+                            {"created_by_user_id": visible_to_user_id},
+                            {"version.created_by_user_id": visible_to_user_id},
+                            {"shared_with_user_ids": visible_to_user_id},
+                            {"shared_scope": "SUBJECT"},
                         ]
                     }
                 }
@@ -452,3 +473,27 @@ class MongoQuestionRepository:
                 -1,
             )
         )
+
+    def update_sharing(self, question_id: str | ObjectId, fields: dict) -> tuple[dict, dict] | None:
+        normalized = dict(fields)
+        if "shared_with_user_ids" in normalized:
+            normalized["shared_with_user_ids"] = [
+                object_id(user_id, "shared_with_user_id")
+                for user_id in normalized.get("shared_with_user_ids") or []
+            ]
+        normalized["updated_at"] = utc_now()
+        question = self.db.questions.find_one_and_update(
+            {
+                "_id": object_id(question_id, "question_id"),
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+            },
+            {"$set": normalized},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not question:
+            return None
+        version = self.db.question_versions.find_one({"_id": question["current_version_id"]})
+        if not version:
+            raise RuntimeError("Question aggregate bị thiếu current version")
+        return question, version

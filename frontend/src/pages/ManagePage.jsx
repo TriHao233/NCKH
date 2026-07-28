@@ -15,6 +15,7 @@ import {
   reviewQuestion,
   submitQuestionForReview,
   updateQuestion,
+  updateQuestionSharing,
 } from '../api/questions';
 import {
   cancelDocumentJob,
@@ -25,9 +26,11 @@ import {
   reindexDocument,
   retryDocumentJob,
   updateDocument,
+  updateDocumentSharing,
   updateDocumentPage,
 } from '../api/documents';
 import { listSubjects } from '../api/catalog';
+import { listTeacherOptions } from '../api/users';
 import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
@@ -557,6 +560,10 @@ function ManagePage() {
   const [editDocTitle, setEditDocTitle] = useState('');
   const [editDocSubjectId, setEditDocSubjectId] = useState('');
   const [savingDoc, setSavingDoc] = useState(false);
+  const [teacherOptions, setTeacherOptions] = useState([]);
+  const [sharingDraft, setSharingDraft] = useState(null);
+  const [sharingSaving, setSharingSaving] = useState(false);
+  const [sharingError, setSharingError] = useState('');
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
@@ -668,6 +675,18 @@ function ManagePage() {
     setSavedFilterName('');
   }, [savedFilterStorageKey]);
 
+  useEffect(() => {
+    const loadTeacherOptions = async () => {
+      try {
+        const result = await listTeacherOptions();
+        setTeacherOptions(result.items || []);
+      } catch {
+        setTeacherOptions([]);
+      }
+    };
+    if (user) loadTeacherOptions();
+  }, [user?.id]);
+
   const fetchQuestions = async (search) => {
     setQuestionsLoading(true);
     setQuestionsError('');
@@ -687,9 +706,12 @@ function ManagePage() {
         evaluationStatus: evaluationFilter !== 'all-evaluations' ? evaluationFilter : undefined,
         publicationStatus: publicationFilter !== 'all-publications' ? publicationFilter : undefined,
       });
-      setQuestions(result.items || []);
+      const items = result.items || [];
+      setQuestions(items);
+      return items;
     } catch (error) {
       setQuestionsError(error.message || 'Không tải được danh sách câu hỏi');
+      return [];
     } finally {
       setQuestionsLoading(false);
     }
@@ -706,9 +728,12 @@ function ManagePage() {
     setDocumentsError('');
     try {
       const result = await listDocuments({ page: 1, pageSize: 100 });
-      setDocuments(result.items || []);
+      const items = result.items || [];
+      setDocuments(items);
+      return items;
     } catch (error) {
       setDocumentsError(error.message || 'Không tải được danh sách tài liệu');
+      return [];
     } finally {
       setDocumentsLoading(false);
     }
@@ -993,6 +1018,56 @@ function ManagePage() {
       alert('Nhân bản câu hỏi thất bại: ' + error.message);
     } finally {
       setDuplicatingQuestionId(null);
+    }
+  };
+
+  const openSharing = (kind, item) => {
+    setSharingError('');
+    setSharingDraft({
+      kind,
+      item,
+      sharedScope: item.shared_scope || 'PRIVATE',
+      sharedWithUserIds: item.shared_with_user_ids || [],
+      ownerUserId: item.uploaded_by_user_id || '',
+    });
+  };
+
+  const toggleSharingUser = (userId) => {
+    setSharingDraft((current) => {
+      const selected = new Set(current.sharedWithUserIds || []);
+      if (selected.has(userId)) selected.delete(userId);
+      else selected.add(userId);
+      return { ...current, sharedWithUserIds: Array.from(selected) };
+    });
+  };
+
+  const submitSharing = async (event) => {
+    event.preventDefault();
+    if (!sharingDraft) return;
+    setSharingSaving(true);
+    setSharingError('');
+    const payload = {
+      shared_with_user_ids: sharingDraft.sharedWithUserIds,
+      shared_scope: sharingDraft.sharedScope,
+    };
+    try {
+      if (sharingDraft.kind === 'question') {
+        await updateQuestionSharing(sharingDraft.item.id, payload);
+        const items = await fetchQuestions(searchTerm);
+        const fresh = items.find((question) => question.id === sharingDraft.item.id);
+        if (fresh) setSelectedQuestion(fresh);
+      } else {
+        await updateDocumentSharing(sharingDraft.item.id, {
+          ...payload,
+          owner_user_id: sharingDraft.ownerUserId || null,
+        });
+        await fetchDocuments();
+      }
+      setSharingDraft(null);
+    } catch (error) {
+      setSharingError(error.message || 'Cập nhật chia sẻ thất bại');
+    } finally {
+      setSharingSaving(false);
     }
   };
 
@@ -2061,6 +2136,9 @@ function ManagePage() {
                             <span className="source-tag">+{item.clos.length - 2} CLO</span>
                           )}
                           <span className="source-tag">Phiên bản {item.current_version}</span>
+                          {(item.shared_scope === 'SUBJECT' || (item.shared_with_user_ids || []).length > 0) && (
+                            <span className="source-tag">Đang chia sẻ</span>
+                          )}
                         </div>
                         <p>{item.content}</p>
                         <div className="question-workflow-row">
@@ -2153,6 +2231,9 @@ function ManagePage() {
                               >
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
                               </button>
+                              <button type="button" className="icon-btn" title="Chia sẻ" onClick={() => openSharing('question', item)}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.59 13.51l6.83 3.98M15.41 6.51L8.59 10.49" /></svg>
+                              </button>
                               <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                               </button>
@@ -2197,6 +2278,9 @@ function ManagePage() {
 	                          <span className="doc-meta">
 	                            {d.page_count ? `${d.page_count} trang · ` : ''}{DOC_STATUS_LABEL[d.status] || d.status}
 	                          </span>
+                            {(d.shared_scope === 'SUBJECT' || (d.shared_with_user_ids || []).length > 0) && (
+                              <span className="doc-meta">Đang chia sẻ</span>
+                            )}
                             <div className="doc-pipeline" aria-label="Trạng thái pipeline tài liệu">
                               {documentPipelineSteps(d).map((step) => (
                                 <span
@@ -2331,6 +2415,14 @@ function ManagePage() {
                               onClick={() => handleReindexDocument(d)}
                             >
                               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn doc-share-btn"
+                              title="Chia sẻ/chuyển giao"
+                              onClick={() => openSharing('document', d)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.59 13.51l6.83 3.98M15.41 6.51L8.59 10.49" /></svg>
                             </button>
                             <button
                               type="button"
@@ -2574,6 +2666,80 @@ function ManagePage() {
           </aside>
         </div>
       </section>
+
+      {sharingDraft && (
+        <div className="modal-overlay" onClick={() => !sharingSaving && setSharingDraft(null)}>
+          <form className="modal-card sharing-modal" onClick={(e) => e.stopPropagation()} onSubmit={submitSharing}>
+            <h3 className="profile-card-title">
+              Chia sẻ {sharingDraft.kind === 'question' ? sharingDraft.item.question_code : sharingDraft.item.title}
+            </h3>
+            <div className="field-group">
+              <label className="field-label">Phạm vi</label>
+              <select
+                className="field-select"
+                value={sharingDraft.sharedScope}
+                onChange={(event) => setSharingDraft((current) => ({
+                  ...current,
+                  sharedScope: event.target.value,
+                }))}
+              >
+                <option value="PRIVATE">Riêng tư</option>
+                <option value="SUBJECT">Chia sẻ theo môn</option>
+              </select>
+            </div>
+            {sharingDraft.kind === 'document' && (
+              <div className="field-group">
+                <label className="field-label">Chủ sở hữu tài liệu</label>
+                <select
+                  className="field-select"
+                  value={sharingDraft.ownerUserId}
+                  onChange={(event) => setSharingDraft((current) => ({
+                    ...current,
+                    ownerUserId: event.target.value,
+                  }))}
+                >
+                  <option value="">Không đổi owner</option>
+                  {teacherOptions.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.display_name || teacher.email || teacher.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="field-group">
+              <label className="field-label">Chia sẻ riêng cho giảng viên</label>
+              <div className="sharing-user-list">
+                {teacherOptions.map((teacher) => (
+                  <label className="clo-option" key={teacher.id}>
+                    <input
+                      type="checkbox"
+                      checked={(sharingDraft.sharedWithUserIds || []).includes(teacher.id)}
+                      onChange={() => toggleSharingUser(teacher.id)}
+                    />
+                    <span>
+                      <b>{teacher.display_name || teacher.email}</b>
+                      {teacher.email}
+                    </span>
+                  </label>
+                ))}
+                {teacherOptions.length === 0 && (
+                  <p className="clo-empty">Không tải được danh sách giảng viên.</p>
+                )}
+              </div>
+            </div>
+            {sharingError && <p className="manage-error">{sharingError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={() => setSharingDraft(null)} disabled={sharingSaving}>
+                Hủy
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={sharingSaving}>
+                {sharingSaving ? 'Đang lưu...' : 'Lưu chia sẻ'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {quickReviewDraft && (
         <div className="modal-overlay" onClick={() => setQuickReviewDraft(null)}>

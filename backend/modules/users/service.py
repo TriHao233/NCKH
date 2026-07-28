@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -22,6 +23,8 @@ from modules.users.schemas import (
     TaskCalendarUpdateRequest,
     UserAdminUpdateRequest,
     UserCreateRequest,
+    UserImportRequest,
+    UserInviteRequest,
     UserSelfUpdateRequest,
 )
 
@@ -38,6 +41,8 @@ class IdentityGateway(Protocol):
 
     def update_user(self, firebase_uid: str, **fields): ...
 
+    def generate_password_reset_link(self, email: str) -> str: ...
+
     def set_user_disabled(self, firebase_uid: str, disabled: bool): ...
 
     def delete_user(self, firebase_uid: str): ...
@@ -49,6 +54,9 @@ class FirebaseIdentityGateway:
 
     def update_user(self, firebase_uid: str, **fields):
         return auth.update_user(firebase_uid, **fields)
+
+    def generate_password_reset_link(self, email: str) -> str:
+        return auth.generate_password_reset_link(email)
 
     def set_user_disabled(self, firebase_uid: str, disabled: bool):
         return auth.update_user(firebase_uid, disabled=disabled)
@@ -110,6 +118,7 @@ class UserService:
                     "display_name": payload.display_name,
                     "role": payload.role.value,
                     "profile": payload.profile.model_dump(),
+                    "permissions": self._normalize_permissions(payload.permissions),
                 }
             )
             self.sessions.upsert(firebase_user.uid, None)
@@ -119,6 +128,104 @@ class UserService:
             self.identity.delete_user(firebase_user.uid)
             raise
         return serialize_user(user)
+
+    @staticmethod
+    def _normalize_permissions(permissions: list[str] | None) -> list[str]:
+        normalized = []
+        seen = set()
+        for permission in permissions or []:
+            value = str(permission or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return normalized
+
+    def invite_user(
+        self,
+        payload: UserInviteRequest,
+        actor: CurrentUser | None = None,
+    ) -> dict:
+        temporary_password = secrets.token_urlsafe(18)
+        firebase_user = self.identity.create_user(
+            email=str(payload.email),
+            password=temporary_password,
+            display_name=payload.display_name,
+        )
+        user = None
+        try:
+            user = self.repository.create(
+                {
+                    "firebase_uid": firebase_user.uid,
+                    "email": str(payload.email),
+                    "display_name": payload.display_name,
+                    "role": payload.role.value,
+                    "profile": payload.profile.model_dump(),
+                    "permissions": self._normalize_permissions(payload.permissions),
+                }
+            )
+            self.sessions.upsert(firebase_user.uid, None)
+            reset_link = self.identity.generate_password_reset_link(str(payload.email))
+        except Exception:
+            if user:
+                self.repository.delete_by_id(user["_id"])
+            self.identity.delete_user(firebase_user.uid)
+            raise
+        record_audit_event(
+            action="user.invite",
+            entity_type="user",
+            entity_id=user["_id"],
+            actor_user_id=actor.id if actor else None,
+            actor_role=actor.role if actor else None,
+            after=self._user_audit_snapshot(user),
+            metadata={"email": str(payload.email), "role": payload.role.value},
+        )
+        return {"user": serialize_user(user), "reset_link": reset_link}
+
+    def reset_password(
+        self,
+        user_id: str,
+        actor: CurrentUser | None = None,
+    ) -> dict | None:
+        user = self.repository.find_by_id(user_id)
+        if not user:
+            return None
+        reset_link = self.identity.generate_password_reset_link(user["email"])
+        record_audit_event(
+            action="user.password_reset",
+            entity_type="user",
+            entity_id=user["_id"],
+            actor_user_id=actor.id if actor else None,
+            actor_role=actor.role if actor else None,
+            metadata={"email": user.get("email")},
+        )
+        return {
+            "user_id": str(user["_id"]),
+            "email": user["email"],
+            "reset_link": reset_link,
+        }
+
+    def import_users(
+        self,
+        payload: UserImportRequest,
+        actor: CurrentUser | None = None,
+    ) -> dict:
+        items = []
+        for item in payload.users:
+            try:
+                invited = self.invite_user(item, actor)
+                items.append(
+                    {
+                        "email": str(item.email),
+                        "ok": True,
+                        "user": invited["user"],
+                        "reset_link": invited["reset_link"],
+                    }
+                )
+            except Exception as exc:
+                items.append({"email": str(item.email), "ok": False, "error": str(exc)})
+        created = len([item for item in items if item["ok"]])
+        return {"items": items, "created": created, "failed": len(items) - created}
 
     def get(self, user_id: str) -> dict | None:
         user = self.repository.find_by_id(user_id)
@@ -347,6 +454,7 @@ class UserService:
         return {
             "role": user.get("role"),
             "is_active": user.get("is_active", True),
+            "permissions": user.get("permissions") or [],
         }
 
     def update_admin(
@@ -362,6 +470,8 @@ class UserService:
         role = fields.get("role")
         if role is not None:
             fields["role"] = role.value if hasattr(role, "value") else role
+        if "permissions" in fields:
+            fields["permissions"] = self._normalize_permissions(fields.get("permissions"))
         user = self.repository.find_by_id(user_id)
         if not user:
             return None

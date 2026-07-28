@@ -2,9 +2,10 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks
 
+from core.audit import record_audit_event
 from core.config import resolve_path, settings
 from core.database import get_database
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, has_permission
 from modules.documents.repository import (
     ACTIVE_DOCUMENT_JOB_STATUSES,
     DocumentRepository,
@@ -15,7 +16,12 @@ from modules.documents.repository import (
     serialize_document_job,
     serialize_document_page,
 )
-from modules.documents.schemas import DocumentCreateRequest, DocumentPageUpdateRequest, DocumentUpdateRequest
+from modules.documents.schemas import (
+    DocumentCreateRequest,
+    DocumentPageUpdateRequest,
+    DocumentSharingRequest,
+    DocumentUpdateRequest,
+)
 
 
 class DocumentService:
@@ -23,14 +29,31 @@ class DocumentService:
         self.repository = repository
 
     @staticmethod
-    def _owner_id(current_user: CurrentUser):
-        return None if current_user.role == "Admin" else current_user.id
+    def _can_manage_all(current_user: CurrentUser) -> bool:
+        return current_user.role == "Admin" or has_permission(current_user, "documents.manage_all")
+
+    @staticmethod
+    def _is_owner(record: dict, current_user: CurrentUser) -> bool:
+        return record.get("uploaded_by_user_id") == current_user.id
 
     @staticmethod
     def _ensure_access(record: dict | None, current_user: CurrentUser) -> None:
-        if not record or current_user.role == "Admin":
+        if not record or DocumentService._can_manage_all(current_user):
             return
-        if record.get("uploaded_by_user_id") != current_user.id:
+        shared_with = set(record.get("shared_with_user_ids") or [])
+        if (
+            DocumentService._is_owner(record, current_user)
+            or current_user.id in shared_with
+            or record.get("shared_scope") == "SUBJECT"
+        ):
+            return
+        raise PermissionError("Bạn không có quyền truy cập tài liệu này")
+
+    @staticmethod
+    def _ensure_manage_access(record: dict | None, current_user: CurrentUser) -> None:
+        if not record or DocumentService._can_manage_all(current_user):
+            return
+        if not DocumentService._is_owner(record, current_user):
             raise PermissionError("Bạn không có quyền truy cập tài liệu này")
 
     def create(self, payload: DocumentCreateRequest, uploaded_by_user_id) -> dict:
@@ -57,7 +80,11 @@ class DocumentService:
             page_size,
             status,
             search,
-            uploaded_by_user_id=self._owner_id(current_user) if current_user else None,
+            visible_to_user_id=(
+                None
+                if not current_user or self._can_manage_all(current_user)
+                else current_user.id
+            ),
         )
         return {
             "items": [serialize_document(item) for item in records],
@@ -73,15 +100,55 @@ class DocumentService:
         current_user: CurrentUser | None = None,
     ) -> dict | None:
         if current_user:
-            self._ensure_access(self.repository.find_by_id(document_id), current_user)
+            self._ensure_manage_access(self.repository.find_by_id(document_id), current_user)
         fields = payload.model_dump(exclude_none=True)
         record = self.repository.update(document_id, fields)
         return serialize_document(record) if record else None
 
     def archive(self, document_id: str, current_user: CurrentUser | None = None) -> bool:
         if current_user:
-            self._ensure_access(self.repository.find_by_id(document_id), current_user)
+            self._ensure_manage_access(self.repository.find_by_id(document_id), current_user)
         return self.repository.archive(document_id)
+
+    def update_sharing(
+        self,
+        document_id: str,
+        payload: DocumentSharingRequest,
+        current_user: CurrentUser,
+    ) -> dict | None:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            return None
+        self._ensure_manage_access(record, current_user)
+        if payload.owner_user_id and not self._can_manage_all(current_user):
+            raise PermissionError("Chỉ Admin được chuyển chủ sở hữu tài liệu")
+        fields = {
+            "shared_with_user_ids": payload.shared_with_user_ids,
+            "shared_scope": payload.shared_scope,
+        }
+        if payload.owner_user_id:
+            fields["uploaded_by_user_id"] = payload.owner_user_id
+        before = {
+            "uploaded_by_user_id": record.get("uploaded_by_user_id"),
+            "shared_with_user_ids": record.get("shared_with_user_ids") or [],
+            "shared_scope": record.get("shared_scope") or "PRIVATE",
+        }
+        updated = self.repository.update(document_id, fields)
+        if updated:
+            record_audit_event(
+                action="document.sharing_update",
+                entity_type="document",
+                entity_id=record["_id"],
+                actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                before=before,
+                after={
+                    "uploaded_by_user_id": updated.get("uploaded_by_user_id"),
+                    "shared_with_user_ids": updated.get("shared_with_user_ids") or [],
+                    "shared_scope": updated.get("shared_scope") or "PRIVATE",
+                },
+            )
+        return serialize_document(updated) if updated else None
 
     def list_jobs(
         self,
@@ -125,7 +192,7 @@ class DocumentService:
         record = self.repository.find_by_id(document_id)
         if not record:
             return None
-        self._ensure_access(record, current_user)
+        self._ensure_manage_access(record, current_user)
         self._ensure_ocr_editable(record)
         page = self.repository.update_page(
             document_id,
@@ -213,7 +280,7 @@ class DocumentService:
         record = self.repository.find_by_id(document_id)
         if not record:
             raise LookupError("Không tìm thấy tài liệu")
-        self._ensure_access(record, current_user)
+        self._ensure_manage_access(record, current_user)
         summary = record.get("pipeline_summary") or {}
         current_processing = record.get("current_processing") or {}
         if not current_processing.get("chunk_set_id") or summary.get("chunk_status") != "COMPLETED":
@@ -240,7 +307,7 @@ class DocumentService:
         document = self.repository.find_by_id(document_id)
         if not document:
             raise LookupError("Không tìm thấy tài liệu")
-        self._ensure_access(document, current_user)
+        self._ensure_manage_access(document, current_user)
         job = self.repository.find_job(job_id)
         if not job or str(job.get("document_id")) != str(document["_id"]):
             raise LookupError("Không tìm thấy job tài liệu")

@@ -85,6 +85,8 @@ class ReviewCreateRequest(BaseModel):
     note: str = Field("", max_length=2000)
     override: ReviewOverride = Field(default_factory=ReviewOverride)
     review_form: StructuredReviewForm = Field(default_factory=StructuredReviewForm)
+    secondary_required: bool = False
+    secondary_reason: str = Field("", max_length=500)
 
     @model_validator(mode="after")
     def require_structured_reason(self):
@@ -94,6 +96,17 @@ class ReviewCreateRequest(BaseModel):
         if self.decision == "NEEDS_REVISION" and not self.review_form.revision_issues:
             raise ValueError("Cần ít nhất một lỗi cần Teacher sửa")
         return self
+
+
+class QuestionCommentCreateRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=2000)
+    mention_user_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class SecondaryReviewRequest(BaseModel):
+    required: bool = True
+    reason: str = Field("", max_length=500)
+    reviewer_user_id: str | None = Field(None, min_length=1, max_length=120)
 
 
 class ReviewAssignmentRequest(BaseModel):

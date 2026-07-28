@@ -6,10 +6,12 @@ import {
   claimQuestionReview,
   exportQuestionMoodle,
   fetchQuestionSourcePdf,
+  addQuestionComment,
   getQuestion,
   getReviewDashboard,
   getQuestionSources,
   listQuestionEvaluations,
+  listQuestionComments,
   listQuestionMoodlePublications,
   listQuestionReviews,
   listQuestions,
@@ -117,6 +119,8 @@ function defaultReviewDraft(question, decision) {
     decision,
     overallNote: '',
     overrideReason: '',
+    secondaryRequired: false,
+    secondaryReason: '',
     checklist: REVIEW_RUBRIC.map((item) => ({
       ...item,
       passed: decision === 'APPROVED',
@@ -356,6 +360,11 @@ function ReviewQueuePage() {
   const [selected, setSelected] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [commentBody, setCommentBody] = useState('');
+  const [commentMentionIds, setCommentMentionIds] = useState([]);
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState('');
   const [publications, setPublications] = useState([]);
   const [sourceViewer, setSourceViewer] = useState(null);
   const [sourceLoading, setSourceLoading] = useState(false);
@@ -472,6 +481,10 @@ function ReviewQueuePage() {
     setAssignmentDraft(null);
     setReviewFormError('');
     setAssignmentError('');
+    setComments([]);
+    setCommentBody('');
+    setCommentMentionIds([]);
+    setCommentError('');
     setHistoryLoading(true);
     setSourceLoading(true);
     setSourceError('');
@@ -481,15 +494,17 @@ function ReviewQueuePage() {
     setActiveSourceIndex(0);
     setActiveSourcePage(1);
     try {
-      const [evaluationResult, reviewResult, publicationResult, sourceResult] = await Promise.all([
+      const [evaluationResult, reviewResult, publicationResult, commentResult, sourceResult] = await Promise.all([
         listQuestionEvaluations(question.id),
         listQuestionReviews(question.id),
         listQuestionMoodlePublications(question.id),
+        listQuestionComments(question.id),
         getQuestionSources(question.id),
       ]);
       setEvaluations(evaluationResult.items || []);
       setReviews(reviewResult.items || []);
       setPublications(publicationResult.items || []);
+      setComments(commentResult.items || []);
       setSourceViewer(sourceResult);
       const firstSource = sourceResult.items?.[0];
       setActiveSourcePage(firstSourcePage(firstSource));
@@ -563,6 +578,10 @@ function ReviewQueuePage() {
     setSelected(null);
     setEvaluations([]);
     setReviews([]);
+    setComments([]);
+    setCommentBody('');
+    setCommentMentionIds([]);
+    setCommentError('');
     setPublications([]);
     setSourceViewer(null);
     setSourceError('');
@@ -855,6 +874,40 @@ function ReviewQueuePage() {
     }
   };
 
+  const toggleCommentMention = (userId) => {
+    setCommentMentionIds((current) => (
+      current.includes(userId)
+        ? current.filter((id) => id !== userId)
+        : [...current, userId]
+    ));
+  };
+
+  const submitComment = async (event) => {
+    event.preventDefault();
+    if (!selected) return;
+    const body = commentBody.trim();
+    if (!body) {
+      setCommentError('Vui lòng nhập nội dung bình luận.');
+      return;
+    }
+    setCommentBusy(true);
+    setCommentError('');
+    try {
+      await addQuestionComment(selected.id, {
+        body,
+        mention_user_ids: commentMentionIds,
+      });
+      const result = await listQuestionComments(selected.id);
+      setComments(result.items || []);
+      setCommentBody('');
+      setCommentMentionIds([]);
+    } catch (err) {
+      setCommentError(err.message || 'Không gửi được bình luận');
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+
   const runEvaluation = async (question) => {
     setBusyId(question.id);
     try {
@@ -906,6 +959,10 @@ function ReviewQueuePage() {
         revision_issues: revisionIssues,
       },
     };
+    if (reviewDraft.decision === 'APPROVED' && reviewDraft.secondaryRequired) {
+      payload.secondary_required = true;
+      payload.secondary_reason = reviewDraft.secondaryReason || overallNote;
+    }
     if (needsOverride) {
       payload.override = {
         applied: true,
@@ -1022,6 +1079,14 @@ function ReviewQueuePage() {
   const dashboardPerformance = dashboard?.performance || {};
   const dashboardDecisions = dashboard?.decisions || {};
   const dashboardSubjects = dashboard?.subjects || [];
+  const dashboardCalibration = dashboard?.calibration || {};
+  const mentionOptions = useMemo(() => {
+    const map = new Map();
+    [...teacherOptions, ...reviewerOptions].forEach((option) => {
+      if (option?.id) map.set(option.id, option);
+    });
+    return Array.from(map.values());
+  }, [teacherOptions, reviewerOptions]);
   const latestEvidence = latestEvaluation?.evidence || {};
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
@@ -1118,6 +1183,31 @@ function ReviewQueuePage() {
             <div>
               <b>{dashboardPerformance.revision_issues || 0}</b>
               <span>Lỗi cần sửa</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="review-dashboard__group review-dashboard__group--calibration">
+          <div className="review-dashboard__head">
+            <span>Calibration AI</span>
+            <b>{percent(dashboardCalibration.agreement_rate)}</b>
+          </div>
+          <div className="review-dashboard__metrics">
+            <div>
+              <b>{dashboardCalibration.sample_size || 0}</b>
+              <span>Mẫu so sánh</span>
+            </div>
+            <div>
+              <b>{dashboardCalibration.disagreements || 0}</b>
+              <span>Lệch AI-human</span>
+            </div>
+            <div>
+              <b>{dashboardCalibration.ai_failed_but_approved || 0}</b>
+              <span>AI rớt, human duyệt</span>
+            </div>
+            <div>
+              <b>{dashboardCalibration.ai_passed_but_not_approved || 0}</b>
+              <span>AI đạt, human giữ lại</span>
             </div>
           </div>
         </div>
@@ -1382,6 +1472,10 @@ function ReviewQueuePage() {
                   <span>Hết hạn giữ câu</span>
                   <b>{formatDate(selectedAssignment.lock_expires_at)}</b>
                 </div>
+                <div>
+                  <span>Duyệt lần 2</span>
+                  <b>{selected.secondary_review?.status || 'NOT_REQUIRED'}</b>
+                </div>
               </section>
               <div className="detail-actions">
                 <button type="button" disabled={busyId === selected.id || !canClaimQuestion(selected)} onClick={() => claimReview(selected)}>
@@ -1570,6 +1664,47 @@ function ReviewQueuePage() {
                     )}
                   </section>
 
+                  <section className="comment-thread">
+                    <div className="comment-thread__head">
+                      <h3>Trao đổi</h3>
+                      <span>{comments.length} bình luận</span>
+                    </div>
+                    <div className="comment-list">
+                      {comments.slice(-6).map((comment) => (
+                        <div className="comment-item" key={comment.id || comment._id}>
+                          <b>{comment.author_role || 'User'}</b>
+                          <p>{comment.body}</p>
+                          <small>{formatDate(comment.created_at)}</small>
+                        </div>
+                      ))}
+                      {comments.length === 0 && <p className="review-empty">Chưa có trao đổi.</p>}
+                    </div>
+                    <form className="comment-form" onSubmit={submitComment}>
+                      <textarea
+                        value={commentBody}
+                        onChange={(event) => setCommentBody(event.target.value)}
+                        rows={3}
+                        placeholder="Viết bình luận hoặc phản hồi..."
+                      />
+                      <div className="comment-mentions">
+                        {mentionOptions.slice(0, 8).map((option) => (
+                          <label key={option.id}>
+                            <input
+                              type="checkbox"
+                              checked={commentMentionIds.includes(option.id)}
+                              onChange={() => toggleCommentMention(option.id)}
+                            />
+                            {option.display_name || option.email}
+                          </label>
+                        ))}
+                      </div>
+                      {commentError && <p className="review-form-error">{commentError}</p>}
+                      <button type="submit" disabled={commentBusy}>
+                        {commentBusy ? 'Đang gửi...' : 'Gửi bình luận'}
+                      </button>
+                    </form>
+                  </section>
+
                   <section className="history-grid">
                     <div>
                       <h3>Lịch sử kiểm duyệt</h3>
@@ -1683,6 +1818,26 @@ function ReviewQueuePage() {
                   rows={4}
                 />
               </label>
+              {reviewDraft.decision === 'APPROVED' && (
+                <div className="secondary-review-box">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(reviewDraft.secondaryRequired)}
+                      onChange={(event) => updateReviewDraft({ secondaryRequired: event.target.checked })}
+                    />
+                    Cần duyệt lần 2 trước khi phê duyệt chính thức
+                  </label>
+                  {reviewDraft.secondaryRequired && (
+                    <textarea
+                      value={reviewDraft.secondaryReason}
+                      onChange={(event) => updateReviewDraft({ secondaryReason: event.target.value })}
+                      rows={2}
+                      placeholder="Lý do cần người thứ hai kiểm duyệt"
+                    />
+                  )}
+                </div>
+              )}
               {reviewNeedsOverride && (
                 <label className="review-form-field">
                   <span>Lý do override</span>

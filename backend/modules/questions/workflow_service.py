@@ -13,11 +13,12 @@ from pymongo.errors import DuplicateKeyError
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, has_permission
 from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
 from modules.notifications.service import (
+    NotificationService,
     safe_notify_review_assigned,
     safe_notify_review_decision,
 )
@@ -27,8 +28,10 @@ from modules.questions.workflow_schemas import (
     EvaluationCreateRequest,
     EvaluationScores,
     MoodlePublicationRequest,
+    QuestionCommentCreateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    SecondaryReviewRequest,
 )
 
 DEFAULT_WEIGHTS = {
@@ -110,15 +113,28 @@ class QuestionWorkflowService:
                 return True
         return False
 
+    @staticmethod
+    def _can_review_all(current_user: CurrentUser) -> bool:
+        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+
+    @staticmethod
+    def _can_manage_all(current_user: CurrentUser) -> bool:
+        return current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
+
+    @staticmethod
+    def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
+        shared_with = set(question.get("shared_with_user_ids") or [])
+        return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
+
     def _ensure_read_access(
         self,
         question: dict,
         version: dict,
         current_user: CurrentUser | None,
     ) -> None:
-        if not current_user or current_user.role in {"Admin", "Reviewer"}:
+        if not current_user or self._can_manage_all(current_user) or self._can_review_all(current_user):
             return
-        if not self._owns_question(question, version, current_user.id):
+        if not self._owns_question(question, version, current_user.id) and not self._is_shared_question(question, current_user):
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _policy(self) -> dict:
@@ -1076,6 +1092,18 @@ class QuestionWorkflowService:
             )
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
+        secondary = question.get("secondary_review") or {}
+        awaiting_secondary = (
+            payload.decision == "APPROVED"
+            and secondary.get("status") == "AWAITING_SECONDARY"
+        )
+        if awaiting_secondary and secondary.get("primary_reviewer_user_id") == current_user.id:
+            raise ValueError("Reviewer duyệt lần đầu không được tự duyệt lần hai")
+        request_secondary = (
+            payload.decision == "APPROVED"
+            and payload.secondary_required
+            and not awaiting_secondary
+        )
         review_form = payload.review_form.model_dump()
         review_note = payload.note or payload.review_form.overall_note
         review = {
@@ -1090,13 +1118,15 @@ class QuestionWorkflowService:
             "override": payload.override.model_dump(),
             "review_form": review_form,
             "revision_issues": review_form.get("revision_issues", []),
+            "review_stage": "SECONDARY" if awaiting_secondary else "PRIMARY",
+            "secondary_required": bool(request_secondary or awaiting_secondary),
+            "secondary_reason": payload.secondary_reason or secondary.get("reason") or "",
             "supersedes_review_id": question.get("latest_review_id"),
             "previous_status": question["review_status"],
-            "resulting_status": payload.decision,
+            "resulting_status": "PENDING" if request_secondary else payload.decision,
             "reviewed_at": now,
         }
         question_fields = {
-            "review_status": payload.decision,
             "latest_review_id": review["_id"],
             "updated_at": now,
             "review_assignment": _empty_review_assignment(
@@ -1104,10 +1134,45 @@ class QuestionWorkflowService:
                 f"review_{payload.decision.lower()}",
             ),
         }
-        if payload.decision == "APPROVED":
+        if request_secondary:
+            question_fields["review_status"] = "PENDING"
+            question_fields["secondary_review"] = {
+                "required": True,
+                "status": "AWAITING_SECONDARY",
+                "reason": payload.secondary_reason or review_note,
+                "primary_review_id": review["_id"],
+                "primary_reviewer_user_id": current_user.id,
+                "secondary_review_id": None,
+                "secondary_reviewer_user_id": None,
+                "requested_at": now,
+                "completed_at": None,
+            }
+        else:
+            question_fields["review_status"] = payload.decision
+        if payload.decision == "APPROVED" and not request_secondary:
             question_fields["approved_version_id"] = version["_id"]
+            if awaiting_secondary:
+                question_fields["secondary_review"] = {
+                    **secondary,
+                    "required": True,
+                    "status": "COMPLETED",
+                    "secondary_review_id": review["_id"],
+                    "secondary_reviewer_user_id": current_user.id,
+                    "completed_at": now,
+                }
         elif question.get("approved_version_id") == version["_id"]:
             question_fields["approved_version_id"] = None
+        if payload.decision != "APPROVED":
+            question_fields["secondary_review"] = {
+                **secondary,
+                "status": "CANCELLED" if secondary else "NOT_REQUIRED",
+                "completed_at": now if secondary else None,
+            }
+        audit_action = (
+            "QUESTION_SECONDARY_REVIEW_REQUESTED"
+            if request_secondary
+            else f"QUESTION_{payload.decision}"
+        )
         audit = {
             "schema_version": SCHEMA_VERSION,
             "actor": {
@@ -1121,12 +1186,12 @@ class QuestionWorkflowService:
                 "id": question["_id"],
                 "version_id": version["_id"],
             },
-            "action": f"QUESTION_{payload.decision}",
+            "action": audit_action,
             "changes": [
                 {
                     "path": "review_status",
                     "old_value": question["review_status"],
-                    "new_value": payload.decision,
+                    "new_value": question_fields["review_status"],
                 }
             ],
             "before_hash": version["content_hash"],
@@ -1136,6 +1201,7 @@ class QuestionWorkflowService:
                 "correlation_id": str(review["_id"]),
                 "review_assignment": json_safe(question.get("review_assignment") or {}),
                 "review_form": review_form,
+                "secondary_review": json_safe(question_fields.get("secondary_review") or secondary or {}),
             },
             "created_at": now,
         }
@@ -1154,14 +1220,189 @@ class QuestionWorkflowService:
             if not result.matched_count:
                 raise RuntimeError("VERSION_CONFLICT")
             self.db.audit_logs.insert_one(audit, session=session)
-        safe_notify_review_decision(
-            database=self.db,
-            question=question,
-            version=version,
-            review=review,
-            actor_user_id=current_user.id,
-        )
+        if not request_secondary:
+            safe_notify_review_decision(
+                database=self.db,
+                question=question,
+                version=version,
+                review=review,
+                actor_user_id=current_user.id,
+            )
         return json_safe(review)
+
+    def list_comments(self, question_id: str, current_user: CurrentUser) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        comments = list(
+            self.db.question_comments.find({"question_id": question["_id"]})
+            .sort("created_at", 1)
+        )
+        return {"items": [json_safe(comment) for comment in comments]}
+
+    def add_comment(
+        self,
+        question_id: str,
+        payload: QuestionCommentCreateRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        mention_ids = [
+            object_id(user_id, "mention_user_id")
+            for user_id in dict.fromkeys(payload.mention_user_ids)
+        ]
+        mentioned_users = list(
+            self.db.users.find(
+                {"_id": {"$in": mention_ids}, "is_active": True},
+                {"_id": 1, "role": 1},
+            )
+        ) if mention_ids else []
+        if len(mentioned_users) != len(mention_ids):
+            raise ValueError("Một hoặc nhiều người được mention không hợp lệ")
+        now = utc_now()
+        comment = {
+            "_id": ObjectId(),
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question["_id"],
+            "question_version_id": version["_id"],
+            "question_version": version["version"],
+            "author_user_id": current_user.id,
+            "author_role": current_user.role,
+            "body": payload.body.strip(),
+            "mention_user_ids": mention_ids,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.db.question_comments.insert_one(comment)
+        self.db.audit_logs.insert_one(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "actor": {
+                    "type": "USER",
+                    "user_id": current_user.id,
+                    "model_id": None,
+                    "service_name": None,
+                },
+                "entity": {
+                    "type": "QUESTION",
+                    "id": question["_id"],
+                    "version_id": version["_id"],
+                },
+                "action": "QUESTION_COMMENT_ADDED",
+                "changes": [],
+                "before_hash": version["content_hash"],
+                "after_hash": version["content_hash"],
+                "metadata": {"comment_id": comment["_id"], "mentions": json_safe(mention_ids)},
+                "created_at": now,
+            }
+        )
+        NotificationService(self.db).create_many(
+            [
+                {
+                    "recipient_user_id": user["_id"],
+                    "actor_user_id": current_user.id,
+                    "type": "QUESTION_MENTION",
+                    "title": f"{question.get('question_code', 'Câu hỏi')} có mention mới",
+                    "body": comment["body"][:200],
+                    "link": (
+                        f"/kiem-duyet?questionId={question['_id']}"
+                        if user.get("role") in {"Reviewer", "Admin"}
+                        else f"/quan-ly?questionId={question['_id']}"
+                    ),
+                    "entity": {
+                        "type": "QUESTION",
+                        "id": str(question["_id"]),
+                        "version_id": str(version["_id"]),
+                        "comment_id": str(comment["_id"]),
+                    },
+                }
+                for user in mentioned_users
+                if user["_id"] != current_user.id
+            ]
+        )
+        return json_safe(comment)
+
+    def set_secondary_review(
+        self,
+        question_id: str,
+        payload: SecondaryReviewRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        if question["review_status"] not in {"PENDING", "APPROVED"}:
+            raise ValueError("Chỉ cấu hình duyệt lần hai cho câu đang chờ hoặc đã duyệt")
+        reviewer = None
+        if payload.reviewer_user_id:
+            reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
+        now = utc_now()
+        secondary = (
+            {
+                "required": True,
+                "status": "AWAITING_SECONDARY",
+                "reason": payload.reason,
+                "primary_review_id": question.get("latest_review_id"),
+                "primary_reviewer_user_id": None,
+                "secondary_review_id": None,
+                "secondary_reviewer_user_id": reviewer["_id"] if reviewer else None,
+                "requested_at": now,
+                "completed_at": None,
+            }
+            if payload.required
+            else {
+                "required": False,
+                "status": "NOT_REQUIRED",
+                "reason": payload.reason,
+                "requested_at": now,
+                "completed_at": now,
+            }
+        )
+        fields = {"secondary_review": secondary, "updated_at": now}
+        if payload.required:
+            fields["review_status"] = "PENDING"
+            fields["approved_version_id"] = None
+            fields["review_assignment"] = (
+                {
+                    "status": "ASSIGNED",
+                    "reviewer_user_id": reviewer["_id"],
+                    "assigned_by_user_id": current_user.id,
+                    "assigned_at": now,
+                    "claimed_at": None,
+                    "lock_expires_at": self._lock_expires_at(now),
+                    "last_released_at": None,
+                    "release_reason": payload.reason or None,
+                }
+                if reviewer
+                else _empty_review_assignment(now, payload.reason or "secondary_review")
+            )
+        updated = self.db.questions.find_one_and_update(
+            {
+                "_id": question["_id"],
+                "current_version_id": version["_id"],
+                "lifecycle_status": "ACTIVE",
+            },
+            {"$set": fields},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise RuntimeError("VERSION_CONFLICT")
+        self._assignment_audit(
+            action="QUESTION_SECONDARY_REVIEW_SET",
+            question=updated,
+            version=version,
+            current_user=current_user,
+            before=question.get("secondary_review") or {},
+            after=secondary,
+            metadata={"reason": payload.reason},
+        )
+        if reviewer:
+            safe_notify_review_assigned(
+                database=self.db,
+                question=updated,
+                version=version,
+                reviewer_user_id=reviewer["_id"],
+                actor_user_id=current_user.id,
+            )
+        return serialize_question(updated, version)
 
     @staticmethod
     def _question_type(version: dict) -> str:
@@ -1601,6 +1842,43 @@ class QuestionWorkflowService:
             if reviewed_at and reviewed_at >= since_7d:
                 reviews_last_7d += 1
 
+        version_ids = [
+            review.get("question_version_id")
+            for review in reviews
+            if review.get("question_version_id")
+        ]
+        evaluation_map: dict[ObjectId, dict] = {}
+        if version_ids and hasattr(self.db, "question_evaluations"):
+            evaluations = list(
+                self.db.question_evaluations.find(
+                    {"question_version_id": {"$in": version_ids}},
+                ).sort("created_at", -1)
+            )
+            for evaluation in evaluations:
+                version_id = evaluation.get("question_version_id")
+                if version_id not in evaluation_map:
+                    evaluation_map[version_id] = evaluation
+        calibration_sample = 0
+        calibration_agreements = 0
+        calibration_disagreements = 0
+        ai_failed_but_approved = 0
+        ai_passed_but_not_approved = 0
+        for review in reviews:
+            evaluation = evaluation_map.get(review.get("question_version_id"))
+            if not evaluation:
+                continue
+            calibration_sample += 1
+            ai_positive = bool(evaluation.get("passed"))
+            human_positive = review.get("decision") == "APPROVED"
+            if ai_positive == human_positive:
+                calibration_agreements += 1
+            else:
+                calibration_disagreements += 1
+                if human_positive:
+                    ai_failed_but_approved += 1
+                else:
+                    ai_passed_but_not_approved += 1
+
         audit_match: dict = {
             "action": {"$in": ["QUESTION_APPROVED", "QUESTION_REJECTED", "QUESTION_NEEDS_REVISION"]},
             "created_at": {"$gte": since_30d},
@@ -1620,11 +1898,6 @@ class QuestionWorkflowService:
             else None
         )
 
-        version_ids = [
-            review.get("question_version_id")
-            for review in reviews
-            if review.get("question_version_id")
-        ]
         versions = list(
             self.db.question_versions.find(
                 {"_id": {"$in": version_ids}},
@@ -1676,10 +1949,23 @@ class QuestionWorkflowService:
             "average_review_hours": average_review_hours,
             "duration_sample_size": len(durations),
         }
+        calibration = {
+            "sample_size": calibration_sample,
+            "agreement_rate": (
+                round(calibration_agreements / calibration_sample, 3)
+                if calibration_sample
+                else None
+            ),
+            "agreements": calibration_agreements,
+            "disagreements": calibration_disagreements,
+            "ai_failed_but_approved": ai_failed_but_approved,
+            "ai_passed_but_not_approved": ai_passed_but_not_approved,
+        }
         return json_safe(
             {
                 "workload": workload,
                 "performance": performance,
+                "calibration": calibration,
                 "decisions": decision_counts,
                 "subjects": subjects,
                 "generated_at": now,
