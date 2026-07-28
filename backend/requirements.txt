@@ -53,6 +53,11 @@ playwright>=1.40.0
 python-docx>=1.2.0
 
 # =========================
+# Tests
+# =========================
+pytest>=8.3.0
+
+# =========================
 # PyTorch CUDA 12.4
 # =========================
 --extra-index-url https://download.pytorch.org/whl/cu124
