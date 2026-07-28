@@ -20,13 +20,13 @@ import {
 import '../css/AdminMoodlePage.css';
 
 const emptyForm = {
-  site_key: 'demo-moodle',
-  site_name: 'Demo Moodle',
+  site_key: '',
+  site_name: '',
   mode: 'MOCK',
   base_url: '',
   token_env_var: '',
-  default_course_id: 'ctdl-demo',
-  default_category_id: 'qbank-demo',
+  default_course_id: '',
+  default_category_id: '',
   allowed_roles: ['Admin', 'Reviewer'],
   is_active: true,
 };
@@ -85,6 +85,7 @@ function AdminMoodlePage() {
   const [publicationTotal, setPublicationTotal] = useState(0);
   const [form, setForm] = useState(emptyForm);
   const [selectedKey, setSelectedKey] = useState('');
+  const [isCreatingTarget, setIsCreatingTarget] = useState(false);
   const [publicationStatus, setPublicationStatus] = useState('all');
   const [siteFilter, setSiteFilter] = useState('all');
   const [searchInput, setSearchInput] = useState('');
@@ -108,7 +109,7 @@ function AdminMoodlePage() {
       const result = await listMoodleTargets();
       const items = result.items || [];
       setTargets(items);
-      if (!selectedKey && items[0]) {
+      if (!selectedKey && !isCreatingTarget && items[0]) {
         setSelectedKey(items[0].site_key);
         setForm(formFromTarget(items[0]));
       }
@@ -117,7 +118,7 @@ function AdminMoodlePage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedKey]);
+  }, [isCreatingTarget, selectedKey]);
 
   const loadPublications = useCallback(async () => {
     setPublicationsLoading(true);
@@ -150,16 +151,18 @@ function AdminMoodlePage() {
   }, [loadPublications]);
 
   const selectedTarget = useMemo(
-    () => targets.find((target) => target.site_key === selectedKey) || null,
-    [selectedKey, targets],
+    () => (isCreatingTarget ? null : targets.find((target) => target.site_key === selectedKey) || null),
+    [isCreatingTarget, selectedKey, targets],
   );
 
   const pickTarget = (target) => {
+    setIsCreatingTarget(false);
     setSelectedKey(target.site_key);
     setForm(formFromTarget(target));
   };
 
   const newTarget = () => {
+    setIsCreatingTarget(true);
     setSelectedKey('');
     setForm(formFromTarget());
   };
@@ -195,6 +198,7 @@ function AdminMoodlePage() {
         ...form,
         allowed_roles: form.allowed_roles?.length ? form.allowed_roles : ['Admin'],
       });
+      setIsCreatingTarget(false);
       setSelectedKey(saved.site_key);
       setForm(formFromTarget(saved));
       await loadTargets();

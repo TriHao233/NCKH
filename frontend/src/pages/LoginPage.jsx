@@ -1,8 +1,15 @@
-import React, { useState, useContext, useEffect } from "react";
+import React, { useState, useContext, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import "../css/LoginPage.css";
 import { AuthContext } from "../context/AuthContext";
-import { signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
+import {
+  getRedirectResult,
+  signInWithCustomToken,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from "firebase/auth";
 import { auth, googleProvider } from "../../firebase";
 import { apiRequest } from "../services/apiClient";
 import { landingPathForRole } from "../auth/permissions";
@@ -15,6 +22,18 @@ import {
 
 const DEMO_LOGIN_ENABLED = String(import.meta.env.VITE_DEMO_MODE).toLowerCase() === "true";
 
+const POPUP_FALLBACK_CODES = new Set([
+  "auth/operation-not-supported-in-this-environment",
+  "auth/popup-blocked",
+]);
+
+function googleLoginErrorMessage(error) {
+  if (error?.code === "auth/unauthorized-domain") {
+    return "Miền hiện tại chưa được Firebase cho phép. Hãy mở ứng dụng bằng localhost hoặc thêm domain này vào Firebase Authorized domains.";
+  }
+  return error?.message || "Lỗi không xác định";
+}
+
 function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -22,6 +41,8 @@ function LoginPage() {
   const requestedPath = location.state?.from;
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [authNotice, setAuthNotice] = useState(null);
+  const redirectChecked = useRef(false);
 
   const [formData, setFormData] = useState({
     email: "",
@@ -47,16 +68,55 @@ function LoginPage() {
     }
   }, [loading, navigate, requestedPath, user]);
 
+  useEffect(() => {
+    if (redirectChecked.current) return undefined;
+    redirectChecked.current = true;
+    let active = true;
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!active || !result?.user) return;
+        setIsLoading(true);
+        const appUser = await login(result.user);
+        navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
+      })
+      .catch(async (error) => {
+        if (!active) return;
+        await signOut(auth).catch(() => {});
+        setAuthNotice({
+          type: "error",
+          message: "Đăng nhập Google thất bại: " + googleLoginErrorMessage(error),
+        });
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [login, navigate, requestedPath]);
+
   // Xử lý đăng nhập bằng Google
   const handleGoogleAuth = async () => {
     setIsLoading(true);
+    setAuthNotice(null);
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await login(result.user);
       navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
       await signOut(auth).catch(() => {});
-      alert("Đăng nhập Google thất bại: " + error.message);
+      if (POPUP_FALLBACK_CODES.has(error?.code)) {
+        setAuthNotice({
+          type: "info",
+          message: "Trình duyệt đang chuyển sang đăng nhập Google...",
+        });
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      setAuthNotice({
+        type: "error",
+        message: "Đăng nhập Google thất bại: " + googleLoginErrorMessage(error),
+      });
     } finally {
       setIsLoading(false);
     }
@@ -66,16 +126,17 @@ function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.email || !formData.password) {
-      alert("Vui lòng nhập đầy đủ email và mật khẩu.");
+      setAuthNotice({ type: "error", message: "Vui lòng nhập đầy đủ email và mật khẩu." });
       return;
     }
     const identifierError = validateLoginIdentifier(formData.email, DEMO_LOGIN_ENABLED);
     if (identifierError) {
-      alert(identifierError);
+      setAuthNotice({ type: "error", message: identifierError });
       return;
     }
 
     setIsLoading(true);
+    setAuthNotice(null);
 
     try {
       const demoUsername = demoUsernameFor(formData.email, DEMO_LOGIN_ENABLED);
@@ -92,14 +153,13 @@ function LoginPage() {
             auth,
             normalizeLoginEmail(formData.email),
             formData.password
-          );
+      );
       const firebaseUser = userCredential.user;
       const appUser = await login(firebaseUser);
-      alert("Đăng nhập thành công!");
       navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
       await signOut(auth).catch(() => {});
-      alert(loginErrorMessage(error, DEMO_LOGIN_ENABLED));
+      setAuthNotice({ type: "error", message: loginErrorMessage(error, DEMO_LOGIN_ENABLED) });
     } finally {
       setIsLoading(false);
     }
@@ -175,7 +235,12 @@ function LoginPage() {
                 </p>
               </div>
 
-              {/* NÚT GOOGLE ĐÃ GẮN SỰ KIỆN */}
+              {authNotice && (
+                <p className={`auth-notice auth-notice--${authNotice.type}`} role="alert">
+                  {authNotice.message}
+                </p>
+              )}
+
               <button 
                 className="btn-google" 
                 type="button" 

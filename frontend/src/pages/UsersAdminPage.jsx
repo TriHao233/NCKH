@@ -274,7 +274,7 @@ function UsersAdminPage() {
               Mời qua email
             </button>
             <button type="button" className="btn btn--primary" onClick={() => openCreate('direct')}>
-              + Tạo tài khoản mới
+              + Tạo bằng mật khẩu
             </button>
           </div>
         </div>
@@ -374,7 +374,7 @@ function UsersAdminPage() {
       {showCreate && (
         <div className="modal-overlay" onClick={() => !creating && setShowCreate(false)}>
           <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <h3 className="modal-title">{createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản mới'}</h3>
+            <h3 className="modal-title">{createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}</h3>
 
             <div className="field-group">
               <label className="field-label">Email</label>
