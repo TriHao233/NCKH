@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import AboutPage from './pages/AboutPage';
@@ -29,7 +29,16 @@ function RequireAccess({ path, children }) {
     const location = useLocation();
     if (loading) return <div className="route-loading">Đang kiểm tra phiên đăng nhập...</div>;
     if (!user) return <Navigate to="/dang-nhap" replace state={{ from: `${location.pathname}${location.search}` }} />;
-    if (!canAccessPath(user, path)) return <Navigate to="/trang-chu" replace />;
+    if (!canAccessPath(user, path)) {
+        return (
+            <section className="route-denied" role="alert">
+                <span>403</span>
+                <h1>Bạn không có quyền truy cập trang này</h1>
+                <p>Phiên đăng nhập vẫn được giữ nguyên. Hãy quay lại khu vực phù hợp với vai trò của bạn.</p>
+                <Link to="/trang-chu" replace>Về trang chủ</Link>
+            </section>
+        );
+    }
     return children;
 }
 

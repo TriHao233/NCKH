@@ -9,6 +9,7 @@ from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.service import DocumentService, get_document_service
 from modules.generation.mongodb import (
     create_generation_job,
+    generation_job_has_status,
     get_generation_job,
     update_generation_job,
 )
@@ -88,14 +89,25 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
 
         async with generate_semaphore:
             processing_started_at = utc_now()
-            update_generation_job(job_id, status="processing")
+            claimed_job = update_generation_job(
+                job_id,
+                status="processing",
+                expected_status="queued",
+            )
+            if not claimed_job:
+                logger.info("Job [%s] không còn ở hàng đợi; bỏ qua xử lý", job_id)
+                return
             req = QuestionGenerateRequest(**job["request"])
             client_telemetry = (
                 req.client_telemetry.model_dump(exclude_none=True)
                 if req.client_telemetry
                 else {}
             )
-            result = await generate_questions_rag(req, requested_by_user_id=requested_by_user_id)
+            result = await generate_questions_rag(
+                req,
+                requested_by_user_id=requested_by_user_id,
+                should_continue=lambda: generation_job_has_status(job_id, "processing"),
+            )
             finished_at = utc_now()
             metrics = build_generation_metrics(
                 job,
@@ -103,7 +115,7 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
                 finished_at=finished_at,
                 client_telemetry=client_telemetry,
             )
-            update_generation_job(
+            completed_job = update_generation_job(
                 job_id,
                 status="completed",
                 result={
@@ -112,8 +124,12 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
                     "summary": [item.model_dump() for item in result.summary],
                 },
                 metrics=metrics,
+                expected_status="processing",
             )
-            logger.info("Job [%s] hoàn tất thành công", job_id)
+            if completed_job:
+                logger.info("Job [%s] hoàn tất thành công", job_id)
+            else:
+                logger.info("Job [%s] đã kết thúc trước khi worker hoàn tất", job_id)
     except Exception as ex:
         logger.error("Job [%s] thất bại: %s", job_id, ex)
         metrics = build_generation_metrics(
@@ -122,12 +138,15 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
             finished_at=utc_now(),
             client_telemetry=client_telemetry,
         )
-        update_generation_job(
+        failed_job = update_generation_job(
             job_id,
             status="failed",
             metrics=metrics,
             error_message=str(ex),
+            expected_status="processing",
         )
+        if not failed_job:
+            logger.info("Giữ nguyên trạng thái kết thúc hiện tại của job [%s]", job_id)
 
 
 @router.post(
@@ -168,9 +187,20 @@ async def api_generate_questions(
     response_model=GenerationJobStatusResponse,
     summary="Kiểm tra trạng thái job sinh câu hỏi",
 )
-async def get_generation_job_status(job_id: str):
+async def get_generation_job_status(
+    job_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+):
     job = get_generation_job(job_id)
     if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy Job ID này trong hệ thống",
+        )
+    if (
+        current_user.role != "Admin"
+        and str(job.get("requested_by_user_id")) != str(current_user.id)
+    ):
         raise HTTPException(
             status_code=404,
             detail="Không tìm thấy Job ID này trong hệ thống",

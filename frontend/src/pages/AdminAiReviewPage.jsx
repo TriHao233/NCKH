@@ -35,7 +35,18 @@ const COLOR_LABEL = {
   RED: 'Rủi ro cao',
 };
 
-const AI_REVIEW_STATUSES = new Set(['QUEUED', 'PROCESSING', 'RUNNING', 'PASSED', 'FAILED', 'ERROR', 'STALE']);
+const AI_REVIEW_STATUSES = new Set([
+  'NOT_STARTED',
+  'QUEUED',
+  'PROCESSING',
+  'RUNNING',
+  'PASSED',
+  'FAILED',
+  'ERROR',
+  'STALE',
+]);
+const COMPLETED_REVIEW_STATUSES = new Set(['APPROVED', 'NEEDS_REVISION', 'REJECTED']);
+const RISK_EVALUATION_STATUSES = new Set(['FAILED', 'ERROR', 'STALE']);
 
 const SCORE_COMPONENTS = [
   { key: 'faithfulness', label: 'Bám sát nguồn' },
@@ -84,7 +95,51 @@ function isEvaluationBusy(question) {
 }
 
 function canQueueEvaluation(question) {
-  return question && !isEvaluationBusy(question) && question.evaluation_status !== 'PASSED';
+  return (
+    question
+    && question.review_status === 'PENDING'
+    && !isEvaluationBusy(question)
+    && question.evaluation_status !== 'PASSED'
+  );
+}
+
+function modelRuntimeLabel(code) {
+  const normalized = String(code || 'deepseek-r1').toLowerCase();
+  if (normalized === 'gemini') return 'Gemini API';
+  if (normalized.startsWith('ollama:')) {
+    return `${normalized.slice('ollama:'.length)} · Ollama cục bộ`;
+  }
+  if (normalized.includes('deepseek') || normalized.includes('qwen')) {
+    return `${code || 'deepseek-r1'} · Ollama cục bộ`;
+  }
+  return code || 'Model theo cấu hình hệ thống';
+}
+
+function matchesStatusFilter(question, filter) {
+  if (filter === 'pending') return question.review_status === 'PENDING';
+  if (filter === 'unscored') {
+    return question.review_status === 'PENDING'
+      && question.evaluation_status === 'NOT_STARTED';
+  }
+  if (filter === 'processing') {
+    return question.review_status === 'PENDING' && isEvaluationBusy(question);
+  }
+  if (filter === 'risk') {
+    return question.review_status === 'PENDING'
+      && RISK_EVALUATION_STATUSES.has(question.evaluation_status);
+  }
+  if (filter === 'completed') return COMPLETED_REVIEW_STATUSES.has(question.review_status);
+  return true;
+}
+
+function riskRank(question) {
+  if (question.evaluation_status === 'ERROR') return 0;
+  if (question.evaluation_status === 'FAILED') return 1;
+  if (question.evaluation_status === 'STALE') return 2;
+  if (question.evaluation_status === 'NOT_STARTED') return 3;
+  if (isEvaluationBusy(question)) return 4;
+  if (question.evaluation_status === 'PASSED') return 5;
+  return 6;
 }
 
 function questionSummary(question) {
@@ -101,7 +156,9 @@ function AdminAiReviewPage() {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('active');
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [qualityFilter, setQualityFilter] = useState('all');
+  const [sortOrder, setSortOrder] = useState('risk');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selected, setSelected] = useState(null);
@@ -111,6 +168,12 @@ function AdminAiReviewPage() {
   const [message, setMessage] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
   const [checkingAll, setCheckingAll] = useState(false);
+  const [actionDialog, setActionDialog] = useState(null);
+  const [actionReason, setActionReason] = useState('');
+  const [dialogError, setDialogError] = useState('');
+  const [approvalChecklist, setApprovalChecklist] = useState(
+    () => Object.fromEntries(SCORE_COMPONENTS.map((component) => [component.key, false])),
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setSearchTerm(searchInput.trim()), 350);
@@ -122,7 +185,10 @@ function AdminAiReviewPage() {
     setError('');
     try {
       const result = await listQuestions({ page: 1, pageSize: 100, search: searchTerm || undefined });
-      const items = (result.items || []).filter((item) => AI_REVIEW_STATUSES.has(item.evaluation_status));
+      const items = (result.items || []).filter((item) => (
+        AI_REVIEW_STATUSES.has(item.evaluation_status)
+        && item.review_status !== 'DRAFT'
+      ));
       setQuestions(items);
       return items;
     } catch (err) {
@@ -175,6 +241,23 @@ function AdminAiReviewPage() {
   }, [questions, selected?.id, searchTerm]);
 
   useEffect(() => {
+    if (!actionDialog) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !busyId && !checkingAll) {
+        setActionDialog(null);
+        setDialogError('');
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [actionDialog, busyId, checkingAll]);
+
+  useEffect(() => {
     const questionId = new URLSearchParams(location.search).get('questionId') || '';
     if (!questionId || openedDeepLinkId === questionId) return;
     const openLinkedQuestion = async () => {
@@ -194,21 +277,30 @@ function AdminAiReviewPage() {
   }, [location.search, questions, openedDeepLinkId]);
 
   const counts = useMemo(() => ({
-    active: questions.filter((item) => item.review_status !== 'APPROVED').length,
-    processing: questions.filter((item) => isEvaluationBusy(item)).length,
-    passed: questions.filter((item) => item.evaluation_status === 'PASSED' && item.review_status !== 'APPROVED').length,
-    failed: questions.filter((item) => ['FAILED', 'ERROR', 'STALE'].includes(item.evaluation_status)).length,
-    approved: questions.filter((item) => item.review_status === 'APPROVED').length,
+    pending: questions.filter((item) => item.review_status === 'PENDING').length,
+    unscored: questions.filter((item) => (
+      item.review_status === 'PENDING' && item.evaluation_status === 'NOT_STARTED'
+    )).length,
+    processing: questions.filter((item) => (
+      item.review_status === 'PENDING' && isEvaluationBusy(item)
+    )).length,
+    risk: questions.filter((item) => (
+      item.review_status === 'PENDING'
+      && RISK_EVALUATION_STATUSES.has(item.evaluation_status)
+    )).length,
+    completed: questions.filter((item) => COMPLETED_REVIEW_STATUSES.has(item.review_status)).length,
   }), [questions]);
 
   const filtered = useMemo(() => {
     const normalizedSearch = searchTerm.toLowerCase();
-    return questions.filter((item) => {
-      if (statusFilter === 'active' && item.review_status === 'APPROVED') return false;
-      if (statusFilter === 'processing' && !isEvaluationBusy(item)) return false;
-      if (statusFilter === 'passed' && !(item.evaluation_status === 'PASSED' && item.review_status !== 'APPROVED')) return false;
-      if (statusFilter === 'failed' && !['FAILED', 'ERROR', 'STALE'].includes(item.evaluation_status)) return false;
-      if (statusFilter === 'approved' && item.review_status !== 'APPROVED') return false;
+    const items = questions.filter((item) => {
+      if (!matchesStatusFilter(item, statusFilter)) return false;
+      const scoreValue = item.quality_summary?.overall_score;
+      if (qualityFilter === 'UNSCORED' && typeof scoreValue === 'number') return false;
+      if (
+        ['GREEN', 'YELLOW', 'RED'].includes(qualityFilter)
+        && item.quality_summary?.color !== qualityFilter
+      ) return false;
       if (!normalizedSearch) return true;
       return [
         item.question_code,
@@ -216,7 +308,34 @@ function AdminAiReviewPage() {
         item.explanation,
       ].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalizedSearch));
     });
-  }, [questions, searchTerm, statusFilter]);
+    return [...items].sort((left, right) => {
+      const leftScore = left.quality_summary?.overall_score;
+      const rightScore = right.quality_summary?.overall_score;
+      if (sortOrder === 'score_asc') {
+        return (typeof leftScore === 'number' ? leftScore : 2)
+          - (typeof rightScore === 'number' ? rightScore : 2);
+      }
+      if (sortOrder === 'score_desc') {
+        return (typeof rightScore === 'number' ? rightScore : -1)
+          - (typeof leftScore === 'number' ? leftScore : -1);
+      }
+      if (sortOrder === 'newest') {
+        return new Date(right.updated_at || right.created_at || 0)
+          - new Date(left.updated_at || left.created_at || 0);
+      }
+      const rankDifference = riskRank(left) - riskRank(right);
+      if (rankDifference !== 0) return rankDifference;
+      return (typeof leftScore === 'number' ? leftScore : 2)
+        - (typeof rightScore === 'number' ? rightScore : 2);
+    });
+  }, [qualityFilter, questions, searchTerm, sortOrder, statusFilter]);
+
+  useEffect(() => {
+    if (selected && !filtered.some((question) => question.id === selected.id)) {
+      setSelected(null);
+      setEvaluations([]);
+    }
+  }, [filtered, selected]);
 
   const latestEvaluation = evaluations[0];
   const qualitySummary = selected?.quality_summary || {};
@@ -233,18 +352,43 @@ function AdminAiReviewPage() {
     if (fresh) await loadEvaluationHistory(fresh);
   };
 
+  const applyDefaultFilters = () => {
+    setStatusFilter('pending');
+    setQualityFilter('all');
+    setSortOrder('risk');
+    setSearchInput('');
+    setSearchTerm('');
+  };
+
+  const openActionDialog = (type, question = null, targets = []) => {
+    setActionDialog({ type, question, targets });
+    setActionReason('');
+    setDialogError('');
+    setApprovalChecklist(
+      Object.fromEntries(SCORE_COMPONENTS.map((component) => [component.key, false])),
+    );
+  };
+
+  const closeActionDialog = () => {
+    if (busyId || checkingAll) return;
+    setActionDialog(null);
+    setDialogError('');
+  };
+
   const runEvaluation = async (question) => {
     setBusyId(question.id);
     setMessage('');
+    setDialogError('');
     try {
       await autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
         fallback_to_heuristic: false,
       });
       setMessage('Đã đưa câu hỏi vào hàng đợi AI đánh giá.');
+      setActionDialog(null);
       await refreshSelection(question.id);
     } catch (err) {
-      setMessage(err.message || 'Đánh giá AI thất bại');
+      setDialogError(err.message || 'Đánh giá AI thất bại');
     } finally {
       setBusyId('');
     }
@@ -263,7 +407,7 @@ function AdminAiReviewPage() {
     return items;
   };
 
-  const checkAllPending = async () => {
+  const prepareBulkEvaluation = async () => {
     setCheckingAll(true);
     setMessage('');
     try {
@@ -273,9 +417,19 @@ function AdminAiReviewPage() {
         setMessage('Không có câu hỏi đang chờ duyệt nào cần kiểm tra AI.');
         return;
       }
-      if (!window.confirm(`Đưa ${targets.length} câu hỏi đang chờ duyệt vào hàng đợi kiểm tra AI?`)) {
-        return;
-      }
+      openActionDialog('bulk-evaluate', null, targets);
+    } catch (err) {
+      setMessage(err.message || 'Không tải được câu hỏi cần kiểm tra');
+    } finally {
+      setCheckingAll(false);
+    }
+  };
+
+  const runBulkEvaluation = async (targets) => {
+    setCheckingAll(true);
+    setDialogError('');
+    setMessage('');
+    try {
       const outcomes = await Promise.allSettled(targets.map((question) => autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
         fallback_to_heuristic: false,
@@ -284,27 +438,29 @@ function AdminAiReviewPage() {
       setMessage(failed > 0
         ? `Đã đưa ${targets.length - failed}/${targets.length} câu hỏi vào hàng đợi AI (${failed} lỗi).`
         : `Đã đưa toàn bộ ${targets.length} câu hỏi vào hàng đợi kiểm tra AI.`);
+      setActionDialog(null);
       await fetchAiQuestions();
     } catch (err) {
-      setMessage(err.message || 'Kiểm tra toàn bộ thất bại');
+      setDialogError(err.message || 'Kiểm tra toàn bộ thất bại');
     } finally {
       setCheckingAll(false);
     }
   };
 
-  const approveQuestion = async (question) => {
+  const approveQuestion = async (question, checklist, reason) => {
     setBusyId(question.id);
+    setDialogError('');
     setMessage('');
     const needsOverride = question.evaluation_status !== 'PASSED';
     const overrideReason = needsOverride
-      ? `Admin cho phép sử dụng sau khi xem kết quả AI: ${questionSummary(question)}.`
+      ? reason.trim()
       : '';
     try {
       await reviewQuestion(question.id, {
         expected_version: question.current_version,
         decision: 'APPROVED',
         note: needsOverride
-          ? 'Admin duyệt sau khi xem xét kết quả thẩm định AI, dù AI chưa đánh dấu đạt.'
+          ? reason.trim()
           : 'Admin duyệt sau khi câu hỏi đạt thẩm định AI.',
         override: {
           applied: needsOverride,
@@ -320,29 +476,29 @@ function AdminAiReviewPage() {
           checklist: SCORE_COMPONENTS.map((component) => ({
             key: component.key,
             label: component.label,
-            passed: true,
+            passed: Boolean(checklist[component.key]),
             note: '',
           })),
           overall_note: needsOverride
-            ? 'Admin quyết định duyệt sau khi cân nhắc kết quả kiểm thử chất lượng của AI.'
+            ? reason.trim()
             : 'Đạt thẩm định AI và sẵn sàng sử dụng trong ngân hàng câu hỏi.',
           revision_issues: [],
         },
       });
       setMessage('Đã duyệt câu hỏi. Câu hỏi đã sẵn sàng trong tab Câu hỏi.');
+      setActionDialog(null);
       await refreshSelection(question.id);
     } catch (err) {
-      setMessage(err.message || 'Duyệt câu hỏi thất bại');
+      setDialogError(err.message || 'Duyệt câu hỏi thất bại');
     } finally {
       setBusyId('');
     }
   };
 
-  const requestRevision = async (question) => {
-    const reason = window.prompt('Nhập lý do cần chỉnh sửa câu hỏi:', 'Cần rà soát lại theo kết quả thẩm định AI.');
-    if (reason === null) return;
-    const detail = reason.trim() || 'Cần rà soát lại theo kết quả thẩm định AI.';
+  const requestRevision = async (question, reason) => {
+    const detail = reason.trim();
     setBusyId(question.id);
+    setDialogError('');
     setMessage('');
     try {
       await reviewQuestion(question.id, {
@@ -365,28 +521,129 @@ function AdminAiReviewPage() {
         },
       });
       setMessage('Đã trả câu hỏi về trạng thái cần sửa.');
+      setActionDialog(null);
       await refreshSelection(question.id);
     } catch (err) {
-      setMessage(err.message || 'Trả về cần sửa thất bại');
+      setDialogError(err.message || 'Trả về cần sửa thất bại');
     } finally {
       setBusyId('');
     }
   };
 
+  const rejectQuestion = async (question, reason) => {
+    const detail = reason.trim();
+    setBusyId(question.id);
+    setDialogError('');
+    setMessage('');
+    try {
+      await reviewQuestion(question.id, {
+        expected_version: question.current_version,
+        decision: 'REJECTED',
+        note: detail,
+        review_form: {
+          checklist: SCORE_COMPONENTS.map((component) => ({
+            key: component.key,
+            label: component.label,
+            passed: false,
+            note: '',
+          })),
+          overall_note: detail,
+          revision_issues: [],
+        },
+      });
+      setMessage('Đã từ chối câu hỏi và lưu lý do vào lịch sử kiểm duyệt.');
+      setActionDialog(null);
+      await refreshSelection(question.id);
+    } catch (err) {
+      setDialogError(err.message || 'Từ chối câu hỏi thất bại');
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const submitActionDialog = async () => {
+    if (!actionDialog) return;
+    const { type, question, targets } = actionDialog;
+    if (type === 'evaluate') {
+      await runEvaluation(question);
+      return;
+    }
+    if (type === 'bulk-evaluate') {
+      await runBulkEvaluation(targets);
+      return;
+    }
+    if (type === 'approve') {
+      const unchecked = SCORE_COMPONENTS.filter(
+        (component) => !approvalChecklist[component.key],
+      );
+      if (unchecked.length > 0) {
+        setDialogError('Admin cần tự xác nhận đủ 5 tiêu chí trước khi duyệt.');
+        return;
+      }
+      if (question.evaluation_status !== 'PASSED' && !actionReason.trim()) {
+        setDialogError('Cần ghi rõ lý do khi duyệt một câu hỏi chưa đạt AI.');
+        return;
+      }
+      await approveQuestion(question, approvalChecklist, actionReason);
+      return;
+    }
+    if (!actionReason.trim()) {
+      setDialogError(
+        type === 'revision'
+          ? 'Cần ghi rõ nội dung giảng viên phải chỉnh sửa.'
+          : 'Cần ghi rõ lý do từ chối câu hỏi.',
+      );
+      return;
+    }
+    if (type === 'revision') {
+      await requestRevision(question, actionReason);
+    } else if (type === 'reject') {
+      await rejectQuestion(question, actionReason);
+    }
+  };
+
+  const hasCustomFilters = (
+    statusFilter !== 'pending'
+    || qualityFilter !== 'all'
+    || sortOrder !== 'risk'
+    || Boolean(searchInput)
+  );
+  const dialogQuestion = actionDialog?.question;
+  const dialogNeedsOverride = (
+    actionDialog?.type === 'approve'
+    && dialogQuestion?.evaluation_status !== 'PASSED'
+  );
+  const dialogTitle = {
+    evaluate: dialogQuestion && ['FAILED', 'ERROR', 'STALE'].includes(dialogQuestion.evaluation_status)
+      ? 'Chạy lại đánh giá AI'
+      : 'Chạy đánh giá AI',
+    'bulk-evaluate': 'Kiểm tra AI các câu đang chờ',
+    approve: 'Duyệt câu hỏi',
+    revision: 'Yêu cầu chỉnh sửa',
+    reject: 'Từ chối câu hỏi',
+  }[actionDialog?.type] || 'Xác nhận hành động';
+  const dialogConfirmLabel = {
+    evaluate: 'Gửi AI đánh giá',
+    'bulk-evaluate': 'Đưa vào hàng đợi',
+    approve: 'Xác nhận duyệt',
+    revision: 'Gửi yêu cầu chỉnh sửa',
+    reject: 'Xác nhận từ chối',
+  }[actionDialog?.type] || 'Xác nhận';
+
   return (
     <main className="admin-ai-review-page">
       <section className="ai-review-toolbar">
         <div className="ai-review-toolbar__title">
-          <span>Quản trị AI</span>
-          <h1>Duyệt AI</h1>
-          <p>Các câu hỏi được đưa vào kiểm tra AI sẽ xuất hiện tại đây để Admin xem điểm, minh chứng và quyết định trạng thái sử dụng.</p>
+          <span>AI triage</span>
+          <h1>AI hỗ trợ kiểm duyệt</h1>
+          <p>Ưu tiên các câu hỏi có cảnh báo, đọc minh chứng và để Admin đưa ra quyết định cuối cùng.</p>
         </div>
         <div className="ai-review-actions">
           <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly')}>
-            Câu hỏi
+            Ngân hàng câu hỏi
           </button>
-          <button type="button" className="btn btn--outline" onClick={checkAllPending} disabled={checkingAll || loading}>
-            {checkingAll ? 'Đang kiểm tra...' : 'Kiểm tra toàn bộ'}
+          <button type="button" className="btn btn--outline" onClick={prepareBulkEvaluation} disabled={checkingAll || loading}>
+            {checkingAll ? 'Đang kiểm tra...' : 'Kiểm tra câu đang chờ'}
           </button>
           <button type="button" className="btn btn--primary" onClick={fetchAiQuestions} disabled={loading}>
             {loading ? 'Đang tải' : 'Làm mới'}
@@ -395,45 +652,123 @@ function AdminAiReviewPage() {
       </section>
 
       <section className="ai-review-summary" aria-label="Tổng quan duyệt AI">
-        <button type="button" className={statusFilter === 'active' ? 'active' : ''} onClick={() => setStatusFilter('active')}>
-          <b>{counts.active}</b>
-          <span>Cần xử lý</span>
+        <button
+          type="button"
+          aria-pressed={statusFilter === 'pending'}
+          className={statusFilter === 'pending' ? 'active' : ''}
+          onClick={() => setStatusFilter('pending')}
+        >
+          <span>Chờ quyết định</span>
+          <b>{counts.pending}</b>
+          <small>Đang chờ Admin kết luận</small>
         </button>
-        <button type="button" className={statusFilter === 'processing' ? 'active' : ''} onClick={() => setStatusFilter('processing')}>
+        <button
+          type="button"
+          aria-pressed={statusFilter === 'unscored'}
+          className={statusFilter === 'unscored' ? 'active' : ''}
+          onClick={() => setStatusFilter('unscored')}
+        >
+          <span>Chưa có điểm AI</span>
+          <b>{counts.unscored}</b>
+          <small>Cần gửi model đánh giá</small>
+        </button>
+        <button
+          type="button"
+          aria-pressed={statusFilter === 'processing'}
+          className={statusFilter === 'processing' ? 'active' : ''}
+          onClick={() => setStatusFilter('processing')}
+        >
+          <span>Đang chấm</span>
           <b>{counts.processing}</b>
-          <span>Đang kiểm tra</span>
+          <small>Đang chạy đánh giá tự động</small>
         </button>
-        <button type="button" className={statusFilter === 'passed' ? 'active' : ''} onClick={() => setStatusFilter('passed')}>
-          <b>{counts.passed}</b>
-          <span>AI đạt</span>
+        <button
+          type="button"
+          aria-pressed={statusFilter === 'risk'}
+          className={statusFilter === 'risk' ? 'active' : ''}
+          onClick={() => setStatusFilter('risk')}
+        >
+          <span>AI cảnh báo</span>
+          <b>{counts.risk}</b>
+          <small>Lỗi, kết quả cũ hoặc không đạt</small>
         </button>
-        <button type="button" className={statusFilter === 'failed' ? 'active' : ''} onClick={() => setStatusFilter('failed')}>
-          <b>{counts.failed}</b>
-          <span>Cần xem lại</span>
-        </button>
-        <button type="button" className={statusFilter === 'approved' ? 'active' : ''} onClick={() => setStatusFilter('approved')}>
-          <b>{counts.approved}</b>
-          <span>Đã duyệt</span>
+        <button
+          type="button"
+          aria-pressed={statusFilter === 'completed'}
+          className={statusFilter === 'completed' ? 'active' : ''}
+          onClick={() => setStatusFilter('completed')}
+        >
+          <span>Đã kết thúc</span>
+          <b>{counts.completed}</b>
+          <small>Đã duyệt, yêu cầu sửa hoặc từ chối</small>
         </button>
       </section>
 
       <section className="ai-review-layout">
         <div className="ai-review-list-panel">
+          <div className="ai-review-list-heading">
+            <div>
+              <span>Danh sách thẩm định</span>
+              <b>{loading ? 'Đang tải...' : `${filtered.length} câu hỏi`}</b>
+            </div>
+            <small>AI sàng lọc; Admin chịu trách nhiệm quyết định</small>
+          </div>
           <div className="ai-review-filters">
-            <input
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Tìm mã hoặc nội dung câu hỏi"
-            />
+            <label className="ai-review-filter ai-review-filter--search">
+              <span>Tìm câu hỏi</span>
+              <div>
+                <input
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  placeholder="Mã hoặc nội dung câu hỏi"
+                />
+                {searchInput && (
+                  <button type="button" aria-label="Xóa tìm kiếm" onClick={() => setSearchInput('')}>
+                    ×
+                  </button>
+                )}
+              </div>
+            </label>
+            <label className="ai-review-filter">
+              <span>Mức chất lượng</span>
+              <select value={qualityFilter} onChange={(event) => setQualityFilter(event.target.value)}>
+                <option value="all">Mọi mức</option>
+                <option value="UNSCORED">Chưa có điểm</option>
+                <option value="RED">Rủi ro cao</option>
+                <option value="YELLOW">Cần xem lại</option>
+                <option value="GREEN">Đạt tốt</option>
+              </select>
+            </label>
+            <label className="ai-review-filter">
+              <span>Sắp xếp</span>
+              <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value)}>
+                <option value="risk">Ưu tiên rủi ro</option>
+                <option value="score_asc">Điểm thấp trước</option>
+                <option value="score_desc">Điểm cao trước</option>
+                <option value="newest">Mới cập nhật</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="ai-review-filter-reset"
+              onClick={applyDefaultFilters}
+              disabled={!hasCustomFilters}
+            >
+              Đặt lại
+            </button>
           </div>
 
           {error && <p className="ai-review-error">{error}</p>}
-          {message && <p className="ai-review-message">{message}</p>}
+          {message && <p className="ai-review-message" role="status">{message}</p>}
 
           {loading ? (
             <p className="ai-review-empty">Đang tải danh sách duyệt AI...</p>
           ) : filtered.length === 0 ? (
-            <p className="ai-review-empty">Chưa có câu hỏi nào trong nhóm này.</p>
+            <div className="ai-review-empty ai-review-empty--action">
+              <b>Không có câu hỏi phù hợp</b>
+              <span>Thử bỏ bớt điều kiện lọc hoặc chuyển sang nhóm trạng thái khác.</span>
+              {hasCustomFilters && <button type="button" onClick={applyDefaultFilters}>Đặt lại bộ lọc</button>}
+            </div>
           ) : (
             <div className="ai-review-list">
               {filtered.map((question) => (
@@ -461,7 +796,11 @@ function AdminAiReviewPage() {
 
         <aside className="ai-review-detail-panel">
           {!selected ? (
-            <p className="ai-review-empty">Chọn một câu hỏi để xem kết quả thẩm định AI.</p>
+            <div className="ai-review-detail-empty">
+              <span>AI</span>
+              <h2>Chọn một câu hỏi để thẩm định</h2>
+              <p>Điểm thành phần, minh chứng và hành động quản trị sẽ xuất hiện tại đây.</p>
+            </div>
           ) : (
             <>
               <div className="ai-review-detail-head">
@@ -480,23 +819,37 @@ function AdminAiReviewPage() {
               </div>
 
               <div className="ai-review-detail-actions">
-                <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
-                  {['FAILED', 'ERROR', 'STALE'].includes(selected.evaluation_status) ? 'Thử lại AI' : 'Chạy AI'}
+                <button
+                  type="button"
+                  disabled={busyId === selected.id || !canQueueEvaluation(selected)}
+                  onClick={() => openActionDialog('evaluate', selected)}
+                >
+                  {['FAILED', 'ERROR', 'STALE'].includes(selected.evaluation_status)
+                    ? 'Chạy lại AI'
+                    : 'Chạy AI'}
                 </button>
                 <button
                   type="button"
                   className="primary"
-                  disabled={busyId === selected.id || isEvaluationBusy(selected) || selected.review_status === 'APPROVED'}
-                  onClick={() => approveQuestion(selected)}
+                  disabled={busyId === selected.id || isEvaluationBusy(selected) || selected.review_status !== 'PENDING'}
+                  onClick={() => openActionDialog('approve', selected)}
                 >
                   Duyệt
                 </button>
                 <button
                   type="button"
-                  disabled={busyId === selected.id || selected.review_status === 'APPROVED'}
-                  onClick={() => requestRevision(selected)}
+                  disabled={busyId === selected.id || selected.review_status !== 'PENDING'}
+                  onClick={() => openActionDialog('revision', selected)}
                 >
                   Cần sửa
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busyId === selected.id || selected.review_status !== 'PENDING'}
+                  onClick={() => openActionDialog('reject', selected)}
+                >
+                  Từ chối
                 </button>
               </div>
 
@@ -551,6 +904,141 @@ function AdminAiReviewPage() {
           )}
         </aside>
       </section>
+
+      {actionDialog && (
+        <div className="ai-admin-dialog-backdrop">
+          <form
+            className="ai-admin-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ai-admin-dialog-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitActionDialog();
+            }}
+          >
+            <header className="ai-admin-dialog__head">
+              <div>
+                <span>
+                  {dialogQuestion?.question_code
+                    || `${actionDialog.targets?.length || 0} câu hỏi`}
+                </span>
+                <h2 id="ai-admin-dialog-title">{dialogTitle}</h2>
+              </div>
+              <button type="button" aria-label="Đóng hộp thoại" onClick={closeActionDialog}>
+                Đóng
+              </button>
+            </header>
+
+            <div className="ai-admin-dialog__body">
+              {dialogQuestion && (
+                <div className="ai-admin-dialog__question">
+                  <b>{dialogQuestion.content}</b>
+                  <span>
+                    {evaluationStatusLabel(dialogQuestion.evaluation_status)}
+                    {' · '}
+                    {questionSummary(dialogQuestion)}
+                  </span>
+                </div>
+              )}
+
+              {['evaluate', 'bulk-evaluate'].includes(actionDialog.type) && (
+                <>
+                  <div className="ai-admin-model-card">
+                    <span>Model sẽ thực hiện</span>
+                    <b>
+                      {modelRuntimeLabel(
+                        dialogQuestion?.quality_summary?.evaluator_model_code || 'deepseek-r1',
+                      )}
+                    </b>
+                    <small>Không dùng chấm dự phòng nếu model lỗi hoặc trả JSON không hợp lệ.</small>
+                  </div>
+                  <p className="ai-admin-dialog__hint">
+                    {actionDialog.type === 'bulk-evaluate'
+                      ? `${actionDialog.targets.length} câu hỏi đang chờ và chưa đạt AI sẽ được đưa vào hàng đợi.`
+                      : 'AI chấm 5 tiêu chí và lưu minh chứng; Admin vẫn là người đưa ra quyết định cuối cùng.'}
+                  </p>
+                </>
+              )}
+
+              {actionDialog.type === 'approve' && (
+                <>
+                  {dialogNeedsOverride && (
+                    <div className="ai-admin-dialog__warning">
+                      Câu hỏi chưa được AI đánh dấu đạt. Quyết định duyệt sẽ được lưu là một lần override của Admin.
+                    </div>
+                  )}
+                  <section className="ai-admin-checklist" aria-labelledby="ai-admin-checklist-title">
+                    <div>
+                      <h3 id="ai-admin-checklist-title">Checklist quyết định</h3>
+                      <span>
+                        {Object.values(approvalChecklist).filter(Boolean).length}/{SCORE_COMPONENTS.length}
+                      </span>
+                    </div>
+                    <p>Admin tự xác nhận từng tiêu chí; hệ thống không đánh dấu thay.</p>
+                    {SCORE_COMPONENTS.map((component) => (
+                      <label key={component.key}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(approvalChecklist[component.key])}
+                          onChange={(event) => setApprovalChecklist((current) => ({
+                            ...current,
+                            [component.key]: event.target.checked,
+                          }))}
+                        />
+                        {component.label}
+                      </label>
+                    ))}
+                  </section>
+                  {dialogNeedsOverride && (
+                    <label className="ai-admin-dialog__field">
+                      <span>Lý do duyệt khác đề xuất AI</span>
+                      <textarea
+                        value={actionReason}
+                        onChange={(event) => setActionReason(event.target.value)}
+                        rows={4}
+                        placeholder="Nêu căn cứ chuyên môn khiến Admin vẫn quyết định duyệt..."
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+
+              {['revision', 'reject'].includes(actionDialog.type) && (
+                <label className="ai-admin-dialog__field">
+                  <span>
+                    {actionDialog.type === 'revision'
+                      ? 'Nội dung giảng viên cần sửa'
+                      : 'Lý do từ chối'}
+                  </span>
+                  <textarea
+                    value={actionReason}
+                    onChange={(event) => setActionReason(event.target.value)}
+                    rows={5}
+                    placeholder={actionDialog.type === 'revision'
+                      ? 'Mô tả lỗi cụ thể và cách giảng viên nên chỉnh...'
+                      : 'Nêu rõ căn cứ khiến câu hỏi không thể đưa vào ngân hàng...'}
+                    autoFocus
+                  />
+                </label>
+              )}
+
+              {dialogError && <p className="ai-admin-dialog__error" role="alert">{dialogError}</p>}
+            </div>
+
+            <footer className="ai-admin-dialog__foot">
+              <button type="button" onClick={closeActionDialog}>Hủy</button>
+              <button
+                type="submit"
+                className={actionDialog.type === 'reject' ? 'danger' : 'primary'}
+                disabled={Boolean(busyId) || checkingAll}
+              >
+                {busyId || checkingAll ? 'Đang xử lý...' : dialogConfirmLabel}
+              </button>
+            </footer>
+          </form>
+        </div>
+      )}
     </main>
   );
 }

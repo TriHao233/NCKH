@@ -344,6 +344,25 @@ def _ensure_collections(db, collection_names: tuple[str, ...]) -> None:
 def _ensure_indexes() -> None:
     auth_db = get_auth_db()
     rag_db = get_rag_db()
+    active_policy = rag_db.evaluation_policies.find_one(
+        {"is_active": True},
+        sort=[("version", DESCENDING), ("updated_at", DESCENDING)],
+    )
+    if active_policy:
+        rag_db.evaluation_policies.update_many(
+            {"_id": {"$ne": active_policy["_id"]}, "is_active": True},
+            {"$set": {"is_active": False}},
+        )
+    else:
+        fallback_policy = rag_db.evaluation_policies.find_one(
+            {},
+            sort=[("version", DESCENDING), ("updated_at", DESCENDING)],
+        )
+        if fallback_policy:
+            rag_db.evaluation_policies.update_one(
+                {"_id": fallback_policy["_id"]},
+                {"$set": {"is_active": True}},
+            )
     auth_db["User"].create_indexes(
         [
             IndexModel([("uid", ASCENDING)], unique=True, name="uq_user_uid"),
@@ -424,6 +443,21 @@ def _ensure_indexes() -> None:
                 [("vector_collection_id", ASCENDING), ("external_vector_id", ASCENDING)],
                 unique=True,
                 name="uq_external_vector",
+            ),
+        ]
+    )
+    rag_db.evaluation_policies.create_indexes(
+        [
+            IndexModel(
+                [("policy_name", ASCENDING), ("version", ASCENDING)],
+                unique=True,
+                name="uq_evaluation_policy_version",
+            ),
+            IndexModel(
+                [("is_active", ASCENDING)],
+                unique=True,
+                name="uq_single_active_evaluation_policy",
+                partialFilterExpression={"is_active": True},
             ),
         ]
     )
@@ -564,6 +598,10 @@ def _seed_reference_data() -> None:
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     }
+    has_active_evaluation_policy = (
+        db.evaluation_policies.find_one({"is_active": True}, {"_id": 1})
+        is not None
+    )
     db.evaluation_policies.update_one(
         {"policy_name": "Default question quality policy", "version": 1},
         {
@@ -590,7 +628,7 @@ def _seed_reference_data() -> None:
                 "default_course_id": "ctdl-demo",
                 "default_category_id": "qbank-demo",
                 "allowed_roles": ["Admin", "Reviewer"],
-                "is_active": True,
+                "is_active": not has_active_evaluation_policy,
                 "last_check": None,
                 "created_by_user_id": None,
                 "updated_by_user_id": None,

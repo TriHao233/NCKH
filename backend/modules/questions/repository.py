@@ -219,13 +219,23 @@ class MongoQuestionRepository:
     ) -> tuple[list[tuple[dict, dict]], int]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
         if review_status:
-            match["review_status"] = review_status
+            match["review_status"] = (
+                {"$in": ["APPROVED", "NEEDS_REVISION", "REJECTED"]}
+                if review_status == "PROCESSED"
+                else review_status
+            )
         if publication_status:
             match["publication_status"] = publication_status
         if evaluation_status:
             match["evaluation_status"] = evaluation_status
         if assignment_status:
-            match["review_assignment.status"] = assignment_status
+            if assignment_status == "UNASSIGNED":
+                match["$or"] = [
+                    {"review_assignment.status": {"$exists": False}},
+                    {"review_assignment.status": "UNASSIGNED"},
+                ]
+            else:
+                match["review_assignment.status"] = assignment_status
         if assigned_reviewer_user_id is not None:
             match["review_assignment.reviewer_user_id"] = assigned_reviewer_user_id
         if quality_color:

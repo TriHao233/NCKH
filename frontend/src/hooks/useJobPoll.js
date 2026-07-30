@@ -22,7 +22,7 @@ const sleep = (ms, signal) =>
 export async function pollJob(fetchStatus, jobId, options = {}) {
   const {
     intervalMs = 2000,
-    terminal = ['completed', 'failed'],
+    terminal = ['completed', 'failed', 'cancelled'],
     signal,
     timeoutMs = 600000,
     onUpdate,

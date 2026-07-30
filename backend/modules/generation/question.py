@@ -2,7 +2,7 @@ import json
 import re
 import logging
 import time
-from typing import List
+from typing import Callable, List
 
 from modules.generation.schemas import (
     QuestionPlanItem,
@@ -22,6 +22,16 @@ from modules.generation.mongodb import (
 
 logger = logging.getLogger(__name__)
 MAX_FORMAT_RETRY_ATTEMPTS = 1
+GenerationGuard = Callable[[], bool]
+
+
+class GenerationCancelledError(RuntimeError):
+    pass
+
+
+def _ensure_generation_active(should_continue: GenerationGuard | None) -> None:
+    if should_continue is not None and not should_continue():
+        raise GenerationCancelledError("GENERATION_JOB_CANCELLED")
 
 QUESTION_TYPE_RETRY_RULES = {
     "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
@@ -36,7 +46,9 @@ QUESTION_TYPE_RETRY_RULES = {
 async def generate_questions_rag(
     req: QuestionGenerateRequest,
     requested_by_user_id=None,
+    should_continue: GenerationGuard | None = None,
 ) -> QuestionGenerateResponse:
+    _ensure_generation_active(should_continue)
     plan = req.effective_plan()
     plan_log = ", ".join(
         f"{item.question_type.value}/{(item.bloom_level or req.bloom_level).value}:{item.num_questions}"
@@ -62,6 +74,7 @@ async def generate_questions_rag(
     seen_question_fingerprints: set[str] = set()
 
     for plan_index, plan_item in enumerate(plan, start=1):
+        _ensure_generation_active(should_continue)
         questions, summary = await _generate_questions_for_plan_item(
             req,
             plan_item,
@@ -73,6 +86,7 @@ async def generate_questions_rag(
             prompt_builder=prompt_builder,
             llm=llm,
             requested_by_user_id=requested_by_user_id,
+            should_continue=should_continue,
         )
         for question in questions:
             seen_question_fingerprints.add(_question_fingerprint(question.question))
@@ -98,7 +112,9 @@ async def _generate_questions_for_plan_item(
     prompt_builder: PromptBuilder,
     llm,
     requested_by_user_id=None,
+    should_continue: GenerationGuard | None = None,
 ) -> tuple[List[GeneratedQuestion], GenerationPlanSummary]:
+    _ensure_generation_active(should_continue)
     bloom_level = plan_item.bloom_level or req.bloom_level
     # 2. Xây dựng Prompt thông qua hệ thống file-based cho từng dạng câu hỏi
     full_prompt = prompt_builder.build(
@@ -129,7 +145,9 @@ async def _generate_questions_for_plan_item(
     # 3. Gọi LLM
     started_at = time.perf_counter()
     try:
+        _ensure_generation_active(should_continue)
         raw_response = await llm.generate_text(full_prompt)
+        _ensure_generation_active(should_continue)
     except Exception as exc:
         finish_generation_run(
             generation_run_id,
@@ -174,7 +192,9 @@ async def _generate_questions_for_plan_item(
                     ],
                 )
                 try:
+                    _ensure_generation_active(should_continue)
                     retry_raw_response = await llm.generate_text(retry_prompt)
+                    _ensure_generation_active(should_continue)
                     raw_response = (
                         f"{raw_response}\n\n--- FORMAT RETRY {retry_index} ---\n"
                         f"{retry_raw_response}"
@@ -207,6 +227,7 @@ async def _generate_questions_for_plan_item(
                     break
 
         # 5. Lưu vào DB
+        _ensure_generation_active(should_continue)
         saved_data = save_generated_questions(
             req.document_id,
             [q.model_dump() for q in deduped_data],
@@ -217,6 +238,7 @@ async def _generate_questions_for_plan_item(
                 for result in context_snapshot["results"]
                 if result.get("chunk_id")
             ],
+            should_continue=should_continue,
         )
         summary = _build_plan_summary(
             plan_index=plan_index,

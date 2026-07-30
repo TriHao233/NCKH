@@ -374,8 +374,8 @@ function GeneratePage() {
 
   const validateForm = () => {
     if (sourceMode === 'upload') {
-      if (!file) return 'Vui lòng chọn file PDF hoặc DOCX';
-      if (!isSupportedSourceFile(file)) return 'Chỉ hỗ trợ file PDF hoặc DOCX';
+      if (!file) return 'Vui lòng chọn file PDF hoặc DOCX (thử nghiệm)';
+      if (!isSupportedSourceFile(file)) return 'Chỉ hỗ trợ PDF; DOCX hiện ở mức thử nghiệm';
     } else {
       if (!selectedDocumentId) return 'Vui lòng chọn tài liệu đã xử lý';
       if (!selectedDocument) return 'Không tìm thấy tài liệu đã chọn';
@@ -1123,8 +1123,8 @@ function GeneratePage() {
                     <polyline points="17 8 12 3 7 8" />
                     <line x1="12" y1="3" x2="12" y2="15" />
                   </svg>
-                  <span>{fileName || 'Kéo thả hoặc chọn file PDF/DOCX'}</span>
-                  <span className="upload-hint">PDF scan sẽ OCR · DOCX được trích xuất text trực tiếp</span>
+                  <span>{fileName || 'Kéo thả hoặc chọn PDF / DOCX thử nghiệm'}</span>
+                  <span className="upload-hint">PDF là định dạng nghiệm thu · DOCX hiện ở mức thử nghiệm</span>
                 </label>
               ) : (
                 <div className="existing-doc-panel">
@@ -1158,7 +1158,7 @@ function GeneratePage() {
                   </div>
                   {documentsError && <p className="source-note source-note--error">{documentsError}</p>}
                   {!documentsLoading && reusableDocuments.length === 0 && !documentsError && (
-                    <p className="source-note">Chưa có tài liệu sẵn sàng. Hãy tải PDF hoặc DOCX mới trước.</p>
+                    <p className="source-note">Chưa có tài liệu sẵn sàng. Hãy tải PDF mới hoặc dùng DOCX thử nghiệm.</p>
                   )}
                   {selectedDocument && (
                     <p className="source-note">
@@ -1375,7 +1375,7 @@ function GeneratePage() {
             {drafts.length === 0 ? (
               <div className="gen-preview-empty">
                 <p>Chưa có câu hỏi nháp.</p>
-                <span>Tải PDF/DOCX, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.</span>
+                <span>Tải PDF (hoặc DOCX thử nghiệm), cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.</span>
               </div>
             ) : (
               <div className="draft-list">

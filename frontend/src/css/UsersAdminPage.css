@@ -193,3 +193,38 @@
 @media (max-width: 640px) {
   .users-page .modal-card { padding: 20px; }
 }
+
+.users-page .modal-inline-error {
+  border-radius: 7px;
+  background: #fff0f0;
+  color: #ae2e24;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.users-confirm-dialog {
+  display: grid;
+  gap: 12px;
+}
+
+.users-dialog-eyebrow {
+  color: #6b778c;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.users-dialog-copy {
+  color: #44546f;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.users-page .btn--danger {
+  border-color: #ae2e24;
+  background: #ae2e24;
+  color: #fff;
+}

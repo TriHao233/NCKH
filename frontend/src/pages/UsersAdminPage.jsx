@@ -147,6 +147,8 @@ function UsersAdminPage() {
   const [resettingId, setResettingId] = useState(null);
   const [resetResult, setResetResult] = useState(null);
   const [copiedKey, setCopiedKey] = useState('');
+  const [modalError, setModalError] = useState('');
+  const [accountAction, setAccountAction] = useState(null);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -168,6 +170,9 @@ function UsersAdminPage() {
       });
       setUsers(result.items || []);
       setTotal(result.total || 0);
+      if ((result.items || []).length === 0 && result.total > 0 && pageArg > 1) {
+        setPage(Math.max(1, Math.ceil(result.total / PAGE_SIZE)));
+      }
     } catch (err) {
       setError(err.message || 'Không tải được danh sách người dùng');
       setUsers([]);
@@ -233,6 +238,7 @@ function UsersAdminPage() {
   const openCreate = (mode = 'direct') => {
     setCreateMode(mode);
     setInviteResult(null);
+    setModalError('');
     setCreateForm({
       ...emptyCreateForm,
       password: '',
@@ -246,17 +252,18 @@ function UsersAdminPage() {
     const email = createForm.email.trim();
     const displayName = createForm.display_name.trim();
     if (!email || !displayName) {
-      alert('Vui lòng nhập đầy đủ email và họ tên.');
+      setModalError('Vui lòng nhập đầy đủ email và họ tên.');
       return;
     }
     if (!EMAIL_RE.test(email)) {
-      alert('Email không hợp lệ.');
+      setModalError('Email không hợp lệ.');
       return;
     }
     if (createMode === 'direct' && createForm.password.length < 6) {
-      alert('Mật khẩu phải có ít nhất 6 ký tự.');
+      setModalError('Mật khẩu phải có ít nhất 6 ký tự.');
       return;
     }
+    setModalError('');
     setCreating(true);
     try {
       const payload = {
@@ -280,13 +287,14 @@ function UsersAdminPage() {
       await refreshAll(1);
       setPage(1);
     } catch (err) {
-      alert('Tạo tài khoản thất bại: ' + err.message);
+      setModalError(`Tạo tài khoản thất bại: ${err.message}`);
     } finally {
       setCreating(false);
     }
   };
 
   const openEdit = (user) => {
+    setModalError('');
     setEditing(user);
     setEditDisplayName(user.display_name || '');
     setEditRole(user.role);
@@ -302,6 +310,11 @@ function UsersAdminPage() {
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editing) return;
+    if (!editDisplayName.trim()) {
+      setModalError('Họ và tên không được để trống.');
+      return;
+    }
+    setModalError('');
     setSaving(true);
     try {
       await updateUser(editing.id, {
@@ -313,7 +326,7 @@ function UsersAdminPage() {
       setEditing(null);
       await refreshAll();
     } catch (err) {
-      alert('Cập nhật tài khoản thất bại: ' + err.message);
+      setModalError(`Cập nhật tài khoản thất bại: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -325,7 +338,7 @@ function UsersAdminPage() {
       const result = await resetUserPassword(user.id);
       setResetResult(result);
     } catch (err) {
-      alert('Tạo link reset mật khẩu thất bại: ' + err.message);
+      setError(`Tạo link reset mật khẩu thất bại: ${err.message}`);
     } finally {
       setResettingId(null);
     }
@@ -334,9 +347,14 @@ function UsersAdminPage() {
   const handleImportUsers = async (event) => {
     event.preventDefault();
     if (importRows.length === 0) {
-      alert('Vui lòng nhập ít nhất một dòng CSV.');
+      setModalError('Vui lòng nhập ít nhất một dòng CSV.');
       return;
     }
+    if (importInvalidCount > 0) {
+      setModalError(`Có ${importInvalidCount} dòng chưa có email hợp lệ. Hãy sửa trước khi import.`);
+      return;
+    }
+    setModalError('');
     setImporting(true);
     setImportResult(null);
     try {
@@ -345,18 +363,21 @@ function UsersAdminPage() {
       await refreshAll(1);
       setPage(1);
     } catch (err) {
-      alert('Import tài khoản thất bại: ' + err.message);
+      setModalError(`Import tài khoản thất bại: ${err.message}`);
     } finally {
       setImporting(false);
     }
   };
 
-  const handleToggleActive = async (user) => {
+  const handleToggleActive = (user) => {
     const activate = !user.is_active;
-    const confirmMessage = activate
-      ? `Kích hoạt lại tài khoản "${user.display_name}" (${user.email})?`
-      : `Vô hiệu hoá tài khoản "${user.display_name}" (${user.email})?`;
-    if (!window.confirm(confirmMessage)) return;
+    setModalError('');
+    setAccountAction({ user, activate });
+  };
+
+  const confirmToggleActive = async () => {
+    if (!accountAction) return;
+    const { user, activate } = accountAction;
     setTogglingId(user.id);
     try {
       if (activate) {
@@ -364,9 +385,10 @@ function UsersAdminPage() {
       } else {
         await deleteUser(user.id);
       }
+      setAccountAction(null);
       await refreshAll();
     } catch (err) {
-      alert((activate ? 'Kích hoạt' : 'Vô hiệu hoá') + ' tài khoản thất bại: ' + err.message);
+      setModalError(`${activate ? 'Kích hoạt' : 'Khóa'} tài khoản thất bại: ${err.message}`);
     } finally {
       setTogglingId(null);
     }
@@ -385,7 +407,14 @@ function UsersAdminPage() {
             <FontAwesomeIcon icon={faRotateRight} />
             <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
           </button>
-          <button type="button" className="jobs-secondary-button" onClick={() => setShowImport(true)}>
+          <button
+            type="button"
+            className="jobs-secondary-button"
+            onClick={() => {
+              setModalError('');
+              setShowImport(true);
+            }}
+          >
             <FontAwesomeIcon icon={faFileImport} />
             <span>Import CSV</span>
           </button>
@@ -521,7 +550,7 @@ function UsersAdminPage() {
                         <button
                           type="button"
                           className={u.is_active ? 'danger-action' : ''}
-                          title={u.is_active ? 'Vô hiệu hoá tài khoản' : 'Kích hoạt lại tài khoản'}
+                          title={u.is_active ? 'Khóa tài khoản' : 'Kích hoạt lại tài khoản'}
                           disabled={togglingId === u.id}
                           onClick={() => handleToggleActive(u)}
                         >
@@ -558,14 +587,24 @@ function UsersAdminPage() {
 
       {showCreate && (
         <div className="modal-overlay" onClick={() => !creating && setShowCreate(false)}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <h3 className="modal-title">{createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}</h3>
+          <form
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-user-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleCreate}
+          >
+            <h3 className="modal-title" id="create-user-dialog-title">
+              {createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}
+            </h3>
 
             <div className="field-group">
               <label className="field-label">Email</label>
               <input
                 className="field-input"
                 type="email"
+                aria-label="Email tài khoản"
                 value={createForm.email}
                 onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
               />
@@ -577,6 +616,7 @@ function UsersAdminPage() {
                 <input
                   className="field-input"
                   type="password"
+                  aria-label="Mật khẩu ban đầu"
                   value={createForm.password}
                   onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                 />
@@ -588,6 +628,7 @@ function UsersAdminPage() {
               <label className="field-label">Họ và tên</label>
               <input
                 className="field-input"
+                aria-label="Họ và tên"
                 value={createForm.display_name}
                 onChange={(e) => setCreateForm({ ...createForm, display_name: e.target.value })}
               />
@@ -597,6 +638,7 @@ function UsersAdminPage() {
               <label className="field-label">Vai trò</label>
               <select
                 className="field-select"
+                aria-label="Vai trò tài khoản"
                 value={createForm.role}
                 onChange={(e) => setCreateForm({
                   ...createForm,
@@ -638,9 +680,11 @@ function UsersAdminPage() {
                     {copiedKey === 'invite' ? 'Đã sao chép' : 'Sao chép'}
                   </button>
                 </div>
-                <textarea className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
+                <textarea aria-label="Link đặt mật khẩu" className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
               </div>
             )}
+
+            {modalError && <p className="modal-inline-error" role="alert">{modalError}</p>}
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={() => setShowCreate(false)} disabled={creating}>
@@ -656,12 +700,20 @@ function UsersAdminPage() {
 
       {showImport && (
         <div className="modal-overlay" onClick={() => !importing && setShowImport(false)}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleImportUsers}>
-            <h3 className="modal-title">Import người dùng</h3>
+          <form
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="import-user-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleImportUsers}
+          >
+            <h3 className="modal-title" id="import-user-dialog-title">Import người dùng</h3>
             <div className="field-group">
               <label className="field-label">CSV</label>
               <textarea
                 className="field-input"
+                aria-label="Dữ liệu CSV người dùng"
                 rows={8}
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
@@ -682,6 +734,7 @@ function UsersAdminPage() {
                 ))}
               </div>
             )}
+            {modalError && <p className="modal-inline-error" role="alert">{modalError}</p>}
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={() => setShowImport(false)} disabled={importing}>
                 Đóng
@@ -696,8 +749,14 @@ function UsersAdminPage() {
 
       {resetResult && (
         <div className="modal-overlay" onClick={() => setResetResult(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Link reset mật khẩu</h3>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-user-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="modal-title" id="reset-user-dialog-title">Link reset mật khẩu</h3>
             <p className="user-email">{resetResult.email}</p>
             <div className="users-result-box-header">
               <b>Link đặt lại mật khẩu</b>
@@ -706,7 +765,7 @@ function UsersAdminPage() {
                 {copiedKey === 'reset' ? 'Đã sao chép' : 'Sao chép'}
               </button>
             </div>
-            <textarea className="field-input" readOnly rows={4} value={resetResult.reset_link} />
+            <textarea aria-label="Link đặt lại mật khẩu" className="field-input" readOnly rows={4} value={resetResult.reset_link} />
             <div className="modal-actions">
               <button type="button" className="btn btn--primary" onClick={() => setResetResult(null)}>
                 Đóng
@@ -718,18 +777,26 @@ function UsersAdminPage() {
 
       {editing && (
         <div className="modal-overlay" onClick={closeEdit}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
-            <h3 className="modal-title">Chỉnh sửa tài khoản</h3>
+          <form
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-user-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleSaveEdit}
+          >
+            <h3 className="modal-title" id="edit-user-dialog-title">Chỉnh sửa tài khoản</h3>
 
             <div className="field-group">
               <label className="field-label">Email</label>
-              <input className="field-input" value={editing.email} disabled />
+              <input aria-label="Email tài khoản" className="field-input" value={editing.email} disabled />
             </div>
 
             <div className="field-group">
               <label className="field-label">Họ và tên</label>
               <input
                 className="field-input"
+                aria-label="Họ và tên"
                 value={editDisplayName}
                 onChange={(e) => setEditDisplayName(e.target.value)}
               />
@@ -739,6 +806,7 @@ function UsersAdminPage() {
               <label className="field-label">Vai trò</label>
               <select
                 className="field-select"
+                aria-label="Vai trò tài khoản"
                 value={editRole}
                 onChange={(e) => {
                   setEditRole(e.target.value);
@@ -778,6 +846,8 @@ function UsersAdminPage() {
               </label>
             </div>
 
+            {modalError && <p className="modal-inline-error" role="alert">{modalError}</p>}
+
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeEdit} disabled={saving}>
                 Huỷ
@@ -787,6 +857,44 @@ function UsersAdminPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {accountAction && (
+        <div className="modal-overlay" onClick={() => !togglingId && setAccountAction(null)}>
+          <section
+            className="modal-card users-confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-action-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span className="users-dialog-eyebrow">{accountAction.user.email}</span>
+            <h3 className="modal-title" id="account-action-dialog-title">
+              {accountAction.activate ? 'Kích hoạt lại tài khoản?' : 'Khóa tài khoản?'}
+            </h3>
+            <p className="users-dialog-copy">
+              {accountAction.activate
+                ? `${accountAction.user.display_name} sẽ có thể đăng nhập và sử dụng lại các quyền đã cấp.`
+                : `${accountAction.user.display_name} sẽ không thể đăng nhập cho đến khi Admin kích hoạt lại. Dữ liệu của tài khoản vẫn được giữ.`}
+            </p>
+            {modalError && <p className="modal-inline-error" role="alert">{modalError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={() => setAccountAction(null)} disabled={Boolean(togglingId)}>
+                Hủy
+              </button>
+              <button
+                type="button"
+                className={`btn ${accountAction.activate ? 'btn--primary' : 'btn--danger'}`}
+                onClick={confirmToggleActive}
+                disabled={Boolean(togglingId)}
+              >
+                {togglingId
+                  ? 'Đang xử lý...'
+                  : (accountAction.activate ? 'Kích hoạt tài khoản' : 'Khóa tài khoản')}
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </main>

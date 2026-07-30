@@ -186,7 +186,7 @@ class AdminOverviewService:
                 "label": "Câu hỏi chờ duyệt",
                 "count": pending_review,
                 "severity": "warning" if pending_review else "neutral",
-                "path": "/kiem-duyet?status=PENDING",
+                "path": "/kiem-duyet?status=PENDING&assignment=all",
             },
             {
                 "key": "retryable_jobs",

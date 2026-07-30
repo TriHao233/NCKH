@@ -264,6 +264,7 @@ class UserListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+    summary: dict[str, int] = Field(default_factory=dict)
 
 
 class UserStatsResponse(BaseModel):

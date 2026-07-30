@@ -74,6 +74,10 @@ test("direct URL permission and landing path use the same route map", () => {
   assert.deepEqual(rolesForPath("/lam-de-thi/abc123"), ["Teacher", "Admin"]);
   assert.equal(landingPathForRole("Admin"), "/tong-quan");
   assert.equal(landingPathForRole("Admin", "/kiem-duyet?status=PENDING"), "/kiem-duyet?status=PENDING");
+  assert.equal(
+    landingPathForRole("Admin", "/quan-ly?tab=documents&status=FAILED"),
+    "/quan-ly?tab=documents&status=FAILED",
+  );
   assert.equal(landingPathForRole("Admin", "/sinh-cau-hoi"), "/tong-quan");
   assert.equal(landingPathForRole("Admin", "/lam-de-thi"), "/lam-de-thi");
   assert.equal(landingPathForRole("Teacher", "/kiem-duyet"), "/sinh-cau-hoi");
