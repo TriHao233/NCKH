@@ -469,6 +469,17 @@ function renderChoiceEditor({
   );
 }
 
+function teacherDisplayName(teacher) {
+  return teacher?.display_name || teacher?.email || 'Giảng viên';
+}
+
+function teacherInitials(teacher) {
+  const name = teacherDisplayName(teacher).trim();
+  const words = name.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 'GV';
+  return words.slice(-2).map((word) => word[0]).join('').toUpperCase();
+}
+
 function ManagePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -573,9 +584,29 @@ function ManagePage() {
   const [editDocSubjectId, setEditDocSubjectId] = useState('');
   const [savingDoc, setSavingDoc] = useState(false);
   const [teacherOptions, setTeacherOptions] = useState([]);
+  const [teacherOptionsLoading, setTeacherOptionsLoading] = useState(false);
+  const [teacherOptionsError, setTeacherOptionsError] = useState('');
   const [sharingDraft, setSharingDraft] = useState(null);
   const [sharingSaving, setSharingSaving] = useState(false);
   const [sharingError, setSharingError] = useState('');
+  const [sharingSearch, setSharingSearch] = useState('');
+
+  const sharingTeacherOptions = useMemo(() => {
+    const normalizedSearch = sharingSearch.trim().toLowerCase();
+    return teacherOptions
+      .filter((teacher) => String(teacher.id) !== String(user?.id || ''))
+      .filter((teacher) => {
+        if (!normalizedSearch) return true;
+        return [teacher.display_name, teacher.email]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(normalizedSearch));
+      })
+      .sort((left, right) => teacherDisplayName(left).localeCompare(
+        teacherDisplayName(right),
+        'vi',
+        { sensitivity: 'base' },
+      ));
+  }, [sharingSearch, teacherOptions, user?.id]);
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 400);
@@ -689,11 +720,16 @@ function ManagePage() {
 
   useEffect(() => {
     const loadTeacherOptions = async () => {
+      setTeacherOptionsLoading(true);
+      setTeacherOptionsError('');
       try {
         const result = await listTeacherOptions();
         setTeacherOptions(result.items || []);
-      } catch {
+      } catch (error) {
         setTeacherOptions([]);
+        setTeacherOptionsError(error.message || 'Không tải được danh sách giảng viên');
+      } finally {
+        setTeacherOptionsLoading(false);
       }
     };
     if (user) loadTeacherOptions();
@@ -1110,20 +1146,31 @@ function ManagePage() {
 
   const openSharing = (kind, item) => {
     setSharingError('');
+    setSharingSearch('');
     setSharingDraft({
       kind,
       item,
       sharedScope: item.shared_scope || 'PRIVATE',
-      sharedWithUserIds: item.shared_with_user_ids || [],
+      sharedWithUserIds: (item.shared_with_user_ids || [])
+        .map(String)
+        .filter((id) => id !== String(user?.id || '')),
       ownerUserId: item.uploaded_by_user_id || '',
     });
+  };
+
+  const closeSharing = () => {
+    if (sharingSaving) return;
+    setSharingDraft(null);
+    setSharingSearch('');
+    setSharingError('');
   };
 
   const toggleSharingUser = (userId) => {
     setSharingDraft((current) => {
       const selected = new Set(current.sharedWithUserIds || []);
-      if (selected.has(userId)) selected.delete(userId);
-      else selected.add(userId);
+      const normalizedId = String(userId);
+      if (selected.has(normalizedId)) selected.delete(normalizedId);
+      else selected.add(normalizedId);
       return { ...current, sharedWithUserIds: Array.from(selected) };
     });
   };
@@ -1150,7 +1197,12 @@ function ManagePage() {
         });
         await fetchDocuments();
       }
+      const itemLabel = sharingDraft.kind === 'question'
+        ? sharingDraft.item.question_code
+        : sharingDraft.item.title;
+      setWorkflowMessage(`Đã cập nhật quyền chia sẻ cho ${itemLabel}.`);
       setSharingDraft(null);
+      setSharingSearch('');
     } catch (error) {
       setSharingError(error.message || 'Cập nhật chia sẻ thất bại');
     } finally {
@@ -2742,28 +2794,112 @@ function ManagePage() {
       </section>
 
       {sharingDraft && (
-        <div className="modal-overlay" onClick={() => !sharingSaving && setSharingDraft(null)}>
-          <form className="modal-card sharing-modal" onClick={(e) => e.stopPropagation()} onSubmit={submitSharing}>
-            <h3 className="profile-card-title">
-              Chia sẻ {sharingDraft.kind === 'question' ? sharingDraft.item.question_code : sharingDraft.item.title}
-            </h3>
-            <div className="field-group">
-              <label className="field-label">Phạm vi</label>
-              <select
-                className="field-select"
-                value={sharingDraft.sharedScope}
-                onChange={(event) => setSharingDraft((current) => ({
-                  ...current,
-                  sharedScope: event.target.value,
-                }))}
+        <div className="modal-overlay" onClick={closeSharing}>
+          <form
+            className="modal-card sharing-modal"
+            aria-labelledby="sharing-modal-title"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitSharing}
+          >
+            <header className="sharing-modal-header">
+              <span className="sharing-modal-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3" />
+                  <circle cx="6" cy="12" r="3" />
+                  <circle cx="18" cy="19" r="3" />
+                  <path d="M8.59 13.51l6.83 3.98M15.41 6.51L8.59 10.49" />
+                </svg>
+              </span>
+              <div>
+                <span className="sharing-eyebrow">Quyền truy cập</span>
+                <h3 id="sharing-modal-title">
+                  Chia sẻ {sharingDraft.kind === 'question' ? 'câu hỏi' : 'tài liệu'}
+                </h3>
+                <p>Chọn phạm vi chung hoặc cấp quyền trực tiếp cho từng giảng viên.</p>
+              </div>
+              <button
+                type="button"
+                className="sharing-close-button"
+                aria-label="Đóng hộp thoại chia sẻ"
+                onClick={closeSharing}
+                disabled={sharingSaving}
               >
-                <option value="PRIVATE">Riêng tư</option>
-                <option value="SUBJECT">Chia sẻ theo môn</option>
-              </select>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </header>
+
+            <div className="sharing-resource-card">
+              <span>{sharingDraft.kind === 'question' ? 'Câu hỏi' : 'Tài liệu'}</span>
+              <b>{sharingDraft.kind === 'question' ? sharingDraft.item.question_code : sharingDraft.item.title}</b>
+              {sharingDraft.kind === 'question' && sharingDraft.item.content && (
+                <p>{sharingDraft.item.content}</p>
+              )}
             </div>
+
+            <section className="sharing-section">
+              <div className="sharing-section-heading">
+                <div>
+                  <h4>Phạm vi chia sẻ</h4>
+                  <p>Quyền dành riêng cho người được chọn luôn được giữ lại.</p>
+                </div>
+              </div>
+              <div className="sharing-scope-grid" role="radiogroup" aria-label="Phạm vi chia sẻ">
+                <label className={sharingDraft.sharedScope === 'PRIVATE' ? 'is-selected' : ''}>
+                  <input
+                    type="radio"
+                    name="sharing-scope"
+                    value="PRIVATE"
+                    checked={sharingDraft.sharedScope === 'PRIVATE'}
+                    onChange={(event) => setSharingDraft((current) => ({
+                      ...current,
+                      sharedScope: event.target.value,
+                    }))}
+                  />
+                  <span className="sharing-scope-icon" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M19 8v6M22 11h-6" />
+                    </svg>
+                  </span>
+                  <span>
+                    <b>Chỉ định người nhận</b>
+                    <small>Chỉ bạn và giảng viên được chọn có quyền sử dụng.</small>
+                  </span>
+                </label>
+                <label className={sharingDraft.sharedScope === 'SUBJECT' ? 'is-selected' : ''}>
+                  <input
+                    type="radio"
+                    name="sharing-scope"
+                    value="SUBJECT"
+                    checked={sharingDraft.sharedScope === 'SUBJECT'}
+                    onChange={(event) => setSharingDraft((current) => ({
+                      ...current,
+                      sharedScope: event.target.value,
+                    }))}
+                  />
+                  <span className="sharing-scope-icon" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 7l9-4 9 4-9 4-9-4z" />
+                      <path d="M7 9.5V15c0 1.7 2.2 3 5 3s5-1.3 5-3V9.5" />
+                    </svg>
+                  </span>
+                  <span>
+                    <b>Toàn bộ môn học</b>
+                    <small>Mọi giảng viên cùng môn có thể tìm và sử dụng.</small>
+                  </span>
+                </label>
+              </div>
+            </section>
+
             {sharingDraft.kind === 'document' && (
-              <div className="field-group">
-                <label className="field-label">Chủ sở hữu tài liệu</label>
+              <section className="sharing-transfer-card">
+                <div>
+                  <b>Chuyển quyền sở hữu</b>
+                  <span>Chỉ dùng khi muốn bàn giao toàn bộ quyền quản lý tài liệu.</span>
+                </div>
                 <select
                   className="field-select"
                   value={sharingDraft.ownerUserId}
@@ -2779,36 +2915,92 @@ function ManagePage() {
                     </option>
                   ))}
                 </select>
-              </div>
+              </section>
             )}
-            <div className="field-group">
-              <label className="field-label">Chia sẻ riêng cho giảng viên</label>
+
+            <section className="sharing-section">
+              <div className="sharing-section-heading">
+                <div>
+                  <h4>Giảng viên được cấp quyền trực tiếp</h4>
+                  <p>Tìm theo tên hoặc email. Bạn không xuất hiện trong danh sách này.</p>
+                </div>
+                <span className="sharing-selection-count">
+                  {(sharingDraft.sharedWithUserIds || []).length} đã chọn
+                </span>
+              </div>
+              <label className="sharing-search">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M20 20l-3.4-3.4" />
+                </svg>
+                <input
+                  value={sharingSearch}
+                  onChange={(event) => setSharingSearch(event.target.value)}
+                  placeholder="Tìm giảng viên..."
+                />
+              </label>
+              {(sharingDraft.sharedWithUserIds || []).length > 0 && (
+                <div className="sharing-selected-summary">
+                  <span>
+                    Đang cấp quyền trực tiếp cho <b>{sharingDraft.sharedWithUserIds.length}</b> giảng viên
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSharingDraft((current) => ({ ...current, sharedWithUserIds: [] }))}
+                  >
+                    Bỏ chọn tất cả
+                  </button>
+                </div>
+              )}
               <div className="sharing-user-list">
-                {teacherOptions.map((teacher) => (
-                  <label className="clo-option" key={teacher.id}>
-                    <input
-                      type="checkbox"
-                      checked={(sharingDraft.sharedWithUserIds || []).includes(teacher.id)}
-                      onChange={() => toggleSharingUser(teacher.id)}
-                    />
-                    <span>
-                      <b>{teacher.display_name || teacher.email}</b>
-                      {teacher.email}
-                    </span>
-                  </label>
-                ))}
-                {teacherOptions.length === 0 && (
-                  <p className="clo-empty">Không tải được danh sách giảng viên.</p>
+                {teacherOptionsLoading ? (
+                  <p className="sharing-empty">Đang tải danh sách giảng viên...</p>
+                ) : teacherOptionsError ? (
+                  <p className="sharing-empty sharing-empty--error">{teacherOptionsError}</p>
+                ) : sharingTeacherOptions.length > 0 ? (
+                  sharingTeacherOptions.map((teacher) => {
+                    const teacherId = String(teacher.id);
+                    const isSelected = (sharingDraft.sharedWithUserIds || []).includes(teacherId);
+                    return (
+                      <label className={`sharing-user-option ${isSelected ? 'is-selected' : ''}`} key={teacher.id}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSharingUser(teacherId)}
+                        />
+                        <span className="sharing-user-avatar" aria-hidden="true">
+                          {teacherInitials(teacher)}
+                        </span>
+                        <span className="sharing-user-identity">
+                          <b>{teacherDisplayName(teacher)}</b>
+                          <small>{teacher.email || 'Chưa có email'}</small>
+                        </span>
+                        <span className="sharing-user-check" aria-hidden="true">✓</span>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p className="sharing-empty">
+                    {sharingSearch
+                      ? 'Không tìm thấy giảng viên phù hợp.'
+                      : 'Chưa có giảng viên khác để chia sẻ.'}
+                  </p>
                 )}
               </div>
-            </div>
+              <p className="sharing-helper">
+                {sharingDraft.sharedScope === 'SUBJECT'
+                  ? 'Phạm vi môn học áp dụng cho toàn bộ giảng viên cùng môn; lựa chọn bên trên là quyền bổ sung.'
+                  : 'Nếu không chọn ai, nội dung sẽ chỉ hiển thị với bạn.'}
+              </p>
+            </section>
+
             {sharingError && <p className="manage-error">{sharingError}</p>}
-            <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={() => setSharingDraft(null)} disabled={sharingSaving}>
+            <div className="modal-actions sharing-modal-actions">
+              <button type="button" className="btn btn--outline" onClick={closeSharing} disabled={sharingSaving}>
                 Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={sharingSaving}>
-                {sharingSaving ? 'Đang lưu...' : 'Lưu chia sẻ'}
+                {sharingSaving ? 'Đang cập nhật...' : 'Cập nhật chia sẻ'}
               </button>
             </div>
           </form>

@@ -275,33 +275,70 @@ function AdminMoodlePage() {
   return (
     <main className="admin-moodle-page">
       <section className="moodle-header">
-        <div>
-          <span>Quản trị hệ thống</span>
-          <h1>Kết nối Moodle</h1>
-          <p>Quản lý điểm kết nối và phân biệt rõ bản ghi mô phỏng với dữ liệu đã gửi sang Moodle thật.</p>
+        <div className="moodle-header__copy">
+          <div className="moodle-eyebrow">
+            <span aria-hidden="true"><FontAwesomeIcon icon={faPlug} /></span>
+            Tích hợp giảng dạy
+          </div>
+          <h1>Trung tâm kết nối Moodle</h1>
+          <p>Thiết lập nơi nhận câu hỏi, kiểm tra kết nối và theo dõi từng lượt đồng bộ từ một màn hình duy nhất.</p>
+          <div className="moodle-mode-legend">
+            <span><i className="mode-dot mode-dot--mock" /> Mô phỏng an toàn</span>
+            <span><i className="mode-dot mode-dot--live" /> Đồng bộ Moodle thật</span>
+          </div>
         </div>
-        <button type="button" className="moodle-primary-button" onClick={() => { loadTargets(); loadPublications(); }} disabled={loading || publicationsLoading}>
-          <FontAwesomeIcon icon={faRotateRight} />
-          <span>Làm mới</span>
-        </button>
+        <div className="moodle-header__actions">
+          <div className="moodle-connection-overview">
+            <b>{targets.filter((target) => target.is_active).length}</b>
+            <span>điểm kết nối đang hoạt động</span>
+          </div>
+          <button type="button" className="moodle-primary-button" onClick={() => { loadTargets(); loadPublications(); }} disabled={loading || publicationsLoading}>
+            <FontAwesomeIcon icon={faRotateRight} />
+            <span>Làm mới dữ liệu</span>
+          </button>
+        </div>
       </section>
 
       <section className="moodle-summary">
-        <button type="button" onClick={() => { setPublicationStatus('all'); setPublicationPage(1); }}>
+        <button
+          type="button"
+          className={publicationStatus === 'all' ? 'is-active' : ''}
+          onClick={() => { setPublicationStatus('all'); setPublicationPage(1); }}
+        >
+          <span className="moodle-summary-icon moodle-summary-icon--blue"><FontAwesomeIcon icon={faPlug} /></span>
           <b>{publicationSummary.total}</b>
           <span>Tổng lượt xuất bản</span>
+          <small>Toàn bộ hoạt động</small>
         </button>
-        <button type="button" onClick={() => { setPublicationStatus('PUBLISHED'); setPublicationPage(1); }}>
+        <button
+          type="button"
+          className={publicationStatus === 'PUBLISHED' ? 'is-active' : ''}
+          onClick={() => { setPublicationStatus('PUBLISHED'); setPublicationPage(1); }}
+        >
+          <span className="moodle-summary-icon moodle-summary-icon--green"><FontAwesomeIcon icon={faCheckCircle} /></span>
           <b>{publicationSummary.published}</b>
-          <span>Đã ghi nhận · {publicationSummary.simulated || 0} mô phỏng</span>
+          <span>Đã ghi nhận</span>
+          <small>{publicationSummary.simulated || 0} lượt mô phỏng</small>
         </button>
-        <button type="button" className="summary-danger" onClick={() => { setPublicationStatus('FAILED'); setPublicationPage(1); }}>
+        <button
+          type="button"
+          className={`summary-danger ${publicationStatus === 'FAILED' ? 'is-active' : ''}`}
+          onClick={() => { setPublicationStatus('FAILED'); setPublicationPage(1); }}
+        >
+          <span className="moodle-summary-icon moodle-summary-icon--red"><FontAwesomeIcon icon={faCircleExclamation} /></span>
           <b>{publicationSummary.failed}</b>
           <span>Xuất bản lỗi</span>
+          <small>Cần kiểm tra lại</small>
         </button>
-        <button type="button" onClick={() => { setPublicationStatus('PROCESSING'); setPublicationPage(1); }}>
+        <button
+          type="button"
+          className={publicationStatus === 'PROCESSING' ? 'is-active' : ''}
+          onClick={() => { setPublicationStatus('PROCESSING'); setPublicationPage(1); }}
+        >
+          <span className="moodle-summary-icon moodle-summary-icon--amber"><FontAwesomeIcon icon={faRotateRight} /></span>
           <b>{publicationSummary.pending}</b>
           <span>Đang xử lý</span>
+          <small>Đang chờ hoặc đồng bộ</small>
         </button>
       </section>
 
@@ -311,10 +348,11 @@ function AdminMoodlePage() {
         <div className="moodle-target-panel">
           <div className="panel-heading">
             <div>
-              <h2>Điểm kết nối</h2>
-              <span>{targets.length} cấu hình</span>
+              <span>Điểm đến</span>
+              <h2>Cấu hình kết nối</h2>
+              <small>{targets.length} cấu hình Moodle</small>
             </div>
-            <button type="button" onClick={newTarget}>Tạo mới</button>
+            <button type="button" onClick={newTarget}>+ Thêm kết nối</button>
           </div>
 
           {loading ? (
@@ -328,19 +366,21 @@ function AdminMoodlePage() {
                   onClick={() => pickTarget(target)}
                 >
                   <div className="target-main">
-                    <div>
+                    <span className="target-brand" aria-hidden="true">M</span>
+                    <div className="target-title">
                       <strong>{target.site_name}</strong>
-                      <small>{target.site_key} · {target.default_course_id}/{target.default_category_id}</small>
+                      <small>{target.site_key}</small>
                     </div>
                     <span className={`target-check ${target.last_check?.ok ? 'target-check--ok' : ''}`}>
                       {checkText(target)}
                     </span>
                   </div>
                   <div className="target-meta">
-                    <span>{target.mode === 'REST_API' ? 'Moodle thật' : 'Mô phỏng'}</span>
-                    <span>{target.is_active ? 'Hoạt động' : 'Đã khóa'}</span>
-                    <span>{(target.allowed_roles?.length ? target.allowed_roles : emptyForm.allowed_roles).join(', ')}</span>
-                    <span>{formatDateTime(target.last_check?.checked_at)}</span>
+                    <span className={`target-mode target-mode--${target.mode === 'REST_API' ? 'live' : 'mock'}`}>
+                      {target.mode === 'REST_API' ? 'Moodle thật' : 'Mô phỏng'}
+                    </span>
+                    <span>Khóa học {target.default_course_id || '—'}</span>
+                    <span>Danh mục {target.default_category_id || '—'}</span>
                   </div>
                   <div className="target-actions">
                     <button
@@ -353,6 +393,7 @@ function AdminMoodlePage() {
                       }}
                     >
                       <FontAwesomeIcon icon={faPlug} />
+                      <span>{checkingKey === target.site_key ? 'Đang kiểm tra' : 'Kiểm tra'}</span>
                     </button>
                     <button
                       type="button"
@@ -364,7 +405,9 @@ function AdminMoodlePage() {
                       }}
                     >
                       <FontAwesomeIcon icon={faBan} />
+                      <span>Khóa</span>
                     </button>
+                    <small>Kiểm tra gần nhất: {formatDateTime(target.last_check?.checked_at)}</small>
                   </div>
                 </article>
               ))}
@@ -376,51 +419,55 @@ function AdminMoodlePage() {
         <form className="moodle-form-panel" onSubmit={handleSave}>
           <div className="panel-heading">
             <div>
-              <h2>{selectedTarget ? 'Cập nhật điểm kết nối' : 'Tạo điểm kết nối'}</h2>
-              <span>{selectedTarget?.last_check?.message || 'Token thật chỉ được đọc từ biến môi trường trên máy chủ'}</span>
+              <span>{selectedTarget ? 'Đang chỉnh sửa' : 'Cấu hình mới'}</span>
+              <h2>{selectedTarget ? selectedTarget.site_name : 'Thêm điểm kết nối'}</h2>
+              <small>{selectedTarget?.last_check?.message || 'Token được bảo vệ trong biến môi trường trên máy chủ'}</small>
             </div>
+            <span className={`moodle-form-mode moodle-form-mode--${form.mode === 'REST_API' ? 'live' : 'mock'}`}>
+              {form.mode === 'REST_API' ? 'Đồng bộ thật' : 'Mô phỏng'}
+            </span>
           </div>
           <div className="form-grid">
             <label>
-              Site key
-              <input value={form.site_key} onChange={(event) => updateForm('site_key', event.target.value)} />
+              <span>Mã cấu hình</span>
+              <input value={form.site_key} onChange={(event) => updateForm('site_key', event.target.value)} placeholder="ctu-main" />
             </label>
             <label>
-              Tên site
-              <input value={form.site_name} onChange={(event) => updateForm('site_name', event.target.value)} />
+              <span>Tên hiển thị</span>
+              <input value={form.site_name} onChange={(event) => updateForm('site_name', event.target.value)} placeholder="Moodle Đại học Cần Thơ" />
             </label>
             <label>
-              Chế độ
+              <span>Kiểu kết nối</span>
               <select value={form.mode} onChange={(event) => updateForm('mode', event.target.value)}>
                 <option value="MOCK">Mô phỏng — chỉ lưu cục bộ</option>
                 <option value="REST_API">REST API — kết nối Moodle thật</option>
               </select>
             </label>
             <label>
-              Trạng thái
+              <span>Trạng thái sử dụng</span>
               <select value={form.is_active ? 'true' : 'false'} onChange={(event) => updateForm('is_active', event.target.value === 'true')}>
                 <option value="true">Hoạt động</option>
                 <option value="false">Đã khóa</option>
               </select>
             </label>
             <label className="form-span">
-              Base URL
+              <span>Địa chỉ Moodle</span>
               <input value={form.base_url || ''} onChange={(event) => updateForm('base_url', event.target.value)} placeholder="https://moodle.example.edu" />
             </label>
             <label>
-              Token env var
+              <span>Biến môi trường chứa token</span>
               <input value={form.token_env_var || ''} onChange={(event) => updateForm('token_env_var', event.target.value)} placeholder="MOODLE_API_TOKEN" />
             </label>
             <label>
-              Course ID
+              <span>Khóa học mặc định</span>
               <input value={form.default_course_id} onChange={(event) => updateForm('default_course_id', event.target.value)} />
             </label>
             <label>
-              Category ID
+              <span>Danh mục câu hỏi</span>
               <input value={form.default_category_id} onChange={(event) => updateForm('default_category_id', event.target.value)} />
             </label>
             <div className="form-span role-toggle-group">
-              <span>Được publish</span>
+              <span>Vai trò được phép xuất bản</span>
               <div>
                 {PUBLISH_ROLES.map((role) => (
                   <label key={role.value}>
@@ -449,7 +496,7 @@ function AdminMoodlePage() {
             )}
             <button type="submit" disabled={saving}>
               <FontAwesomeIcon icon={faFloppyDisk} />
-              <span>{saving ? 'Đang lưu' : 'Lưu điểm kết nối'}</span>
+              <span>{saving ? 'Đang lưu' : 'Lưu cấu hình'}</span>
             </button>
           </div>
         </form>
@@ -458,8 +505,9 @@ function AdminMoodlePage() {
       <section className="publication-panel">
         <div className="panel-heading">
           <div>
-            <h2>Lịch sử xuất bản và lỗi</h2>
-            <span>{publicationTotal} kết quả</span>
+            <span>Hoạt động gần đây</span>
+            <h2>Nhật ký xuất bản</h2>
+            <small>{publicationTotal} kết quả theo bộ lọc hiện tại</small>
           </div>
           <div className="publication-filters">
             <select value={siteFilter} onChange={(event) => { setSiteFilter(event.target.value); setPublicationPage(1); }}>
