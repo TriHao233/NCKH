@@ -128,10 +128,7 @@ function ExamListPage() {
           <div>
             <div className="page-hero-badge">Làm đề thi</div>
             <h1 className="page-hero-title">Danh sách đề thi</h1>
-            <p className="page-hero-desc">
-              Tạo đề thi trắc nghiệm hoàn chỉnh từ ngân hàng câu hỏi đã được duyệt, cấu hình ma trận đề
-              và xuất PDF/DOCX theo chuẩn đề thi giấy.
-            </p>
+            <p className="page-hero-desc">Tạo, cấu hình và xuất đề thi.</p>
           </div>
           <button type="button" className="btn btn--primary" onClick={openCreate}>
             + Tạo đề thi mới
@@ -185,7 +182,7 @@ function ExamListPage() {
                 </div>
               ))}
               {exams.length === 0 && (
-                <p className="empty-note">Chưa có đề thi nào. Bấm "Tạo đề thi mới" để bắt đầu.</p>
+                <p className="empty-note">Chưa có đề thi. Tạo đề mới để bắt đầu.</p>
               )}
             </div>
           )}

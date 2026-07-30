@@ -1304,7 +1304,7 @@ function ManagePage() {
       return;
     }
     if (!await requestManageConfirmation(
-      `${selectedSubmittableQuestions.length} câu hỏi sẽ chuyển sang hàng đợi Reviewer. Các bản nháp chưa hợp lệ không nằm trong lần gửi này.`,
+      `${selectedSubmittableQuestions.length} câu hỏi sẽ vào hàng kiểm duyệt. Bản nháp chưa hợp lệ sẽ được bỏ qua.`,
       {
         title: 'Gửi các câu hỏi đã chọn đi duyệt?',
         confirmLabel: `Gửi ${selectedSubmittableQuestions.length} câu`,
@@ -1806,10 +1806,10 @@ function ManagePage() {
     if (!selectedQuestion || !version) return;
     if (version.version === selectedQuestion.current_version) return;
     if (!await requestManageConfirmation(
-      `Hệ thống sẽ tạo một phiên bản mới từ version ${version.version}. Câu hỏi cần được AI đánh giá và kiểm duyệt lại.`,
+      `Tạo bản mới từ bản ${version.version}. Câu hỏi cần được đánh giá và duyệt lại.`,
       {
         title: `Khôi phục ${selectedQuestion.question_code}?`,
-        confirmLabel: `Khôi phục version ${version.version}`,
+        confirmLabel: `Khôi phục bản ${version.version}`,
         eyebrow: selectedQuestion.question_code,
       },
     )) {
@@ -1827,7 +1827,7 @@ function ManagePage() {
       difficulty: classification.difficulty || undefined,
       source_chunk_ids: versionSourceChunkIds(version),
       clo_ids: (version.clos || []).map((clo) => refId(clo.id || clo)).filter(Boolean),
-      change_note: `Khôi phục từ version ${version.version}`,
+      change_note: `Khôi phục từ bản ${version.version}`,
     };
     if (questionType) payload.question_type = questionType;
     if (subjectId) payload.subject_id = subjectId;
@@ -1836,11 +1836,11 @@ function ManagePage() {
     setRestoringVersionId(version.id);
     try {
       const updated = await updateQuestion(selectedQuestion.id, payload);
-      setWorkflowMessage(`Đã tạo version ${updated.current_version} từ version ${version.version}. Cần đánh giá và kiểm duyệt lại.`);
+      setWorkflowMessage(`Đã tạo bản ${updated.current_version} từ bản ${version.version}. Cần đánh giá và duyệt lại.`);
       await fetchQuestions(searchTerm);
       await loadWorkflowHistory(updated, { keepMessage: true });
     } catch (error) {
-      setWorkflowMessage(error.message || 'Khôi phục version thất bại');
+      setWorkflowMessage(error.message || 'Khôi phục phiên bản thất bại');
     } finally {
       setRestoringVersionId('');
     }
@@ -1938,10 +1938,10 @@ function ManagePage() {
       <section className="page-hero">
         <div className="container manage-hero-row">
           <div>
-            <div className="page-hero-badge">Khu vực quản lý</div>
+            <div className="page-hero-badge">Nội dung</div>
             <h1 className="page-hero-title">Quản lý nội dung</h1>
             <p className="page-hero-desc">
-              Quản lý tài liệu nguồn, ngân hàng câu hỏi và các phản hồi cần chỉnh sửa.
+              Câu hỏi, tài liệu và phản hồi.
             </p>
           </div>
           {activeManageTab !== 'documents' && (
@@ -1954,7 +1954,7 @@ function ManagePage() {
               )}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-              Hàng đợi duyệt
+              Hàng kiểm duyệt
             </button>
             {canReviewQuestions && (
               <button
@@ -1995,7 +1995,7 @@ function ManagePage() {
             className={activeManageTab === 'revision' ? 'manage-tab--active' : ''}
             onClick={() => applyManageTab('revision')}
           >
-            Cần sửa theo Reviewer
+            Cần sửa
           </button>
         </div>
       </nav>
@@ -2763,7 +2763,7 @@ function ManagePage() {
                       <div className="history-block version-history-block">
                         <div className="version-block-head">
                           <h4>Phiên bản</h4>
-                          <span>{versionHistory.length} version</span>
+                          <span>{versionHistory.length} phiên bản</span>
                         </div>
                         {versionHistory.length === 0 ? (
                           <span className="history-empty">Chưa có lịch sử phiên bản.</span>
@@ -2776,7 +2776,7 @@ function ManagePage() {
                                   key={version.id}
                                 >
                                   <div>
-                                    <b>Version {version.version}</b>
+                                    <b>Bản {version.version}</b>
                                     <span>{version.change_note || version.origin}</span>
                                     <small>{formatDateTime(version.created_at)}</small>
                                   </div>
@@ -2808,7 +2808,7 @@ function ManagePage() {
                                     >
                                       {versionHistory.map((version) => (
                                         <option key={version.id} value={version.id}>
-                                          Version {version.version}
+                                          Bản {version.version}
                                         </option>
                                       ))}
                                     </select>
@@ -2825,14 +2825,14 @@ function ManagePage() {
                                     >
                                       {versionHistory.map((version) => (
                                         <option key={version.id} value={version.id}>
-                                          Version {version.version}
+                                          Bản {version.version}
                                         </option>
                                       ))}
                                     </select>
                                   </label>
                                 </div>
                                 {compareRows.length === 0 ? (
-                                  <span className="history-empty">Hai version đang chọn không khác nội dung chính.</span>
+                                  <span className="history-empty">Hai phiên bản không khác nhau.</span>
                                 ) : (
                                   <div className="version-diff-list">
                                     {compareRows.map((row) => (
@@ -2930,11 +2930,11 @@ function ManagePage() {
                 </svg>
               </span>
               <div>
-                <span className="sharing-eyebrow">Quyền truy cập</span>
+                <span className="sharing-eyebrow">Chia sẻ</span>
                 <h3 id="sharing-modal-title">
                   Chia sẻ {sharingDraft.kind === 'question' ? 'câu hỏi' : 'tài liệu'}
                 </h3>
-                <p>Chọn phạm vi chung hoặc cấp quyền trực tiếp cho từng giảng viên.</p>
+                <p>Chọn phạm vi hoặc người nhận.</p>
               </div>
               <button
                 type="button"
@@ -2961,7 +2961,7 @@ function ManagePage() {
               <div className="sharing-section-heading">
                 <div>
                   <h4>Phạm vi chia sẻ</h4>
-                  <p>Quyền dành riêng cho người được chọn luôn được giữ lại.</p>
+                  <p>Người được chọn luôn có quyền.</p>
                 </div>
               </div>
               <div className="sharing-scope-grid" role="radiogroup" aria-label="Phạm vi chia sẻ">
@@ -2985,7 +2985,7 @@ function ManagePage() {
                   </span>
                   <span>
                     <b>Chỉ định người nhận</b>
-                    <small>Chỉ bạn và giảng viên được chọn có quyền sử dụng.</small>
+                    <small>Chỉ bạn và người được chọn.</small>
                   </span>
                 </label>
                 <label className={sharingDraft.sharedScope === 'SUBJECT' ? 'is-selected' : ''}>
@@ -3007,7 +3007,7 @@ function ManagePage() {
                   </span>
                   <span>
                     <b>Toàn bộ môn học</b>
-                    <small>Mọi giảng viên cùng môn có thể tìm và sử dụng.</small>
+                    <small>Giảng viên cùng môn có thể sử dụng.</small>
                   </span>
                 </label>
               </div>
@@ -3017,7 +3017,7 @@ function ManagePage() {
               <section className="sharing-transfer-card">
                 <div>
                   <b>Chuyển quyền sở hữu</b>
-                  <span>Chỉ dùng khi muốn bàn giao toàn bộ quyền quản lý tài liệu.</span>
+                  <span>Bàn giao toàn bộ quyền quản lý.</span>
                 </div>
                 <select
                   className="field-select"
@@ -3027,7 +3027,7 @@ function ManagePage() {
                     ownerUserId: event.target.value,
                   }))}
                 >
-                  <option value="">Không đổi owner</option>
+                  <option value="">Không đổi chủ sở hữu</option>
                   {teacherOptions.map((teacher) => (
                     <option key={teacher.id} value={teacher.id}>
                       {teacher.display_name || teacher.email || teacher.id}
@@ -3040,8 +3040,8 @@ function ManagePage() {
             <section className="sharing-section">
               <div className="sharing-section-heading">
                 <div>
-                  <h4>Giảng viên được cấp quyền trực tiếp</h4>
-                  <p>Tìm theo tên hoặc email. Bạn không xuất hiện trong danh sách này.</p>
+                  <h4>Người được chia sẻ</h4>
+                  <p>Tìm theo tên hoặc email.</p>
                 </div>
                 <span className="sharing-selection-count">
                   {(sharingDraft.sharedWithUserIds || []).length} đã chọn
@@ -3061,7 +3061,7 @@ function ManagePage() {
               {(sharingDraft.sharedWithUserIds || []).length > 0 && (
                 <div className="sharing-selected-summary">
                   <span>
-                    Đang cấp quyền trực tiếp cho <b>{sharingDraft.sharedWithUserIds.length}</b> giảng viên
+                    Đã chọn <b>{sharingDraft.sharedWithUserIds.length}</b> giảng viên
                   </span>
                   <button
                     type="button"
@@ -3108,8 +3108,8 @@ function ManagePage() {
               </div>
               <p className="sharing-helper">
                 {sharingDraft.sharedScope === 'SUBJECT'
-                  ? 'Phạm vi môn học áp dụng cho toàn bộ giảng viên cùng môn; lựa chọn bên trên là quyền bổ sung.'
-                  : 'Nếu không chọn ai, nội dung sẽ chỉ hiển thị với bạn.'}
+                  ? 'Toàn bộ giảng viên cùng môn có thể sử dụng.'
+                  : 'Không chọn ai thì chỉ bạn xem được.'}
               </p>
             </section>
 
@@ -3119,7 +3119,7 @@ function ManagePage() {
                 Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={sharingSaving}>
-                {sharingSaving ? 'Đang cập nhật...' : 'Cập nhật chia sẻ'}
+                {sharingSaving ? 'Đang lưu...' : 'Lưu chia sẻ'}
               </button>
             </div>
           </form>
@@ -3270,7 +3270,7 @@ function ManagePage() {
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeBulkEdit} disabled={bulkActionBusy === 'edit'}>
-                Huỷ
+                Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={bulkActionBusy === 'edit'}>
                 {bulkActionBusy === 'edit' ? 'Đang cập nhật...' : 'Cập nhật hàng loạt'}
@@ -3383,7 +3383,7 @@ function ManagePage() {
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeEdit} disabled={saving}>
-                Huỷ
+                Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
@@ -3529,7 +3529,7 @@ function ManagePage() {
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeCreateQuestion} disabled={creatingSaving}>
-                Huỷ
+                Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={creatingSaving}>
                 {creatingSaving ? 'Đang tạo...' : 'Tạo câu hỏi'}
@@ -3576,7 +3576,7 @@ function ManagePage() {
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeEditDocument} disabled={savingDoc}>
-                Huỷ
+                Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={savingDoc}>
                 {savingDoc ? 'Đang lưu...' : 'Lưu thay đổi'}

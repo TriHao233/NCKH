@@ -156,3 +156,146 @@
   .exam-builder-page .export-item { grid-template-columns: 1fr; }
   .exam-builder-page .export-actions { grid-template-columns: 1fr; }
 }
+
+/* Admin exam workbench: step rail + one uninterrupted editing sheet */
+.app-shell--admin .exam-builder-page,
+.app-shell--admin .exam-builder-page .builder-hero,
+.app-shell--admin .exam-builder-page .builder-body {
+  background: var(--admin-canvas, #fff);
+}
+
+.app-shell--admin .exam-builder-page .container {
+  max-width: 1440px;
+  padding-inline: clamp(20px, 3vw, 44px);
+}
+
+.app-shell--admin .exam-builder-page .builder-hero {
+  padding: 26px 0 20px;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .exam-builder-page .page-hero-title,
+.app-shell--admin .exam-builder-page .step-title,
+.app-shell--admin .exam-builder-page .pool-title {
+  color: var(--admin-ink, #172033);
+  font-family: inherit;
+}
+
+.app-shell--admin .exam-builder-page .builder-body {
+  padding-top: 0;
+}
+
+.app-shell--admin .exam-builder-page .builder-grid {
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 0;
+}
+
+.app-shell--admin .exam-builder-page .builder-steps {
+  top: calc(var(--admin-topbar-height, 72px) + 18px);
+  gap: 0;
+  padding: 24px 20px 24px 0;
+  border-right: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .exam-builder-page .builder-step {
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .exam-builder-page .builder-step--active {
+  border-color: var(--admin-row-rule, #e8ebef);
+  background: var(--admin-soft, #f7f9fb);
+  box-shadow: inset 3px 0 var(--admin-blue, #176aa8);
+}
+
+.app-shell--admin .exam-builder-page .builder-content {
+  padding: 26px 0 30px 28px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.app-shell--admin .exam-builder-page .card {
+  padding-inline: 0;
+  border: 0;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell--admin .exam-builder-page .lifecycle-bar {
+  border: 0;
+  border-block: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .exam-builder-page .step-tabs {
+  gap: 24px;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .exam-builder-page .step-tab {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .exam-builder-page .step-tab--active {
+  border-bottom-color: var(--admin-blue, #176aa8);
+  background: transparent;
+}
+
+.app-shell--admin .exam-builder-page .question-pick-list,
+.app-shell--admin .exam-builder-page .question-pool-list,
+.app-shell--admin .exam-builder-page .variant-list,
+.app-shell--admin .exam-builder-page .export-list {
+  gap: 0;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .exam-builder-page .question-pick-item,
+.app-shell--admin .exam-builder-page .question-pool-item,
+.app-shell--admin .exam-builder-page .variant-item,
+.app-shell--admin .exam-builder-page .export-item {
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .exam-builder-page .btn,
+.app-shell--admin .exam-builder-page .field-input,
+.app-shell--admin .exam-builder-page .field-select {
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+@media (max-width: 820px) {
+  .app-shell--admin .exam-builder-page .builder-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell--admin .exam-builder-page .builder-steps {
+    position: static;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 16px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--admin-rule, #d9dee4);
+  }
+
+  .app-shell--admin .exam-builder-page .builder-step {
+    flex: 0 0 auto;
+  }
+
+  .app-shell--admin .exam-builder-page .builder-content {
+    padding-left: 0;
+  }
+}

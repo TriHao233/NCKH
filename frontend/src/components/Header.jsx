@@ -38,7 +38,7 @@ const ADMIN_NAV_SECTIONS = [
     items: [
       { path: '/tong-quan', label: 'Tổng quan', icon: faGaugeHigh },
       { path: '/kiem-duyet', label: 'Hàng kiểm duyệt', icon: faClipboardCheck },
-      { path: '/duyet-ai', label: 'Duyệt bằng AI', icon: faRobot },
+      { path: '/duyet-ai', label: 'Đánh giá AI', icon: faRobot },
     ],
   },
   {
@@ -47,17 +47,17 @@ const ADMIN_NAV_SECTIONS = [
     items: [
       { path: '/quan-ly', label: 'Ngân hàng câu hỏi', icon: faFileCircleQuestion },
       { path: '/lam-de-thi', label: 'Đề thi', icon: faGraduationCap },
-      { path: '/danh-muc', label: 'Danh mục đào tạo', icon: faLayerGroup },
+      { path: '/danh-muc', label: 'Danh mục', icon: faLayerGroup },
     ],
   },
   {
     id: 'system',
     label: 'Hệ thống',
     items: [
-      { path: '/quan-ly-nguoi-dung', label: 'Người dùng & quyền', icon: faUsers },
-      { path: '/quan-ly-job', label: 'Tác vụ hệ thống', icon: faListCheck },
-      { path: '/quan-ly-moodle', label: 'Moodle & tích hợp', icon: faPlug },
-      { path: '/nhat-ky-he-thong', label: 'Nhật ký hoạt động', icon: faClockRotateLeft },
+      { path: '/quan-ly-nguoi-dung', label: 'Người dùng', icon: faUsers },
+      { path: '/quan-ly-job', label: 'Tác vụ', icon: faListCheck },
+      { path: '/quan-ly-moodle', label: 'Moodle', icon: faPlug },
+      { path: '/nhat-ky-he-thong', label: 'Nhật ký', icon: faClockRotateLeft },
     ],
   },
 ];
@@ -308,7 +308,7 @@ const Header = ({ adminShell = false }) => {
               </span>
               <span>
                 <strong>QBankCTU</strong>
-                <small>ADMIN CONSOLE</small>
+                <small>QUẢN TRỊ</small>
               </span>
             </Link>
             <button
@@ -324,8 +324,8 @@ const Header = ({ adminShell = false }) => {
           <div className="admin-sidebar__context">
             <FontAwesomeIcon icon={faShieldHalved} />
             <div>
-              <span>Không gian quản trị</span>
-              <small>Điều hành và kiểm soát hệ thống</small>
+              <span>Quản trị</span>
+              <small>Vận hành hệ thống</small>
             </div>
           </div>
 
@@ -357,8 +357,8 @@ const Header = ({ adminShell = false }) => {
           <div className="admin-sidebar__footer">
             <span className="admin-sidebar__status-dot" />
             <div>
-              <b>Hệ thống đang hoạt động</b>
-              <small>Phiên quản trị được bảo vệ</small>
+              <b>Hệ thống ổn định</b>
+              <small>Phiên được bảo vệ</small>
             </div>
           </div>
         </aside>

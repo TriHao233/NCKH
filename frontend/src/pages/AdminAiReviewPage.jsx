@@ -112,7 +112,7 @@ function modelRuntimeLabel(code) {
   if (normalized.includes('deepseek') || normalized.includes('qwen')) {
     return `${code || 'deepseek-r1'} · Ollama cục bộ`;
   }
-  return code || 'Model theo cấu hình hệ thống';
+  return code || 'Mô hình mặc định';
 }
 
 function matchesStatusFilter(question, filter) {
@@ -461,7 +461,7 @@ function AdminAiReviewPage() {
         decision: 'APPROVED',
         note: needsOverride
           ? reason.trim()
-          : 'Admin duyệt sau khi câu hỏi đạt thẩm định AI.',
+          : 'Đã duyệt sau thẩm định AI.',
         override: {
           applied: needsOverride,
           score: typeof question.quality_summary?.overall_score === 'number'
@@ -577,7 +577,7 @@ function AdminAiReviewPage() {
         (component) => !approvalChecklist[component.key],
       );
       if (unchecked.length > 0) {
-        setDialogError('Admin cần tự xác nhận đủ 5 tiêu chí trước khi duyệt.');
+        setDialogError('Hãy xác nhận đủ 5 tiêu chí.');
         return;
       }
       if (question.evaluation_status !== 'PASSED' && !actionReason.trim()) {
@@ -634,16 +634,16 @@ function AdminAiReviewPage() {
     <main className="admin-ai-review-page">
       <section className="ai-review-toolbar">
         <div className="ai-review-toolbar__title">
-          <span>AI triage</span>
-          <h1>AI hỗ trợ kiểm duyệt</h1>
-          <p>Ưu tiên các câu hỏi có cảnh báo, đọc minh chứng và để Admin đưa ra quyết định cuối cùng.</p>
+          <span>Đánh giá AI</span>
+          <h1>Thẩm định câu hỏi</h1>
+          <p>Xem điểm, minh chứng và xử lý cảnh báo.</p>
         </div>
         <div className="ai-review-actions">
           <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly')}>
-            Ngân hàng câu hỏi
+            Ngân hàng
           </button>
           <button type="button" className="btn btn--outline" onClick={prepareBulkEvaluation} disabled={checkingAll || loading}>
-            {checkingAll ? 'Đang kiểm tra...' : 'Kiểm tra câu đang chờ'}
+            {checkingAll ? 'Đang kiểm tra...' : 'Chấm câu cần AI'}
           </button>
           <button type="button" className="btn btn--primary" onClick={fetchAiQuestions} disabled={loading}>
             {loading ? 'Đang tải' : 'Làm mới'}
@@ -658,9 +658,8 @@ function AdminAiReviewPage() {
           className={statusFilter === 'pending' ? 'active' : ''}
           onClick={() => setStatusFilter('pending')}
         >
-          <span>Chờ quyết định</span>
+          <span>Chờ duyệt</span>
           <b>{counts.pending}</b>
-          <small>Đang chờ Admin kết luận</small>
         </button>
         <button
           type="button"
@@ -670,7 +669,6 @@ function AdminAiReviewPage() {
         >
           <span>Chưa có điểm AI</span>
           <b>{counts.unscored}</b>
-          <small>Cần gửi model đánh giá</small>
         </button>
         <button
           type="button"
@@ -680,7 +678,6 @@ function AdminAiReviewPage() {
         >
           <span>Đang chấm</span>
           <b>{counts.processing}</b>
-          <small>Đang chạy đánh giá tự động</small>
         </button>
         <button
           type="button"
@@ -690,7 +687,6 @@ function AdminAiReviewPage() {
         >
           <span>AI cảnh báo</span>
           <b>{counts.risk}</b>
-          <small>Lỗi, kết quả cũ hoặc không đạt</small>
         </button>
         <button
           type="button"
@@ -698,9 +694,8 @@ function AdminAiReviewPage() {
           className={statusFilter === 'completed' ? 'active' : ''}
           onClick={() => setStatusFilter('completed')}
         >
-          <span>Đã kết thúc</span>
+          <span>Đã xử lý</span>
           <b>{counts.completed}</b>
-          <small>Đã duyệt, yêu cầu sửa hoặc từ chối</small>
         </button>
       </section>
 
@@ -708,10 +703,9 @@ function AdminAiReviewPage() {
         <div className="ai-review-list-panel">
           <div className="ai-review-list-heading">
             <div>
-              <span>Danh sách thẩm định</span>
+              <span>Câu hỏi</span>
               <b>{loading ? 'Đang tải...' : `${filtered.length} câu hỏi`}</b>
             </div>
-            <small>AI sàng lọc; Admin chịu trách nhiệm quyết định</small>
           </div>
           <div className="ai-review-filters">
             <label className="ai-review-filter ai-review-filter--search">
@@ -780,7 +774,7 @@ function AdminAiReviewPage() {
                 >
                   <div>
                     <strong>{question.question_code}</strong>
-                    <span>{questionTypeLabel(question.question_type)} · Version {question.current_version}</span>
+                    <span>{questionTypeLabel(question.question_type)} · Bản {question.current_version}</span>
                   </div>
                   <p>{question.content}</p>
                   <div className="ai-review-row__meta">
@@ -798,8 +792,8 @@ function AdminAiReviewPage() {
           {!selected ? (
             <div className="ai-review-detail-empty">
               <span>AI</span>
-              <h2>Chọn một câu hỏi để thẩm định</h2>
-              <p>Điểm thành phần, minh chứng và hành động quản trị sẽ xuất hiện tại đây.</p>
+              <h2>Chọn câu hỏi</h2>
+              <p>Điểm và minh chứng sẽ hiện ở đây.</p>
             </div>
           ) : (
             <>
@@ -809,7 +803,7 @@ function AdminAiReviewPage() {
                   <h2>{questionTypeLabel(selected.question_type)}</h2>
                 </div>
                 <button type="button" className="btn btn--outline" onClick={() => navigate(`/quan-ly?questionId=${selected.id}`)}>
-                  Mở bên Câu hỏi
+                  Mở trong ngân hàng
                 </button>
               </div>
 
@@ -871,7 +865,7 @@ function AdminAiReviewPage() {
                       <strong>{qualityColorLabel(evaluationColor)}</strong>
                     </div>
                     <div>
-                      <span>Cách đánh giá</span>
+                      <span>Chế độ</span>
                       <strong>{evaluationModeLabel(latestEvidence.mode)}</strong>
                     </div>
                   </div>
@@ -945,18 +939,18 @@ function AdminAiReviewPage() {
               {['evaluate', 'bulk-evaluate'].includes(actionDialog.type) && (
                 <>
                   <div className="ai-admin-model-card">
-                    <span>Model sẽ thực hiện</span>
+                    <span>Mô hình</span>
                     <b>
                       {modelRuntimeLabel(
                         dialogQuestion?.quality_summary?.evaluator_model_code || 'deepseek-r1',
                       )}
                     </b>
-                    <small>Không dùng chấm dự phòng nếu model lỗi hoặc trả JSON không hợp lệ.</small>
+                    <small>Không chấm dự phòng khi mô hình lỗi.</small>
                   </div>
                   <p className="ai-admin-dialog__hint">
                     {actionDialog.type === 'bulk-evaluate'
-                      ? `${actionDialog.targets.length} câu hỏi đang chờ và chưa đạt AI sẽ được đưa vào hàng đợi.`
-                      : 'AI chấm 5 tiêu chí và lưu minh chứng; Admin vẫn là người đưa ra quyết định cuối cùng.'}
+                      ? `${actionDialog.targets.length} câu hỏi sẽ được đưa vào hàng đợi.`
+                      : 'AI chấm 5 tiêu chí. Bạn quyết định.'}
                   </p>
                 </>
               )}
@@ -965,17 +959,17 @@ function AdminAiReviewPage() {
                 <>
                   {dialogNeedsOverride && (
                     <div className="ai-admin-dialog__warning">
-                      Câu hỏi chưa được AI đánh dấu đạt. Quyết định duyệt sẽ được lưu là một lần override của Admin.
+                      AI chưa đánh dấu đạt. Hệ thống sẽ lưu lý do duyệt.
                     </div>
                   )}
                   <section className="ai-admin-checklist" aria-labelledby="ai-admin-checklist-title">
                     <div>
-                      <h3 id="ai-admin-checklist-title">Checklist quyết định</h3>
+                      <h3 id="ai-admin-checklist-title">Tiêu chí xác nhận</h3>
                       <span>
                         {Object.values(approvalChecklist).filter(Boolean).length}/{SCORE_COMPONENTS.length}
                       </span>
                     </div>
-                    <p>Admin tự xác nhận từng tiêu chí; hệ thống không đánh dấu thay.</p>
+                    <p>Tự xác nhận từng mục.</p>
                     {SCORE_COMPONENTS.map((component) => (
                       <label key={component.key}>
                         <input
@@ -997,7 +991,7 @@ function AdminAiReviewPage() {
                         value={actionReason}
                         onChange={(event) => setActionReason(event.target.value)}
                         rows={4}
-                        placeholder="Nêu căn cứ chuyên môn khiến Admin vẫn quyết định duyệt..."
+                        placeholder="Nêu căn cứ chuyên môn..."
                       />
                     </label>
                   )}
@@ -1016,8 +1010,8 @@ function AdminAiReviewPage() {
                     onChange={(event) => setActionReason(event.target.value)}
                     rows={5}
                     placeholder={actionDialog.type === 'revision'
-                      ? 'Mô tả lỗi cụ thể và cách giảng viên nên chỉnh...'
-                      : 'Nêu rõ căn cứ khiến câu hỏi không thể đưa vào ngân hàng...'}
+                      ? 'Nêu lỗi và cách chỉnh...'
+                      : 'Nêu lý do từ chối...'}
                     autoFocus
                   />
                 </label>

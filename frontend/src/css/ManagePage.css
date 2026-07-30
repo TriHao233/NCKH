@@ -1598,3 +1598,405 @@
   .manage-page .bulk-actions .btn { width: 100%; }
   .manage-page .bulk-actions .btn { flex: 1; }
 }
+
+/* Admin-only content index. Teacher workspace keeps its existing presentation. */
+.app-shell--admin .manage-page {
+  color: #172033;
+  background: #f1f3f5;
+}
+
+.app-shell--admin .manage-page .page-hero {
+  padding-block: 28px 22px;
+  border-bottom: 1px solid #c9d0d8;
+  background: transparent;
+}
+
+.app-shell--admin .manage-page .page-hero-badge {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: #5d6878;
+  background: transparent;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.app-shell--admin .manage-page .page-hero-title {
+  margin-top: 6px;
+  color: #172033;
+  font-family: inherit;
+  font-size: clamp(1.7rem, 3vw, 2.2rem);
+  font-weight: 780;
+  letter-spacing: -0.035em;
+}
+
+.app-shell--admin .manage-page .page-hero-desc {
+  color: #5a6575;
+  font-size: 0.84rem;
+}
+
+.app-shell--admin .manage-page .manage-tabs {
+  border-bottom: 1px solid #cfd5dc;
+  background: #fff;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .stats-row {
+  gap: 0;
+  overflow: hidden;
+  border-block: 1px solid #cbd2da;
+  border-radius: 0;
+  background: #fff;
+}
+
+.app-shell--admin .manage-page .stat-card {
+  min-height: 82px;
+  border: 0;
+  border-right: 1px solid #d8dde3;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .stat-card:last-child {
+  border-right: 0;
+}
+
+.app-shell--admin .manage-page .stat-card:hover {
+  border-color: #d8dde3;
+  background: #f6f8fa;
+  box-shadow: none;
+  transform: none;
+}
+
+.app-shell--admin .manage-page .stat-card--active {
+  border-color: #d8dde3;
+  background: #eef4f8;
+  box-shadow: inset 0 -3px #176aa8;
+}
+
+.app-shell--admin .manage-page .stat-card b {
+  color: #172033;
+  font-family: inherit;
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell--admin .manage-page .coverage-panel,
+.app-shell--admin .manage-page .list-card,
+.app-shell--admin .manage-page .side-card {
+  border-color: #cfd5dc;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .coverage-panel-header,
+.app-shell--admin .manage-page .list-card-header {
+  border-bottom-color: #dce1e6;
+}
+
+.app-shell--admin .manage-page .coverage-panel h3,
+.app-shell--admin .manage-page .list-card-header h3,
+.app-shell--admin .manage-page .side-card h3 {
+  color: #172033;
+  font-family: inherit;
+}
+
+.app-shell--admin .manage-page .question-filter-panel,
+.app-shell--admin .manage-page .saved-filter-bar {
+  border-radius: 2px;
+  background: #f7f8fa;
+}
+
+.app-shell--admin .manage-page .field-input,
+.app-shell--admin .manage-page .field-select,
+.app-shell--admin .manage-page .btn,
+.app-shell--admin .manage-page .mini-action,
+.app-shell--admin .manage-page .icon-btn {
+  border-radius: 3px;
+}
+
+.app-shell--admin .manage-page .question-list {
+  gap: 0;
+}
+
+.app-shell--admin .manage-page .question-item {
+  border: 0;
+  border-bottom: 1px solid #e1e5e9;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .question-item:hover {
+  background: #f7f8fa;
+  box-shadow: none;
+  transform: none;
+}
+
+.app-shell--admin .manage-page .doc-item,
+.app-shell--admin .manage-page .history-item {
+  border-radius: 2px;
+}
+
+@media (max-width: 760px) {
+  .app-shell--admin .manage-page .stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell--admin .manage-page .stat-card:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .app-shell--admin .manage-page .stat-card {
+    border-bottom: 1px solid #d8dde3;
+  }
+
+  .app-shell--admin .manage-page .stat-card:last-child {
+    border-bottom: 0;
+  }
+}
+
+/* Admin content register: filters and records stay on one white work surface */
+.app-shell--admin .manage-page,
+.app-shell--admin .manage-page .manage-body {
+  background: var(--admin-canvas, #fff);
+}
+
+.app-shell--admin .manage-page .stats-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 0;
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+  background: transparent;
+  scrollbar-width: thin;
+}
+
+.app-shell--admin .manage-page .stat-card {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+}
+
+.app-shell--admin .manage-page .stat-card + .stat-card {
+  padding-left: 12px;
+}
+
+.app-shell--admin .manage-page .stat-card b {
+  order: 2;
+  font-size: 0.78rem;
+}
+
+.app-shell--admin .manage-page .stat-card span {
+  order: 1;
+  color: #455467;
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.app-shell--admin .manage-page .stat-card--active b,
+.app-shell--admin .manage-page .stat-card--active span {
+  color: var(--admin-blue, #176aa8);
+}
+
+.app-shell--admin .manage-page .stat-card:hover,
+.app-shell--admin .manage-page .stat-card--active {
+  border-color: transparent;
+  background: transparent;
+}
+
+.app-shell--admin .manage-page .stat-card--active::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 3px;
+  background: var(--admin-blue, #176aa8);
+  content: "";
+}
+
+.app-shell--admin .manage-page .coverage-panel {
+  margin-bottom: 0;
+  padding: 20px 0;
+  border: 0;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .manage-page .manage-grid {
+  gap: 0;
+}
+
+.app-shell--admin .manage-page .list-card,
+.app-shell--admin .manage-page .side-card {
+  padding: 22px 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .manage-side {
+  padding-left: 24px;
+  border-left: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .manage-page .coverage-panel-header,
+.app-shell--admin .manage-page .list-card-header {
+  border-bottom-color: var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .manage-page .question-filter-panel,
+.app-shell--admin .manage-page .saved-filter-bar {
+  padding-inline: 0;
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .manage-page .question-list {
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .manage-page .doc-item,
+.app-shell--admin .manage-page .history-item {
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .btn {
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .modal-card,
+.app-shell--admin .manage-confirm-dialog {
+  border: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 12px;
+  box-shadow: var(--admin-overlay-shadow, 0 24px 64px rgba(20, 37, 58, 0.18));
+}
+
+.app-shell--admin .manage-page .modal-overlay {
+  z-index: 1200;
+  padding: 24px;
+  background: rgba(9, 30, 66, 0.5);
+}
+
+.app-shell--admin .manage-page .sharing-modal {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+}
+
+.app-shell--admin .manage-page .sharing-modal-header {
+  grid-template-columns: minmax(0, 1fr) 34px;
+  border-bottom-color: var(--admin-rule, #d9dee4);
+  background: #fff;
+}
+
+.app-shell--admin .manage-page .sharing-modal-icon {
+  display: none;
+}
+
+.app-shell--admin .manage-page .sharing-resource-card {
+  margin-inline: 24px;
+  padding: 12px 14px;
+  border: 0;
+  border-left: 3px solid var(--admin-blue, #176aa8);
+  border-radius: 0;
+  background: var(--admin-soft, #f7f9fb);
+}
+
+.app-shell--admin .manage-page .sharing-scope-grid {
+  gap: 0;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .manage-page .sharing-scope-grid > label {
+  min-height: 74px;
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .manage-page .sharing-scope-grid > label + label {
+  border-left: 1px solid var(--admin-row-rule, #e8ebef);
+}
+
+.app-shell--admin .manage-page .sharing-scope-grid > label:hover,
+.app-shell--admin .manage-page .sharing-scope-grid > label.is-selected {
+  border-color: var(--admin-row-rule, #e8ebef);
+  background: var(--admin-soft, #f7f9fb);
+}
+
+.app-shell--admin .manage-page .sharing-scope-grid > label.is-selected {
+  box-shadow: inset 0 -3px var(--admin-blue, #176aa8);
+}
+
+.app-shell--admin .manage-page .sharing-scope-icon {
+  border-radius: 50%;
+  box-shadow: none;
+}
+
+.app-shell--admin .manage-page .sharing-user-list {
+  border: 0;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 0;
+}
+
+.app-shell--admin .manage-page .sharing-user-option {
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell--admin .manage-page .sharing-user-option:hover,
+.app-shell--admin .manage-page .sharing-user-option.is-selected {
+  background: var(--admin-soft, #f7f9fb);
+}
+
+.app-shell--admin .manage-page .sharing-modal-actions {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  border-top-color: var(--admin-rule, #d9dee4);
+  background: #fff;
+}
+
+@media (max-width: 980px) {
+  .app-shell--admin .manage-page .manage-side {
+    padding: 22px 0 0;
+    border-top: 1px solid var(--admin-rule, #d9dee4);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell--admin .manage-page .stats-row {
+    display: flex;
+    gap: 4px;
+  }
+
+  .app-shell--admin .manage-page .stat-card,
+  .app-shell--admin .manage-page .stat-card:nth-child(2n),
+  .app-shell--admin .manage-page .stat-card:last-child {
+    min-width: 0;
+    border: 0;
+  }
+}

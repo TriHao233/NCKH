@@ -55,3 +55,101 @@
 }
 .exam-list-page .field-input:focus, .exam-list-page .field-select:focus { border-color: var(--primary, #0c78d4); }
 .exam-list-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+/* Admin exam register. Other roles keep the teaching workspace. */
+.app-shell--admin .exam-list-page,
+.app-shell--admin .exam-list-page .page-hero,
+.app-shell--admin .exam-list-page .exam-list-body {
+  background: var(--admin-canvas, #fff);
+}
+
+.app-shell--admin .exam-list-page .container {
+  max-width: 1440px;
+  padding-inline: clamp(20px, 3vw, 44px);
+}
+
+.app-shell--admin .exam-list-page .page-hero {
+  padding: 28px 0 22px;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .exam-list-page .page-hero-badge {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--admin-muted, #657182);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.app-shell--admin .exam-list-page .page-hero-title,
+.app-shell--admin .exam-list-page .exam-card-header h3,
+.app-shell--admin .exam-list-page .profile-card-title {
+  color: var(--admin-ink, #172033);
+  font-family: inherit;
+}
+
+.app-shell--admin .exam-list-page .page-hero-title {
+  margin-top: 6px;
+  font-size: clamp(1.7rem, 3vw, 2.2rem);
+  letter-spacing: -0.035em;
+}
+
+.app-shell--admin .exam-list-page .exam-list-body {
+  padding-top: 20px;
+}
+
+.app-shell--admin .exam-list-page .exam-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.app-shell--admin .exam-list-page .card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 0.8fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 17px 0;
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.app-shell--admin .exam-list-page .exam-card-header,
+.app-shell--admin .exam-list-page .exam-card-meta,
+.app-shell--admin .exam-list-page .exam-card-stats {
+  margin: 0;
+}
+
+.app-shell--admin .exam-list-page .btn {
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.app-shell--admin .exam-list-page .modal-card {
+  border: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 12px;
+  box-shadow: var(--admin-overlay-shadow, 0 24px 64px rgba(20, 37, 58, 0.18));
+}
+
+.app-shell--admin .exam-list-page .modal-overlay {
+  z-index: 1200;
+  overflow-y: auto;
+  background: rgba(9, 30, 66, 0.5);
+}
+
+.app-shell--admin .exam-list-page .modal-card {
+  max-height: calc(100vh - 48px);
+}
+
+@media (max-width: 760px) {
+  .app-shell--admin .exam-list-page .card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}

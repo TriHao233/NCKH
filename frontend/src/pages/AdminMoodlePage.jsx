@@ -126,7 +126,7 @@ function AdminMoodlePage() {
         setForm(formFromTarget(items[0]));
       }
     } catch (err) {
-      setError(err.message || 'Không tải được Moodle target');
+      setError(err.message || 'Không tải được kết nối Moodle');
     } finally {
       setLoading(false);
     }
@@ -146,7 +146,7 @@ function AdminMoodlePage() {
       setPublicationSummary(result.summary || { total: 0, published: 0, simulated: 0, failed: 0, pending: 0 });
       setPublicationTotal(result.total || 0);
     } catch (err) {
-      setError(err.message || 'Không tải được publication Moodle');
+      setError(err.message || 'Không tải được lịch sử xuất bản');
       setPublications([]);
       setPublicationTotal(0);
     } finally {
@@ -215,7 +215,7 @@ function AdminMoodlePage() {
       setForm(formFromTarget(saved));
       await loadTargets();
     } catch (err) {
-      setError(err.message || 'Lưu Moodle target thất bại');
+      setError(err.message || 'Lưu kết nối Moodle thất bại');
     } finally {
       setSaving(false);
     }
@@ -231,7 +231,7 @@ function AdminMoodlePage() {
       ));
       await loadTargets();
     } catch (err) {
-      setError(err.message || 'Kiểm tra Moodle target thất bại');
+      setError(err.message || 'Kiểm tra kết nối thất bại');
     } finally {
       setCheckingKey('');
     }
@@ -258,7 +258,7 @@ function AdminMoodlePage() {
         setActionDialog(null);
         await loadTargets();
       } catch (err) {
-        setDialogError(err.message || 'Khóa Moodle target thất bại');
+        setDialogError(err.message || 'Khóa kết nối thất bại');
       } finally {
         setSaving(false);
       }
@@ -270,7 +270,7 @@ function AdminMoodlePage() {
       setActionDialog(null);
       await loadPublications();
     } catch (err) {
-      setDialogError(err.message || 'Retry publication Moodle thất bại');
+      setDialogError(err.message || 'Chạy lại xuất bản thất bại');
     } finally {
       setRetryingId('');
     }
@@ -293,23 +293,23 @@ function AdminMoodlePage() {
         <div className="moodle-header__copy">
           <div className="moodle-eyebrow">
             <span aria-hidden="true"><FontAwesomeIcon icon={faPlug} /></span>
-            Tích hợp giảng dạy
+            Tích hợp
           </div>
-          <h1>Trung tâm kết nối Moodle</h1>
-          <p>Thiết lập nơi nhận câu hỏi, kiểm tra kết nối và theo dõi từng lượt đồng bộ từ một màn hình duy nhất.</p>
+          <h1>Moodle</h1>
+          <p>Kết nối và theo dõi xuất bản.</p>
           <div className="moodle-mode-legend">
-            <span><i className="mode-dot mode-dot--mock" /> Mô phỏng an toàn</span>
-            <span><i className="mode-dot mode-dot--live" /> Đồng bộ Moodle thật</span>
+            <span><i className="mode-dot mode-dot--mock" /> Mô phỏng</span>
+            <span><i className="mode-dot mode-dot--live" /> Kết nối thật</span>
           </div>
         </div>
         <div className="moodle-header__actions">
           <div className="moodle-connection-overview">
             <b>{targets.filter((target) => target.is_active).length}</b>
-            <span>điểm kết nối đang hoạt động</span>
+            <span>kết nối đang hoạt động</span>
           </div>
           <button type="button" className="moodle-primary-button" onClick={() => { loadTargets(); loadPublications(); }} disabled={loading || publicationsLoading}>
             <FontAwesomeIcon icon={faRotateRight} />
-            <span>Làm mới dữ liệu</span>
+            <span>Làm mới</span>
           </button>
         </div>
       </section>
@@ -322,8 +322,7 @@ function AdminMoodlePage() {
         >
           <span className="moodle-summary-icon moodle-summary-icon--blue"><FontAwesomeIcon icon={faPlug} /></span>
           <b>{publicationSummary.total}</b>
-          <span>Tổng lượt xuất bản</span>
-          <small>Toàn bộ hoạt động</small>
+          <span>Tất cả</span>
         </button>
         <button
           type="button"
@@ -332,8 +331,7 @@ function AdminMoodlePage() {
         >
           <span className="moodle-summary-icon moodle-summary-icon--green"><FontAwesomeIcon icon={faCheckCircle} /></span>
           <b>{publicationSummary.published}</b>
-          <span>Đã ghi nhận</span>
-          <small>{publicationSummary.simulated || 0} lượt mô phỏng</small>
+          <span>Đã ghi</span>
         </button>
         <button
           type="button"
@@ -342,8 +340,7 @@ function AdminMoodlePage() {
         >
           <span className="moodle-summary-icon moodle-summary-icon--red"><FontAwesomeIcon icon={faCircleExclamation} /></span>
           <b>{publicationSummary.failed}</b>
-          <span>Xuất bản lỗi</span>
-          <small>Cần kiểm tra lại</small>
+          <span>Lỗi</span>
         </button>
         <button
           type="button"
@@ -353,7 +350,6 @@ function AdminMoodlePage() {
           <span className="moodle-summary-icon moodle-summary-icon--amber"><FontAwesomeIcon icon={faRotateRight} /></span>
           <b>{publicationSummary.pending}</b>
           <span>Đang xử lý</span>
-          <small>Đang chờ hoặc đồng bộ</small>
         </button>
       </section>
 
@@ -363,15 +359,15 @@ function AdminMoodlePage() {
         <div className="moodle-target-panel">
           <div className="panel-heading">
             <div>
-              <span>Điểm đến</span>
-              <h2>Cấu hình kết nối</h2>
-              <small>{targets.length} cấu hình Moodle</small>
+              <span>Kết nối</span>
+              <h2>Cấu hình</h2>
+              <small>{targets.length} kết nối</small>
             </div>
-            <button type="button" onClick={newTarget}>+ Thêm kết nối</button>
+            <button type="button" onClick={newTarget}>+ Thêm</button>
           </div>
 
           {loading ? (
-            <p className="moodle-empty">Đang tải target...</p>
+            <p className="moodle-empty">Đang tải kết nối...</p>
           ) : (
             <div className="target-list">
               {targets.map((target) => (
@@ -412,7 +408,7 @@ function AdminMoodlePage() {
                     </button>
                     <button
                       type="button"
-                      title="Khóa target"
+                      title="Khóa kết nối"
                       disabled={!target.is_active || saving}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -426,7 +422,7 @@ function AdminMoodlePage() {
                   </div>
                 </article>
               ))}
-              {targets.length === 0 && <p className="moodle-empty">Chưa có Moodle target.</p>}
+              {targets.length === 0 && <p className="moodle-empty">Chưa có kết nối.</p>}
             </div>
           )}
         </div>
@@ -434,9 +430,13 @@ function AdminMoodlePage() {
         <form className="moodle-form-panel" onSubmit={handleSave}>
           <div className="panel-heading">
             <div>
-              <span>{selectedTarget ? 'Đang chỉnh sửa' : 'Cấu hình mới'}</span>
-              <h2>{selectedTarget ? selectedTarget.site_name : 'Thêm điểm kết nối'}</h2>
-              <small>{selectedTarget?.last_check?.message || 'Token được bảo vệ trong biến môi trường trên máy chủ'}</small>
+              <span>{selectedTarget ? 'Đang sửa' : 'Kết nối mới'}</span>
+              <h2>{selectedTarget ? selectedTarget.site_name : 'Thêm kết nối'}</h2>
+              <small>
+                {selectedTarget?.last_check?.ok
+                  ? 'Đã kiểm tra kết nối'
+                  : selectedTarget?.last_check?.message || 'Token lưu trong biến môi trường máy chủ'}
+              </small>
             </div>
             <span className={`moodle-form-mode moodle-form-mode--${form.mode === 'REST_API' ? 'live' : 'mock'}`}>
               {form.mode === 'REST_API' ? 'Đồng bộ thật' : 'Mô phỏng'}
@@ -499,7 +499,7 @@ function AdminMoodlePage() {
           </div>
           {form.mode === 'REST_API' && (
             <p className="moodle-real-sync-warning">
-              Đây là cấu hình Moodle thật. Nút kiểm tra chỉ đọc thông tin site; thao tác xuất bản ở màn kiểm duyệt mới gửi câu hỏi ra ngoài hệ thống.
+              Kết nối thật. Kiểm tra chỉ đọc thông tin site; xuất bản sẽ gửi dữ liệu sang Moodle.
             </p>
           )}
           <div className="form-actions">
@@ -520,9 +520,9 @@ function AdminMoodlePage() {
       <section className="publication-panel">
         <div className="panel-heading">
           <div>
-            <span>Hoạt động gần đây</span>
-            <h2>Nhật ký xuất bản</h2>
-            <small>{publicationTotal} kết quả theo bộ lọc hiện tại</small>
+            <span>Gần đây</span>
+            <h2>Lịch sử xuất bản</h2>
+            <small>{publicationTotal} kết quả</small>
           </div>
           <div className="publication-filters">
             <select
@@ -530,7 +530,7 @@ function AdminMoodlePage() {
               value={siteFilter}
               onChange={(event) => { setSiteFilter(event.target.value); setPublicationPage(1); }}
             >
-              <option value="all">Tất cả site</option>
+              <option value="all">Tất cả kết nối</option>
               {targets.map((target) => (
                 <option key={target.site_key} value={target.site_key}>{target.site_name}</option>
               ))}
@@ -550,7 +550,7 @@ function AdminMoodlePage() {
                 aria-label="Tìm trong nhật ký xuất bản Moodle"
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
-                placeholder="Mã câu hỏi, ref, ghi chú..."
+                placeholder="Mã câu hỏi hoặc ghi chú"
               />
             </label>
           </div>
@@ -561,7 +561,7 @@ function AdminMoodlePage() {
             <thead>
               <tr>
                 <th>Câu hỏi</th>
-                <th>Điểm kết nối</th>
+                <th>Kết nối</th>
                 <th>Trạng thái</th>
                 <th>Mã Moodle</th>
                 <th>Định dạng</th>
@@ -575,10 +575,10 @@ function AdminMoodlePage() {
                 <tr key={item.id}>
                   <td>
                     <strong>{item.question_code || item.question_id}</strong>
-                    <small>Phiên bản {item.question_version}</small>
+                    <small>Bản {item.question_version}</small>
                   </td>
                   <td>
-                    <span>{item.target?.site_name || item.target?.moodle_site_id || 'Điểm kết nối'}</span>
+                    <span>{item.target?.site_name || item.target?.moodle_site_id || 'Kết nối'}</span>
                     <small>{publicationModeLabel(item.publication_mode || item.target?.mode)} · {item.target?.course_id}/{item.target?.category_id}</small>
                   </td>
                   <td>
@@ -588,7 +588,7 @@ function AdminMoodlePage() {
                   </td>
                   <td>
                     <span>{item.moodle_question_ref_id || 'Chưa có'}</span>
-                    {item.publication_mode === 'MOCK' && <small>Mã mô phỏng, không phải ID từ Moodle</small>}
+                    {item.publication_mode === 'MOCK' && <small>Mã mô phỏng</small>}
                   </td>
                   <td>{item.export_formats?.length ? item.export_formats.join(', ') : item.export_format}</td>
                   <td>{formatDateTime(item.created_at)}</td>
@@ -612,8 +612,8 @@ function AdminMoodlePage() {
               ))}
             </tbody>
           </table>
-          {publicationsLoading && <p className="moodle-empty">Đang tải publication...</p>}
-          {!publicationsLoading && publications.length === 0 && <p className="moodle-empty">Không có publication phù hợp.</p>}
+          {publicationsLoading && <p className="moodle-empty">Đang tải lịch sử...</p>}
+          {!publicationsLoading && publications.length === 0 && <p className="moodle-empty">Không có lượt xuất bản phù hợp.</p>}
         </div>
         {!publicationsLoading && publicationTotal > 0 && (
           <div className="moodle-pagination">
@@ -652,23 +652,22 @@ function AdminMoodlePage() {
               </span>
               <h2 id="moodle-action-dialog-title">
                 {actionDialog.type === 'deactivate'
-                  ? 'Khóa điểm kết nối Moodle?'
+                  ? 'Khóa kết nối Moodle?'
                   : 'Chạy lại lượt xuất bản?'}
               </h2>
             </header>
             <div className="moodle-dialog__body">
               {actionDialog.type === 'deactivate' ? (
                 <p>
-                  <b>{actionDialog.target.site_name}</b> sẽ không còn nhận lượt xuất bản mới.
-                  Nhật ký và cấu hình hiện tại vẫn được giữ lại.
+                  <b>{actionDialog.target.site_name}</b> sẽ ngừng nhận dữ liệu mới. Lịch sử vẫn được giữ.
                 </p>
               ) : (
                 <>
-                  <p>Lượt xuất bản lỗi sẽ được đưa vào xử lý lại với cấu hình hiện tại.</p>
+                  <p>Đưa lượt xuất bản lỗi vào xử lý lại.</p>
                   <div className={retryIsRealSync ? 'danger' : 'safe'}>
                     {retryIsRealSync
-                      ? 'Đây là kết nối thật: câu hỏi có thể được gửi lại sang Moodle bên ngoài.'
-                      : 'Đây là chế độ mô phỏng: hệ thống chỉ tạo lại bản ghi cục bộ.'}
+                      ? 'Kết nối thật: dữ liệu có thể được gửi lại sang Moodle.'
+                      : 'Mô phỏng: chỉ tạo lại bản ghi cục bộ.'}
                   </div>
                 </>
               )}
@@ -686,7 +685,7 @@ function AdminMoodlePage() {
               >
                 {dialogBusy
                   ? 'Đang xử lý...'
-                  : (actionDialog.type === 'deactivate' ? 'Khóa điểm kết nối' : 'Chạy lại xuất bản')}
+                  : (actionDialog.type === 'deactivate' ? 'Khóa kết nối' : 'Chạy lại')}
               </button>
             </footer>
           </section>

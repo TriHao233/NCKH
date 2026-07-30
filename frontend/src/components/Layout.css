@@ -11,11 +11,17 @@
 .app-shell--admin {
   --admin-sidebar-width: 272px;
   --admin-topbar-height: 72px;
+  --admin-canvas: #fff;
+  --admin-ink: #172033;
+  --admin-muted: #657182;
+  --admin-rule: #d9dee4;
+  --admin-row-rule: #e8ebef;
+  --admin-blue: #176aa8;
+  --admin-soft: #f7f9fb;
+  --admin-overlay-shadow: 0 24px 64px rgba(20, 37, 58, 0.18);
   display: block;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 78% 0, rgba(40, 111, 244, 0.07), transparent 30rem),
-    #f2f5f9;
+  background: var(--admin-canvas);
 }
 
 .page-main--admin {
@@ -23,7 +29,7 @@
   min-height: 100vh;
   margin-left: var(--admin-sidebar-width);
   padding-top: var(--admin-topbar-height);
-  background: transparent;
+  background: var(--admin-canvas);
 }
 
 .page-main--admin > main {

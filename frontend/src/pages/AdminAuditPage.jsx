@@ -37,7 +37,7 @@ const ACTION_OPTIONS = [
   { value: 'admin.moodle_target_save', label: 'Lưu cấu hình Moodle' },
   { value: 'admin.moodle_target_deactivate', label: 'Tắt cấu hình Moodle' },
   { value: 'admin.moodle_target_check', label: 'Kiểm tra cấu hình Moodle' },
-  { value: 'auth.demo_login', label: 'Demo login' },
+  { value: 'auth.demo_login', label: 'Đăng nhập demo' },
 ];
 
 const ENTITY_OPTIONS = [
@@ -246,12 +246,12 @@ function AdminAuditPage() {
   const exportDisabled = loading || Boolean(exportKey) || total === 0;
 
   return (
-    <main className="admin-jobs-page">
+    <main className="admin-jobs-page admin-audit-page">
       <section className="jobs-header">
         <div>
-          <span>Quản trị hệ thống</span>
-          <h1>Nhật ký hệ thống</h1>
-          <p>Theo dõi hành động nhạy cảm, thay đổi quyền và luồng xử lý trên toàn hệ thống.</p>
+          <span>Hệ thống</span>
+          <h1>Nhật ký</h1>
+          <p>Hành động, thay đổi quyền và dữ liệu hệ thống.</p>
         </div>
         <div className="jobs-header-actions">
           <button
@@ -289,7 +289,7 @@ function AdminAuditPage() {
             id="audit-search"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Hành động, người thực hiện, đối tượng..."
+            placeholder="Hành động, người dùng, đối tượng"
           />
         </div>
         <div className="toolbar-field">
@@ -313,11 +313,11 @@ function AdminAuditPage() {
         </div>
         <div className="toolbar-field">
           <label htmlFor="audit-actor">ID người thực hiện</label>
-          <input id="audit-actor" value={actorUserId} onChange={(event) => updateActorUserId(event.target.value)} placeholder="User ID" />
+          <input id="audit-actor" value={actorUserId} onChange={(event) => updateActorUserId(event.target.value)} placeholder="ID người dùng" />
         </div>
         <div className="toolbar-field">
           <label htmlFor="audit-entity">ID đối tượng</label>
-          <input id="audit-entity" value={entityId} onChange={(event) => updateEntityId(event.target.value)} placeholder="Object ID" />
+          <input id="audit-entity" value={entityId} onChange={(event) => updateEntityId(event.target.value)} placeholder="ID đối tượng" />
         </div>
         <div className="toolbar-field">
           <label htmlFor="audit-from">Từ ngày</label>
@@ -377,7 +377,7 @@ function AdminAuditPage() {
               </tbody>
             </table>
             {!loading && logs.length === 0 && (
-              <p className="jobs-empty">Không có nhật ký phù hợp với bộ lọc hiện tại.</p>
+              <p className="jobs-empty">Không có nhật ký phù hợp.</p>
             )}
             {loading && (
               <p className="jobs-empty">Đang tải nhật ký...</p>
@@ -435,7 +435,7 @@ function AdminAuditPage() {
               </div>
             </>
           ) : (
-            <p className="job-detail-empty">Chọn một nhật ký để xem chi tiết.</p>
+            <p className="job-detail-empty">Chọn nhật ký để xem chi tiết.</p>
           )}
         </aside>
       </section>

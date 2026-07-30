@@ -49,7 +49,7 @@ const PERMISSION_OPTIONS = [
   { value: 'documents.manage_own', label: 'Quản lý tài liệu cá nhân' },
   { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
   { value: 'exams.manage_own', label: 'Làm đề thi' },
-  { value: 'admin.overview', label: 'Tổng quan Admin' },
+  { value: 'admin.overview', label: 'Xem tổng quan' },
   { value: 'admin.users', label: 'Quản lý người dùng' },
   { value: 'admin.catalog', label: 'Quản lý danh mục' },
   { value: 'admin.audit', label: 'Xem audit log' },
@@ -351,7 +351,7 @@ function UsersAdminPage() {
       return;
     }
     if (importInvalidCount > 0) {
-      setModalError(`Có ${importInvalidCount} dòng chưa có email hợp lệ. Hãy sửa trước khi import.`);
+      setModalError(`Có ${importInvalidCount} dòng thiếu email hợp lệ.`);
       return;
     }
     setModalError('');
@@ -363,7 +363,7 @@ function UsersAdminPage() {
       await refreshAll(1);
       setPage(1);
     } catch (err) {
-      setModalError(`Import tài khoản thất bại: ${err.message}`);
+      setModalError(`Nhập tài khoản thất bại: ${err.message}`);
     } finally {
       setImporting(false);
     }
@@ -398,9 +398,9 @@ function UsersAdminPage() {
     <main className="admin-jobs-page users-page">
       <section className="jobs-header">
         <div>
-          <span>Khu vực quản trị</span>
-          <h1>Quản lý người dùng</h1>
-          <p>Quản lý tài khoản giảng viên, người duyệt và quản trị viên trong hệ thống ngân hàng câu hỏi.</p>
+          <span>Hệ thống</span>
+          <h1>Người dùng</h1>
+          <p>Tài khoản, vai trò và quyền truy cập.</p>
         </div>
         <div className="jobs-header-actions">
           <button type="button" className="jobs-secondary-button" onClick={() => refreshAll()} disabled={loading}>
@@ -416,7 +416,7 @@ function UsersAdminPage() {
             }}
           >
             <FontAwesomeIcon icon={faFileImport} />
-            <span>Import CSV</span>
+            <span>Nhập CSV</span>
           </button>
           <button type="button" className="jobs-secondary-button" onClick={() => openCreate('invite')}>
             <FontAwesomeIcon icon={faEnvelope} />
@@ -429,23 +429,13 @@ function UsersAdminPage() {
         </div>
       </section>
 
-      <section className="jobs-summary">
-        <button type="button" className={`summary-tile ${roleFilter === 'all' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('all')}>
-          <b>{stats.all}</b>
-          <span>Tổng tài khoản</span>
-        </button>
-        <button type="button" className={`summary-tile ${roleFilter === 'Admin' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Admin')}>
-          <b>{stats.Admin}</b>
-          <span>Quản trị viên</span>
-        </button>
-        <button type="button" className={`summary-tile ${roleFilter === 'Teacher' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Teacher')}>
-          <b>{stats.Teacher}</b>
-          <span>Giảng viên</span>
-        </button>
-        <button type="button" className={`summary-tile ${roleFilter === 'Reviewer' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Reviewer')}>
-          <b>{stats.Reviewer}</b>
-          <span>Người duyệt</span>
-        </button>
+      <section className="users-directory-summary" aria-label="Phân bố tài khoản">
+        <strong>{stats.all} tài khoản</strong>
+        <p>
+          <span><b>{stats.Admin}</b> quản trị viên</span>
+          <span><b>{stats.Teacher}</b> giảng viên</span>
+          <span><b>{stats.Reviewer}</b> người duyệt</span>
+        </p>
       </section>
 
       <section className="jobs-toolbar jobs-toolbar--users" aria-label="Bộ lọc người dùng">
@@ -459,7 +449,7 @@ function UsersAdminPage() {
               id="users-search"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Tìm theo tên hoặc email..."
+              placeholder="Tên hoặc email"
             />
             {searchInput && (
               <button type="button" className="search-clear-btn" title="Xoá tìm kiếm" onClick={() => setSearchInput('')}>
@@ -488,7 +478,7 @@ function UsersAdminPage() {
         <div className="jobs-table-panel">
           <div className="jobs-table-header">
             <div>
-              <h2>Danh sách người dùng</h2>
+              <h2>Tài khoản</h2>
               <span>{total} tài khoản</span>
             </div>
           </div>
@@ -596,7 +586,7 @@ function UsersAdminPage() {
             onSubmit={handleCreate}
           >
             <h3 className="modal-title" id="create-user-dialog-title">
-              {createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}
+              {createMode === 'invite' ? 'Mời người dùng' : 'Tạo tài khoản'}
             </h3>
 
             <div className="field-group">
@@ -653,7 +643,7 @@ function UsersAdminPage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
+              <label className="field-label">Quyền</label>
               <div className="permission-grid">
                 {PERMISSION_OPTIONS.map((permission) => (
                   <label className="field-checkbox" key={permission.value}>
@@ -674,13 +664,13 @@ function UsersAdminPage() {
             {inviteResult?.reset_link && (
               <div className="users-result-box">
                 <div className="users-result-box-header">
-                  <b>Link đặt mật khẩu</b>
+                  <b>Liên kết đặt mật khẩu</b>
                   <button type="button" className="copy-btn" onClick={() => copyToClipboard(inviteResult.reset_link, 'invite')}>
                     <FontAwesomeIcon icon={faCopy} />
                     {copiedKey === 'invite' ? 'Đã sao chép' : 'Sao chép'}
                   </button>
                 </div>
-                <textarea aria-label="Link đặt mật khẩu" className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
+                <textarea aria-label="Liên kết đặt mật khẩu" className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
               </div>
             )}
 
@@ -688,7 +678,7 @@ function UsersAdminPage() {
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={() => setShowCreate(false)} disabled={creating}>
-                Huỷ
+                Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={creating}>
                 {creating ? 'Đang lưu...' : (createMode === 'invite' ? 'Tạo link mời' : 'Tạo tài khoản')}
@@ -708,7 +698,7 @@ function UsersAdminPage() {
             onClick={(e) => e.stopPropagation()}
             onSubmit={handleImportUsers}
           >
-            <h3 className="modal-title" id="import-user-dialog-title">Import người dùng</h3>
+            <h3 className="modal-title" id="import-user-dialog-title">Nhập người dùng từ CSV</h3>
             <div className="field-group">
               <label className="field-label">CSV</label>
               <textarea
@@ -719,7 +709,7 @@ function UsersAdminPage() {
                 onChange={(e) => setImportText(e.target.value)}
                 placeholder="email@ctu.edu.vn,Nguyễn Văn A,Teacher,questions.generate|questions.manage_own"
               />
-              <p className="field-hint">Mỗi dòng: email, họ tên, vai trò (Teacher/Reviewer/Admin), quyền cách nhau bởi dấu "|" (tuỳ chọn).</p>
+              <p className="field-hint">Mỗi dòng: email, họ tên, vai trò, quyền (không bắt buộc).</p>
               {importRows.length > 0 && (
                 <p className={`field-hint ${importInvalidCount > 0 ? 'field-hint--warn' : ''}`}>
                   {importRows.length} dòng ({importValidCount} hợp lệ{importInvalidCount > 0 ? `, ${importInvalidCount} thiếu email hợp lệ` : ''})
@@ -740,7 +730,7 @@ function UsersAdminPage() {
                 Đóng
               </button>
               <button type="submit" className="btn btn--primary" disabled={importing || importRows.length === 0}>
-                {importing ? 'Đang import...' : 'Import'}
+                {importing ? 'Đang nhập...' : 'Nhập'}
               </button>
             </div>
           </form>
@@ -756,16 +746,16 @@ function UsersAdminPage() {
             aria-labelledby="reset-user-dialog-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="modal-title" id="reset-user-dialog-title">Link reset mật khẩu</h3>
+            <h3 className="modal-title" id="reset-user-dialog-title">Đặt lại mật khẩu</h3>
             <p className="user-email">{resetResult.email}</p>
             <div className="users-result-box-header">
-              <b>Link đặt lại mật khẩu</b>
+              <b>Liên kết đặt lại mật khẩu</b>
               <button type="button" className="copy-btn" onClick={() => copyToClipboard(resetResult.reset_link, 'reset')}>
                 <FontAwesomeIcon icon={faCopy} />
                 {copiedKey === 'reset' ? 'Đã sao chép' : 'Sao chép'}
               </button>
             </div>
-            <textarea aria-label="Link đặt lại mật khẩu" className="field-input" readOnly rows={4} value={resetResult.reset_link} />
+            <textarea aria-label="Liên kết đặt lại mật khẩu" className="field-input" readOnly rows={4} value={resetResult.reset_link} />
             <div className="modal-actions">
               <button type="button" className="btn btn--primary" onClick={() => setResetResult(null)}>
                 Đóng
@@ -785,7 +775,7 @@ function UsersAdminPage() {
             onClick={(e) => e.stopPropagation()}
             onSubmit={handleSaveEdit}
           >
-            <h3 className="modal-title" id="edit-user-dialog-title">Chỉnh sửa tài khoản</h3>
+            <h3 className="modal-title" id="edit-user-dialog-title">Sửa tài khoản</h3>
 
             <div className="field-group">
               <label className="field-label">Email</label>
@@ -820,7 +810,7 @@ function UsersAdminPage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
+              <label className="field-label">Quyền</label>
               <div className="permission-grid">
                 {PERMISSION_OPTIONS.map((permission) => (
                   <label className="field-checkbox" key={permission.value}>
@@ -850,7 +840,7 @@ function UsersAdminPage() {
 
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeEdit} disabled={saving}>
-                Huỷ
+                Hủy
               </button>
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
@@ -876,7 +866,7 @@ function UsersAdminPage() {
             <p className="users-dialog-copy">
               {accountAction.activate
                 ? `${accountAction.user.display_name} sẽ có thể đăng nhập và sử dụng lại các quyền đã cấp.`
-                : `${accountAction.user.display_name} sẽ không thể đăng nhập cho đến khi Admin kích hoạt lại. Dữ liệu của tài khoản vẫn được giữ.`}
+                : `${accountAction.user.display_name} sẽ không thể đăng nhập. Dữ liệu vẫn được giữ.`}
             </p>
             {modalError && <p className="modal-inline-error" role="alert">{modalError}</p>}
             <div className="modal-actions">

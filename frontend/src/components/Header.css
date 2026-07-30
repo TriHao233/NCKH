@@ -490,11 +490,12 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  margin: 16px 14px 6px;
-  padding: 11px 12px;
-  border: 1px solid rgba(112, 174, 244, 0.2);
-  border-radius: 12px;
-  background: rgba(77, 139, 218, 0.1);
+  margin: 17px 20px 8px;
+  padding: 5px 0 5px 11px;
+  border: 0;
+  border-left: 2px solid rgba(118, 181, 255, 0.72);
+  border-radius: 0;
+  background: transparent;
 }
 
 .admin-sidebar__context > svg {
@@ -650,9 +651,9 @@
   height: var(--admin-topbar-height, 72px);
   padding: 0 clamp(18px, 2.5vw, 36px);
   border-bottom: 1px solid #dce3ec;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 5px 22px rgba(22, 48, 78, 0.05);
-  backdrop-filter: blur(14px);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: none;
+  backdrop-filter: blur(10px);
 }
 
 .admin-topbar__title {

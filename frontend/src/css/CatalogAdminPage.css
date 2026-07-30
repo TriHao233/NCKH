@@ -682,3 +682,340 @@
     border-radius: 12px 12px 0 0;
   }
 }
+
+/* Configuration index: dense runtime ledger and flat editing surfaces */
+.catalog-page {
+  padding: 28px clamp(20px, 3vw, 44px) 72px;
+  color: #172033;
+  background: #f1f3f5;
+}
+
+.catalog-header,
+.catalog-grid,
+.catalog-error,
+.catalog-empty {
+  max-width: 1440px;
+}
+
+.catalog-header {
+  align-items: flex-end;
+  margin-bottom: 20px;
+  padding: 4px 0 22px;
+  border-bottom: 1px solid #c9d0d8;
+}
+
+.catalog-header span {
+  color: #5d6878;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+}
+
+.catalog-header h1 {
+  color: #172033;
+  font-size: clamp(1.65rem, 3vw, 2.15rem);
+  letter-spacing: -0.03em;
+}
+
+.catalog-header p {
+  color: #5a6575;
+  font-size: 0.84rem;
+}
+
+.catalog-header > button {
+  min-height: 36px;
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.catalog-grid {
+  gap: 16px;
+}
+
+.catalog-card {
+  border-color: #cfd5dc;
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.catalog-runtime-panel {
+  padding: 18px 20px;
+}
+
+.runtime-grid {
+  gap: 0;
+  margin-inline: -20px;
+  border-block: 1px solid #d8dde3;
+}
+
+.runtime-grid div {
+  min-height: 92px;
+  padding: 14px 18px;
+  border: 0;
+  border-right: 1px solid #d8dde3;
+  border-radius: 0;
+  background: #fff;
+}
+
+.runtime-grid div:last-child {
+  border-right: 0;
+}
+
+.runtime-grid b {
+  color: #172033;
+  font-size: 0.98rem;
+}
+
+.catalog-section-tabs {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #cfd5dc;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.catalog-section-tabs button {
+  border: 0;
+  border-right: 1px solid #d8dde3;
+  border-radius: 0;
+  background: #fff;
+}
+
+.catalog-section-tabs button.active {
+  border-color: #d8dde3;
+  background: #eef4f8;
+  box-shadow: inset 0 -3px #176aa8;
+}
+
+.catalog-form input,
+.catalog-form textarea,
+.catalog-card select,
+.catalog-page .catalog-ghost-button,
+.catalog-item-actions button,
+.catalog-form-actions button {
+  border-radius: 3px;
+}
+
+.catalog-list {
+  gap: 0;
+}
+
+.catalog-list-item {
+  border: 0;
+  border-bottom: 1px solid #e1e5e9;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.catalog-list-item:hover {
+  background: #f7f8fa;
+}
+
+@media (max-width: 760px) {
+  .catalog-page {
+    padding: 22px 14px 54px;
+  }
+
+  .catalog-header {
+    padding: 0 0 18px;
+  }
+
+  .runtime-grid div {
+    border-right: 0;
+    border-bottom: 1px solid #d8dde3;
+  }
+
+  .runtime-grid div:last-child {
+    border-bottom: 0;
+  }
+}
+
+/* Configuration register: scan sections horizontally, edit them on a continuous sheet */
+.catalog-page {
+  background: var(--admin-canvas, #fff);
+}
+
+.catalog-header {
+  margin-bottom: 0;
+  border-bottom-color: var(--admin-rule, #d9dee4);
+}
+
+.catalog-grid {
+  gap: 0;
+}
+
+.catalog-card {
+  padding: 24px 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.catalog-runtime-panel {
+  padding: 20px 0 18px;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.runtime-grid {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-inline: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+  scrollbar-width: thin;
+}
+
+.runtime-grid div {
+  flex: 1 0 190px;
+  min-height: 88px;
+  padding: 15px 20px 13px 0;
+  border: 0;
+  border-right: 1px solid var(--admin-row-rule, #e8ebef);
+  background: transparent;
+}
+
+.runtime-grid div + div {
+  padding-left: 20px;
+}
+
+.runtime-grid div:last-child {
+  border-right: 0;
+}
+
+.catalog-section-tabs {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: clamp(20px, 3vw, 42px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 0;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 0;
+  background: transparent;
+  scrollbar-width: thin;
+}
+
+.catalog-section-tabs button {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 130px;
+  padding: 16px 0 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.catalog-section-tabs button:last-child,
+.catalog-section-tabs button:hover,
+.catalog-section-tabs button.active {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.catalog-section-tabs button.active::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 3px;
+  background: var(--admin-blue, #176aa8);
+  content: "";
+}
+
+.catalog-form--inline {
+  padding-block: 15px;
+  border-block: 1px solid var(--admin-row-rule, #e8ebef);
+}
+
+.subject-layout,
+.prompt-layout {
+  gap: 0;
+  margin-top: 18px;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.subject-list {
+  gap: 0;
+  padding: 8px 20px 8px 0;
+  border-right: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.subject-list button {
+  border: 0;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+  border-radius: 0;
+  background: transparent;
+}
+
+.subject-list button:hover,
+.subject-list button.active,
+.subject-list button.inactive {
+  border-color: var(--admin-row-rule, #e8ebef);
+  background: var(--admin-soft, #f7f9fb);
+}
+
+.subject-list button.active {
+  box-shadow: inset 3px 0 var(--admin-blue, #176aa8);
+}
+
+.subject-detail {
+  padding: 18px 0 0 24px;
+}
+
+.catalog-columns {
+  gap: 0;
+}
+
+.catalog-columns > * + * {
+  padding-left: 20px;
+  border-left: 1px solid var(--admin-row-rule, #e8ebef);
+}
+
+.catalog-warning-list span,
+.catalog-result {
+  border: 0;
+  border-left: 3px solid #d69e2e;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.catalog-dialog {
+  border-color: var(--admin-rule, #d9dee4);
+  border-radius: 12px;
+  box-shadow: var(--admin-overlay-shadow, 0 24px 64px rgba(20, 37, 58, 0.18));
+}
+
+@media (max-width: 760px) {
+  .runtime-grid {
+    display: flex;
+  }
+
+  .runtime-grid div,
+  .runtime-grid div:last-child {
+    border-right: 1px solid var(--admin-row-rule, #e8ebef);
+    border-bottom: 0;
+  }
+
+  .runtime-grid div:last-child {
+    border-right: 0;
+  }
+
+  .subject-layout,
+  .prompt-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .subject-list {
+    padding-right: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--admin-rule, #d9dee4);
+  }
+
+  .subject-detail {
+    padding-left: 0;
+  }
+}

@@ -1133,11 +1133,11 @@ function ReviewQueuePage() {
     );
     const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
     if (adminDirectReview && !overallNote) {
-      setReviewFormError('Admin duyệt thay Reviewer phải ghi rõ lý do trong ghi chú tổng.');
+      setReviewFormError('Hãy ghi lý do khi duyệt thay.');
       return;
     }
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
-      setReviewFormError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
+      setReviewFormError('Hãy ghi lý do duyệt khác kết quả AI.');
       return;
     }
     if (reviewDraft.decision === 'REJECTED' && !overallNote && revisionIssues.length === 0) {
@@ -1289,12 +1289,12 @@ function ReviewQueuePage() {
     <main className="review-page">
       <section className="review-toolbar">
         <div className="review-toolbar__title">
-          <span>Reviewer workspace</span>
-          <h1>Bàn làm việc kiểm duyệt</h1>
-          <p>Chọn một câu hỏi, đối chiếu nguồn và hoàn tất quyết định ngay trong cùng màn hình.</p>
+          <span>Kiểm duyệt</span>
+          <h1>Bàn kiểm duyệt</h1>
+          <p>Duyệt câu hỏi và đối chiếu nguồn.</p>
         </div>
         <div className="review-toolbar__workload" aria-label="Khối lượng đang chờ">
-          <span>Đang chờ xử lý</span>
+          <span>Đang chờ</span>
           <b>{dashboardLoading ? '--' : dashboardWorkload.pending || 0}</b>
           <small>
             {dashboardWorkload.lock_expired || 0} phiên quá hạn · {dashboardWorkload.unassigned || 0} câu chưa nhận
@@ -1312,7 +1312,6 @@ function ReviewQueuePage() {
         >
           <span>Việc của tôi</span>
           <b>{dashboardWorkload.mine || 0}</b>
-          <small>Đã nhận và cần hoàn tất</small>
         </button>
         <button
           type="button"
@@ -1321,7 +1320,6 @@ function ReviewQueuePage() {
         >
           <span>Chưa có người nhận</span>
           <b>{dashboardWorkload.unassigned || 0}</b>
-          <small>Có thể nhận để bắt đầu duyệt</small>
         </button>
         <button
           type="button"
@@ -1330,7 +1328,6 @@ function ReviewQueuePage() {
         >
           <span>Đã hoàn tất</span>
           <b>{processedCount}</b>
-          <small>Tra cứu quyết định trước đây</small>
         </button>
       </section>
 
@@ -1341,12 +1338,12 @@ function ReviewQueuePage() {
               <span>Hàng đợi hiện tại</span>
               <b>{loading ? 'Đang tải...' : `${total} câu hỏi`}</b>
             </div>
-            <small>Ưu tiên câu chờ lâu hoặc có cảnh báo chất lượng</small>
+            <small>Ưu tiên câu chờ lâu</small>
           </div>
           <div className="review-filter-bar">
             <input
               aria-label="Tìm câu hỏi"
-              placeholder="Tìm mã hoặc nội dung..."
+              placeholder="Mã hoặc nội dung"
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
             />
@@ -1355,7 +1352,7 @@ function ReviewQueuePage() {
               aria-expanded={advancedFiltersOpen}
               onClick={() => setAdvancedFiltersOpen((current) => !current)}
             >
-              Bộ lọc nâng cao{advancedFilterCount > 0 ? ` (${advancedFilterCount})` : ''}
+              Bộ lọc{advancedFilterCount > 0 ? ` (${advancedFilterCount})` : ''}
             </button>
           </div>
 
@@ -1464,7 +1461,7 @@ function ReviewQueuePage() {
               onChange={(event) => updateFilter(setMinScore)(event.target.value)}
             />
               <button type="button" className="review-filter-reset" onClick={resetAdvancedFilters}>
-                Xóa bộ lọc nâng cao
+                Xóa bộ lọc
               </button>
             </div>
           )}
@@ -1542,8 +1539,8 @@ function ReviewQueuePage() {
           {!selected ? (
             <div className="review-detail-empty">
               <span>01</span>
-              <h2>Chọn một câu hỏi để bắt đầu</h2>
-              <p>Nội dung, nguồn trích dẫn, đánh giá AI và biểu mẫu quyết định sẽ xuất hiện tại đây.</p>
+              <h2>Chọn câu hỏi</h2>
+              <p>Nội dung và nguồn đối chiếu sẽ hiện ở đây.</p>
             </div>
           ) : (
             <>
@@ -1625,7 +1622,7 @@ function ReviewQueuePage() {
                   disabled={busyId === selected.id || isEvaluationBusy(selected) || !canReviewQuestion(selected)}
                   onClick={() => openReviewForm(selected, 'APPROVED')}
                 >
-                  {user?.role === 'Admin' ? 'Duyệt thay Reviewer' : 'Duyệt'}
+                  {user?.role === 'Admin' ? 'Duyệt thay' : 'Duyệt'}
                 </button>
                 <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'NEEDS_REVISION')}>Cần sửa</button>
                 <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'REJECTED')}>Từ chối</button>
@@ -1936,8 +1933,8 @@ function ReviewQueuePage() {
             <section className="review-form-section">
               <div className="review-form-section__head">
                 <div>
-                  <h3>Checklist Reviewer</h3>
-                  <p>Tự xác nhận từng tiêu chí; hệ thống không đánh dấu thay người duyệt.</p>
+                  <h3>Tiêu chí kiểm duyệt</h3>
+                  <p>Tự xác nhận từng mục.</p>
                 </div>
                 <strong>
                   {reviewDraft.checklist.filter((item) => item.passed).length}/{reviewDraft.checklist.length}
@@ -1995,7 +1992,7 @@ function ReviewQueuePage() {
               <label className="review-form-field">
                 <span>
                   {reviewDraft.decision === 'REJECTED' ? 'Lý do từ chối' : 'Ghi chú tổng'}
-                  {isAdminDirectReview ? ' (bắt buộc khi duyệt thay Reviewer)' : ''}
+                  {isAdminDirectReview ? ' (bắt buộc khi duyệt thay)' : ''}
                   {reviewDraft.decision === 'REJECTED' ? ' (bắt buộc nếu không thêm căn cứ)' : ''}
                 </span>
                 <textarea
@@ -2168,7 +2165,7 @@ function ReviewQueuePage() {
             {assignmentDraft.activeLock && (
               <>
                 <p className="review-assignment-warning">
-                  Câu hỏi đang được một Reviewer xử lý. Ghi đè sẽ thu hồi quyền nộp duyệt của người đó.
+                  Câu hỏi đang được người khác xử lý. Ghi đè sẽ thu hồi lượt duyệt của họ.
                 </p>
                 <label className="review-filter-toggle">
                   <input
@@ -2238,10 +2235,9 @@ function ReviewQueuePage() {
               </button>
             </div>
             <div className="evaluation-confirmation">
-              <strong>AI chỉ hỗ trợ chấm điểm; Reviewer vẫn là người quyết định.</strong>
+              <strong>AI chấm điểm; người duyệt quyết định.</strong>
               <p>
-                Hệ thống sẽ gửi nội dung câu hỏi và nguồn trích dẫn tới mô hình đánh giá.
-                Quá trình có thể mất vài phút và điểm sẽ tự cập nhật khi hoàn tất.
+                Gửi câu hỏi và nguồn đối chiếu tới mô hình. Điểm tự cập nhật khi xong.
               </p>
               <dl>
                 <div>

@@ -228,3 +228,132 @@
   background: #ae2e24;
   color: #fff;
 }
+
+/* Keep administration forms consistent with the flat resource index */
+.users-page .role-pill,
+.users-page .status-pill {
+  border-radius: 2px;
+}
+
+.users-page .modal-card {
+  border: 1px solid #c8d0d9;
+  border-radius: 3px;
+  box-shadow: 0 24px 70px rgba(23, 32, 51, 0.28);
+}
+
+.users-page .modal-title {
+  color: #172033;
+  font-family: inherit;
+}
+
+.users-page .field-input,
+.users-page .field-select,
+.users-page .permission-grid,
+.users-page .users-result-box {
+  border-radius: 3px;
+}
+
+.users-page .jobs-table-panel {
+  overflow-x: auto;
+}
+
+@media (max-width: 760px) {
+  .users-page .jobs-toolbar--users {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .users-page .users-table {
+    min-width: 780px;
+  }
+}
+
+/* User directory: keep permissions readable without stacking framed boxes */
+.users-page .btn--primary {
+  box-shadow: none;
+}
+
+.users-page .modal-card {
+  border-color: var(--admin-rule, #d9dee4);
+  border-radius: 12px;
+  box-shadow: var(--admin-overlay-shadow, 0 24px 64px rgba(20, 37, 58, 0.18));
+}
+
+.users-page .modal-overlay {
+  z-index: 1200;
+  overflow-y: auto;
+  background: rgba(9, 30, 66, 0.5);
+}
+
+.users-page .modal-card {
+  max-height: calc(100vh - 48px);
+}
+
+.users-page .permission-grid {
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-block: 1px solid var(--admin-rule, #d9dee4);
+  border-radius: 0;
+  background: transparent;
+  max-height: 160px;
+}
+
+.users-page .permission-grid .field-checkbox {
+  min-height: 40px;
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--admin-row-rule, #e8ebef);
+}
+
+.users-page .users-result-box {
+  border: 0;
+  border-left: 3px solid var(--admin-blue, #176aa8);
+  border-radius: 0;
+  background: var(--admin-soft, #f7f9fb);
+}
+
+.users-directory-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  min-height: 54px;
+  padding: 13px 0 12px;
+  border-bottom: 1px solid var(--admin-rule, #d9dee4);
+  color: var(--admin-muted, #657182);
+}
+
+.users-directory-summary > strong {
+  flex: 0 0 auto;
+  color: var(--admin-ink, #172033);
+  font-size: 0.9rem;
+}
+
+.users-directory-summary p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 0;
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.users-directory-summary p span {
+  white-space: nowrap;
+}
+
+.users-directory-summary p span + span::before {
+  margin-inline: 10px;
+  color: #a6afb9;
+  content: "·";
+}
+
+.users-directory-summary p b {
+  color: var(--admin-ink, #172033);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .users-directory-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+}

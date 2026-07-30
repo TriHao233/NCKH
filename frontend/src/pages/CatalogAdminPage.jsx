@@ -44,8 +44,8 @@ const EMPTY_CHAPTER_FORM = { id: '', chapter_code: '', chapter_name: '', sequenc
 const EMPTY_CLO_FORM = { id: '', clo_code: '', description: '', target_weight: 1, is_active: true };
 const CATALOG_SECTIONS = [
   { key: 'subjects', label: 'Cấu trúc đào tạo', description: 'Môn học, chương và CLO' },
-  { key: 'models', label: 'Mô hình AI', description: 'Runtime và health-check' },
-  { key: 'prompts', label: 'Mẫu prompt', description: 'Phiên bản và test-build' },
+  { key: 'models', label: 'Mô hình AI', description: 'Cấu hình và kiểm tra' },
+  { key: 'prompts', label: 'Mẫu prompt', description: 'Phiên bản và chạy thử' },
   { key: 'policy', label: 'Tiêu chí đánh giá', description: 'Trọng số và ngưỡng đạt' },
 ];
 
@@ -76,12 +76,12 @@ function factoryText(model) {
 
 function healthText(model) {
   const health = model?.last_health_check;
-  if (!health) return 'Chưa health-check';
+  if (!health) return 'Chưa kiểm tra';
   if (
     health.status === 'OK'
     && (!health.config_hash || health.config_hash !== model.config_hash)
   ) {
-    return 'Health-check không còn khớp cấu hình';
+    return 'Kết quả kiểm tra đã cũ';
   }
   return health.status === 'OK'
     ? `OK · ${health.latency_ms || 0}ms`
@@ -95,6 +95,13 @@ function modelHealthReady(model) {
     && health.config_hash
     && health.config_hash === model?.config_hash,
   );
+}
+
+function catalogWarningText(warning) {
+  if (warning?.includes('PROMPT_SOURCE') && warning?.includes('file')) {
+    return 'Prompt đang đọc từ tệp; bản trong hệ thống chưa được áp dụng.';
+  }
+  return warning;
 }
 
 function subjectToForm(subject) {
@@ -322,7 +329,7 @@ function CatalogAdminPage() {
       setConfirmAction({
         eyebrow: activeSubject.subject_code,
         title: `Tạm khóa môn ${activeSubject.subject_code}?`,
-        description: `Môn học đang liên quan đến ${usageText(activeSubject.usage_counts)}. Dữ liệu cũ vẫn được giữ, nhưng môn này sẽ không thể chọn cho dữ liệu mới.`,
+        description: `Đang dùng cho ${usageText(activeSubject.usage_counts)}. Dữ liệu cũ được giữ; không thể chọn cho dữ liệu mới.`,
         confirmLabel: 'Tạm khóa môn',
         run: execute,
       });
@@ -345,7 +352,7 @@ function CatalogAdminPage() {
       setConfirmAction({
         eyebrow: `${activeSubject.subject_code} · ${chapter.chapter_code}`,
         title: `Tạm khóa chương ${chapter.chapter_code}?`,
-        description: `Chương đang liên quan đến ${usageText(chapter.usage_counts)}. Nội dung cũ không bị xóa, nhưng chương sẽ không thể chọn cho dữ liệu mới.`,
+        description: `Đang dùng cho ${usageText(chapter.usage_counts)}. Dữ liệu cũ được giữ; không thể chọn cho dữ liệu mới.`,
         confirmLabel: 'Tạm khóa chương',
         run: execute,
       });
@@ -368,7 +375,7 @@ function CatalogAdminPage() {
       setConfirmAction({
         eyebrow: `${activeSubject.subject_code} · ${clo.clo_code}`,
         title: `Tạm khóa ${clo.clo_code}?`,
-        description: `Chuẩn đầu ra đang liên quan đến ${usageText(clo.usage_counts)}. Dữ liệu cũ được giữ nguyên, nhưng CLO này sẽ không thể chọn cho dữ liệu mới.`,
+        description: `Đang dùng cho ${usageText(clo.usage_counts)}. Dữ liệu cũ được giữ; không thể chọn cho dữ liệu mới.`,
         confirmLabel: 'Tạm khóa CLO',
         run: execute,
       });
@@ -410,7 +417,7 @@ function CatalogAdminPage() {
 
   const toggleModelActive = (model) => {
     if (model.is_active === false && !modelHealthReady(model)) {
-      setError('Model phải health-check thành công với cấu hình hiện tại trước khi kích hoạt.');
+      setError('Mô hình cần được kiểm tra thành công trước khi kích hoạt.');
       return;
     }
     runSave(async () => setAiModelActive({
@@ -430,7 +437,7 @@ function CatalogAdminPage() {
       setModelHealth(result);
       await loadCatalog();
     } catch (err) {
-      setError(err.message || 'Health-check model thất bại');
+      setError(err.message || 'Kiểm tra mô hình thất bại');
     } finally {
       setHealthCheckingCode('');
     }
@@ -545,9 +552,9 @@ function CatalogAdminPage() {
     <main className="catalog-page">
       <section className="catalog-header">
         <div>
-          <span>Khu vực quản trị</span>
-          <h1>Cấu hình dữ liệu nền</h1>
-          <p>Quản lý từng nhóm cấu hình độc lập để giảm nhầm lẫn khi vận hành.</p>
+          <span>Nội dung</span>
+          <h1>Danh mục</h1>
+          <p>Môn học, mô hình AI, prompt và tiêu chí.</p>
         </div>
         <button type="button" onClick={() => loadCatalog()} disabled={loading || saving}>Làm mới</button>
       </section>
@@ -558,9 +565,9 @@ function CatalogAdminPage() {
         <section className="catalog-grid">
           <div className="catalog-card catalog-card--wide catalog-runtime-panel">
             <div className="catalog-card-title-row">
-              <h2>Runtime đang dùng</h2>
+              <h2>Cấu hình đang dùng</h2>
               <span className={`catalog-status ${runtimeConfig.prompt_source === 'db' ? 'ok' : 'warn'}`}>
-                PROMPT_SOURCE={runtimeConfig.prompt_source || 'file'}
+                Nguồn prompt: {runtimeConfig.prompt_source === 'db' ? 'hệ thống' : 'tệp'}
               </span>
             </div>
             <div className="runtime-grid">
@@ -575,12 +582,12 @@ function CatalogAdminPage() {
                 <span>{runtimeConfig.evaluation_factory?.runtime?.provider_class || factoryText(runtimeConfig.evaluation_catalog_model)}</span>
               </div>
               <div>
-                <small>Prompt DB active</small>
+                <small>Prompt đang dùng</small>
                 <b>{runtimeConfig.active_prompt_count ?? 0}</b>
-                <span>{runtimeConfig.prompt_source === 'db' ? 'Có hiệu lực runtime' : 'Chưa có hiệu lực runtime'}</span>
+                <span>{runtimeConfig.prompt_source === 'db' ? 'Đang áp dụng' : 'Chưa áp dụng'}</span>
               </div>
               <div>
-                <small>Policy active</small>
+                <small>Tiêu chí đang dùng</small>
                 <b>{runtimeConfig.active_evaluation_policy?.policy_name || '--'}</b>
                 <span>Phiên bản {runtimeConfig.active_evaluation_policy?.version || 1}</span>
               </div>
@@ -588,7 +595,7 @@ function CatalogAdminPage() {
             {(runtimeConfig.warnings || []).length > 0 && (
               <div className="catalog-warning-list">
                 {runtimeConfig.warnings.map((warning) => (
-                  <span key={warning}>{warning}</span>
+                    <span key={warning}>{catalogWarningText(warning)}</span>
                 ))}
               </div>
             )}
@@ -740,7 +747,7 @@ function CatalogAdminPage() {
               <input placeholder="Tên mô hình" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
               <input placeholder="Năng lực mô hình" value={modelForm.capabilities} onChange={(e) => setModelForm({ ...modelForm, capabilities: e.target.value })} />
               <input type="number" min="0" value={modelForm.priority} onChange={(e) => setModelForm({ ...modelForm, priority: e.target.value })} />
-              <p className="catalog-form-hint">Mô hình được lưu ở trạng thái chưa kích hoạt. Hãy health-check trước khi dùng.</p>
+              <p className="catalog-form-hint">Mô hình mới cần được kiểm tra trước khi dùng.</p>
               <button type="submit" disabled={saving}>Lưu mô hình</button>
             </form>
             <div className="catalog-list">
@@ -761,13 +768,13 @@ function CatalogAdminPage() {
                       onClick={() => toggleModelActive(model)}
                       disabled={saving || (model.is_active === false && !modelHealthReady(model))}
                       title={model.is_active === false && !modelHealthReady(model)
-                        ? 'Cần health-check thành công trước khi kích hoạt'
+                        ? 'Cần kiểm tra thành công trước khi kích hoạt'
                         : ''}
                     >
                       {model.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
                     </button>
                     <button type="button" onClick={() => handleCheckModelHealth(model)} disabled={saving || healthCheckingCode === model.model_code}>
-                      {healthCheckingCode === model.model_code ? 'Đang kiểm tra...' : 'Health-check'}
+                      {healthCheckingCode === model.model_code ? 'Đang kiểm tra...' : 'Kiểm tra'}
                     </button>
                   </div>
                 </article>
@@ -791,7 +798,7 @@ function CatalogAdminPage() {
                 onClick={handleTestPrompt}
                 disabled={promptTesting || !selectedPromptKey || !selectedPromptVersion}
               >
-                {promptTesting ? 'Đang build...' : 'Test-build phiên bản đã chọn'}
+                {promptTesting ? 'Đang chạy...' : 'Chạy thử phiên bản đã chọn'}
               </button>
             </div>
             <div className="prompt-layout">
@@ -946,7 +953,7 @@ function CatalogAdminPage() {
                       Sửa
                     </button>
                     <button type="button" onClick={() => handleActivatePolicy(policy)} disabled={saving || policy.is_active}>
-                      {policy.is_active ? 'Đang active' : 'Kích hoạt'}
+                      {policy.is_active ? 'Đang dùng' : 'Kích hoạt'}
                     </button>
                   </div>
                 </article>

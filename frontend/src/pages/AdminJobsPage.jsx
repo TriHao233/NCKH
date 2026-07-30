@@ -363,9 +363,9 @@ function AdminJobsPage() {
     <main className="admin-jobs-page">
       <section className="jobs-header">
         <div>
-          <span>Quản trị hệ thống</span>
-          <h1>Hàng đợi hệ thống</h1>
-          <p>Theo dõi hàng đợi sinh câu hỏi, đánh giá chất lượng và xử lý tài liệu.</p>
+          <span>Hệ thống</span>
+          <h1>Tác vụ</h1>
+          <p>Theo dõi, chạy lại hoặc hủy tác vụ.</p>
         </div>
         <div className="jobs-header-actions">
           <button
@@ -396,7 +396,7 @@ function AdminJobsPage() {
       <section className="jobs-summary" aria-label="Tổng quan hàng đợi">
         <button type="button" className="summary-tile" onClick={showAllJobs}>
           <b>{summary.total}</b>
-          <span>Tổng tác vụ</span>
+          <span>Tất cả</span>
         </button>
         <button type="button" className="summary-tile summary-tile--active" onClick={showActiveJobs}>
           <b>{summary.active}</b>
@@ -408,7 +408,7 @@ function AdminJobsPage() {
         </button>
         <button type="button" className="summary-tile summary-tile--warning" onClick={showLongRunningJobs}>
           <b>{summary.long_running}</b>
-          <span>Quá lâu</span>
+          <span>Quá hạn</span>
         </button>
       </section>
 
@@ -422,7 +422,7 @@ function AdminJobsPage() {
             id="job-search"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Mã tác vụ, đối tượng, lỗi..."
+            placeholder="Mã, đối tượng hoặc lỗi"
           />
         </div>
         <div className="toolbar-field">
@@ -451,7 +451,7 @@ function AdminJobsPage() {
             id="job-user"
             value={userIdFilter}
             onChange={(event) => updateUserIdFilter(event.target.value)}
-            placeholder="User ID"
+            placeholder="ID người dùng"
           />
         </div>
         <div className="toolbar-field">
@@ -628,7 +628,7 @@ function AdminJobsPage() {
               </div>
             </>
           ) : (
-            <p className="job-detail-empty">Chọn một tác vụ để xem chi tiết.</p>
+            <p className="job-detail-empty">Chọn tác vụ để xem chi tiết.</p>
           )}
         </aside>
       </section>
@@ -648,17 +648,17 @@ function AdminJobsPage() {
             <div className="jobs-dialog__body">
               <p>
                 {{
-                  generation: 'Hệ thống sẽ dừng sinh thêm câu hỏi; các câu đã lưu trước thời điểm hủy vẫn được giữ lại.',
+                  generation: 'Dừng sinh câu hỏi. Dữ liệu đã lưu vẫn được giữ.',
                   evaluation: 'Kết quả AI chưa hoàn tất sẽ không được ghi vào câu hỏi.',
-                  document: 'Pipeline xử lý tài liệu sẽ dừng và cần chạy lại từ màn quản lý tài liệu.',
+                  document: 'Dừng xử lý tài liệu. Có thể chạy lại trong mục Tài liệu.',
                 }[cancelJob.kind] || 'Tác vụ đang chạy sẽ bị dừng.'}
               </p>
-              <div>Hủy chỉ áp dụng cho tác vụ này và không xóa dữ liệu đã hoàn tất.</div>
+              <div>Dữ liệu đã hoàn tất không bị xóa.</div>
               {cancelError && <p className="jobs-dialog__error" role="alert">{cancelError}</p>}
             </div>
             <footer>
               <button type="button" onClick={() => setCancelJob(null)} disabled={Boolean(actionKey)}>
-                Quay lại
+                Không hủy
               </button>
               <button type="button" className="danger" onClick={confirmCancel} disabled={Boolean(actionKey)}>
                 {actionKey ? 'Đang hủy...' : 'Hủy tác vụ'}
