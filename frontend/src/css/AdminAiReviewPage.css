@@ -1304,9 +1304,22 @@
   border-left: 3px solid var(--admin-blue, #176aa8);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1180px) {
   .ai-review-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-review-filters {
+    grid-template-columns: minmax(180px, 1.6fr) repeat(2, minmax(130px, 1fr)) auto;
+  }
+
+  .ai-review-filter--search {
+    grid-column: auto;
+  }
+
+  .ai-review-list {
+    max-height: 170px;
+    overflow-y: auto;
   }
 
   .ai-review-list-panel {
@@ -1334,5 +1347,19 @@
   .ai-review-summary button:last-child {
     min-width: 0;
     border: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .ai-review-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-review-filter--search {
+    grid-column: auto;
+  }
+
+  .ai-review-filter-reset {
+    justify-self: stretch;
   }
 }

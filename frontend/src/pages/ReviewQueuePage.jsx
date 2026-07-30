@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   assignQuestionReview,
@@ -427,6 +427,8 @@ function ReviewQueuePage() {
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
+  const detailPanelRef = useRef(null);
+  const historyRequestRef = useRef(0);
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -517,6 +519,8 @@ function ReviewQueuePage() {
   };
 
   const loadHistory = async (question) => {
+    const requestId = historyRequestRef.current + 1;
+    historyRequestRef.current = requestId;
     setSelected(question);
     setReviewDraft(null);
     setEvaluationRequest(null);
@@ -547,6 +551,7 @@ function ReviewQueuePage() {
         listQuestionComments(question.id),
         getQuestionSources(question.id),
       ]);
+      if (historyRequestRef.current !== requestId) return;
 
       const failedHistoryParts = [];
       if (evaluationResult.status === 'fulfilled') {
@@ -590,16 +595,24 @@ function ReviewQueuePage() {
       if (sourceData.document?.pdf_available) {
         setSourcePdfLoading(true);
         try {
-          setSourcePdf(await fetchQuestionSourcePdf(question.id));
+          const pdfResult = await fetchQuestionSourcePdf(question.id);
+          if (historyRequestRef.current !== requestId) {
+            if (pdfResult?.url) URL.revokeObjectURL(pdfResult.url);
+            return;
+          }
+          setSourcePdf(pdfResult);
         } catch (err) {
+          if (historyRequestRef.current !== requestId) return;
           setSourceError(err.message || 'Không mở được PDF nguồn');
         } finally {
-          setSourcePdfLoading(false);
+          if (historyRequestRef.current === requestId) setSourcePdfLoading(false);
         }
       }
     } finally {
-      setHistoryLoading(false);
-      setSourceLoading(false);
+      if (historyRequestRef.current === requestId) {
+        setHistoryLoading(false);
+        setSourceLoading(false);
+      }
     }
   };
 
@@ -648,6 +661,17 @@ function ReviewQueuePage() {
     fetchDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const linkedQuestionId = new URLSearchParams(location.search).get('questionId') || '';
+    if (linkedQuestionId || selected || questions.length === 0) return;
+    loadHistory(questions[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, questions, selected]);
+
+  useEffect(() => {
+    detailPanelRef.current?.scrollTo({ top: 0 });
+  }, [selected?.id]);
 
   useEffect(() => {
     if (!selected) return;
@@ -1535,7 +1559,7 @@ function ReviewQueuePage() {
           )}
         </div>
 
-        <aside className="review-detail-panel">
+        <aside className="review-detail-panel" ref={detailPanelRef}>
           {!selected ? (
             <div className="review-detail-empty">
               <span>01</span>

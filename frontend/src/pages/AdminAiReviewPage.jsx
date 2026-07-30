@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   autoEvaluateQuestion,
@@ -174,6 +174,7 @@ function AdminAiReviewPage() {
   const [approvalChecklist, setApprovalChecklist] = useState(
     () => Object.fromEntries(SCORE_COMPONENTS.map((component) => [component.key, false])),
   );
+  const evaluationRequestRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearchTerm(searchInput.trim()), 350);
@@ -201,17 +202,21 @@ function AdminAiReviewPage() {
 
   const loadEvaluationHistory = async (question) => {
     if (!question) return;
+    const requestId = evaluationRequestRef.current + 1;
+    evaluationRequestRef.current = requestId;
     setSelected(question);
     setHistoryLoading(true);
     setMessage('');
     try {
       const result = await listQuestionEvaluations(question.id);
+      if (evaluationRequestRef.current !== requestId) return;
       setEvaluations(result.items || []);
     } catch (err) {
+      if (evaluationRequestRef.current !== requestId) return;
       setMessage(err.message || 'Không tải được kết quả AI');
       setEvaluations([]);
     } finally {
-      setHistoryLoading(false);
+      if (evaluationRequestRef.current === requestId) setHistoryLoading(false);
     }
   };
 
@@ -331,10 +336,15 @@ function AdminAiReviewPage() {
   }, [qualityFilter, questions, searchTerm, sortOrder, statusFilter]);
 
   useEffect(() => {
-    if (selected && !filtered.some((question) => question.id === selected.id)) {
+    if (filtered.length === 0) {
       setSelected(null);
       setEvaluations([]);
+      return;
     }
+    if (!selected || !filtered.some((question) => question.id === selected.id)) {
+      loadEvaluationHistory(filtered[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, selected]);
 
   const latestEvaluation = evaluations[0];
@@ -643,7 +653,7 @@ function AdminAiReviewPage() {
             Ngân hàng
           </button>
           <button type="button" className="btn btn--outline" onClick={prepareBulkEvaluation} disabled={checkingAll || loading}>
-            {checkingAll ? 'Đang kiểm tra...' : 'Chấm câu cần AI'}
+            {checkingAll ? 'Đang kiểm tra...' : 'Gửi câu chưa chấm'}
           </button>
           <button type="button" className="btn btn--primary" onClick={fetchAiQuestions} disabled={loading}>
             {loading ? 'Đang tải' : 'Làm mới'}
@@ -703,7 +713,7 @@ function AdminAiReviewPage() {
         <div className="ai-review-list-panel">
           <div className="ai-review-list-heading">
             <div>
-              <span>Câu hỏi</span>
+              <span>Hàng thẩm định</span>
               <b>{loading ? 'Đang tải...' : `${filtered.length} câu hỏi`}</b>
             </div>
           </div>
@@ -819,8 +829,8 @@ function AdminAiReviewPage() {
                   onClick={() => openActionDialog('evaluate', selected)}
                 >
                   {['FAILED', 'ERROR', 'STALE'].includes(selected.evaluation_status)
-                    ? 'Chạy lại AI'
-                    : 'Chạy AI'}
+                    ? 'Gửi AI chấm lại'
+                    : 'Gửi AI đánh giá'}
                 </button>
                 <button
                   type="button"

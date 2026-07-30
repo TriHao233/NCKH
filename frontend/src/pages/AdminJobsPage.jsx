@@ -358,6 +358,11 @@ function AdminJobsPage() {
   };
 
   const exportDisabled = loading || Boolean(exportKey) || total === 0;
+  const activeSummary = staleOnly
+    ? 'stale'
+    : ['all', 'active', 'retryable'].includes(statusFilter)
+      ? statusFilter
+      : '';
 
   return (
     <main className="admin-jobs-page">
@@ -394,19 +399,39 @@ function AdminJobsPage() {
       </section>
 
       <section className="jobs-summary" aria-label="Tổng quan hàng đợi">
-        <button type="button" className="summary-tile" onClick={showAllJobs}>
+        <button
+          type="button"
+          aria-pressed={activeSummary === 'all'}
+          className={`summary-tile ${activeSummary === 'all' ? 'is-active' : ''}`}
+          onClick={showAllJobs}
+        >
           <b>{summary.total}</b>
           <span>Tất cả</span>
         </button>
-        <button type="button" className="summary-tile summary-tile--active" onClick={showActiveJobs}>
+        <button
+          type="button"
+          aria-pressed={activeSummary === 'active'}
+          className={`summary-tile ${activeSummary === 'active' ? 'is-active' : ''}`}
+          onClick={showActiveJobs}
+        >
           <b>{summary.active}</b>
           <span>Đang chạy</span>
         </button>
-        <button type="button" className="summary-tile summary-tile--danger" onClick={showRetryableJobs}>
+        <button
+          type="button"
+          aria-pressed={activeSummary === 'retryable'}
+          className={`summary-tile summary-tile--danger ${activeSummary === 'retryable' ? 'is-active' : ''}`}
+          onClick={showRetryableJobs}
+        >
           <b>{summary.failed}</b>
           <span>Cần xử lý</span>
         </button>
-        <button type="button" className="summary-tile summary-tile--warning" onClick={showLongRunningJobs}>
+        <button
+          type="button"
+          aria-pressed={activeSummary === 'stale'}
+          className={`summary-tile summary-tile--warning ${activeSummary === 'stale' ? 'is-active' : ''}`}
+          onClick={showLongRunningJobs}
+        >
           <b>{summary.long_running}</b>
           <span>Quá hạn</span>
         </button>

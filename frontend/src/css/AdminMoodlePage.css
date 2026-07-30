@@ -350,8 +350,25 @@
   border-radius: 13px;
   background: #fff;
   padding: 13px;
-  cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.target-select {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.target-select:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid #0c78d4;
+  outline-offset: 4px;
 }
 
 .target-row:hover {
@@ -1369,7 +1386,7 @@
 }
 
 .moodle-summary-icon {
-  display: none;
+  display: none !important;
 }
 
 .moodle-summary b,

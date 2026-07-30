@@ -1035,6 +1035,15 @@ function ManagePage() {
     { key: 'chapters', label: 'Chương', rows: questionCoverage.chapters, gapCount: questionCoverage.gaps.chapters },
     { key: 'clos', label: 'CLO', rows: questionCoverage.clos, gapCount: questionCoverage.gaps.clos },
   ];
+  const advancedQuestionFilterCount = [
+    chapterFilter !== 'all-chapters',
+    cloFilter !== 'all-clos',
+    canManageDocuments && documentFilter !== 'all-documents',
+    bloomFilter !== 'all-bloom',
+    difficultyFilter !== 'all-difficulties',
+    evaluationFilter !== 'all-evaluations',
+    publicationFilter !== 'all-publications',
+  ].filter(Boolean).length;
   const selectedQuestions = useMemo(
     () => selectedQuestionsForIds(questions, selectedQuestionIds),
     [questions, selectedQuestionIds],
@@ -1973,9 +1982,11 @@ function ManagePage() {
       </section>
 
       <nav className="manage-tabs" aria-label="Khu vực quản lý nội dung">
-        <div className="container">
+        <div className="container" role="tablist">
           <button
             type="button"
+            role="tab"
+            aria-selected={activeManageTab === 'questions'}
             className={activeManageTab === 'questions' ? 'manage-tab--active' : ''}
             onClick={() => applyManageTab('questions')}
           >
@@ -1984,6 +1995,8 @@ function ManagePage() {
           {canManageDocuments && (
             <button
               type="button"
+              role="tab"
+              aria-selected={activeManageTab === 'documents'}
               className={activeManageTab === 'documents' ? 'manage-tab--active' : ''}
               onClick={() => applyManageTab('documents')}
             >
@@ -1992,6 +2005,8 @@ function ManagePage() {
           )}
           <button
             type="button"
+            role="tab"
+            aria-selected={activeManageTab === 'revision'}
             className={activeManageTab === 'revision' ? 'manage-tab--active' : ''}
             onClick={() => applyManageTab('revision')}
           >
@@ -2004,24 +2019,24 @@ function ManagePage() {
         <div className={`container manage-grid ${activeManageTab === 'documents' ? 'manage-grid--documents' : ''}`}>
           {/* Main column */}
           <div className="manage-main">
-            <div className="stats-row">
-              <button type="button" className={`stat-card ${statusFilter === 'all' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('all')}>
+            <div className="stats-row" aria-label="Lọc câu hỏi theo trạng thái">
+              <button type="button" aria-pressed={statusFilter === 'all'} className={`stat-card ${statusFilter === 'all' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('all')}>
                 <b>{counts.all}</b>
                 <span>Tổng câu hỏi</span>
               </button>
-              <button type="button" className={`stat-card ${statusFilter === 'DRAFT' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('DRAFT')}>
+              <button type="button" aria-pressed={statusFilter === 'DRAFT'} className={`stat-card ${statusFilter === 'DRAFT' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('DRAFT')}>
                 <b>{counts.DRAFT}</b>
                 <span>Nháp</span>
               </button>
-              <button type="button" className={`stat-card ${statusFilter === 'APPROVED' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('APPROVED')}>
+              <button type="button" aria-pressed={statusFilter === 'APPROVED'} className={`stat-card ${statusFilter === 'APPROVED' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('APPROVED')}>
                 <b>{counts.APPROVED}</b>
                 <span>Đã duyệt</span>
               </button>
-              <button type="button" className={`stat-card ${statusFilter === 'PENDING' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('PENDING')}>
+              <button type="button" aria-pressed={statusFilter === 'PENDING'} className={`stat-card ${statusFilter === 'PENDING' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('PENDING')}>
                 <b>{counts.PENDING}</b>
                 <span>Chờ duyệt</span>
               </button>
-              <button type="button" className={`stat-card ${statusFilter === 'NEEDS_REVISION' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('NEEDS_REVISION')}>
+              <button type="button" aria-pressed={statusFilter === 'NEEDS_REVISION'} className={`stat-card ${statusFilter === 'NEEDS_REVISION' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('NEEDS_REVISION')}>
                 <b>{counts.NEEDS_REVISION}</b>
                 <span>Cần sửa</span>
               </button>
@@ -2119,7 +2134,14 @@ function ManagePage() {
               </div>
 
               <div className="question-filter-panel" role="region" aria-label="Bộ lọc câu hỏi">
-                <div className="filter-row">
+                <div className="filter-row filter-row--primary">
+                  <input
+                    className="field-input search-input"
+                    aria-label="Tìm câu hỏi"
+                    placeholder="Tìm theo mã hoặc nội dung"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                  />
                   <select
                     className="field-select field-select--wide"
                     aria-label="Lọc theo môn học"
@@ -2135,38 +2157,6 @@ function ManagePage() {
                   </select>
                   <select
                     className="field-select"
-                    aria-label="Lọc theo chương"
-                    value={chapterFilter}
-                    disabled={!selectedFilterSubject}
-                    onChange={(e) => setChapterFilter(e.target.value)}
-                  >
-                    <option value="all-chapters">
-                      {selectedFilterSubject ? 'Tất cả chương' : 'Chọn môn để lọc chương'}
-                    </option>
-                    {filterChapters.map((chapter) => (
-                      <option key={refId(chapter)} value={refId(chapter)}>
-                        {chapter.chapter_name || chapter.name || chapter.title || refId(chapter)}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="field-select"
-                    aria-label="Lọc theo CLO"
-                    value={cloFilter}
-                    disabled={!selectedFilterSubject}
-                    onChange={(e) => setCloFilter(e.target.value)}
-                  >
-                    <option value="all-clos">
-                      {selectedFilterSubject ? 'Tất cả CLO' : 'Chọn môn để lọc CLO'}
-                    </option>
-                    {filterLearningOutcomes.map((clo) => (
-                      <option key={refId(clo)} value={refId(clo)}>
-                        {clo.clo_code || clo.code || refId(clo)}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="field-select"
                     aria-label="Lọc theo loại câu hỏi"
                     value={typeFilter}
                     onChange={(e) => setTypeFilter(e.target.value)}
@@ -2176,6 +2166,47 @@ function ManagePage() {
                       <option key={type.backend} value={type.backend}>{type.label}</option>
                     ))}
                   </select>
+                </div>
+
+                <div className="filter-panel-foot">
+                  <details className="advanced-filter-panel">
+                    <summary>
+                      <span>Lọc nâng cao</span>
+                      {advancedQuestionFilterCount > 0 && <b>{advancedQuestionFilterCount} đang dùng</b>}
+                    </summary>
+                    <div className="filter-row filter-row--advanced">
+                    <select
+                      className="field-select"
+                      aria-label="Lọc theo chương"
+                      value={chapterFilter}
+                      disabled={!selectedFilterSubject}
+                      onChange={(e) => setChapterFilter(e.target.value)}
+                    >
+                      <option value="all-chapters">
+                        {selectedFilterSubject ? 'Tất cả chương' : 'Chọn môn để lọc chương'}
+                      </option>
+                      {filterChapters.map((chapter) => (
+                        <option key={refId(chapter)} value={refId(chapter)}>
+                          {chapter.chapter_name || chapter.name || chapter.title || refId(chapter)}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="field-select"
+                      aria-label="Lọc theo CLO"
+                      value={cloFilter}
+                      disabled={!selectedFilterSubject}
+                      onChange={(e) => setCloFilter(e.target.value)}
+                    >
+                      <option value="all-clos">
+                        {selectedFilterSubject ? 'Tất cả CLO' : 'Chọn môn để lọc CLO'}
+                      </option>
+                      {filterLearningOutcomes.map((clo) => (
+                        <option key={refId(clo)} value={refId(clo)}>
+                          {clo.clo_code || clo.code || refId(clo)}
+                        </option>
+                      ))}
+                    </select>
                   {canManageDocuments && (
                     <select
                       className="field-select"
@@ -2235,49 +2266,49 @@ function ManagePage() {
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
-                  <input
-                    className="field-input search-input"
-                    aria-label="Tìm câu hỏi"
-                    placeholder="Tìm câu hỏi..."
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                  />
+                    </div>
+                  </details>
+                  <details className="saved-filter-panel">
+                    <summary>
+                      <span>Bộ lọc đã lưu</span>
+                      <b>{savedQuestionFilters.length}</b>
+                    </summary>
+                    <div className="saved-filter-bar">
+                      <select
+                        className="field-select field-select--wide"
+                        aria-label="Chọn bộ lọc đã lưu"
+                        value={selectedSavedFilterId}
+                        onChange={(event) => handleSelectSavedQuestionFilter(event.target.value)}
+                      >
+                        <option value="">Chọn bộ lọc</option>
+                        {savedQuestionFilters.map((filter) => (
+                          <option key={filter.id} value={filter.id}>{filter.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        className="field-input saved-filter-name"
+                        aria-label="Tên bộ lọc"
+                        placeholder="Tên bộ lọc mới"
+                        value={savedFilterName}
+                        onChange={(event) => setSavedFilterName(event.target.value)}
+                      />
+                      <button type="button" className="btn btn--outline" onClick={handleSaveQuestionFilter}>
+                        Lưu
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--outline"
+                        disabled={!selectedSavedFilterId}
+                        onClick={handleDeleteSavedQuestionFilter}
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  </details>
+                  <button type="button" className="filter-reset-button" onClick={handleResetQuestionFilters}>
+                    Đặt lại
+                  </button>
                 </div>
-              </div>
-
-              <div className="saved-filter-bar">
-                <select
-                  className="field-select field-select--wide"
-                  aria-label="Chọn bộ lọc đã lưu"
-                  value={selectedSavedFilterId}
-                  onChange={(event) => handleSelectSavedQuestionFilter(event.target.value)}
-                >
-                  <option value="">Bộ lọc đã lưu</option>
-                  {savedQuestionFilters.map((filter) => (
-                    <option key={filter.id} value={filter.id}>{filter.name}</option>
-                  ))}
-                </select>
-                <input
-                  className="field-input saved-filter-name"
-                  aria-label="Tên bộ lọc"
-                  placeholder="Tên bộ lọc"
-                  value={savedFilterName}
-                  onChange={(event) => setSavedFilterName(event.target.value)}
-                />
-                <button type="button" className="btn btn--outline" onClick={handleSaveQuestionFilter}>
-                  Lưu bộ lọc
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--outline"
-                  disabled={!selectedSavedFilterId}
-                  onClick={handleDeleteSavedQuestionFilter}
-                >
-                  Xóa
-                </button>
-                <button type="button" className="btn btn--outline" onClick={handleResetQuestionFilters}>
-                  Đặt lại
-                </button>
               </div>
 
               {questionExchangeMessage && (

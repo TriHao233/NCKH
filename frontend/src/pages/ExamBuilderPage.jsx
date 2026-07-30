@@ -97,6 +97,9 @@ function ExamBuilderPage() {
   const [error, setError] = useState('');
   const [step, setStep] = useState('info');
   const [subjects, setSubjects] = useState([]);
+  const [notice, setNotice] = useState(null);
+  const [statusAction, setStatusAction] = useState(null);
+  const [statusSaving, setStatusSaving] = useState(false);
 
   const fetchExam = useCallback(async () => {
     setLoading(true);
@@ -124,19 +127,71 @@ function ExamBuilderPage() {
   const statusValue = examStatus(exam);
   const locked = isExamLocked(exam);
 
-  const handleStatusChange = async (targetStatus) => {
-    if (targetStatus === 'FINALIZED' && !window.confirm('Chốt đề thi và khóa ma trận/danh sách câu hỏi?')) {
-      return;
-    }
-    if (targetStatus === 'ARCHIVED' && !window.confirm('Lưu trữ đề thi này?')) {
-      return;
-    }
+  const notify = useCallback((message, tone = 'error') => {
+    setNotice({ message, tone });
+  }, []);
+
+  useEffect(() => {
+    if (!statusAction) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !statusSaving) setStatusAction(null);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [statusAction, statusSaving]);
+
+  const applyStatusChange = async (targetStatus) => {
+    setStatusSaving(true);
     try {
       const updated = await updateExamStatus(exam.id, targetStatus);
       setExam(updated);
+      notify(
+        targetStatus === 'FINALIZED'
+          ? 'Đã chốt đề thi.'
+          : targetStatus === 'ARCHIVED'
+            ? 'Đã lưu trữ đề thi.'
+            : 'Đã cập nhật trạng thái.',
+        'success',
+      );
     } catch (err) {
-      alert('Cập nhật trạng thái đề thi thất bại: ' + err.message);
+      notify(`Không thể cập nhật trạng thái: ${err.message}`);
+    } finally {
+      setStatusSaving(false);
     }
+  };
+
+  const handleStatusChange = (targetStatus) => {
+    if (targetStatus === 'FINALIZED') {
+      setStatusAction({
+        targetStatus,
+        title: 'Chốt đề thi?',
+        message: 'Ma trận và danh sách câu hỏi sẽ bị khóa.',
+        confirmLabel: 'Chốt đề',
+      });
+      return;
+    }
+    if (targetStatus === 'ARCHIVED') {
+      setStatusAction({
+        targetStatus,
+        title: 'Lưu trữ đề thi?',
+        message: 'Đề thi sẽ được chuyển khỏi nhóm đang làm việc.',
+        confirmLabel: 'Lưu trữ',
+      });
+      return;
+    }
+    applyStatusChange(targetStatus);
+  };
+
+  const confirmStatusChange = async () => {
+    if (!statusAction) return;
+    const { targetStatus } = statusAction;
+    await applyStatusChange(targetStatus);
+    setStatusAction(null);
   };
 
   if (loading) return <main className="exam-builder-page"><p className="empty-note">Đang tải đề thi...</p></main>;
@@ -175,27 +230,61 @@ function ExamBuilderPage() {
               exam={exam}
               status={statusValue}
               onStatusChange={handleStatusChange}
+              busy={statusSaving}
             />
+            {notice && (
+              <div
+                className={`builder-notice builder-notice--${notice.tone}`}
+                role={notice.tone === 'error' ? 'alert' : 'status'}
+              >
+                <span>{notice.message}</span>
+                <button type="button" onClick={() => setNotice(null)} aria-label="Đóng thông báo">×</button>
+              </div>
+            )}
             {locked && (
               <p className="locked-note">
                 Đề thi đã {statusValue === 'ARCHIVED' ? 'lưu trữ' : 'chốt'}; thông tin, ma trận và danh sách câu hỏi đang được khóa.
               </p>
             )}
-            {step === 'info' && <InfoStep exam={exam} onSaved={setExam} readOnly={locked} />}
-            {step === 'header' && <HeaderStep exam={exam} onSaved={setExam} readOnly={locked} />}
-            {step === 'matrix' && <MatrixStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} />}
-            {step === 'questions' && <QuestionsStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} />}
-            {step === 'variants' && <VariantsStep exam={exam} />}
-            {step === 'preview' && <PreviewStep exam={exam} />}
-            {step === 'export' && <ExportStep exam={exam} />}
+            {step === 'info' && <InfoStep exam={exam} onSaved={setExam} readOnly={locked} onNotify={notify} />}
+            {step === 'header' && <HeaderStep exam={exam} onSaved={setExam} readOnly={locked} onNotify={notify} />}
+            {step === 'matrix' && <MatrixStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} onNotify={notify} />}
+            {step === 'questions' && <QuestionsStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} onNotify={notify} />}
+            {step === 'variants' && <VariantsStep exam={exam} onNotify={notify} />}
+            {step === 'preview' && <PreviewStep exam={exam} onNotify={notify} />}
+            {step === 'export' && <ExportStep exam={exam} onNotify={notify} />}
           </div>
         </div>
       </section>
+
+      {statusAction && (
+        <div
+          className="exam-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !statusSaving) setStatusAction(null);
+          }}
+        >
+          <section className="exam-dialog" role="dialog" aria-modal="true" aria-labelledby="exam-status-dialog-title">
+            <span className="exam-dialog__eyebrow">Trạng thái đề thi</span>
+            <h2 id="exam-status-dialog-title">{statusAction.title}</h2>
+            <p>{statusAction.message}</p>
+            <div className="exam-dialog__actions">
+              <button type="button" className="btn btn--outline" onClick={() => setStatusAction(null)} disabled={statusSaving}>
+                Hủy
+              </button>
+              <button type="button" className="btn btn--primary" onClick={confirmStatusChange} disabled={statusSaving}>
+                {statusSaving ? 'Đang cập nhật...' : statusAction.confirmLabel}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
 
-function LifecycleBar({ exam, status, onStatusChange }) {
+function LifecycleBar({ exam, status, onStatusChange, busy }) {
   const selectedCount = exam.questions?.length || 0;
   const hasExactQuestionCount = selectedCount === exam.question_count;
   const canReady = status === 'DRAFT' && hasExactQuestionCount;
@@ -215,22 +304,22 @@ function LifecycleBar({ exam, status, onStatusChange }) {
       </div>
       <div className="lifecycle-actions">
         {status === 'READY' && (
-          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('DRAFT')}>
+          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('DRAFT')} disabled={busy}>
             Mở chỉnh
           </button>
         )}
         {status === 'DRAFT' && (
-          <button type="button" className="btn btn--outline" disabled={!canReady} onClick={() => onStatusChange('READY')}>
+          <button type="button" className="btn btn--outline" disabled={!canReady || busy} onClick={() => onStatusChange('READY')}>
             Đánh dấu sẵn sàng
           </button>
         )}
         {status === 'READY' && (
-          <button type="button" className="btn btn--primary" disabled={!canFinalize} onClick={() => onStatusChange('FINALIZED')}>
+          <button type="button" className="btn btn--primary" disabled={!canFinalize || busy} onClick={() => onStatusChange('FINALIZED')}>
             Chốt đề
           </button>
         )}
         {canArchive && (
-          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('ARCHIVED')}>
+          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('ARCHIVED')} disabled={busy}>
             Lưu trữ
           </button>
         )}
@@ -239,7 +328,7 @@ function LifecycleBar({ exam, status, onStatusChange }) {
   );
 }
 
-function InfoStep({ exam, onSaved, readOnly }) {
+function InfoStep({ exam, onSaved, readOnly, onNotify }) {
   const [name, setName] = useState(exam.name);
   const [examTitle, setExamTitle] = useState(exam.exam_title);
   const [questionCount, setQuestionCount] = useState(exam.question_count);
@@ -256,8 +345,9 @@ function InfoStep({ exam, onSaved, readOnly }) {
         question_count: Number(questionCount),
       });
       onSaved(updated);
+      onNotify('Đã lưu thông tin đề thi.', 'success');
     } catch (err) {
-      alert('Lưu thất bại: ' + err.message);
+      onNotify(`Không thể lưu thông tin: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -283,7 +373,7 @@ function InfoStep({ exam, onSaved, readOnly }) {
   );
 }
 
-function HeaderStep({ exam, onSaved, readOnly }) {
+function HeaderStep({ exam, onSaved, readOnly, onNotify }) {
   const [header, setHeader] = useState({ ...exam.header });
   const [saving, setSaving] = useState(false);
 
@@ -296,8 +386,9 @@ function HeaderStep({ exam, onSaved, readOnly }) {
     try {
       const updated = await updateExam(exam.id, { header });
       onSaved(updated);
+      onNotify('Đã lưu đầu trang.', 'success');
     } catch (err) {
-      alert('Lưu thất bại: ' + err.message);
+      onNotify(`Không thể lưu đầu trang: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -343,7 +434,7 @@ function HeaderStep({ exam, onSaved, readOnly }) {
   );
 }
 
-function MatrixStep({ exam, chapters, onSaved, readOnly }) {
+function MatrixStep({ exam, chapters, onSaved, readOnly, onNotify }) {
   const [cells, setCells] = useState(exam.matrix?.length ? exam.matrix : [emptyCell()]);
   const [saving, setSaving] = useState(false);
   const [availability, setAvailability] = useState(null);
@@ -369,8 +460,9 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
       const updated = await saveMatrix(exam.id, payload);
       onSaved(updated);
       setAvailability(null);
+      onNotify('Đã lưu ma trận.', 'success');
     } catch (err) {
-      alert('Lưu ma trận thất bại: ' + err.message);
+      onNotify(`Không thể lưu ma trận: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -382,7 +474,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
       const result = await getMatrixAvailability(exam.id);
       setAvailability(result);
     } catch (err) {
-      alert('Kiểm tra thất bại: ' + err.message);
+      onNotify(`Không thể kiểm tra ngân hàng: ${err.message}`);
     } finally {
       setChecking(false);
     }
@@ -463,7 +555,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
   );
 }
 
-function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
+function QuestionsStep({ exam, chapters, onSaved, readOnly, onNotify }) {
   const [mode, setMode] = useState('auto');
   const [busy, setBusy] = useState(false);
   const [poolItems, setPoolItems] = useState([]);
@@ -504,13 +596,13 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
       setPoolItems(result.items || []);
       setPoolTotal(result.total || 0);
     } catch (err) {
-      alert('Tải câu hỏi thất bại: ' + err.message);
+      onNotify(`Không thể tải câu hỏi: ${err.message}`);
       setPoolItems([]);
       setPoolTotal(0);
     } finally {
       setLoadingApproved(false);
     }
-  }, [chapterFilter, cognitiveFilter, difficultyFilter, exam.id, mode, poolPage, searchTerm]);
+  }, [chapterFilter, cognitiveFilter, difficultyFilter, exam.id, mode, onNotify, poolPage, searchTerm]);
 
   useEffect(() => {
     loadApproved();
@@ -527,9 +619,9 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
     try {
       const updated = await autoGenerateQuestions(exam.id);
       onSaved(updated);
-      alert('Đã tự sinh đề theo ma trận.');
+      onNotify('Đã chọn câu hỏi theo ma trận.', 'success');
     } catch (err) {
-      alert('Tự sinh đề thất bại: ' + err.message);
+      onNotify(`Không thể chọn câu hỏi: ${err.message}`);
     } finally {
       setBusy(false);
     }
@@ -547,8 +639,9 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
       onSaved(updated);
       setSelectedIds([]);
       await loadApproved();
+      onNotify(`Đã thêm ${selectedIds.length} câu hỏi.`, 'success');
     } catch (err) {
-      alert('Thêm câu hỏi thất bại: ' + err.message);
+      onNotify(`Không thể thêm câu hỏi: ${err.message}`);
     } finally {
       setBusy(false);
     }
@@ -560,8 +653,9 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
     try {
       const updated = await removeQuestion(exam.id, questionId);
       onSaved(updated);
+      onNotify('Đã bỏ câu hỏi khỏi đề.', 'success');
     } catch (err) {
-      alert('Xoá câu hỏi thất bại: ' + err.message);
+      onNotify(`Không thể bỏ câu hỏi: ${err.message}`);
     } finally {
       setBusy(false);
     }
@@ -661,12 +755,13 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
   );
 }
 
-function VariantsStep({ exam }) {
+function VariantsStep({ exam, onNotify }) {
   const [variants, setVariants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [examCode, setExamCode] = useState('');
   const [shuffle, setShuffle] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
   const finalized = examStatus(exam) === 'FINALIZED';
 
   const load = async () => {
@@ -675,7 +770,7 @@ function VariantsStep({ exam }) {
       const result = await listVariants(exam.id);
       setVariants(result || []);
     } catch (err) {
-      alert('Tải mã đề thất bại: ' + err.message);
+      onNotify(`Không thể tải mã đề: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -694,21 +789,38 @@ function VariantsStep({ exam }) {
       await createVariant(exam.id, examCode.trim(), shuffle);
       setExamCode('');
       await load();
+      onNotify('Đã tạo mã đề.', 'success');
     } catch (err) {
-      alert('Tạo mã đề thất bại: ' + err.message);
+      onNotify(`Không thể tạo mã đề: ${err.message}`);
     } finally {
       setBusy(false);
     }
   };
 
-  const handleDelete = async (variantId) => {
-    if (!window.confirm('Xoá mã đề này?')) return;
+  useEffect(() => {
+    if (!deleteCandidate) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !busy) setDeleteCandidate(null);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [busy, deleteCandidate]);
+
+  const confirmDelete = async () => {
+    if (!deleteCandidate) return;
     setBusy(true);
     try {
-      await deleteVariant(exam.id, variantId);
+      await deleteVariant(exam.id, deleteCandidate.id);
       await load();
+      setDeleteCandidate(null);
+      onNotify('Đã xóa mã đề.', 'success');
     } catch (err) {
-      alert('Xoá mã đề thất bại: ' + err.message);
+      onNotify(`Không thể xóa mã đề: ${err.message}`);
     } finally {
       setBusy(false);
     }
@@ -727,7 +839,15 @@ function VariantsStep({ exam }) {
           {variants.map((variant) => (
             <div className="variant-item" key={variant.id}>
               <span>Mã đề <b>{variant.exam_code}</b> — {variant.questions.length} câu</span>
-              <button type="button" className="icon-btn icon-btn--danger" onClick={() => handleDelete(variant.id)} disabled={busy}>×</button>
+              <button
+                type="button"
+                className="icon-btn icon-btn--danger"
+                onClick={() => setDeleteCandidate(variant)}
+                disabled={busy}
+                aria-label={`Xóa mã đề ${variant.exam_code}`}
+              >
+                ×
+              </button>
             </div>
           ))}
           {variants.length === 0 && <p className="empty-note">Chưa có mã đề nào.</p>}
@@ -745,11 +865,35 @@ function VariantsStep({ exam }) {
       ) : (
         <p className="matrix-warning">Đã đạt tối đa 4 mã đề cho kỳ thi này.</p>
       )}
+
+      {deleteCandidate && (
+        <div
+          className="exam-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !busy) setDeleteCandidate(null);
+          }}
+        >
+          <section className="exam-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-variant-dialog-title">
+            <span className="exam-dialog__eyebrow">Mã đề {deleteCandidate.exam_code}</span>
+            <h2 id="delete-variant-dialog-title">Xóa mã đề?</h2>
+            <p>Bản xuất của mã đề này sẽ không còn dùng được.</p>
+            <div className="exam-dialog__actions">
+              <button type="button" className="btn btn--outline" onClick={() => setDeleteCandidate(null)} disabled={busy}>
+                Hủy
+              </button>
+              <button type="button" className="btn btn--danger" onClick={confirmDelete} disabled={busy}>
+                {busy ? 'Đang xóa...' : 'Xóa mã đề'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
 
-function PreviewStep({ exam }) {
+function PreviewStep({ exam, onNotify }) {
   const [variants, setVariants] = useState([]);
   const [variantId, setVariantId] = useState('');
   const [preview, setPreview] = useState(null);
@@ -767,9 +911,9 @@ function PreviewStep({ exam }) {
     setLoading(true);
     getVariantPreview(exam.id, variantId)
       .then(setPreview)
-      .catch((err) => alert('Xem trước thất bại: ' + err.message))
+      .catch((err) => onNotify(`Không thể xem trước: ${err.message}`))
       .finally(() => setLoading(false));
-  }, [exam.id, variantId]);
+  }, [exam.id, onNotify, variantId]);
 
   return (
     <div>
@@ -809,7 +953,7 @@ function PreviewStep({ exam }) {
   );
 }
 
-function ExportStep({ exam }) {
+function ExportStep({ exam, onNotify }) {
   const [variants, setVariants] = useState([]);
   const [busy, setBusy] = useState('');
 
@@ -827,7 +971,7 @@ function ExportStep({ exam }) {
         await downloadVariantPdf(exam.id, variantId, type);
       }
     } catch (err) {
-      alert(`Xuất ${format.toUpperCase()} thất bại: ${err.message}`);
+      onNotify(`Không thể xuất ${format.toUpperCase()}: ${err.message}`);
     } finally {
       setBusy('');
     }

@@ -317,6 +317,7 @@ function AdminMoodlePage() {
       <section className="moodle-summary">
         <button
           type="button"
+          aria-pressed={publicationStatus === 'all'}
           className={publicationStatus === 'all' ? 'is-active' : ''}
           onClick={() => { setPublicationStatus('all'); setPublicationPage(1); }}
         >
@@ -326,6 +327,7 @@ function AdminMoodlePage() {
         </button>
         <button
           type="button"
+          aria-pressed={publicationStatus === 'PUBLISHED'}
           className={publicationStatus === 'PUBLISHED' ? 'is-active' : ''}
           onClick={() => { setPublicationStatus('PUBLISHED'); setPublicationPage(1); }}
         >
@@ -335,6 +337,7 @@ function AdminMoodlePage() {
         </button>
         <button
           type="button"
+          aria-pressed={publicationStatus === 'FAILED'}
           className={`summary-danger ${publicationStatus === 'FAILED' ? 'is-active' : ''}`}
           onClick={() => { setPublicationStatus('FAILED'); setPublicationPage(1); }}
         >
@@ -344,6 +347,7 @@ function AdminMoodlePage() {
         </button>
         <button
           type="button"
+          aria-pressed={publicationStatus === 'PROCESSING'}
           className={publicationStatus === 'PROCESSING' ? 'is-active' : ''}
           onClick={() => { setPublicationStatus('PROCESSING'); setPublicationPage(1); }}
         >
@@ -374,25 +378,31 @@ function AdminMoodlePage() {
                 <article
                   key={target.site_key}
                   className={`target-row ${selectedKey === target.site_key ? 'target-row--active' : ''}`}
-                  onClick={() => pickTarget(target)}
                 >
-                  <div className="target-main">
-                    <span className="target-brand" aria-hidden="true">M</span>
-                    <div className="target-title">
-                      <strong>{target.site_name}</strong>
-                      <small>{target.site_key}</small>
+                  <button
+                    type="button"
+                    className="target-select"
+                    aria-pressed={selectedKey === target.site_key}
+                    onClick={() => pickTarget(target)}
+                  >
+                    <div className="target-main">
+                      <span className="target-brand" aria-hidden="true">M</span>
+                      <div className="target-title">
+                        <strong>{target.site_name}</strong>
+                        <small>{target.site_key}</small>
+                      </div>
+                      <span className={`target-check ${target.last_check?.ok ? 'target-check--ok' : ''}`}>
+                        {checkText(target)}
+                      </span>
                     </div>
-                    <span className={`target-check ${target.last_check?.ok ? 'target-check--ok' : ''}`}>
-                      {checkText(target)}
-                    </span>
-                  </div>
-                  <div className="target-meta">
-                    <span className={`target-mode target-mode--${target.mode === 'REST_API' ? 'live' : 'mock'}`}>
-                      {target.mode === 'REST_API' ? 'Moodle thật' : 'Mô phỏng'}
-                    </span>
-                    <span>Khóa học {target.default_course_id || '—'}</span>
-                    <span>Danh mục {target.default_category_id || '—'}</span>
-                  </div>
+                    <div className="target-meta">
+                      <span className={`target-mode target-mode--${target.mode === 'REST_API' ? 'live' : 'mock'}`}>
+                        {target.mode === 'REST_API' ? 'Moodle thật' : 'Mô phỏng'}
+                      </span>
+                      <span>Khóa học {target.default_course_id || '—'}</span>
+                      <span>Danh mục {target.default_category_id || '—'}</span>
+                    </div>
+                  </button>
                   <div className="target-actions">
                     <button
                       type="button"

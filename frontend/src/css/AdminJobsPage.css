@@ -825,6 +825,11 @@
   color: var(--admin-blue, #176aa8);
 }
 
+.jobs-summary .summary-tile.is-active b,
+.jobs-summary .summary-tile.is-active span {
+  color: var(--admin-blue, #176aa8);
+}
+
 .jobs-summary .summary-tile:hover {
   border-color: transparent;
   background: transparent;
@@ -855,6 +860,49 @@
 
 .admin-audit-page .jobs-table {
   min-width: 720px;
+}
+
+.admin-audit-page .audit-json-grid {
+  gap: 0;
+  margin-top: 18px;
+  border-top: 1px solid var(--admin-rule, #d9dee4);
+}
+
+.admin-audit-page .job-detail-json {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--admin-row-rule, #e8ebef);
+}
+
+.admin-audit-page .job-detail-json:first-child {
+  border-top: 0;
+}
+
+.admin-audit-page .job-detail-json summary {
+  padding: 13px 2px;
+  color: #4f5d6d;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.admin-audit-page .job-detail-json--primary summary {
+  color: var(--admin-blue, #176aa8);
+}
+
+.admin-audit-page .job-detail-json pre {
+  max-height: 280px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 0;
+  border-left: 3px solid #ccd5df;
+  border-radius: 0;
+  background: #f7f8fa;
+}
+
+.admin-audit-page .job-detail-json--primary pre {
+  border-left-color: var(--admin-blue, #176aa8);
 }
 
 @media (max-width: 1040px) {

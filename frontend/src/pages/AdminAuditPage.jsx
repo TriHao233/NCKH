@@ -416,22 +416,22 @@ function AdminAuditPage() {
                 </div>
               </dl>
               <div className="audit-json-grid">
-                <div className="job-detail-json">
-                  <span>Trước</span>
-                  <pre>{jsonText(selectedLog.before)}</pre>
-                </div>
-                <div className="job-detail-json">
-                  <span>Sau</span>
-                  <pre>{jsonText(selectedLog.after)}</pre>
-                </div>
-                <div className="job-detail-json">
-                  <span>Thay đổi</span>
+                <details className="job-detail-json job-detail-json--primary" open>
+                  <summary>Thay đổi</summary>
                   <pre>{jsonText(selectedLog.changes)}</pre>
-                </div>
-                <div className="job-detail-json">
-                  <span>Dữ liệu bổ sung</span>
+                </details>
+                <details className="job-detail-json">
+                  <summary>Trước thay đổi</summary>
+                  <pre>{jsonText(selectedLog.before)}</pre>
+                </details>
+                <details className="job-detail-json">
+                  <summary>Sau thay đổi</summary>
+                  <pre>{jsonText(selectedLog.after)}</pre>
+                </details>
+                <details className="job-detail-json">
+                  <summary>Dữ liệu bổ sung</summary>
                   <pre>{jsonText(selectedLog.metadata)}</pre>
-                </div>
+                </details>
               </div>
             </>
           ) : (
