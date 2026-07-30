@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -9,7 +10,7 @@ from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
-from core.database import get_database
+from core.database import get_database, mongo_transaction
 from modules.catalog.schemas import (
     AiModelActivationPayload,
     AiModelHealthCheckPayload,
@@ -33,6 +34,23 @@ from modules.questions.repository import json_safe, object_id
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _ai_model_config_hash(model: dict) -> str:
+    health_config = {
+        key: model.get(key)
+        for key in (
+            "model_code",
+            "model_name",
+            "runtime",
+            "kind",
+            "revision",
+            "is_local",
+            "config",
+        )
+    }
+    payload = json.dumps(health_config, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 FALLBACK_EVALUATION_POLICY = {
@@ -465,12 +483,30 @@ class CatalogService:
 
     def upsert_ai_model(self, payload: AiModelPayload) -> dict:
         now = utc_now()
+        existing = self.db.ai_models.find_one({"model_code": payload.model_code})
+        model_data = payload.model_dump()
+        config_hash = _ai_model_config_hash(model_data)
+        existing_hash = (
+            existing.get("config_hash") or _ai_model_config_hash(existing)
+            if existing
+            else None
+        )
+        config_changed = existing_hash != config_hash
+        model_data["config_hash"] = config_hash
+        model_data["is_active"] = bool(
+            existing
+            and existing.get("is_active")
+            and not config_changed
+            and payload.is_active
+        )
+        if config_changed:
+            model_data["last_health_check"] = None
         record = self.db.ai_models.find_one_and_update(
             {"model_code": payload.model_code},
             {
                 "$set": {
                     "schema_version": SCHEMA_VERSION,
-                    **payload.model_dump(),
+                    **model_data,
                     "updated_at": now,
                 },
                 "$setOnInsert": {"_id": ObjectId(), "created_at": now},
@@ -482,17 +518,34 @@ class CatalogService:
 
     def set_ai_model_active(self, payload: AiModelActivationPayload) -> dict:
         now = utc_now()
+        existing = self.db.ai_models.find_one({"model_code": payload.model_code})
+        if not existing:
+            raise LookupError("Không tìm thấy model")
+        if payload.is_active:
+            health = existing.get("last_health_check") or {}
+            config_hash = existing.get("config_hash") or _ai_model_config_hash(existing)
+            if (
+                health.get("status") != "OK"
+                or health.get("config_hash") != config_hash
+            ):
+                raise ValueError(
+                    "Model phải health-check thành công với cấu hình hiện tại trước khi kích hoạt"
+                )
         record = self.db.ai_models.find_one_and_update(
             {"model_code": payload.model_code},
             {"$set": {"is_active": payload.is_active, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
-        if not record:
-            raise LookupError("Không tìm thấy model")
         return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
 
     async def check_ai_model_health(self, payload: AiModelHealthCheckPayload) -> dict:
         started = time.perf_counter()
+        catalog_model = self._catalog_model(payload.model_code)
+        config_hash = (
+            catalog_model.get("config_hash") or _ai_model_config_hash(catalog_model)
+            if catalog_model
+            else None
+        )
         factory_status = self._model_factory_status(payload.model_code)
         if not factory_status["supported"]:
             snapshot = {
@@ -500,9 +553,10 @@ class CatalogService:
                 "latency_ms": 0,
                 "response_preview": "",
                 "error": factory_status.get("error"),
+                "config_hash": config_hash,
                 "checked_at": utc_now(),
             }
-            if self._catalog_model(payload.model_code):
+            if catalog_model:
                 self.db.ai_models.find_one_and_update(
                     {"model_code": payload.model_code},
                     {"$set": {"last_health_check": snapshot, "updated_at": snapshot["checked_at"]}},
@@ -531,9 +585,10 @@ class CatalogService:
             "latency_ms": latency_ms,
             "response_preview": response_text[:500],
             "error": error,
+            "config_hash": config_hash,
             "checked_at": utc_now(),
         }
-        if self._catalog_model(payload.model_code):
+        if catalog_model:
             self.db.ai_models.find_one_and_update(
                 {"model_code": payload.model_code},
                 {"$set": {"last_health_check": snapshot, "updated_at": snapshot["checked_at"]}},
@@ -553,16 +608,15 @@ class CatalogService:
 
     def save_prompt_template(self, payload: PromptTemplatePayload) -> dict:
         now = utc_now()
+        if payload.is_active:
+            raise ValueError(
+                "Prompt mới phải được lưu nháp, test-build thành công rồi mới kích hoạt"
+            )
         latest = self.db.prompt_templates.find_one(
             {"template_key": payload.template_key},
             sort=[("version", -1)],
         )
         version = int(latest.get("version", 0)) + 1 if latest and payload.create_new_version else int((latest or {}).get("version", 1))
-        if payload.is_active:
-            self.db.prompt_templates.update_many(
-                {"template_key": payload.template_key},
-                {"$set": {"is_active": False, "updated_at": now}},
-            )
         body_hash = hashlib.sha256(payload.prompt_body.encode("utf-8")).hexdigest()
         record = self.db.prompt_templates.find_one_and_update(
             {"template_key": payload.template_key, "version": version},
@@ -575,7 +629,8 @@ class CatalogService:
                     "name": payload.name,
                     "prompt_body": payload.prompt_body,
                     "content_hash": body_hash,
-                    "is_active": payload.is_active,
+                    "is_active": False,
+                    "last_test_build": None,
                     "updated_at": now,
                 },
                 "$setOnInsert": {"_id": ObjectId(), "created_at": now},
@@ -588,9 +643,18 @@ class CatalogService:
     def activate_prompt_template(self, payload: PromptTemplateActivationPayload) -> dict:
         now = utc_now()
         query = {"template_key": payload.template_key, "version": payload.version}
-        if not self.db.prompt_templates.find_one(query):
+        existing = self.db.prompt_templates.find_one(query)
+        if not existing:
             raise LookupError("Không tìm thấy prompt version")
         if payload.is_active:
+            test_build = existing.get("last_test_build") or {}
+            if (
+                test_build.get("status") != "OK"
+                or test_build.get("content_hash") != existing.get("content_hash")
+            ):
+                raise ValueError(
+                    "Prompt phải test-build thành công với nội dung hiện tại trước khi kích hoạt"
+                )
             self.db.prompt_templates.update_many(
                 {"template_key": payload.template_key},
                 {"$set": {"is_active": False, "updated_at": now}},
@@ -603,6 +667,20 @@ class CatalogService:
         return json_safe(record)
 
     def test_prompt_template(self, payload: PromptTemplateTestPayload) -> dict:
+        if bool(payload.template_key) != bool(payload.version):
+            raise ValueError("template_key và version phải được cung cấp cùng nhau")
+        tested_template = None
+        template_overrides = {}
+        if payload.template_key and payload.version:
+            tested_template = self.db.prompt_templates.find_one(
+                {
+                    "template_key": payload.template_key,
+                    "version": payload.version,
+                }
+            )
+            if not tested_template:
+                raise LookupError("Không tìm thấy prompt version")
+            template_overrides[payload.template_key] = tested_template["prompt_body"]
         template_keys = [
             "system",
             "question_rule",
@@ -628,9 +706,36 @@ class CatalogService:
                 question_type=payload.question_type,
                 num_questions=payload.num_questions,
                 instruction=payload.instruction,
+                template_overrides=template_overrides,
             )
         except Exception as exc:
+            if tested_template:
+                self.db.prompt_templates.update_one(
+                    {"_id": tested_template["_id"]},
+                    {
+                        "$set": {
+                            "last_test_build": {
+                                "status": "FAILED",
+                                "content_hash": tested_template.get("content_hash"),
+                                "error": str(exc),
+                                "checked_at": utc_now(),
+                            }
+                        }
+                    },
+                )
             raise ValueError(f"Không build được prompt mẫu: {exc}") from exc
+        test_build = None
+        if tested_template:
+            test_build = {
+                "status": "OK",
+                "content_hash": tested_template.get("content_hash"),
+                "error": None,
+                "checked_at": utc_now(),
+            }
+            self.db.prompt_templates.update_one(
+                {"_id": tested_template["_id"]},
+                {"$set": {"last_test_build": test_build}},
+            )
         warnings = []
         if settings.prompt_source != "db":
             warnings.append("Prompt DB chưa có hiệu lực vì PROMPT_SOURCE không phải db.")
@@ -640,6 +745,15 @@ class CatalogService:
             "rendered_prompt": rendered,
             "length": len(rendered),
             "warnings": warnings,
+            "tested_template": (
+                {
+                    "template_key": tested_template["template_key"],
+                    "version": tested_template["version"],
+                    "test_build": test_build,
+                }
+                if tested_template
+                else None
+            ),
         }
 
     def list_evaluation_policies(self) -> list[dict]:
@@ -653,47 +767,72 @@ class CatalogService:
             sort=[("version", -1)],
         )
         version = int(latest.get("version", 0)) + 1 if latest and payload.create_new_version else int((latest or {}).get("version", 1))
-        if payload.is_active:
-            self.db.evaluation_policies.update_many(
-                {"policy_name": payload.policy_name},
-                {"$set": {"is_active": False}},
+        query = {"policy_name": payload.policy_name, "version": version}
+        existing = self.db.evaluation_policies.find_one(query)
+        if existing and existing.get("is_active") and not payload.is_active:
+            raise ValueError(
+                "Không thể tắt policy đang active; hãy kích hoạt policy khác"
             )
         weights_hash = hashlib.sha256(str(sorted(payload.weights.items())).encode()).hexdigest()
-        record = self.db.evaluation_policies.find_one_and_update(
-            {"policy_name": payload.policy_name, "version": version},
-            {
-                "$set": {
-                    "schema_version": SCHEMA_VERSION,
-                    "policy_name": payload.policy_name,
-                    "version": version,
-                    "weights": payload.weights,
-                    "weights_hash": weights_hash,
-                    "thresholds": payload.thresholds,
-                    "is_active": payload.is_active,
-                    "updated_at": now,
+        target_was_active = bool(existing and existing.get("is_active"))
+        with mongo_transaction() as session:
+            record = self.db.evaluation_policies.find_one_and_update(
+                query,
+                {
+                    "$set": {
+                        "schema_version": SCHEMA_VERSION,
+                        "policy_name": payload.policy_name,
+                        "version": version,
+                        "weights": payload.weights,
+                        "weights_hash": weights_hash,
+                        "thresholds": payload.thresholds,
+                        "is_active": target_was_active and payload.is_active,
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {"_id": ObjectId(), "created_at": now},
                 },
-                "$setOnInsert": {"_id": ObjectId(), "created_at": now},
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
+            if payload.is_active:
+                self.db.evaluation_policies.update_many(
+                    {"is_active": True},
+                    {"$set": {"is_active": False, "updated_at": now}},
+                    session=session,
+                )
+                record = self.db.evaluation_policies.find_one_and_update(
+                    {"_id": record["_id"]},
+                    {"$set": {"is_active": True, "updated_at": now}},
+                    return_document=ReturnDocument.AFTER,
+                    session=session,
+                )
         return json_safe(record)
 
     def activate_evaluation_policy(self, payload: EvaluationPolicyActivationPayload) -> dict:
         now = utc_now()
         query = {"policy_name": payload.policy_name, "version": payload.version}
-        if not self.db.evaluation_policies.find_one(query):
+        existing = self.db.evaluation_policies.find_one(query)
+        if not existing:
             raise LookupError("Không tìm thấy policy version")
-        if payload.is_active:
+        if not payload.is_active:
+            if existing.get("is_active"):
+                raise ValueError(
+                    "Không thể tắt policy đang active; hãy kích hoạt policy khác"
+                )
+            return json_safe(existing)
+        with mongo_transaction() as session:
             self.db.evaluation_policies.update_many(
-                {"policy_name": payload.policy_name},
+                {"is_active": True},
                 {"$set": {"is_active": False, "updated_at": now}},
+                session=session,
             )
-        record = self.db.evaluation_policies.find_one_and_update(
-            query,
-            {"$set": {"is_active": payload.is_active, "updated_at": now}},
-            return_document=ReturnDocument.AFTER,
-        )
+            record = self.db.evaluation_policies.find_one_and_update(
+                query,
+                {"$set": {"is_active": True, "updated_at": now}},
+                return_document=ReturnDocument.AFTER,
+                session=session,
+            )
         return json_safe(record)
 
     def overview(self) -> dict[str, Any]:

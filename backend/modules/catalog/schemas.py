@@ -1,6 +1,17 @@
+import math
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+EVALUATION_WEIGHT_KEYS = {
+    "faithfulness",
+    "contextual_relevancy",
+    "answer_relevancy",
+    "bloom_alignment",
+    "clo_alignment",
+}
+EVALUATION_THRESHOLD_KEYS = {"yellow_min", "green_min", "pass_min"}
 
 
 class ChapterPayload(BaseModel):
@@ -100,6 +111,8 @@ class PromptTemplateActivationPayload(BaseModel):
 
 
 class PromptTemplateTestPayload(BaseModel):
+    template_key: str | None = Field(None, min_length=1, max_length=120)
+    version: int | None = Field(None, ge=1)
     context: str = Field(
         "Stack uses LIFO, queue uses FIFO.",
         min_length=1,
@@ -117,6 +130,39 @@ class EvaluationPolicyPayload(BaseModel):
     thresholds: dict[str, float]
     create_new_version: bool = True
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_policy(self):
+        weight_keys = set(self.weights)
+        if weight_keys != EVALUATION_WEIGHT_KEYS:
+            missing = sorted(EVALUATION_WEIGHT_KEYS - weight_keys)
+            extra = sorted(weight_keys - EVALUATION_WEIGHT_KEYS)
+            raise ValueError(
+                f"weights không đúng bộ tiêu chí; thiếu={missing}, thừa={extra}"
+            )
+        if any(not math.isfinite(value) or value < 0 or value > 1 for value in self.weights.values()):
+            raise ValueError("Mỗi weight phải là số hữu hạn trong khoảng 0..1")
+        if not math.isclose(sum(self.weights.values()), 1.0, abs_tol=1e-6):
+            raise ValueError("Tổng weights phải bằng 1")
+
+        threshold_keys = set(self.thresholds)
+        if threshold_keys != EVALUATION_THRESHOLD_KEYS:
+            missing = sorted(EVALUATION_THRESHOLD_KEYS - threshold_keys)
+            extra = sorted(threshold_keys - EVALUATION_THRESHOLD_KEYS)
+            raise ValueError(
+                f"thresholds không đúng bộ ngưỡng; thiếu={missing}, thừa={extra}"
+            )
+        if any(
+            not math.isfinite(value) or value < 0 or value > 1
+            for value in self.thresholds.values()
+        ):
+            raise ValueError("Mỗi threshold phải là số hữu hạn trong khoảng 0..1")
+        yellow_min = self.thresholds["yellow_min"]
+        green_min = self.thresholds["green_min"]
+        pass_min = self.thresholds["pass_min"]
+        if not yellow_min <= green_min <= pass_min:
+            raise ValueError("Threshold phải thỏa yellow_min <= green_min <= pass_min")
+        return self
 
 
 class EvaluationPolicyActivationPayload(BaseModel):

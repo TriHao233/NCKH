@@ -168,6 +168,9 @@ function UsersAdminPage() {
       });
       setUsers(result.items || []);
       setTotal(result.total || 0);
+      if ((result.items || []).length === 0 && result.total > 0 && pageArg > 1) {
+        setPage(Math.max(1, Math.ceil(result.total / PAGE_SIZE)));
+      }
     } catch (err) {
       setError(err.message || 'Không tải được danh sách người dùng');
       setUsers([]);
@@ -355,7 +358,7 @@ function UsersAdminPage() {
     const activate = !user.is_active;
     const confirmMessage = activate
       ? `Kích hoạt lại tài khoản "${user.display_name}" (${user.email})?`
-      : `Vô hiệu hoá tài khoản "${user.display_name}" (${user.email})?`;
+      : `Khóa tài khoản "${user.display_name}" (${user.email})? Người dùng sẽ không thể đăng nhập cho đến khi được kích hoạt lại.`;
     if (!window.confirm(confirmMessage)) return;
     setTogglingId(user.id);
     try {
@@ -366,7 +369,7 @@ function UsersAdminPage() {
       }
       await refreshAll();
     } catch (err) {
-      alert((activate ? 'Kích hoạt' : 'Vô hiệu hoá') + ' tài khoản thất bại: ' + err.message);
+      alert((activate ? 'Kích hoạt' : 'Khóa') + ' tài khoản thất bại: ' + err.message);
     } finally {
       setTogglingId(null);
     }
@@ -521,7 +524,7 @@ function UsersAdminPage() {
                         <button
                           type="button"
                           className={u.is_active ? 'danger-action' : ''}
-                          title={u.is_active ? 'Vô hiệu hoá tài khoản' : 'Kích hoạt lại tài khoản'}
+                          title={u.is_active ? 'Khóa tài khoản' : 'Kích hoạt lại tài khoản'}
                           disabled={togglingId === u.id}
                           onClick={() => handleToggleActive(u)}
                         >

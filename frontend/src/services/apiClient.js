@@ -1,4 +1,5 @@
 import { auth } from "../../firebase";
+import { notifyAuthFailure } from "../auth/authFailure";
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "/api/v1"
@@ -15,7 +16,14 @@ export class ApiError extends Error {
 
 export async function apiRequest(
   path,
-  { method = "GET", body, headers = {}, authRequired = true, signal } = {},
+  {
+    method = "GET",
+    body,
+    headers = {},
+    authRequired = true,
+    signal,
+    _retriedAfterRefresh = false,
+  } = {},
 ) {
   const requestHeaders = { Accept: "application/json", ...headers };
   if (body !== undefined && !(body instanceof FormData)) {
@@ -52,6 +60,34 @@ export async function apiRequest(
     payload = null;
   }
   if (!response.ok) {
+    if (
+      authRequired
+      && response.status === 401
+      && !_retriedAfterRefresh
+      && auth.currentUser
+    ) {
+      try {
+        await auth.currentUser.getIdToken(true);
+      } catch {
+        notifyAuthFailure(401, payload);
+        throw new ApiError(
+          "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+          401,
+          payload,
+        );
+      }
+      return apiRequest(path, {
+        method,
+        body,
+        headers,
+        authRequired,
+        signal,
+        _retriedAfterRefresh: true,
+      });
+    }
+    if (authRequired) {
+      notifyAuthFailure(response.status, payload);
+    }
     throw new ApiError(
       payload?.detail || payload?.message || "Yêu cầu API thất bại",
       response.status,

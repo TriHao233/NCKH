@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   assignQuestionReview,
@@ -34,6 +34,7 @@ import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
   all: 'Tất cả',
+  PROCESSED: 'Đã xử lý',
   PENDING: 'Chờ duyệt',
   APPROVED: 'Đã duyệt',
   NEEDS_REVISION: 'Cần sửa',
@@ -80,6 +81,24 @@ const ASSIGNMENT_STATUS_LABEL = {
 };
 
 const PAGE_SIZE = 20;
+
+function queueFiltersFromSearch(search, role) {
+  const params = new URLSearchParams(search);
+  const defaultTab = role === 'Admin' ? 'unassigned' : 'mine';
+  const requestedStatus = params.get('status');
+  const requestedAssignment = params.get('assignment');
+  const status = Object.prototype.hasOwnProperty.call(REVIEW_STATUS_LABEL, requestedStatus)
+    ? requestedStatus
+    : 'PENDING';
+  const assignment = ['all', 'mine', 'UNASSIGNED', 'ASSIGNED', 'IN_REVIEW'].includes(requestedAssignment)
+    ? requestedAssignment
+    : (defaultTab === 'unassigned' ? 'UNASSIGNED' : 'mine');
+  let tab = 'custom';
+  if (status === 'PENDING' && assignment === 'mine') tab = 'mine';
+  if (status === 'PENDING' && assignment === 'UNASSIGNED') tab = 'unassigned';
+  if (status === 'PROCESSED' && assignment === 'all') tab = 'processed';
+  return { status, assignment, tab };
+}
 
 const SCORE_COMPONENTS = [
   {
@@ -214,8 +233,8 @@ function isEvaluationBusy(question) {
   return ['QUEUED', 'PROCESSING', 'RUNNING'].includes(question?.evaluation_status);
 }
 
-function canQueueEvaluation(question) {
-  return question && !isEvaluationBusy(question) && question.evaluation_status !== 'PASSED';
+function canRetryEvaluation(question) {
+  return question && ['ERROR', 'FAILED', 'STALE'].includes(question.evaluation_status);
 }
 
 function publicationStatusLabel(value) {
@@ -233,6 +252,7 @@ function assignmentOf(question) {
     lock_expires_at: assignment.lock_expires_at || null,
     last_released_at: assignment.last_released_at || null,
     release_reason: assignment.release_reason || '',
+    revision: Number(assignment.revision || 0),
   };
 }
 
@@ -330,11 +350,14 @@ function ReviewQueuePage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
+  const initialQueueFilters = queueFiltersFromSearch(location.search, user?.role);
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('PENDING');
-  const [assignmentFilter, setAssignmentFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(initialQueueFilters.status);
+  const [assignmentFilter, setAssignmentFilter] = useState(initialQueueFilters.assignment);
+  const [activeQueueTab, setActiveQueueTab] = useState(initialQueueFilters.tab);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [waitingFilter, setWaitingFilter] = useState('all');
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -374,8 +397,9 @@ function ReviewQueuePage() {
   const [sourcePdf, setSourcePdf] = useState(null);
   const [sourcePdfLoading, setSourcePdfLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [busyId, setBusyId] = useState('');
-  const [bulkBusy, setBulkBusy] = useState(false);
   const [reviewDraft, setReviewDraft] = useState(null);
   const [reviewFormError, setReviewFormError] = useState('');
   const [reviewTemplates, setReviewTemplates] = useState([...DEFAULT_REVIEW_COMMENT_TEMPLATES]);
@@ -485,6 +509,8 @@ function ReviewQueuePage() {
     setCommentBody('');
     setCommentMentionIds([]);
     setCommentError('');
+    setActionError('');
+    setHistoryError('');
     setHistoryLoading(true);
     setSourceLoading(true);
     setSourceError('');
@@ -494,22 +520,54 @@ function ReviewQueuePage() {
     setActiveSourceIndex(0);
     setActiveSourcePage(1);
     try {
-      const [evaluationResult, reviewResult, publicationResult, commentResult, sourceResult] = await Promise.all([
+      const [evaluationResult, reviewResult, publicationResult, commentResult, sourceResult] = await Promise.allSettled([
         listQuestionEvaluations(question.id),
         listQuestionReviews(question.id),
         listQuestionMoodlePublications(question.id),
         listQuestionComments(question.id),
         getQuestionSources(question.id),
       ]);
-      setEvaluations(evaluationResult.items || []);
-      setReviews(reviewResult.items || []);
-      setPublications(publicationResult.items || []);
-      setComments(commentResult.items || []);
-      setSourceViewer(sourceResult);
-      const firstSource = sourceResult.items?.[0];
+
+      const failedHistoryParts = [];
+      if (evaluationResult.status === 'fulfilled') {
+        setEvaluations(evaluationResult.value.items || []);
+      } else {
+        setEvaluations([]);
+        failedHistoryParts.push('đánh giá AI');
+      }
+      if (reviewResult.status === 'fulfilled') {
+        setReviews(reviewResult.value.items || []);
+      } else {
+        setReviews([]);
+        failedHistoryParts.push('lịch sử kiểm duyệt');
+      }
+      if (publicationResult.status === 'fulfilled') {
+        setPublications(publicationResult.value.items || []);
+      } else {
+        setPublications([]);
+        failedHistoryParts.push('lịch sử Moodle');
+      }
+      if (commentResult.status === 'fulfilled') {
+        setComments(commentResult.value.items || []);
+      } else {
+        setComments([]);
+        failedHistoryParts.push('bình luận');
+      }
+      if (failedHistoryParts.length > 0) {
+        setHistoryError(`Không tải được ${failedHistoryParts.join(', ')}. Các phần còn lại vẫn có thể sử dụng.`);
+      }
+
+      if (sourceResult.status === 'rejected') {
+        setSourceError(sourceResult.reason?.message || 'Không tải được nguồn câu hỏi');
+        return;
+      }
+
+      const sourceData = sourceResult.value;
+      setSourceViewer(sourceData);
+      const firstSource = sourceData.items?.[0];
       setActiveSourcePage(firstSourcePage(firstSource));
       setSourceLoading(false);
-      if (sourceResult.document?.pdf_available) {
+      if (sourceData.document?.pdf_available) {
         setSourcePdfLoading(true);
         try {
           setSourcePdf(await fetchQuestionSourcePdf(question.id));
@@ -519,9 +577,6 @@ function ReviewQueuePage() {
           setSourcePdfLoading(false);
         }
       }
-    } catch (err) {
-      setError(err.message || 'Không tải được lịch sử câu hỏi');
-      setSourceError(err.message || 'Không tải được nguồn câu hỏi');
     } finally {
       setHistoryLoading(false);
       setSourceLoading(false);
@@ -535,6 +590,14 @@ function ReviewQueuePage() {
     }, 350);
     return () => clearTimeout(handle);
   }, [searchInput]);
+
+  useEffect(() => {
+    const next = queueFiltersFromSearch(location.search, user?.role);
+    setStatusFilter(next.status);
+    setAssignmentFilter(next.assignment);
+    setActiveQueueTab(next.tab);
+    setPage(1);
+  }, [location.search, user?.role]);
 
   useEffect(() => {
     fetchQuestions();
@@ -606,7 +669,7 @@ function ReviewQueuePage() {
         { replace: true },
       );
       setOpenedDeepLinkId('');
-      setError('');
+      setError('Liên kết câu hỏi không hợp lệ.');
       return;
     }
     const openLinkedQuestion = async () => {
@@ -645,14 +708,6 @@ function ReviewQueuePage() {
     setReviewTemplates([...DEFAULT_REVIEW_COMMENT_TEMPLATES, ...saved]);
   }, [user?.email, user?.id, user?.uid]);
 
-  const summary = useMemo(() => ({
-    pending: questions.filter((item) => item.review_status === 'PENDING').length,
-    mine: questions.filter((item) => isAssignmentMine(item, user)).length,
-    passed: questions.filter((item) => item.evaluation_status === 'PASSED').length,
-    green: questions.filter((item) => item.quality_summary?.color === 'GREEN').length,
-    publishable: questions.filter((item) => item.review_status === 'APPROVED' && item.publication_status !== 'PUBLISHED').length,
-  }), [questions, user]);
-
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageEnd = Math.min(page * PAGE_SIZE, total);
@@ -662,10 +717,48 @@ function ReviewQueuePage() {
     setPage(1);
   };
 
+  const applyQueueTab = (tab) => {
+    setActiveQueueTab(tab);
+    setPage(1);
+    if (tab === 'mine') {
+      setStatusFilter('PENDING');
+      setAssignmentFilter('mine');
+      return;
+    }
+    if (tab === 'unassigned') {
+      setStatusFilter('PENDING');
+      setAssignmentFilter('UNASSIGNED');
+      return;
+    }
+    setStatusFilter('PROCESSED');
+    setAssignmentFilter('all');
+  };
+
+  const updateQueueFilter = (setter) => (value) => {
+    setActiveQueueTab('custom');
+    updateFilter(setter)(value);
+  };
+
   const updateSubjectFilter = (value) => {
     setSubjectFilter(value);
     setChapterFilter('all');
     setCloFilter('all');
+    setPage(1);
+  };
+
+  const resetAdvancedFilters = () => {
+    setWaitingFilter('all');
+    setOverdueOnly(false);
+    setTypeFilter('all');
+    setBloomFilter('all');
+    setColorFilter('all');
+    setSubjectFilter('all');
+    setChapterFilter('all');
+    setCloFilter('all');
+    setEvaluationStatusFilter('all');
+    setPublicationStatusFilter('all');
+    setCreatorFilter('all');
+    setMinScore('');
     setPage(1);
   };
 
@@ -705,9 +798,10 @@ function ReviewQueuePage() {
 
   const openReviewForm = (question, decision) => {
     if (!canReviewQuestion(question)) {
-      alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
+      setActionError('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
     }
+    setActionError('');
     setReviewFormError('');
     setReviewDraft(loadReviewDraft(question, decision));
   };
@@ -807,11 +901,16 @@ function ReviewQueuePage() {
 
   const claimReview = async (question) => {
     setBusyId(question.id);
+    setActionError('');
     try {
-      await claimQuestionReview(question.id);
-      await refreshAfterAction(question);
+      const claimedQuestion = await claimQuestionReview(question.id);
+      setActiveQueueTab('mine');
+      setStatusFilter('PENDING');
+      setAssignmentFilter('mine');
+      setPage(1);
+      await Promise.all([loadHistory(claimedQuestion), fetchDashboard()]);
     } catch (err) {
-      alert('Nhận câu kiểm duyệt thất bại: ' + err.message);
+      setActionError(`Không thể bắt đầu duyệt: ${err.message}`);
     } finally {
       setBusyId('');
     }
@@ -819,22 +918,27 @@ function ReviewQueuePage() {
 
   const releaseReview = async (question) => {
     setBusyId(question.id);
+    setActionError('');
     try {
       await releaseQuestionReview(question.id);
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Trả câu kiểm duyệt thất bại: ' + err.message);
+      setActionError(`Không thể trả câu: ${err.message}`);
     } finally {
       setBusyId('');
     }
   };
 
-  const openAssignmentForm = (question) => {
+  const openAssignmentForm = (question, { unassign = false } = {}) => {
+    const assignment = assignmentOf(question);
     setAssignmentError('');
     setAssignmentDraft({
       question,
-      reviewerUserId: assignmentOf(question).reviewer_user_id,
-      note: '',
+      reviewerUserId: unassign ? '' : assignment.reviewer_user_id,
+      note: unassign ? 'Bỏ phân công kiểm duyệt' : '',
+      expectedRevision: assignment.revision,
+      activeLock: assignment.status === 'IN_REVIEW' && !isReviewLockExpired(assignment),
+      force: false,
     });
   };
 
@@ -842,12 +946,22 @@ function ReviewQueuePage() {
     if (!assignmentDraft?.question) return;
     const question = assignmentDraft.question;
     const reviewerId = assignmentDraft.reviewerUserId.trim();
+    if (assignmentDraft.activeLock && !assignmentDraft.force) {
+      setAssignmentError('Câu hỏi đang được xử lý. Hãy xác nhận ghi đè và nêu rõ lý do.');
+      return;
+    }
+    if (assignmentDraft.force && !assignmentDraft.note.trim()) {
+      setAssignmentError('Cần ghi rõ lý do khi ghi đè phân công đang xử lý.');
+      return;
+    }
     setBusyId(question.id);
     setAssignmentError('');
     try {
       await assignQuestionReview(question.id, {
         reviewer_user_id: reviewerId || null,
-        note: assignmentDraft.note,
+        note: assignmentDraft.note.trim(),
+        expected_revision: assignmentDraft.expectedRevision,
+        force: assignmentDraft.force,
       });
       setAssignmentDraft(null);
       await refreshAfterAction(question);
@@ -858,20 +972,8 @@ function ReviewQueuePage() {
     }
   };
 
-  const unassignReview = async (question) => {
-    if (!window.confirm(`Bỏ phân công kiểm duyệt cho ${question.question_code}?`)) return;
-    setBusyId(question.id);
-    try {
-      await assignQuestionReview(question.id, {
-        reviewer_user_id: null,
-        note: 'Admin bỏ phân công',
-      });
-      await refreshAfterAction(question);
-    } catch (err) {
-      alert('Bỏ phân công kiểm duyệt thất bại: ' + err.message);
-    } finally {
-      setBusyId('');
-    }
+  const unassignReview = (question) => {
+    openAssignmentForm(question, { unassign: true });
   };
 
   const toggleCommentMention = (userId) => {
@@ -910,6 +1012,7 @@ function ReviewQueuePage() {
 
   const runEvaluation = async (question) => {
     setBusyId(question.id);
+    setActionError('');
     try {
       await autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
@@ -917,7 +1020,7 @@ function ReviewQueuePage() {
       });
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Đánh giá AI thất bại: ' + err.message);
+      setActionError(`Không thể thử lại đánh giá AI: ${err.message}`);
     } finally {
       setBusyId('');
     }
@@ -931,7 +1034,19 @@ function ReviewQueuePage() {
     }
     const revisionIssues = compactIssues(reviewDraft.issues);
     const overallNote = reviewDraft.overallNote.trim();
+    const adminDirectReview = (
+      user?.role === 'Admin'
+      && !(
+        selectedAssignment.status === 'IN_REVIEW'
+        && isAssignmentMine(selected, user)
+        && !isReviewLockExpired(selectedAssignment)
+      )
+    );
     const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
+    if (adminDirectReview && !overallNote) {
+      setReviewFormError('Admin duyệt thay Reviewer phải ghi rõ lý do trong ghi chú tổng.');
+      return;
+    }
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
       setReviewFormError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
       return;
@@ -991,6 +1106,7 @@ function ReviewQueuePage() {
 
   const publish = async (question) => {
     setBusyId(question.id);
+    setActionError('');
     try {
       await publishQuestionToMoodle(question.id, {
         expected_version: question.current_version,
@@ -999,7 +1115,7 @@ function ReviewQueuePage() {
       });
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Ghi mô phỏng Moodle thất bại: ' + err.message);
+      setActionError(`Không thể ghi mô phỏng Moodle: ${err.message}`);
     } finally {
       setBusyId('');
     }
@@ -1007,70 +1123,14 @@ function ReviewQueuePage() {
 
   const exportMoodle = async (question, format) => {
     setBusyId(question.id);
+    setActionError('');
     try {
       const content = await exportQuestionMoodle(question.id, format);
       downloadMoodleExport(question, format, content);
     } catch (err) {
-      alert('Export Moodle thất bại: ' + err.message);
+      setActionError(`Không thể xuất ${format.toUpperCase()}: ${err.message}`);
     } finally {
       setBusyId('');
-    }
-  };
-
-  const runBulkEvaluate = async () => {
-    const targets = questions.filter((question) => canQueueEvaluation(question)).slice(0, 10);
-    if (targets.length === 0) return;
-    if (!window.confirm(`Đưa ${targets.length} câu đang lọc vào hàng đợi AI đánh giá?`)) return;
-    setBulkBusy(true);
-    try {
-      for (const question of targets) {
-        await autoEvaluateQuestion(question.id, {
-          expected_version: question.current_version,
-          fallback_to_heuristic: false,
-        });
-      }
-      await Promise.all([fetchQuestions(), fetchDashboard()]);
-    } catch (err) {
-      alert('Đánh giá hàng loạt dừng lại: ' + err.message);
-    } finally {
-      setBulkBusy(false);
-    }
-  };
-
-  const runBulkApproveGreen = async () => {
-    const targets = questions
-      .filter((question) => (
-        canReviewQuestion(question)
-        && question.evaluation_status === 'PASSED'
-        && question.quality_summary?.color === 'GREEN'
-      ))
-      .slice(0, 10);
-    if (targets.length === 0) return;
-    const note = 'Duyệt hàng loạt các câu đạt tốt';
-    if (!window.confirm(`Duyệt ${targets.length} câu đạt tốt đang lọc?`)) return;
-    setBulkBusy(true);
-    try {
-      for (const question of targets) {
-        await reviewQuestion(question.id, {
-          expected_version: question.current_version,
-          decision: 'APPROVED',
-          note,
-          review_form: {
-            checklist: REVIEW_RUBRIC.map((item) => ({
-              ...item,
-              passed: true,
-              note: '',
-            })),
-            overall_note: note,
-            revision_issues: [],
-          },
-        });
-      }
-      await Promise.all([fetchQuestions(), fetchDashboard()]);
-    } catch (err) {
-      alert('Duyệt hàng loạt dừng lại: ' + err.message);
-    } finally {
-      setBulkBusy(false);
     }
   };
 
@@ -1087,6 +1147,25 @@ function ReviewQueuePage() {
     });
     return Array.from(map.values());
   }, [teacherOptions, reviewerOptions]);
+  const processedCount = (
+    (dashboardDecisions.APPROVED || 0)
+    + (dashboardDecisions.NEEDS_REVISION || 0)
+    + (dashboardDecisions.REJECTED || 0)
+  );
+  const advancedFilterCount = [
+    waitingFilter !== 'all',
+    overdueOnly,
+    typeFilter !== 'all',
+    bloomFilter !== 'all',
+    colorFilter !== 'all',
+    subjectFilter !== 'all',
+    chapterFilter !== 'all',
+    cloFilter !== 'all',
+    evaluationStatusFilter !== 'all',
+    publicationStatusFilter !== 'all',
+    creatorFilter !== 'all',
+    minScore !== '',
+  ].filter(Boolean).length;
   const latestEvidence = latestEvaluation?.evidence || {};
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
@@ -1095,6 +1174,14 @@ function ReviewQueuePage() {
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
   const latestModel = latestEvaluation?.evaluator_model || {};
   const selectedAssignment = assignmentOf(selected);
+  const isAdminDirectReview = (
+    user?.role === 'Admin'
+    && !(
+      selectedAssignment.status === 'IN_REVIEW'
+      && isAssignmentMine(selected, user)
+      && !isReviewLockExpired(selectedAssignment)
+    )
+  );
   const selectedCatalogSubject = catalogSubjects.find((subject) => subject.id === subjectFilter);
   const chapterFilterOptions = selectedCatalogSubject?.chapters || [];
   const cloFilterOptions = selectedCatalogSubject?.learning_outcomes || [];
@@ -1117,14 +1204,6 @@ function ReviewQueuePage() {
         <div className="review-toolbar__title">
           <span>Hàng đợi kiểm duyệt</span>
           <h1>Kiểm duyệt câu hỏi</h1>
-        </div>
-        <div className="review-actions">
-          <button type="button" className="btn btn--outline" disabled={bulkBusy} onClick={runBulkEvaluate}>
-            Xếp hàng AI
-          </button>
-          <button type="button" className="btn btn--primary" disabled={bulkBusy} onClick={runBulkApproveGreen}>
-            Duyệt câu đạt tốt
-          </button>
         </div>
       </section>
 
@@ -1232,38 +1311,59 @@ function ReviewQueuePage() {
       </section>
       {dashboardError && <p className="review-error review-error--dashboard">{dashboardError}</p>}
 
-      <section className="review-summary">
-        <button type="button" onClick={() => updateFilter(setStatusFilter)('PENDING')}>
-          <b>{statusFilter === 'PENDING' ? total : summary.pending}</b>
-          <span>Chờ duyệt</span>
+      <section className="review-queue-tabs" aria-label="Luồng công việc kiểm duyệt">
+        <button
+          type="button"
+          className={activeQueueTab === 'mine' ? 'review-queue-tab--active' : ''}
+          onClick={() => applyQueueTab('mine')}
+        >
+          <b>{dashboardWorkload.mine || 0}</b>
+          <span>Cần tôi xử lý</span>
         </button>
-        <button type="button" onClick={() => updateFilter(setAssignmentFilter)('mine')}>
-          <b>{assignmentFilter === 'mine' ? total : summary.mine}</b>
-          <span>Của tôi</span>
+        <button
+          type="button"
+          className={activeQueueTab === 'unassigned' ? 'review-queue-tab--active' : ''}
+          onClick={() => applyQueueTab('unassigned')}
+        >
+          <b>{dashboardWorkload.unassigned || 0}</b>
+          <span>Chưa có người nhận</span>
         </button>
-        <button type="button" onClick={() => updateFilter(setColorFilter)('GREEN')}>
-          <b>{colorFilter === 'GREEN' ? total : summary.green}</b>
-          <span>Đạt tốt</span>
-        </button>
-        <button type="button" onClick={() => updateFilter(setMinScore)('0.8')}>
-          <b>{minScore === '0.8' ? total : summary.passed}</b>
-          <span>AI đạt</span>
-        </button>
-        <button type="button" onClick={() => updateFilter(setStatusFilter)('APPROVED')}>
-          <b>{statusFilter === 'APPROVED' ? total : summary.publishable}</b>
-          <span>Đã duyệt</span>
+        <button
+          type="button"
+          className={activeQueueTab === 'processed' ? 'review-queue-tab--active' : ''}
+          onClick={() => applyQueueTab('processed')}
+        >
+          <b>{processedCount}</b>
+          <span>Đã xử lý</span>
         </button>
       </section>
 
       <section className="review-layout">
         <div className="review-list-panel">
-          <div className="review-filters">
-            <select value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
+          <div className="review-filter-bar">
+            <input
+              aria-label="Tìm câu hỏi"
+              placeholder="Tìm mã hoặc nội dung..."
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+            />
+            <button
+              type="button"
+              aria-expanded={advancedFiltersOpen}
+              onClick={() => setAdvancedFiltersOpen((current) => !current)}
+            >
+              Bộ lọc nâng cao{advancedFilterCount > 0 ? ` (${advancedFilterCount})` : ''}
+            </button>
+          </div>
+
+          {advancedFiltersOpen && (
+            <div className="review-filters">
+            <select value={statusFilter} onChange={(event) => updateQueueFilter(setStatusFilter)(event.target.value)}>
               {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-            <select value={assignmentFilter} onChange={(event) => updateFilter(setAssignmentFilter)(event.target.value)}>
+            <select value={assignmentFilter} onChange={(event) => updateQueueFilter(setAssignmentFilter)(event.target.value)}>
               {Object.entries(ASSIGNMENT_STATUS_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
@@ -1360,12 +1460,11 @@ function ReviewQueuePage() {
               value={minScore}
               onChange={(event) => updateFilter(setMinScore)(event.target.value)}
             />
-            <input
-              placeholder="Tìm mã hoặc nội dung..."
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-            />
-          </div>
+              <button type="button" className="review-filter-reset" onClick={resetAdvancedFilters}>
+                Xóa bộ lọc nâng cao
+              </button>
+            </div>
+          )}
 
           {catalogFilterError && <p className="review-error review-error--filters">{catalogFilterError}</p>}
           {teacherFilterError && <p className="review-error review-error--filters">{teacherFilterError}</p>}
@@ -1478,64 +1577,82 @@ function ReviewQueuePage() {
                 </div>
               </section>
               <div className="detail-actions">
-                <button type="button" disabled={busyId === selected.id || !canClaimQuestion(selected)} onClick={() => claimReview(selected)}>
-                  {selectedAssignment.status === 'IN_REVIEW' && isAssignmentMine(selected, user) ? 'Gia hạn giữ câu' : 'Nhận câu'}
-                </button>
-                <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => releaseReview(selected)}>
-                  Trả câu
-                </button>
-                {user?.role === 'Admin' && (
-                  <button type="button" disabled={busyId === selected.id || selected.review_status !== 'PENDING'} onClick={() => openAssignmentForm(selected)}>
-                    Gán người duyệt
+                {user?.role !== 'Admin' && (
+                  <button
+                    type="button"
+                    className="detail-action-primary"
+                    disabled={busyId === selected.id || !canClaimQuestion(selected)}
+                    onClick={() => claimReview(selected)}
+                  >
+                    {selectedAssignment.status === 'IN_REVIEW' && isAssignmentMine(selected, user)
+                      ? 'Gia hạn phiên duyệt'
+                      : 'Bắt đầu duyệt'}
+                  </button>
+                )}
+                {user?.role !== 'Admin' && canReleaseQuestion(selected) && (
+                  <button type="button" disabled={busyId === selected.id} onClick={() => releaseReview(selected)}>
+                    Trả lại hàng đợi
                   </button>
                 )}
                 {user?.role === 'Admin' && (
+                  <button
+                    type="button"
+                    className="detail-action-primary"
+                    disabled={busyId === selected.id || selected.review_status !== 'PENDING'}
+                    onClick={() => openAssignmentForm(selected)}
+                  >
+                    Phân công
+                  </button>
+                )}
+                {user?.role === 'Admin' && canReleaseQuestion(selected) && (
                   <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => unassignReview(selected)}>
                     Bỏ gán
                   </button>
                 )}
-                <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
-                  {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
-                    ? 'Thử lại AI'
-                    : 'AI đánh giá'}
-                </button>
+                {canRetryEvaluation(selected) && (
+                  <button type="button" disabled={busyId === selected.id} onClick={() => runEvaluation(selected)}>
+                    Thử lại đánh giá AI
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="detail-action-primary"
+                  className={user?.role === 'Admin' ? '' : 'detail-action-primary'}
                   disabled={busyId === selected.id || isEvaluationBusy(selected) || !canReviewQuestion(selected)}
                   onClick={() => openReviewForm(selected, 'APPROVED')}
                 >
-                  Duyệt
+                  {user?.role === 'Admin' ? 'Duyệt thay Reviewer' : 'Duyệt'}
                 </button>
                 <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'NEEDS_REVISION')}>Cần sửa</button>
                 <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'REJECTED')}>Từ chối</button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'}
-                  onClick={() => publish(selected)}
-                >
-                  Mô phỏng Moodle
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED'}
-                  onClick={() => exportMoodle(selected, 'gift')}
-                >
-                  GIFT
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED'}
-                  onClick={() => exportMoodle(selected, 'xml')}
-                >
-                  XML
-                </button>
               </div>
+              {actionError && <p className="review-error review-error--action">{actionError}</p>}
+
+              {selected.review_status === 'APPROVED' && (
+                <details className="review-secondary-actions">
+                  <summary>Xuất bản và xuất file</summary>
+                  <div>
+                    <button
+                      type="button"
+                      disabled={busyId === selected.id || selected.publication_status === 'PUBLISHED'}
+                      onClick={() => publish(selected)}
+                    >
+                      Ghi mô phỏng Moodle
+                    </button>
+                    <button type="button" disabled={busyId === selected.id} onClick={() => exportMoodle(selected, 'gift')}>
+                      Tải GIFT
+                    </button>
+                    <button type="button" disabled={busyId === selected.id} onClick={() => exportMoodle(selected, 'xml')}>
+                      Tải XML
+                    </button>
+                  </div>
+                </details>
+              )}
 
               {historyLoading ? (
                 <p className="review-empty">Đang tải minh chứng...</p>
               ) : (
                 <>
+                  {historyError && <p className="review-error review-error--history">{historyError}</p>}
                   <section className="evaluation-panel">
                     <div className="evaluation-total">
                       <div>
@@ -1811,11 +1928,15 @@ function ReviewQueuePage() {
                 </div>
               </div>
               <label className="review-form-field">
-                <span>Ghi chú tổng</span>
+                <span>
+                  Ghi chú tổng
+                  {isAdminDirectReview ? ' (bắt buộc khi duyệt thay Reviewer)' : ''}
+                </span>
                 <textarea
                   value={reviewDraft.overallNote}
                   onChange={(event) => updateReviewDraft({ overallNote: event.target.value })}
                   rows={4}
+                  required={isAdminDirectReview}
                 />
               </label>
               {reviewDraft.decision === 'APPROVED' && (
@@ -1953,8 +2074,26 @@ function ReviewQueuePage() {
                 )}
               </select>
             </label>
+            {assignmentDraft.activeLock && (
+              <>
+                <p className="review-assignment-warning">
+                  Câu hỏi đang được một Reviewer xử lý. Ghi đè sẽ thu hồi quyền nộp duyệt của người đó.
+                </p>
+                <label className="review-filter-toggle">
+                  <input
+                    type="checkbox"
+                    checked={assignmentDraft.force}
+                    onChange={(event) => setAssignmentDraft((current) => ({
+                      ...current,
+                      force: event.target.checked,
+                    }))}
+                  />
+                  Xác nhận ghi đè phân công đang xử lý
+                </label>
+              </>
+            )}
             <label className="review-form-field">
-              <span>Ghi chú</span>
+              <span>{assignmentDraft.force ? 'Lý do ghi đè (bắt buộc)' : 'Ghi chú'}</span>
               <textarea
                 value={assignmentDraft.note}
                 onChange={(event) => setAssignmentDraft((current) => ({
@@ -1962,6 +2101,7 @@ function ReviewQueuePage() {
                   note: event.target.value,
                 }))}
                 rows={3}
+                required={assignmentDraft.force}
               />
             </label>
             {assignmentError && <p className="review-form-error">{assignmentError}</p>}

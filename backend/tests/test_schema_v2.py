@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import inspect
 import re
@@ -31,12 +32,15 @@ from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.admin.overview_service import AdminOverviewService
 from modules.catalog.schemas import (
     AiModelActivationPayload,
+    AiModelPayload,
     ChapterPayload,
     ChapterUpdatePayload,
     EvaluationPolicyActivationPayload,
+    EvaluationPolicyPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
     PromptTemplateActivationPayload,
+    PromptTemplateTestPayload,
     SubjectUpdatePayload,
 )
 from modules.catalog.service import CatalogService
@@ -64,8 +68,15 @@ from modules.generation.schemas import (
 )
 from modules.generation.llm.deepseek import DeepseekProvider
 from modules.generation.llm.factory import get_llm_service
+from modules.generation import generate as generation_module
+from modules.generation import mongodb as generation_mongodb_module
 from modules.generation.prompt_builder import PromptBuilder
-from modules.generation.question import _build_retry_prompt, _check_type_format
+from modules.generation.question import (
+    GenerationCancelledError,
+    _build_retry_prompt,
+    _check_type_format,
+    _ensure_generation_active,
+)
 from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionResponse,
@@ -276,6 +287,23 @@ class FakeUserRepository:
         total = len(records)
         start = (page - 1) * page_size
         return records[start:start + page_size], total
+
+    def count_by_role(self, search=None):
+        records = list(self.users.values())
+        if search:
+            search_text = search.lower()
+            records = [
+                user for user in records
+                if search_text in user.get("display_name", "").lower()
+                or search_text in user.get("email", "").lower()
+            ]
+        return {
+            "all": len(records),
+            **{
+                role: len([user for user in records if user.get("role") == role])
+                for role in ("Admin", "Teacher", "Reviewer")
+            },
+        }
 
     def update(self, user_id, fields):
         user = self.find_by_id(user_id)
@@ -758,9 +786,25 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(payload.review_form.revision_issues[0].severity, "HIGH")
 
     def test_review_assignment_request_allows_admin_unassign(self):
-        payload = ReviewAssignmentRequest(reviewer_user_id=None, note="unassign")
+        payload = ReviewAssignmentRequest(
+            reviewer_user_id=None,
+            note="unassign",
+            expected_revision=0,
+        )
         self.assertIsNone(payload.reviewer_user_id)
         self.assertEqual(payload.note, "unassign")
+        self.assertEqual(payload.expected_revision, 0)
+
+        with self.assertRaisesRegex(
+            ValidationError,
+            "Cần ghi rõ lý do",
+        ):
+            ReviewAssignmentRequest(
+                reviewer_user_id=None,
+                note="",
+                expected_revision=0,
+                force=True,
+            )
 
     def test_question_response_exposes_review_assignment(self):
         now = datetime.now(timezone.utc)
@@ -1231,6 +1275,54 @@ class SchemaV2Tests(unittest.TestCase):
                 now,
             )
 
+    def test_admin_cannot_review_question_outside_pending(self):
+        admin = _current_user("Admin")
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-NOT-PENDING",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "DRAFT",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {"overall_score": 0.95, "color": "GREEN"},
+            "latest_review_id": None,
+            "created_by_user_id": ObjectId(),
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
+        version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "content_hash": "hash-not-pending",
+        }
+
+        class FakeWorkflowDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([question])
+                self.question_versions = InMemoryCollection([version])
+
+        service = QuestionWorkflowService(FakeWorkflowDatabase())
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Chỉ câu hỏi đang chờ duyệt",
+        ):
+            service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                admin,
+            )
+
     def test_review_assignment_claim_and_review_enforce_lock_owner(self):
         admin = _current_user("Admin")
         teacher = _current_user("Teacher")
@@ -1309,19 +1401,40 @@ class SchemaV2Tests(unittest.TestCase):
             question_workflow_module.mongo_transaction = lambda: nullcontext(None)
             service = QuestionWorkflowService(db)
 
+            with self.assertRaisesRegex(
+                ValueError,
+                "Admin duyệt thay Reviewer phải ghi rõ lý do",
+            ):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    admin,
+                )
+
             assigned = service.assign_review(
                 str(question_id),
                 ReviewAssignmentRequest(
                     reviewer_user_id=str(reviewer.id),
                     note="Assign to reviewer",
+                    expected_revision=0,
                 ),
                 admin,
             )
-            with self.assertRaises(PermissionError):
+            with self.assertRaisesRegex(RuntimeError, "ASSIGNMENT_CONFLICT"):
+                service.assign_review(
+                    str(question_id),
+                    ReviewAssignmentRequest(
+                        reviewer_user_id=str(other_reviewer.id),
+                        note="Stale assignment",
+                        expected_revision=0,
+                    ),
+                    admin,
+                )
+            with self.assertRaisesRegex(RuntimeError, "ASSIGNMENT_CONFLICT"):
                 service.claim_review(str(question_id), other_reviewer)
 
             claimed = service.claim_review(str(question_id), reviewer)
-            with self.assertRaises(PermissionError):
+            with self.assertRaisesRegex(RuntimeError, "ASSIGNMENT_CONFLICT"):
                 service.release_review(str(question_id), other_reviewer)
             with self.assertRaises(PermissionError):
                 service.review(
@@ -1330,33 +1443,79 @@ class SchemaV2Tests(unittest.TestCase):
                     other_reviewer,
                 )
 
+            with self.assertRaisesRegex(RuntimeError, "ASSIGNMENT_CONFLICT"):
+                service.assign_review(
+                    str(question_id),
+                    ReviewAssignmentRequest(
+                        reviewer_user_id=str(other_reviewer.id),
+                        note="Reassign without explicit override",
+                        expected_revision=2,
+                    ),
+                    admin,
+                )
+            reassigned = service.assign_review(
+                str(question_id),
+                ReviewAssignmentRequest(
+                    reviewer_user_id=str(other_reviewer.id),
+                    note="Reviewer hiện tại không thể tiếp tục xử lý",
+                    expected_revision=2,
+                    force=True,
+                ),
+                admin,
+            )
+            with self.assertRaises(PermissionError):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    reviewer,
+                )
+            self.assertEqual(db.question_reviews.count_documents({}), 0)
+
+            claimed_by_other = service.claim_review(str(question_id), other_reviewer)
             review = service.review(
                 str(question_id),
                 ReviewCreateRequest(expected_version=1, decision="APPROVED"),
-                reviewer,
+                other_reviewer,
             )
         finally:
             question_workflow_module.mongo_transaction = original_transaction
 
         self.assertEqual(assigned["review_assignment"]["status"], "ASSIGNED")
         self.assertEqual(assigned["review_assignment"]["reviewer_user_id"], str(reviewer.id))
+        self.assertEqual(assigned["review_assignment"]["revision"], 1)
         self.assertEqual(claimed["review_assignment"]["status"], "IN_REVIEW")
         self.assertEqual(claimed["review_assignment"]["reviewer_user_id"], str(reviewer.id))
+        self.assertEqual(claimed["review_assignment"]["revision"], 2)
+        self.assertEqual(reassigned["review_assignment"]["revision"], 3)
+        self.assertEqual(
+            reassigned["review_assignment"]["reviewer_user_id"],
+            str(other_reviewer.id),
+        )
+        self.assertEqual(claimed_by_other["review_assignment"]["revision"], 4)
         self.assertEqual(review["decision"], "APPROVED")
         updated_question = db.questions.find_one({"_id": question_id})
         self.assertEqual(updated_question["review_status"], "APPROVED")
         self.assertEqual(updated_question["approved_version_id"], version_id)
         self.assertEqual(updated_question["review_assignment"]["status"], "UNASSIGNED")
+        self.assertEqual(updated_question["review_assignment"]["revision"], 5)
         self.assertEqual(len(db.question_reviews.records), 1)
-        self.assertEqual(len(db.notifications.records), 2)
+        self.assertEqual(len(db.notifications.records), 3)
         self.assertEqual(db.notifications.records[0]["recipient_user_id"], reviewer.id)
         self.assertEqual(db.notifications.records[0]["type"], "QUESTION_REVIEW_ASSIGNED")
         self.assertEqual(db.notifications.records[0]["link"], f"/kiem-duyet?questionId={question_id}")
-        self.assertEqual(db.notifications.records[1]["recipient_user_id"], teacher.id)
-        self.assertEqual(db.notifications.records[1]["type"], "QUESTION_APPROVED")
+        self.assertEqual(db.notifications.records[1]["recipient_user_id"], other_reviewer.id)
+        self.assertEqual(db.notifications.records[1]["type"], "QUESTION_REVIEW_ASSIGNED")
+        self.assertEqual(db.notifications.records[2]["recipient_user_id"], teacher.id)
+        self.assertEqual(db.notifications.records[2]["type"], "QUESTION_APPROVED")
         self.assertEqual(
             [event["action"] for event in db.audit_logs.records],
-            ["QUESTION_REVIEW_ASSIGNED", "QUESTION_REVIEW_CLAIMED", "QUESTION_APPROVED"],
+            [
+                "QUESTION_REVIEW_ASSIGNED",
+                "QUESTION_REVIEW_CLAIMED",
+                "QUESTION_REVIEW_ASSIGNED",
+                "QUESTION_REVIEW_CLAIMED",
+                "QUESTION_APPROVED",
+            ],
         )
 
     def test_secondary_review_requires_a_different_reviewer_and_comments_notify_mentions(self):
@@ -3224,6 +3383,72 @@ class SchemaV2Tests(unittest.TestCase):
             )
         self.assertEqual(identity.disabled_calls, [])
 
+    def test_admin_user_update_rolls_back_firebase_when_mongo_fails(self):
+        teacher = _user_doc("Teacher", True)
+
+        class FailingRepository(FakeUserRepository):
+            def update(self, _user_id, _fields):
+                raise RuntimeError("simulated mongo failure")
+
+        identity = FakeIdentityGateway()
+        service = UserService(
+            FailingRepository([teacher]),
+            identity,
+            FakeSessions(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "simulated mongo failure"):
+            service.update_admin(
+                str(teacher["_id"]),
+                UserAdminUpdateRequest(
+                    display_name="Tên mới",
+                    is_active=False,
+                ),
+                _current_user("Admin"),
+            )
+
+        self.assertEqual(
+            identity.update_calls,
+            [
+                (
+                    teacher["firebase_uid"],
+                    {"display_name": "Tên mới", "disabled": True},
+                ),
+                (
+                    teacher["firebase_uid"],
+                    {
+                        "display_name": teacher["display_name"],
+                        "disabled": False,
+                    },
+                ),
+            ],
+        )
+
+    def test_admin_user_deactivate_rolls_back_firebase_when_mongo_fails(self):
+        teacher = _user_doc("Teacher", True)
+
+        class FailingRepository(FakeUserRepository):
+            def update(self, _user_id, _fields):
+                raise RuntimeError("simulated mongo failure")
+
+        identity = FakeIdentityGateway()
+        service = UserService(
+            FailingRepository([teacher]),
+            identity,
+            FakeSessions(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "simulated mongo failure"):
+            service.deactivate(str(teacher["_id"]), _current_user("Admin"))
+
+        self.assertEqual(
+            identity.disabled_calls,
+            [
+                (teacher["firebase_uid"], True),
+                (teacher["firebase_uid"], False),
+            ],
+        )
+
     def test_user_service_lists_teacher_options_for_review_filters(self):
         teacher = _user_doc("Teacher", True)
         inactive_teacher = _user_doc("Teacher", False)
@@ -3242,6 +3467,34 @@ class SchemaV2Tests(unittest.TestCase):
             {str(teacher["_id"]), str(inactive_teacher["_id"])},
         )
         self.assertNotIn(str(reviewer["_id"]), {item["id"] for item in result["items"]})
+
+    def test_user_service_list_returns_server_pagination_and_role_summary(self):
+        users = [
+            _user_doc("Admin", True),
+            _user_doc("Teacher", True),
+            _user_doc("Teacher", False),
+            _user_doc("Reviewer", True),
+        ]
+        service = UserService(
+            FakeUserRepository(users),
+            FakeIdentityGateway(),
+            FakeSessions(),
+        )
+
+        result = service.list(
+            page=2,
+            page_size=1,
+            role="Teacher",
+            search="Teacher",
+        )
+
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["page"], 2)
+        self.assertEqual(
+            result["summary"],
+            {"all": 2, "Admin": 0, "Teacher": 2, "Reviewer": 0},
+        )
 
     def test_user_service_lists_active_reviewer_options_for_assignment(self):
         teacher = _user_doc("Teacher", True)
@@ -3436,6 +3689,11 @@ class SchemaV2Tests(unittest.TestCase):
                     "is_local": True,
                     "is_active": True,
                     "config": {},
+                    "config_hash": "qwen-health-config",
+                    "last_health_check": {
+                        "status": "OK",
+                        "config_hash": "qwen-health-config",
+                    },
                 },
                 {
                     "_id": ObjectId(),
@@ -3459,6 +3717,11 @@ class SchemaV2Tests(unittest.TestCase):
                     "kind": "SYSTEM",
                     "name": "System v1",
                     "prompt_body": "v1",
+                    "content_hash": "system-v1",
+                    "last_test_build": {
+                        "status": "OK",
+                        "content_hash": "system-v1",
+                    },
                     "is_active": False,
                 },
                 {
@@ -3500,12 +3763,27 @@ class SchemaV2Tests(unittest.TestCase):
             AiModelActivationPayload(model_code="qwen", is_active=False)
         )
         self.assertFalse(model["is_active"])
+        model = service.set_ai_model_active(
+            AiModelActivationPayload(model_code="qwen", is_active=True)
+        )
+        self.assertTrue(model["is_active"])
+        service.set_ai_model_active(
+            AiModelActivationPayload(model_code="qwen", is_active=False)
+        )
+        with self.assertRaisesRegex(ValueError, "health-check thành công"):
+            service.set_ai_model_active(
+                AiModelActivationPayload(model_code="unknown-provider", is_active=True)
+            )
 
         prompt = service.activate_prompt_template(
             PromptTemplateActivationPayload(template_key="system", version=1)
         )
         self.assertTrue(prompt["is_active"])
         self.assertFalse(db.prompt_templates.find_one({"template_key": "system", "version": 2})["is_active"])
+        with self.assertRaisesRegex(ValueError, "test-build thành công"):
+            service.activate_prompt_template(
+                PromptTemplateActivationPayload(template_key="system", version=2)
+            )
 
         policy = service.activate_evaluation_policy(
             EvaluationPolicyActivationPayload(policy_name="Default", version=1)
@@ -3520,6 +3798,231 @@ class SchemaV2Tests(unittest.TestCase):
             self.assertTrue(
                 any("Model sinh c" in warning and "inactive" in warning for warning in runtime["warnings"])
             )
+
+    def test_catalog_prompt_test_build_and_model_config_invalidation(self):
+        prompt_id = ObjectId()
+        db = FakeCatalogDatabase(
+            ai_models=[
+                {
+                    "_id": ObjectId(),
+                    "model_code": "qwen",
+                    "model_name": "Old model",
+                    "runtime": "OLLAMA",
+                    "kind": "CHAT",
+                    "revision": "local",
+                    "capabilities": ["QUESTION_GENERATION"],
+                    "priority": 1,
+                    "is_local": True,
+                    "is_active": True,
+                    "config": {},
+                    "config_hash": "old-hash",
+                    "last_health_check": {
+                        "status": "OK",
+                        "config_hash": "old-hash",
+                    },
+                }
+            ],
+            prompt_templates=[
+                {
+                    "_id": prompt_id,
+                    "template_key": "system",
+                    "version": 1,
+                    "kind": "SYSTEM",
+                    "name": "System",
+                    "prompt_body": "Candidate system prompt",
+                    "content_hash": "candidate-hash",
+                    "is_active": False,
+                }
+            ],
+        )
+        service = CatalogService(db)
+        original_build = PromptBuilder.build
+        try:
+            PromptBuilder.build = lambda _self, **_kwargs: "Rendered prompt"
+            result = service.test_prompt_template(
+                PromptTemplateTestPayload(template_key="system", version=1)
+            )
+        finally:
+            PromptBuilder.build = original_build
+
+        self.assertEqual(result["tested_template"]["test_build"]["status"], "OK")
+        tested = db.prompt_templates.find_one({"_id": prompt_id})
+        self.assertEqual(tested["last_test_build"]["content_hash"], "candidate-hash")
+        activated = service.activate_prompt_template(
+            PromptTemplateActivationPayload(template_key="system", version=1)
+        )
+        self.assertTrue(activated["is_active"])
+
+        updated_model = service.upsert_ai_model(
+            AiModelPayload(
+                model_code="qwen",
+                model_name="Changed model",
+                runtime="OLLAMA",
+                kind="CHAT",
+                revision="local",
+                capabilities=["QUESTION_GENERATION"],
+                priority=1,
+                is_local=True,
+                is_active=True,
+                config={},
+            )
+        )
+        self.assertFalse(updated_model["is_active"])
+        self.assertIsNone(updated_model["last_health_check"])
+
+    def test_evaluation_policy_payload_validates_weights_and_thresholds(self):
+        valid_weights = {
+            "faithfulness": 0.35,
+            "contextual_relevancy": 0.20,
+            "answer_relevancy": 0.15,
+            "bloom_alignment": 0.15,
+            "clo_alignment": 0.15,
+        }
+        valid_thresholds = {
+            "yellow_min": 0.60,
+            "green_min": 0.80,
+            "pass_min": 0.80,
+        }
+        policy = EvaluationPolicyPayload(
+            policy_name="Strict",
+            weights=valid_weights,
+            thresholds=valid_thresholds,
+        )
+        self.assertEqual(sum(policy.weights.values()), 1)
+
+        invalid_payloads = [
+            {
+                "weights": {**valid_weights, "faithfulness": 0.20},
+                "thresholds": valid_thresholds,
+            },
+            {
+                "weights": {key: value for key, value in valid_weights.items() if key != "clo_alignment"},
+                "thresholds": valid_thresholds,
+            },
+            {
+                "weights": valid_weights,
+                "thresholds": {
+                    "yellow_min": 0.85,
+                    "green_min": 0.80,
+                    "pass_min": 0.90,
+                },
+            },
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                EvaluationPolicyPayload(policy_name="Invalid", **payload)
+
+    def test_evaluation_policy_activation_is_global(self):
+        first_id = ObjectId()
+        second_id = ObjectId()
+        db = FakeCatalogDatabase(
+            evaluation_policies=[
+                {
+                    "_id": first_id,
+                    "policy_name": "Default",
+                    "version": 1,
+                    "is_active": True,
+                },
+                {
+                    "_id": second_id,
+                    "policy_name": "Strict",
+                    "version": 1,
+                    "is_active": False,
+                },
+            ]
+        )
+
+        activated = CatalogService(db).activate_evaluation_policy(
+            EvaluationPolicyActivationPayload(
+                policy_name="Strict",
+                version=1,
+            )
+        )
+
+        self.assertTrue(activated["is_active"])
+        active_records = [
+            item for item in db.evaluation_policies.records if item.get("is_active")
+        ]
+        self.assertEqual([item["_id"] for item in active_records], [second_id])
+
+    def test_saving_active_evaluation_policy_keeps_exactly_one_active(self):
+        current_id = ObjectId()
+        db = FakeCatalogDatabase(
+            evaluation_policies=[
+                {
+                    "_id": current_id,
+                    "policy_name": "Default",
+                    "version": 1,
+                    "is_active": True,
+                }
+            ]
+        )
+        saved = CatalogService(db).save_evaluation_policy(
+            EvaluationPolicyPayload(
+                policy_name="Strict",
+                weights={
+                    "faithfulness": 0.35,
+                    "contextual_relevancy": 0.20,
+                    "answer_relevancy": 0.15,
+                    "bloom_alignment": 0.15,
+                    "clo_alignment": 0.15,
+                },
+                thresholds={
+                    "yellow_min": 0.60,
+                    "green_min": 0.80,
+                    "pass_min": 0.80,
+                },
+                is_active=True,
+            )
+        )
+
+        self.assertTrue(saved["is_active"])
+        active_records = [
+            item for item in db.evaluation_policies.records if item.get("is_active")
+        ]
+        self.assertEqual(len(active_records), 1)
+        self.assertEqual(active_records[0]["policy_name"], "Strict")
+
+    def test_failed_policy_save_does_not_deactivate_current_policy(self):
+        current_id = ObjectId()
+
+        class FailingPolicyCollection(InMemoryCollection):
+            def find_one_and_update(self, *_args, **_kwargs):
+                raise RuntimeError("simulated write failure")
+
+        db = FakeCatalogDatabase()
+        db.evaluation_policies = FailingPolicyCollection(
+            [
+                {
+                    "_id": current_id,
+                    "policy_name": "Default",
+                    "version": 1,
+                    "is_active": True,
+                }
+            ]
+        )
+        payload = EvaluationPolicyPayload(
+            policy_name="Strict",
+            weights={
+                "faithfulness": 0.35,
+                "contextual_relevancy": 0.20,
+                "answer_relevancy": 0.15,
+                "bloom_alignment": 0.15,
+                "clo_alignment": 0.15,
+            },
+            thresholds={
+                "yellow_min": 0.60,
+                "green_min": 0.80,
+                "pass_min": 0.80,
+            },
+            is_active=True,
+        )
+
+        with self.assertRaises(RuntimeError):
+            CatalogService(db).save_evaluation_policy(payload)
+        self.assertTrue(
+            db.evaluation_policies.find_one({"_id": current_id})["is_active"]
+        )
 
     def test_admin_job_summary_tracks_operational_states(self):
         jobs = [
@@ -3557,9 +4060,15 @@ class SchemaV2Tests(unittest.TestCase):
 
     def test_admin_job_status_filters_support_rollups(self):
         self.assertEqual(_generation_status_filter("active"), {"$in": ["queued", "processing"]})
-        self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
+        self.assertEqual(
+            _generation_status_filter("retryable"),
+            {"$in": ["failed", "cancelled"]},
+        )
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
-        self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+        self.assertEqual(
+            _uppercase_status_filter("retryable"),
+            {"$in": ["FAILED", "ERROR", "STALE", "CANCELLED"]},
+        )
 
     def test_admin_audit_list_filters_legacy_and_nested_records(self):
         actor_id = ObjectId()
@@ -3588,9 +4097,22 @@ class SchemaV2Tests(unittest.TestCase):
                             "action": "user.update",
                             "actor": {"user_id": actor_id, "role": "Admin"},
                             "entity": {"type": "user", "id": entity_id, "version_id": version_id},
-                            "before": {"role": "Teacher"},
-                            "after": {"role": "Reviewer"},
-                            "changes": [{"field": "role"}],
+                            "before": {"role": "Teacher", "password": "old-password"},
+                            "after": {
+                                "role": "Reviewer",
+                                "api_key": "should-not-leak",
+                            },
+                            "changes": [
+                                {"field": "role"},
+                                {
+                                    "field": "refresh_token",
+                                    "old_value": "old-token",
+                                    "new_value": "new-token",
+                                },
+                            ],
+                            "metadata": {
+                                "runtime": {"client_secret": "should-not-leak"}
+                            },
                             "created_at": now - timedelta(minutes=5),
                         },
                         {
@@ -3627,6 +4149,16 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual([item["action"] for item in actor_result["items"]], ["admin.job_cancel", "user.update"])
         self.assertEqual(entity_result["total"], 1)
         self.assertEqual(entity_result["items"][0]["entity"]["version_id"], str(version_id))
+        self.assertEqual(entity_result["items"][0]["before"]["password"], "[REDACTED]")
+        self.assertEqual(entity_result["items"][0]["after"]["api_key"], "[REDACTED]")
+        self.assertEqual(
+            entity_result["items"][0]["changes"][1]["new_value"],
+            "[REDACTED]",
+        )
+        self.assertEqual(
+            entity_result["items"][0]["metadata"]["runtime"]["client_secret"],
+            "[REDACTED]",
+        )
         self.assertEqual(search_result["total"], 1)
         self.assertEqual(search_result["items"][0]["metadata"]["reason"], "manual cancel")
         self.assertEqual(date_result["total"], 2)
@@ -3736,6 +4268,38 @@ class SchemaV2Tests(unittest.TestCase):
                 date_to=now,
             )
 
+    def test_admin_job_list_does_not_truncate_after_five_hundred_records(self):
+        now = datetime.now(timezone.utc)
+
+        class FakeJobDatabase:
+            def __init__(self):
+                self.generation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": ObjectId(),
+                            "status": "completed",
+                            "requested_by_user_id": ObjectId(),
+                            "request": {},
+                            "created_at": now - timedelta(seconds=index),
+                            "updated_at": now - timedelta(seconds=index),
+                        }
+                        for index in range(505)
+                    ]
+                )
+                self.evaluation_jobs = InMemoryCollection()
+                self.documents = InMemoryCollection()
+                self.document_jobs = InMemoryCollection()
+
+        result = AdminJobService(FakeJobDatabase()).list_jobs(
+            page=11,
+            page_size=50,
+            job_kind="generation",
+        )
+
+        self.assertEqual(result["total"], 505)
+        self.assertEqual(result["summary"]["total"], 505)
+        self.assertEqual(len(result["items"]), 5)
+
     def test_admin_job_cancel_updates_jobs_questions_and_audit(self):
         admin = _current_user("Admin")
         generation_job_id = ObjectId()
@@ -3762,6 +4326,7 @@ class SchemaV2Tests(unittest.TestCase):
                         {
                             "_id": evaluation_job_id,
                             "status": "PROCESSING",
+                            "finalization_token": None,
                             "question_id": question_id,
                             "requested_by_user_id": ObjectId(),
                             "queued_at": now,
@@ -3791,14 +4356,116 @@ class SchemaV2Tests(unittest.TestCase):
         finally:
             admin_jobs_module.record_audit_event = original_audit
 
-        self.assertEqual(generation_result["job"]["status"], "failed")
-        self.assertIn("Cancelled by admin", generation_result["job"]["error_message"])
-        self.assertEqual(evaluation_result["job"]["status"], "STALE")
+        self.assertEqual(generation_result["job"]["status"], "cancelled")
+        self.assertIn("Đã hủy bởi Admin", generation_result["job"]["error_message"])
+        self.assertEqual(evaluation_result["job"]["status"], "CANCELLED")
         question = db.questions.find_one({"_id": question_id})
         self.assertEqual(question["evaluation_status"], "STALE")
         self.assertIn("Cancelled by admin", question["quality_summary"]["error"]["message"])
         self.assertEqual([event["action"] for event in audit_events], ["admin.job_cancel", "admin.job_cancel"])
         self.assertEqual({event["entity_type"] for event in audit_events}, {"generation", "evaluation"})
+
+    def test_admin_cannot_cancel_evaluation_during_finalization(self):
+        admin = _current_user("Admin")
+        evaluation_job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeJobDatabase:
+            def __init__(self):
+                self.evaluation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": evaluation_job_id,
+                            "status": "PROCESSING",
+                            "finalization_token": ObjectId(),
+                            "updated_at": now,
+                        }
+                    ]
+                )
+
+        db = FakeJobDatabase()
+        with self.assertRaises(ValueError):
+            AdminJobService(db).cancel_job(
+                "evaluation",
+                str(evaluation_job_id),
+                admin,
+            )
+        self.assertEqual(
+            db.evaluation_jobs.find_one({"_id": evaluation_job_id})["status"],
+            "PROCESSING",
+        )
+
+    def test_cancelled_evaluation_job_cannot_persist_llm_result(self):
+        job_id = ObjectId()
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeEvaluationDatabase:
+            def __init__(self):
+                self.evaluation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": job_id,
+                            "schema_version": SCHEMA_VERSION,
+                            "question_id": question_id,
+                            "question_version_id": version_id,
+                            "status": "QUEUED",
+                            "finalization_token": None,
+                            "requested_by_user_id": ObjectId(),
+                            "evaluator_model_code": "test-model",
+                            "policy_snapshot": {"version": 1},
+                            "source_snapshot": [],
+                            "trigger": "TEST",
+                            "queued_at": now,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            "_id": question_id,
+                            "schema_version": SCHEMA_VERSION,
+                            "lifecycle_status": "ACTIVE",
+                            "current_version_id": version_id,
+                            "evaluation_status": "QUEUED",
+                            "quality_summary": {"latest_evaluation_job_id": job_id},
+                        }
+                    ]
+                )
+                self.question_versions = InMemoryCollection(
+                    [{"_id": version_id, "version": 1}]
+                )
+
+        db = FakeEvaluationDatabase()
+        service = QuestionWorkflowService(db)
+        service._build_evaluation_prompt = lambda *_args: ("prompt", {}, [])
+        evaluate_calls = []
+        service.evaluate = lambda *_args, **_kwargs: evaluate_calls.append(True)
+
+        class CancellingLlm:
+            async def generate_text(self, _prompt):
+                db.evaluation_jobs.records[0]["status"] = "CANCELLED"
+                return (
+                    '{"scores":{"faithfulness":1,"contextual_relevancy":1,'
+                    '"answer_relevancy":1,"bloom_alignment":1,"clo_alignment":1},'
+                    '"feedback":{},"evidence":{}}'
+                )
+
+        original_get_llm = question_workflow_module.get_llm_service
+        question_workflow_module.get_llm_service = lambda _model_code: CancellingLlm()
+        try:
+            result = asyncio.run(service.process_evaluation_job(str(job_id)))
+        finally:
+            question_workflow_module.get_llm_service = original_get_llm
+
+        self.assertIsNone(result)
+        self.assertEqual(evaluate_calls, [])
+        self.assertEqual(
+            db.evaluation_jobs.find_one({"_id": job_id})["status"],
+            "CANCELLED",
+        )
 
     def test_admin_job_retry_evaluation_dispatches_background_and_audit(self):
         admin = _current_user("Admin")
@@ -4120,6 +4787,22 @@ class SchemaV2Tests(unittest.TestCase):
         attention = {item["key"]: item for item in overview["attention"]}
         self.assertEqual(attention["retryable_jobs"]["severity"], "danger")
         self.assertEqual(attention["failed_documents"]["count"], 1)
+        self.assertEqual(
+            attention["pending_review"]["path"],
+            "/kiem-duyet?status=PENDING&assignment=all",
+        )
+        self.assertEqual(
+            attention["retryable_jobs"]["path"],
+            "/quan-ly-job?status=retryable",
+        )
+        self.assertEqual(
+            attention["long_running_jobs"]["path"],
+            "/quan-ly-job?stale_only=true",
+        )
+        self.assertEqual(
+            attention["failed_documents"]["path"],
+            "/quan-ly?tab=documents&status=FAILED",
+        )
 
     def test_job_recovery_marks_only_stale_active_jobs(self):
         now = datetime.now(timezone.utc)
@@ -4671,6 +5354,103 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(summary.skipped_count, 2)
         self.assertIn("Lưu thiếu 2 câu so với yêu cầu.", summary.warnings)
 
+    def test_generation_status_is_visible_only_to_owner_or_admin(self):
+        job_id = str(ObjectId())
+        owner = _current_user("Teacher")
+        other_teacher = _current_user("Teacher")
+        admin = _current_user("Admin")
+        now = datetime.now(timezone.utc)
+        job = {
+            "job_id": job_id,
+            "requested_by_user_id": owner.id,
+            "status": "queued",
+            "created_at": now,
+            "updated_at": now,
+        }
+        original_get_job = generation_module.get_generation_job
+        generation_module.get_generation_job = lambda _job_id: dict(job)
+        try:
+            with self.assertRaises(HTTPException) as context:
+                asyncio.run(
+                    generation_module.get_generation_job_status(
+                        job_id,
+                        current_user=other_teacher,
+                    )
+                )
+            self.assertEqual(context.exception.status_code, 404)
+
+            response = asyncio.run(
+                generation_module.get_generation_job_status(
+                    job_id,
+                    current_user=admin,
+                )
+            )
+            self.assertEqual(response.job_id, job_id)
+            self.assertEqual(response.status.value, "queued")
+        finally:
+            generation_module.get_generation_job = original_get_job
+
+    def test_generation_worker_does_not_restart_terminal_job(self):
+        job_id = str(ObjectId())
+        generated = []
+        original_get_job = generation_module.get_generation_job
+        original_update_job = generation_module.update_generation_job
+        original_generate = generation_module.generate_questions_rag
+        generation_module.get_generation_job = lambda _job_id: {
+            "job_id": job_id,
+            "status": "failed",
+            "request": {},
+            "created_at": datetime.now(timezone.utc),
+        }
+
+        def reject_claim(_job_id, **kwargs):
+            self.assertEqual(kwargs["expected_status"], "queued")
+            return None
+
+        async def fake_generate(*_args, **_kwargs):
+            generated.append(True)
+
+        generation_module.update_generation_job = reject_claim
+        generation_module.generate_questions_rag = fake_generate
+        try:
+            asyncio.run(generation_module.process_generate_background(job_id))
+        finally:
+            generation_module.get_generation_job = original_get_job
+            generation_module.update_generation_job = original_update_job
+            generation_module.generate_questions_rag = original_generate
+
+        self.assertEqual(generated, [])
+
+    def test_generation_job_compare_and_set_preserves_terminal_status(self):
+        job_id = ObjectId()
+        collection = InMemoryCollection(
+            [{"_id": job_id, "status": "failed", "updated_at": datetime.now(timezone.utc)}]
+        )
+
+        class FakeDatabase:
+            generation_jobs = collection
+
+            def __getitem__(self, _name):
+                return self.generation_jobs
+
+        original_get_database = generation_mongodb_module.get_database
+        generation_mongodb_module.get_database = lambda: FakeDatabase()
+        try:
+            updated = generation_mongodb_module.update_generation_job(
+                str(job_id),
+                status="completed",
+                expected_status="processing",
+            )
+        finally:
+            generation_mongodb_module.get_database = original_get_database
+
+        self.assertIsNone(updated)
+        self.assertEqual(collection.find_one({"_id": job_id})["status"], "failed")
+
+    def test_generation_guard_stops_persistence_after_cancellation(self):
+        with self.assertRaises(GenerationCancelledError):
+            _ensure_generation_active(lambda: False)
+
     def test_key_validators_require_schema_version(self):
         for collection in ("users", "documents", "questions", "question_versions", "evaluation_jobs", "moodle_targets"):
             required = VALIDATORS[collection]["$jsonSchema"]["required"]
@@ -4993,6 +5773,23 @@ class SchemaV2Tests(unittest.TestCase):
         search_match = pipeline[5]["$match"]
         self.assertIn({"question_code": {"$regex": "queue", "$options": "i"}}, search_match["$or"])
         self.assertIn({"version.content": {"$regex": "queue", "$options": "i"}}, search_match["$or"])
+
+        repo.list(
+            1,
+            10,
+            "PENDING",
+            None,
+            assignment_status="UNASSIGNED",
+        )
+        unassigned_match = fake_db.questions.pipeline[0]["$match"]
+        self.assertNotIn("review_assignment.status", unassigned_match)
+        self.assertEqual(
+            unassigned_match["$or"],
+            [
+                {"review_assignment.status": {"$exists": False}},
+                {"review_assignment.status": "UNASSIGNED"},
+            ],
+        )
         facet = pipeline[-1]["$facet"]
         self.assertEqual(facet["items"][0], {"$skip": 10})
         self.assertEqual(facet["items"][1], {"$limit": 10})
@@ -5024,6 +5821,29 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn(
             {"$match": {"$expr": {"$eq": ["$approved_version_id", "$current_version_id"]}}},
             fake_db.questions.pipeline,
+        )
+
+    def test_question_repository_processed_filter_includes_all_review_decisions(self):
+        class FakeQuestionsCollection:
+            def __init__(self):
+                self.pipeline = None
+
+            def aggregate(self, pipeline):
+                self.pipeline = pipeline
+                return [{"items": [], "count": [{"total": 0}]}]
+
+        class FakeDatabase:
+            def __init__(self):
+                self.questions = FakeQuestionsCollection()
+
+        fake_db = FakeDatabase()
+        repo = MongoQuestionRepository(fake_db)
+
+        repo.list(1, 20, "PROCESSED", None)
+
+        self.assertEqual(
+            fake_db.questions.pipeline[0]["$match"]["review_status"],
+            {"$in": ["APPROVED", "NEEDS_REVISION", "REJECTED"]},
         )
 
 

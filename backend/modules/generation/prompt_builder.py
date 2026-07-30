@@ -32,12 +32,18 @@ class PromptBuilder:
         num_questions: int,
         instruction: str | None = None,
         avoid_questions: list[str] | None = None,
+        template_overrides: dict[str, str] | None = None,
     ):
-        system = self._load_template("system", "system.txt")
-        question_rule = self._load_template("question_rule", "question_rule.txt")
-        bloom = self._load_template(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
-        qtype = self._load_template(f"question_type:{question_type}", f"question_type/{question_type}.txt")
-        output = self._load_template("output_format", "output_format.txt")
+        overrides = template_overrides or {}
+
+        def resolve(template_key: str, relative_path: str) -> str:
+            return overrides.get(template_key) or self._load_template(template_key, relative_path)
+
+        system = resolve("system", "system.txt")
+        question_rule = resolve("question_rule", "question_rule.txt")
+        bloom = resolve(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
+        qtype = resolve(f"question_type:{question_type}", f"question_type/{question_type}.txt")
+        output = resolve("output_format", "output_format.txt")
         instruction_block = ""
         if instruction:
             instruction_block = f"""

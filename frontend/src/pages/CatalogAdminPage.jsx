@@ -27,13 +27,21 @@ const DEFAULT_WEIGHTS = {
 };
 
 const DEFAULT_THRESHOLDS = { yellow_min: 0.6, green_min: 0.8, pass_min: 0.8 };
+const POLICY_WEIGHT_FIELDS = [
+  ['faithfulness', 'Bám sát nguồn'],
+  ['contextual_relevancy', 'Liên quan ngữ cảnh'],
+  ['answer_relevancy', 'Độ phù hợp đáp án'],
+  ['bloom_alignment', 'Khớp Bloom'],
+  ['clo_alignment', 'Khớp CLO'],
+];
+const POLICY_THRESHOLD_FIELDS = [
+  ['yellow_min', 'Tối thiểu mức vàng'],
+  ['green_min', 'Tối thiểu mức xanh'],
+  ['pass_min', 'Ngưỡng đạt'],
+];
 const EMPTY_SUBJECT_FORM = { id: '', subject_code: '', subject_name: '', description: '', is_active: true };
 const EMPTY_CHAPTER_FORM = { id: '', chapter_code: '', chapter_name: '', sequence_no: 1, is_active: true };
 const EMPTY_CLO_FORM = { id: '', clo_code: '', description: '', target_weight: 1, is_active: true };
-
-function compactJson(value) {
-  return JSON.stringify(value, null, 2);
-}
 
 function usageText(counts = {}) {
   const parts = [
@@ -42,6 +50,10 @@ function usageText(counts = {}) {
     counts.exams ? `${counts.exams} đề` : '',
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : 'Chưa được dùng';
+}
+
+function usageTotal(counts = {}) {
+  return Object.values(counts).reduce((total, value) => total + Number(value || 0), 0);
 }
 
 function childId(item) {
@@ -59,9 +71,24 @@ function factoryText(model) {
 function healthText(model) {
   const health = model?.last_health_check;
   if (!health) return 'Chưa health-check';
+  if (
+    health.status === 'OK'
+    && (!health.config_hash || health.config_hash !== model.config_hash)
+  ) {
+    return 'Health-check không còn khớp cấu hình';
+  }
   return health.status === 'OK'
     ? `OK · ${health.latency_ms || 0}ms`
     : `${health.status || 'FAILED'}${health.error ? ` · ${health.error}` : ''}`;
+}
+
+function modelHealthReady(model) {
+  const health = model?.last_health_check;
+  return Boolean(
+    health?.status === 'OK'
+    && health.config_hash
+    && health.config_hash === model?.config_hash,
+  );
 }
 
 function subjectToForm(subject) {
@@ -116,14 +143,15 @@ function CatalogAdminPage() {
     revision: 'local',
     capabilities: 'QUESTION_GENERATION,QUESTION_EVALUATION',
     priority: 10,
-    is_active: true,
+    is_active: false,
   });
   const [selectedPromptKey, setSelectedPromptKey] = useState('');
+  const [selectedPromptVersion, setSelectedPromptVersion] = useState(null);
   const [promptForm, setPromptForm] = useState({ template_key: '', kind: 'QUESTION_TYPE', name: '', prompt_body: '' });
   const [policyForm, setPolicyForm] = useState({
     policy_name: 'Default question quality policy',
-    weights: compactJson(DEFAULT_WEIGHTS),
-    thresholds: compactJson(DEFAULT_THRESHOLDS),
+    weights: { ...DEFAULT_WEIGHTS },
+    thresholds: { ...DEFAULT_THRESHOLDS },
   });
   const [healthCheckingCode, setHealthCheckingCode] = useState('');
   const [modelHealth, setModelHealth] = useState(null);
@@ -136,6 +164,17 @@ function CatalogAdminPage() {
     [catalog.subjects, activeSubjectId],
   );
   const runtimeConfig = catalog.runtime_config || {};
+  const policyWeightTotal = Object.values(policyForm.weights)
+    .reduce((total, value) => total + Number(value || 0), 0);
+  const policyThresholdsValid = (
+    Number(policyForm.thresholds.yellow_min) <= Number(policyForm.thresholds.green_min)
+    && Number(policyForm.thresholds.green_min) <= Number(policyForm.thresholds.pass_min)
+  );
+  const policyFormValid = (
+    policyForm.policy_name.trim().length > 0
+    && Math.abs(policyWeightTotal - 1) < 0.000001
+    && policyThresholdsValid
+  );
 
   const promptOptions = useMemo(() => {
     const latestByKey = new Map();
@@ -250,6 +289,13 @@ function CatalogAdminPage() {
 
   const toggleSubjectActive = () => {
     if (!activeSubject) return;
+    if (
+      activeSubject.is_active !== false
+      && usageTotal(activeSubject.usage_counts) > 0
+      && !window.confirm(
+        `Tạm khóa ${activeSubject.subject_code}? Đang liên quan: ${usageText(activeSubject.usage_counts)}. Dữ liệu cũ vẫn được giữ nhưng không thể chọn cho dữ liệu mới.`,
+      )
+    ) return;
     runSave(async () => {
       const updated = await updateSubject(activeSubject.id, { is_active: !activeSubject.is_active });
       setSubjectForm(subjectToForm(updated));
@@ -258,6 +304,13 @@ function CatalogAdminPage() {
 
   const toggleChapterActive = (chapter) => {
     if (!activeSubject) return;
+    if (
+      chapter.is_active !== false
+      && usageTotal(chapter.usage_counts) > 0
+      && !window.confirm(
+        `Tạm khóa chương ${chapter.chapter_code}? Đang liên quan: ${usageText(chapter.usage_counts)}.`,
+      )
+    ) return;
     runSave(async () => updateSubjectChapter(
       activeSubject.id,
       childId(chapter),
@@ -267,6 +320,13 @@ function CatalogAdminPage() {
 
   const toggleCloActive = (clo) => {
     if (!activeSubject) return;
+    if (
+      clo.is_active !== false
+      && usageTotal(clo.usage_counts) > 0
+      && !window.confirm(
+        `Tạm khóa ${clo.clo_code}? Đang liên quan: ${usageText(clo.usage_counts)}.`,
+      )
+    ) return;
     runSave(async () => updateSubjectLearningOutcome(
       activeSubject.id,
       childId(clo),
@@ -282,7 +342,7 @@ function CatalogAdminPage() {
       priority: Number(modelForm.priority) || 0,
       config: { endpoint: 'http://localhost:11434/api/generate' },
       is_local: true,
-      is_active: modelForm.is_active,
+      is_active: false,
     }));
   };
 
@@ -295,11 +355,15 @@ function CatalogAdminPage() {
       revision: model.revision || 'local',
       capabilities: (model.capabilities || []).join(','),
       priority: model.priority ?? 10,
-      is_active: model.is_active !== false,
+      is_active: false,
     });
   };
 
   const toggleModelActive = (model) => {
+    if (model.is_active === false && !modelHealthReady(model)) {
+      setError('Model phải health-check thành công với cấu hình hiện tại trước khi kích hoạt.');
+      return;
+    }
     runSave(async () => setAiModelActive({
       model_code: model.model_code,
       is_active: model.is_active === false,
@@ -327,17 +391,21 @@ function CatalogAdminPage() {
     setSelectedPromptKey(templateKey);
     const selected = promptOptions.find((template) => template.template_key === templateKey);
     if (selected) {
+      setSelectedPromptVersion(selected.version);
       setPromptForm({
         template_key: selected.template_key,
         kind: selected.kind,
         name: selected.name,
         prompt_body: selected.prompt_body,
       });
+    } else {
+      setSelectedPromptVersion(null);
     }
   };
 
   const handleEditPromptVersion = (template) => {
     setSelectedPromptKey(template.template_key);
+    setSelectedPromptVersion(template.version);
     setPromptForm({
       template_key: template.template_key,
       kind: template.kind,
@@ -348,7 +416,16 @@ function CatalogAdminPage() {
 
   const handleSavePrompt = (event) => {
     event.preventDefault();
-    runSave(async () => savePromptTemplate({ ...promptForm, create_new_version: true, is_active: true }));
+    runSave(async () => {
+      const saved = await savePromptTemplate({
+        ...promptForm,
+        create_new_version: true,
+        is_active: false,
+      });
+      setSelectedPromptKey(saved.template_key);
+      setSelectedPromptVersion(saved.version);
+      return saved;
+    });
   };
 
   const handleActivatePrompt = (template, isActive = true) => {
@@ -360,11 +437,23 @@ function CatalogAdminPage() {
   };
 
   const handleTestPrompt = async () => {
+    const selected = catalog.prompt_templates.find((template) => (
+      template.template_key === selectedPromptKey
+      && template.version === selectedPromptVersion
+    ));
+    if (!selected) {
+      setError('Hãy chọn một phiên bản prompt đã lưu trước khi test-build.');
+      return;
+    }
     setPromptTesting(true);
     setError('');
     try {
-      const result = await testPromptTemplate({});
+      const result = await testPromptTemplate({
+        template_key: selected.template_key,
+        version: selected.version,
+      });
       setPromptPreview(result);
+      await loadCatalog();
     } catch (err) {
       setError(err.message || 'Không build được prompt mẫu');
     } finally {
@@ -375,9 +464,13 @@ function CatalogAdminPage() {
   const handleSavePolicy = (event) => {
     event.preventDefault();
     runSave(async () => saveEvaluationPolicy({
-      policy_name: policyForm.policy_name,
-      weights: JSON.parse(policyForm.weights),
-      thresholds: JSON.parse(policyForm.thresholds),
+      policy_name: policyForm.policy_name.trim(),
+      weights: Object.fromEntries(
+        Object.entries(policyForm.weights).map(([key, value]) => [key, Number(value)]),
+      ),
+      thresholds: Object.fromEntries(
+        Object.entries(policyForm.thresholds).map(([key, value]) => [key, Number(value)]),
+      ),
       create_new_version: true,
       is_active: true,
     }));
@@ -386,16 +479,16 @@ function CatalogAdminPage() {
   const handleEditPolicy = (policy) => {
     setPolicyForm({
       policy_name: policy.policy_name,
-      weights: compactJson(policy.weights || DEFAULT_WEIGHTS),
-      thresholds: compactJson(policy.thresholds || DEFAULT_THRESHOLDS),
+      weights: { ...(policy.weights || DEFAULT_WEIGHTS) },
+      thresholds: { ...(policy.thresholds || DEFAULT_THRESHOLDS) },
     });
   };
 
-  const handleActivatePolicy = (policy, isActive = true) => {
+  const handleActivatePolicy = (policy) => {
     runSave(async () => activateEvaluationPolicy({
       policy_name: policy.policy_name,
       version: policy.version,
-      is_active: isActive,
+      is_active: true,
     }));
   };
 
@@ -578,10 +671,7 @@ function CatalogAdminPage() {
               <input placeholder="Tên mô hình" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
               <input placeholder="Năng lực mô hình" value={modelForm.capabilities} onChange={(e) => setModelForm({ ...modelForm, capabilities: e.target.value })} />
               <input type="number" min="0" value={modelForm.priority} onChange={(e) => setModelForm({ ...modelForm, priority: e.target.value })} />
-              <label className="catalog-check">
-                <input type="checkbox" checked={modelForm.is_active} onChange={(e) => setModelForm({ ...modelForm, is_active: e.target.checked })} />
-                Đang dùng
-              </label>
+              <p className="catalog-form-hint">Mô hình được lưu ở trạng thái chưa kích hoạt. Hãy health-check trước khi dùng.</p>
               <button type="submit" disabled={saving}>Lưu mô hình</button>
             </form>
             <div className="catalog-list">
@@ -596,7 +686,15 @@ function CatalogAdminPage() {
                     <button type="button" className="catalog-ghost-button" onClick={() => handleSelectModel(model)} disabled={saving}>
                       Sửa
                     </button>
-                    <button type="button" className="catalog-ghost-button" onClick={() => toggleModelActive(model)} disabled={saving}>
+                    <button
+                      type="button"
+                      className="catalog-ghost-button"
+                      onClick={() => toggleModelActive(model)}
+                      disabled={saving || (model.is_active === false && !modelHealthReady(model))}
+                      title={model.is_active === false && !modelHealthReady(model)
+                        ? 'Cần health-check thành công trước khi kích hoạt'
+                        : ''}
+                    >
                       {model.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
                     </button>
                     <button type="button" onClick={() => handleCheckModelHealth(model)} disabled={saving || healthCheckingCode === model.model_code}>
@@ -616,8 +714,13 @@ function CatalogAdminPage() {
           <div className="catalog-card catalog-card--wide">
             <div className="catalog-card-title-row">
               <h2>Mẫu prompt</h2>
-              <button type="button" className="catalog-ghost-button" onClick={handleTestPrompt} disabled={promptTesting}>
-                {promptTesting ? 'Đang build...' : 'Test prompt mẫu'}
+              <button
+                type="button"
+                className="catalog-ghost-button"
+                onClick={handleTestPrompt}
+                disabled={promptTesting || !selectedPromptKey || !selectedPromptVersion}
+              >
+                {promptTesting ? 'Đang build...' : 'Test-build phiên bản đã chọn'}
               </button>
             </div>
             <div className="prompt-layout">
@@ -653,14 +756,36 @@ function CatalogAdminPage() {
                 <article className={`catalog-list-item ${template.is_active ? '' : 'inactive'}`} key={`${template.template_key}-${template.version}`}>
                   <div>
                     <b>{template.name || template.template_key}</b>
-                    <span>{template.template_key} · phiên bản {template.version} {template.is_active ? '· đang dùng' : ''}</span>
+                    <span>
+                      {template.template_key} · phiên bản {template.version}
+                      {template.is_active ? ' · Đang áp dụng' : ' · Bản nháp'}
+                    </span>
+                    <span>
+                      Test-build: {template.last_test_build?.status === 'OK'
+                        && template.last_test_build?.content_hash === template.content_hash
+                        ? 'Đạt'
+                        : 'Chưa đạt'}
+                    </span>
                   </div>
                   <div className="catalog-item-actions">
                     <button type="button" className="catalog-ghost-button" onClick={() => handleEditPromptVersion(template)} disabled={saving}>
                       Sửa
                     </button>
-                    <button type="button" onClick={() => handleActivatePrompt(template, !template.is_active)} disabled={saving}>
-                      {template.is_active ? 'Tắt active' : 'Activate'}
+                    <button
+                      type="button"
+                      onClick={() => handleActivatePrompt(template, !template.is_active)}
+                      disabled={
+                        saving
+                        || (
+                          !template.is_active
+                          && !(
+                            template.last_test_build?.status === 'OK'
+                            && template.last_test_build?.content_hash === template.content_hash
+                          )
+                        )
+                      }
+                    >
+                      {template.is_active ? 'Ngừng áp dụng' : 'Kích hoạt'}
                     </button>
                   </div>
                 </article>
@@ -671,10 +796,67 @@ function CatalogAdminPage() {
           <div className="catalog-card">
             <h2>Bộ tiêu chí đánh giá</h2>
             <form className="catalog-form" onSubmit={handleSavePolicy}>
-              <input value={policyForm.policy_name} onChange={(e) => setPolicyForm({ ...policyForm, policy_name: e.target.value })} />
-              <textarea rows={7} value={policyForm.weights} onChange={(e) => setPolicyForm({ ...policyForm, weights: e.target.value })} />
-              <textarea rows={5} value={policyForm.thresholds} onChange={(e) => setPolicyForm({ ...policyForm, thresholds: e.target.value })} />
-              <button type="submit" disabled={saving}>Lưu phiên bản tiêu chí</button>
+              <label className="policy-field">
+                <span>Tên bộ tiêu chí</span>
+                <input
+                  required
+                  value={policyForm.policy_name}
+                  onChange={(e) => setPolicyForm({ ...policyForm, policy_name: e.target.value })}
+                />
+              </label>
+              <fieldset className="policy-fieldset">
+                <legend>Trọng số</legend>
+                <div className="policy-field-grid">
+                  {POLICY_WEIGHT_FIELDS.map(([key, label]) => (
+                    <label className="policy-field" key={key}>
+                      <span>{label}</span>
+                      <input
+                        required
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={policyForm.weights[key]}
+                        onChange={(e) => setPolicyForm({
+                          ...policyForm,
+                          weights: { ...policyForm.weights, [key]: e.target.value },
+                        })}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <p className={`policy-total ${Math.abs(policyWeightTotal - 1) < 0.000001 ? 'ok' : 'warn'}`}>
+                  Tổng trọng số: {policyWeightTotal.toFixed(2)} / 1.00
+                </p>
+              </fieldset>
+              <fieldset className="policy-fieldset">
+                <legend>Ngưỡng đánh giá</legend>
+                <div className="policy-field-grid">
+                  {POLICY_THRESHOLD_FIELDS.map(([key, label]) => (
+                    <label className="policy-field" key={key}>
+                      <span>{label}</span>
+                      <input
+                        required
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={policyForm.thresholds[key]}
+                        onChange={(e) => setPolicyForm({
+                          ...policyForm,
+                          thresholds: { ...policyForm.thresholds, [key]: e.target.value },
+                        })}
+                      />
+                    </label>
+                  ))}
+                </div>
+                {!policyThresholdsValid && (
+                  <p className="policy-total warn">
+                    Cần thỏa: mức vàng ≤ mức xanh ≤ ngưỡng đạt.
+                  </p>
+                )}
+              </fieldset>
+              <button type="submit" disabled={saving || !policyFormValid}>Lưu phiên bản tiêu chí</button>
             </form>
             <div className="catalog-list">
               {catalog.evaluation_policies.map((policy) => (
@@ -687,8 +869,8 @@ function CatalogAdminPage() {
                     <button type="button" className="catalog-ghost-button" onClick={() => handleEditPolicy(policy)} disabled={saving}>
                       Sửa
                     </button>
-                    <button type="button" onClick={() => handleActivatePolicy(policy, !policy.is_active)} disabled={saving}>
-                      {policy.is_active ? 'Tắt active' : 'Activate'}
+                    <button type="button" onClick={() => handleActivatePolicy(policy)} disabled={saving || policy.is_active}>
+                      {policy.is_active ? 'Đang active' : 'Kích hoạt'}
                     </button>
                   </div>
                 </article>

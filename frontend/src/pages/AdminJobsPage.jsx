@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBan,
@@ -24,6 +25,17 @@ import '../css/AdminJobsPage.css';
 const PAGE_SIZE = 25;
 const EXPORT_PAGE_SIZE = 100;
 
+function jobFiltersFromSearch(search) {
+  const params = new URLSearchParams(search);
+  const status = params.get('status') || 'all';
+  const kind = params.get('kind') || 'all';
+  return {
+    status: STATUS_OPTIONS.some((option) => option.value === status) ? status : 'all',
+    kind: ['all', 'generation', 'evaluation', 'document'].includes(kind) ? kind : 'all',
+    staleOnly: params.get('stale_only') === 'true',
+  };
+}
+
 const KIND_LABEL = {
   generation: 'Sinh câu hỏi',
   evaluation: 'Đánh giá',
@@ -34,6 +46,7 @@ const STATUS_LABEL = {
   queued: 'Đang chờ',
   processing: 'Đang xử lý',
   failed: 'Thất bại',
+  cancelled: 'Đã hủy',
   QUEUED: 'Đang chờ',
   PROCESSING: 'Đang xử lý',
   COMPLETED: 'Hoàn tất',
@@ -127,13 +140,15 @@ const JOB_EXPORT_COLUMNS = [
 ];
 
 function AdminJobsPage() {
+  const location = useLocation();
+  const initialFilters = jobFiltersFromSearch(location.search);
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState({ total: 0, active: 0, failed: 0, long_running: 0 });
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [kindFilter, setKindFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [staleOnly, setStaleOnly] = useState(false);
+  const [kindFilter, setKindFilter] = useState(initialFilters.kind);
+  const [statusFilter, setStatusFilter] = useState(initialFilters.status);
+  const [staleOnly, setStaleOnly] = useState(initialFilters.staleOnly);
   const [userIdFilter, setUserIdFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -144,6 +159,14 @@ function AdminJobsPage() {
   const [actionKey, setActionKey] = useState('');
   const [exportKey, setExportKey] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
+
+  useEffect(() => {
+    const next = jobFiltersFromSearch(location.search);
+    setKindFilter(next.kind);
+    setStatusFilter(next.status);
+    setStaleOnly(next.staleOnly);
+    setPage(1);
+  }, [location.search]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -259,25 +282,32 @@ function AdminJobsPage() {
   const handleRetry = async (job) => {
     const key = `retry:${jobKey(job)}`;
     setActionKey(key);
+    setError('');
     try {
       await retryAdminJob(job.kind, job.id);
       await fetchJobs();
     } catch (err) {
-      window.alert(err.message || 'Chạy lại tác vụ thất bại');
+      setError(err.message || 'Chạy lại tác vụ thất bại');
     } finally {
       setActionKey('');
     }
   };
 
   const handleCancel = async (job) => {
-    if (!window.confirm(`Hủy tác vụ ${compactId(job.id)}?`)) return;
+    const consequence = {
+      generation: 'Hệ thống sẽ dừng sinh thêm câu hỏi; các câu đã lưu trước thời điểm hủy vẫn được giữ lại.',
+      evaluation: 'Kết quả AI chưa hoàn tất sẽ không được ghi vào câu hỏi.',
+      document: 'Pipeline xử lý tài liệu sẽ dừng và cần chạy lại từ màn quản lý tài liệu.',
+    }[job.kind] || 'Tác vụ đang chạy sẽ bị dừng.';
+    if (!window.confirm(`Hủy tác vụ ${compactId(job.id)}? ${consequence}`)) return;
     const key = `cancel:${jobKey(job)}`;
     setActionKey(key);
+    setError('');
     try {
       await cancelAdminJob(job.kind, job.id);
       await fetchJobs();
     } catch (err) {
-      window.alert(err.message || 'Hủy tác vụ thất bại');
+      setError(err.message || 'Hủy tác vụ thất bại');
     } finally {
       setActionKey('');
     }
@@ -465,7 +495,7 @@ function AdminJobsPage() {
                   <th>Đối tượng</th>
                   <th>Người tạo</th>
                   <th>Cập nhật</th>
-                  <th>Lỗi</th>
+                  <th>Lỗi / ghi chú</th>
                   <th>Thao tác</th>
                 </tr>
               </thead>
@@ -584,7 +614,7 @@ function AdminJobsPage() {
               </dl>
               {selectedJob.error_message && (
                 <div className="job-detail-error">
-                  <span>Lỗi gần nhất</span>
+                  <span>Thông báo gần nhất</span>
                   <p>{selectedJob.error_message}</p>
                 </div>
               )}

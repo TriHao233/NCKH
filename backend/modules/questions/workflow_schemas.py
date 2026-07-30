@@ -112,6 +112,14 @@ class SecondaryReviewRequest(BaseModel):
 class ReviewAssignmentRequest(BaseModel):
     reviewer_user_id: str | None = Field(None, min_length=1, max_length=120)
     note: str = Field("", max_length=500)
+    expected_revision: int = Field(..., ge=0)
+    force: bool = False
+
+    @model_validator(mode="after")
+    def require_force_reason(self):
+        if self.force and not self.note.strip():
+            raise ValueError("Cần ghi rõ lý do khi ghi đè phân công đang xử lý")
+        return self
 
 
 class MoodlePublicationRequest(BaseModel):

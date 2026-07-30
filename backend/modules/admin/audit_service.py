@@ -8,6 +8,49 @@ from bson import ObjectId
 from pymongo.database import Database
 
 
+REDACTED_VALUE = "[REDACTED]"
+SENSITIVE_FIELD_NAMES = {
+    "authorization",
+    "credential",
+    "credentials",
+    "id_token",
+    "refresh_token",
+    "access_token",
+    "api_key",
+    "private_key",
+    "client_secret",
+    "wstoken",
+}
+
+
+def _is_sensitive_field(value: Any) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+    return (
+        normalized in SENSITIVE_FIELD_NAMES
+        or "password" in normalized
+        or "secret" in normalized
+        or normalized.endswith("_token")
+    )
+
+
+def _redact_sensitive(value: Any):
+    if isinstance(value, dict):
+        sensitive_change = _is_sensitive_field(value.get("path") or value.get("field"))
+        redacted = {}
+        for key, item in value.items():
+            if _is_sensitive_field(key) or (
+                sensitive_change
+                and key in {"old_value", "new_value", "value", "before", "after"}
+            ):
+                redacted[key] = REDACTED_VALUE
+            else:
+                redacted[key] = _redact_sensitive(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive(item) for item in value]
+    return value
+
+
 def _json_safe(value):
     if isinstance(value, ObjectId):
         return str(value)
@@ -49,10 +92,10 @@ def _normalize_audit_log(record: dict) -> dict:
             "id": str(entity_id) if entity_id is not None else None,
             "version_id": str(entity.get("version_id")) if entity.get("version_id") is not None else None,
         },
-        "before": _json_safe(record.get("before") or {}),
-        "after": _json_safe(record.get("after") or {}),
-        "changes": _json_safe(record.get("changes") or []),
-        "metadata": _json_safe(record.get("metadata") or {}),
+        "before": _json_safe(_redact_sensitive(record.get("before") or {})),
+        "after": _json_safe(_redact_sensitive(record.get("after") or {})),
+        "changes": _json_safe(_redact_sensitive(record.get("changes") or [])),
+        "metadata": _json_safe(_redact_sensitive(record.get("metadata") or {})),
         "before_hash": record.get("before_hash"),
         "after_hash": record.get("after_hash"),
         "created_at": record.get("created_at"),

@@ -1,8 +1,10 @@
 import hashlib
 from datetime import datetime, timezone
+from typing import Callable
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
+from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database
@@ -155,11 +157,14 @@ def save_generated_questions(
     generation_run_id: str,
     requested_by_user_id,
     source_chunk_ids: list[str],
+    should_continue: Callable[[], bool] | None = None,
 ) -> list[dict]:
     service = get_question_service()
     run_oid = object_id(generation_run_id, "generation_run_id")
     saved_questions = []
     for question in questions:
+        if should_continue is not None and not should_continue():
+            raise RuntimeError("GENERATION_JOB_CANCELLED")
         saved_question = service.create(
             QuestionCreateRequest(
                 content=question["question"],
@@ -216,8 +221,9 @@ def update_generation_job(
     result: dict | None = None,
     metrics: dict | None = None,
     error_message: str | None = None,
-):
-    """Cập nhật trạng thái job sinh câu hỏi."""
+    expected_status: str | list[str] | tuple[str, ...] | set[str] | None = None,
+) -> dict | None:
+    """Cập nhật job bằng compare-and-set để không ghi đè trạng thái kết thúc."""
     db = get_database()
     update_data: dict = {
         "status": status,
@@ -230,7 +236,32 @@ def update_generation_job(
     if error_message is not None:
         update_data["error_message"] = error_message
 
-    db["generation_jobs"].update_one({"_id": ObjectId(job_id)}, {"$set": update_data})
+    try:
+        query: dict = {"_id": ObjectId(job_id)}
+    except InvalidId:
+        return None
+    if expected_status is not None:
+        if isinstance(expected_status, str):
+            query["status"] = expected_status
+        else:
+            query["status"] = {"$in": list(expected_status)}
+    return db["generation_jobs"].find_one_and_update(
+        query,
+        {"$set": update_data},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def generation_job_has_status(job_id: str, status: str) -> bool:
+    """Kiểm tra trạng thái hiện tại mà không làm biến đổi tài liệu job."""
+    try:
+        job_oid = ObjectId(job_id)
+    except InvalidId:
+        return False
+    return get_database()["generation_jobs"].find_one(
+        {"_id": job_oid, "status": status},
+        {"_id": 1},
+    ) is not None
 
 
 def get_generation_job(job_id: str) -> dict | None:

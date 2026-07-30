@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -199,10 +200,11 @@ class MoodleTargetService:
         if site_key and site_key != "all":
             query["target.moodle_site_id"] = site_key
         if search:
+            search_pattern = re.escape(search.strip())
             query["$or"] = [
-                {"moodle_question_ref_id": {"$regex": search, "$options": "i"}},
-                {"request_payload.question_code": {"$regex": search, "$options": "i"}},
-                {"error.message": {"$regex": search, "$options": "i"}},
+                {"moodle_question_ref_id": {"$regex": search_pattern, "$options": "i"}},
+                {"request_payload.question_code": {"$regex": search_pattern, "$options": "i"}},
+                {"error.message": {"$regex": search_pattern, "$options": "i"}},
             ]
         total = self.db.moodle_publications.count_documents(query)
         items = list(

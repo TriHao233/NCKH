@@ -21,7 +21,14 @@ from modules.questions.workflow_service import (
 )
 
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
-RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "failed"}
+RETRYABLE_STATUSES = {
+    "FAILED",
+    "ERROR",
+    "STALE",
+    "CANCELLED",
+    "failed",
+    "cancelled",
+}
 
 
 def utc_now() -> datetime:
@@ -100,7 +107,7 @@ def _generation_status_filter(status: str | None) -> str | dict | None:
     if normalized == "active":
         return {"$in": ["queued", "processing"]}
     if normalized in {"retryable", "attention"}:
-        return {"$in": ["failed"]}
+        return {"$in": ["failed", "cancelled"]}
     return normalized
 
 
@@ -111,7 +118,7 @@ def _uppercase_status_filter(status: str | None) -> str | dict | None:
     if normalized == "active":
         return {"$in": ["QUEUED", "PROCESSING"]}
     if normalized in {"retryable", "attention"}:
-        return {"$in": ["FAILED", "ERROR", "STALE"]}
+        return {"$in": ["FAILED", "ERROR", "STALE", "CANCELLED"]}
     return status.upper()
 
 
@@ -209,7 +216,7 @@ class AdminJobService:
             query["requested_by_user_id"] = user_oid
         return [
             self._normalize_generation(job)
-            for job in self.db.generation_jobs.find(query).sort("updated_at", -1).limit(500)
+            for job in self.db.generation_jobs.find(query).sort("updated_at", -1)
         ]
 
     def _evaluation_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
@@ -221,7 +228,7 @@ class AdminJobService:
             query["requested_by_user_id"] = user_oid
         return [
             self._normalize_evaluation(job)
-            for job in self.db.evaluation_jobs.find(query).sort("updated_at", -1).limit(500)
+            for job in self.db.evaluation_jobs.find(query).sort("updated_at", -1)
         ]
 
     def _document_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
@@ -235,7 +242,7 @@ class AdminJobService:
                 for doc in self.db.documents.find({"uploaded_by_user_id": user_oid}, {"_id": 1})
             ]
             query["document_id"] = {"$in": document_ids}
-        document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1).limit(500))
+        document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1))
         document_ids = [job["document_id"] for job in document_jobs if job.get("document_id")]
         documents = {
             doc["_id"]: doc
@@ -454,8 +461,8 @@ class AdminJobService:
             {"_id": _parse_object_id(job_id, "job_id"), "status": {"$in": ["queued", "processing"]}},
             {
                 "$set": {
-                    "status": "failed",
-                    "error_message": f"Cancelled by admin {current_user.email}",
+                    "status": "cancelled",
+                    "error_message": f"Đã hủy bởi Admin {current_user.email}",
                     "updated_at": now,
                 }
             },
@@ -470,10 +477,14 @@ class AdminJobService:
         now = utc_now()
         error = {"message": f"Cancelled by admin {current_user.email}", "at": now}
         result = self.db.evaluation_jobs.find_one_and_update(
-            {"_id": _parse_object_id(job_id, "job_id"), "status": {"$in": ["QUEUED", "PROCESSING"]}},
+            {
+                "_id": _parse_object_id(job_id, "job_id"),
+                "status": {"$in": ["QUEUED", "PROCESSING"]},
+                "finalization_token": None,
+            },
             {
                 "$set": {
-                    "status": "STALE",
+                    "status": "CANCELLED",
                     "error": error,
                     "finished_at": now,
                     "updated_at": now,

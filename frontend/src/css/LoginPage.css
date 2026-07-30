@@ -392,6 +392,18 @@
 }
 
 /* ─── Form fields ────────────────────────────────────────────── */
+.auth-session-notice {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  color: #9a3412;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.45;
+  margin-top: 12px;
+  padding: 9px 11px;
+}
+
 .auth-form {
   display: flex;
   flex-direction: column;

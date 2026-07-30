@@ -469,6 +469,46 @@
   font-weight: 800;
 }
 
+.moodle-real-sync-warning {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #fde68a;
+  border-radius: 9px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.moodle-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  border-top: 1px solid #e7eef6;
+}
+
+.moodle-pagination button {
+  border: 1px solid #cbd9e8;
+  border-radius: 8px;
+  background: #fff;
+  color: #0c5c9f;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 7px 11px;
+}
+
+.moodle-pagination button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.moodle-pagination span {
+  color: #5c6f89;
+  font-size: 0.82rem;
+}
+
 .moodle-empty {
   color: #5c6f89;
   font-size: 0.86rem;
@@ -500,5 +540,15 @@
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .moodle-pagination {
+    flex-wrap: wrap;
+  }
+
+  .moodle-pagination span {
+    order: -1;
+    width: 100%;
+    text-align: center;
   }
 }

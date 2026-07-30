@@ -225,6 +225,52 @@
   line-height: 1.45;
 }
 
+.policy-fieldset {
+  border: 1px solid #d9e6f2;
+  border-radius: 10px;
+  margin: 0;
+  padding: 10px;
+}
+
+.policy-fieldset legend {
+  color: #003a75;
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 0 5px;
+}
+
+.policy-field-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.policy-field {
+  color: #425a78;
+  display: grid;
+  font-size: 0.76rem;
+  font-weight: 700;
+  gap: 5px;
+}
+
+.policy-total {
+  border-radius: 7px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  margin-top: 8px;
+  padding: 6px 8px;
+}
+
+.policy-total.ok {
+  background: #ecfdf3;
+  color: #087443;
+}
+
+.policy-total.warn {
+  background: #fff7ed;
+  color: #b45309;
+}
+
 .catalog-check {
   min-height: 36px;
   border: 1px solid #d9e6f2;
@@ -411,7 +457,8 @@
   .subject-layout,
   .prompt-layout,
   .catalog-columns,
-  .catalog-form--inline {
+  .catalog-form--inline,
+  .policy-field-grid {
     grid-template-columns: 1fr;
   }
 
@@ -425,4 +472,10 @@
 @media (max-width: 640px) {
   .catalog-page { padding: 22px 16px 56px; }
   .catalog-header { flex-direction: column; align-items: flex-start; }
+}
+.catalog-form-hint {
+  margin: 0;
+  color: #5c6f89;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }

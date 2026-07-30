@@ -228,7 +228,10 @@ def save_evaluation_policy(
     _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.save_evaluation_policy(payload)
+    try:
+        return service.save_evaluation_policy(payload)
+    except Exception as exc:
+        _translate(exc)
 
 
 @router.post("/evaluation-policies/active")

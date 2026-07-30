@@ -39,6 +39,9 @@ function LoginPage() {
   const location = useLocation();
   const { login, user, loading } = useContext(AuthContext);
   const requestedPath = location.state?.from;
+  const [sessionNotice] = useState(
+    () => location.state?.authNotice || sessionStorage.getItem('authNotice') || '',
+  );
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [authNotice, setAuthNotice] = useState(null);
@@ -61,6 +64,10 @@ function LoginPage() {
   const handleTogglePassword = () => {
     setShowPassword(!showPassword);
   };
+
+  useEffect(() => {
+    sessionStorage.removeItem('authNotice');
+  }, []);
 
   useEffect(() => {
     if (!loading && user) {
@@ -233,6 +240,11 @@ function LoginPage() {
                     Đăng ký ngay
                   </Link>
                 </p>
+                {sessionNotice && (
+                  <p className="auth-session-notice" role="alert">
+                    {sessionNotice}
+                  </p>
+                )}
               </div>
 
               {authNotice && (

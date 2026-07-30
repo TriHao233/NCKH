@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -59,6 +60,8 @@ class UserRepository(Protocol):
     def sync_identity(self, claims: dict) -> dict: ...
 
     def list(self, page: int, page_size: int, role: str | None, search: str | None) -> tuple[list[dict], int]: ...
+
+    def count_by_role(self, search: str | None = None) -> dict[str, int]: ...
 
     def update(self, user_id: str | ObjectId, fields: dict) -> dict | None: ...
 
@@ -150,6 +153,18 @@ class MongoUserRepository:
             return_document=ReturnDocument.AFTER,
         )
 
+    @staticmethod
+    def _search_filter(search: str | None) -> dict:
+        term = re.escape((search or "").strip())
+        if not term:
+            return {}
+        return {
+            "$or": [
+                {"display_name": {"$regex": term, "$options": "i"}},
+                {"email": {"$regex": term, "$options": "i"}},
+            ]
+        }
+
     def list(
         self,
         page: int,
@@ -157,14 +172,9 @@ class MongoUserRepository:
         role: str | None,
         search: str | None,
     ) -> tuple[list[dict], int]:
-        query: dict = {}
+        query: dict = self._search_filter(search)
         if role:
             query["role"] = role
-        if search:
-            query["$or"] = [
-                {"display_name": {"$regex": search, "$options": "i"}},
-                {"email": {"$regex": search, "$options": "i"}},
-            ]
         total = self.collection.count_documents(query)
         records = list(
             self.collection.find(query)
@@ -173,6 +183,16 @@ class MongoUserRepository:
             .limit(page_size)
         )
         return records, total
+
+    def count_by_role(self, search: str | None = None) -> dict[str, int]:
+        base_query = self._search_filter(search)
+        return {
+            "all": self.collection.count_documents(base_query),
+            **{
+                role: self.collection.count_documents({**base_query, "role": role})
+                for role in ("Admin", "Teacher", "Reviewer")
+            },
+        }
 
     def update(self, user_id: str | ObjectId, fields: dict) -> dict | None:
         fields = {**fields, "updated_at": utc_now()}

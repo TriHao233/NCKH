@@ -57,7 +57,11 @@ EVALUATION_SOURCE_EXCERPT_CHARS = 700
 evaluation_semaphore = asyncio.Semaphore(1)
 
 
-def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
+def _empty_review_assignment(
+    now=None,
+    reason: str | None = None,
+    revision: int = 0,
+) -> dict:
     return {
         "status": "UNASSIGNED",
         "reviewer_user_id": None,
@@ -67,6 +71,8 @@ def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
         "lock_expires_at": None,
         "last_released_at": now,
         "release_reason": reason,
+        "revision": revision,
+        "finalization_token": None,
     }
 
 
@@ -641,6 +647,7 @@ class QuestionWorkflowService:
             "started_at": None,
             "finished_at": None,
             "duration_ms": None,
+            "finalization_token": None,
             "updated_at": now,
         }
 
@@ -805,6 +812,22 @@ class QuestionWorkflowService:
                 "evaluation_job_id": str(job["_id"]),
                 "source_snapshot": json_safe(job.get("source_snapshot") or []),
             }
+            finalization_token = ObjectId()
+            finalization_claim = self.db.evaluation_jobs.update_one(
+                {
+                    "_id": job["_id"],
+                    "status": "PROCESSING",
+                    "finalization_token": None,
+                },
+                {
+                    "$set": {
+                        "finalization_token": finalization_token,
+                        "updated_at": utc_now(),
+                    }
+                },
+            )
+            if not finalization_claim.matched_count:
+                return None
             evaluation = self.evaluate(
                 str(question["_id"]),
                 EvaluationCreateRequest(
@@ -824,7 +847,11 @@ class QuestionWorkflowService:
             )
             finished_at = utc_now()
             self.db.evaluation_jobs.update_one(
-                {"_id": job["_id"], "status": "PROCESSING"},
+                {
+                    "_id": job["_id"],
+                    "status": "PROCESSING",
+                    "finalization_token": finalization_token,
+                },
                 {
                     "$set": {
                         "status": "COMPLETED",
@@ -869,9 +896,30 @@ class QuestionWorkflowService:
     def _lock_expires_at(self, now) -> object:
         return now + timedelta(minutes=max(1, settings.review_lock_timeout_minutes))
 
+    @staticmethod
+    def _assignment_revision(question: dict) -> int:
+        assignment = question.get("review_assignment") or {}
+        return max(0, int(assignment.get("revision") or 0))
+
+    @staticmethod
+    def _assignment_revision_condition(expected_revision: int) -> dict:
+        if expected_revision == 0:
+            return {
+                "$or": [
+                    {"review_assignment.revision": 0},
+                    {"review_assignment.revision": {"$exists": False}},
+                ]
+            }
+        return {"review_assignment.revision": expected_revision}
+
+    @staticmethod
+    def _has_active_review_lock(assignment: dict, now) -> bool:
+        if assignment.get("status") != "IN_REVIEW":
+            return False
+        lock_expires_at = _as_aware_utc(assignment.get("lock_expires_at"))
+        return not lock_expires_at or lock_expires_at > _as_aware_utc(now)
+
     def _assignment_available_filter(self, current_user: CurrentUser, now) -> list[dict]:
-        if current_user.role == "Admin":
-            return []
         return [
             {"review_assignment": {"$exists": False}},
             {"review_assignment.status": "UNASSIGNED"},
@@ -881,9 +929,14 @@ class QuestionWorkflowService:
         ]
 
     def _ensure_review_lock(self, question: dict, current_user: CurrentUser, now) -> None:
-        if current_user.role == "Admin":
-            return
         assignment = question.get("review_assignment") or {}
+        if current_user.role == "Admin":
+            if (
+                self._has_active_review_lock(assignment, now)
+                and assignment.get("reviewer_user_id") != current_user.id
+            ):
+                raise RuntimeError("ASSIGNMENT_CONFLICT")
+            return
         if assignment.get("status") != "IN_REVIEW":
             raise PermissionError("Bạn cần claim câu hỏi trước khi kiểm duyệt")
         if assignment.get("reviewer_user_id") != current_user.id:
@@ -953,6 +1006,7 @@ class QuestionWorkflowService:
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể claim")
         now = utc_now()
         previous_assignment = question.get("review_assignment") or {}
+        previous_revision = self._assignment_revision(question)
         assignment = {
             "status": "IN_REVIEW",
             "reviewer_user_id": current_user.id,
@@ -963,23 +1017,28 @@ class QuestionWorkflowService:
             "lock_expires_at": self._lock_expires_at(now),
             "last_released_at": None,
             "release_reason": None,
+            "revision": previous_revision + 1,
+            "finalization_token": None,
         }
         query = {
             "_id": question["_id"],
             "current_version_id": version["_id"],
             "lifecycle_status": "ACTIVE",
             "review_status": "PENDING",
+            "review_assignment.finalization_token": None,
         }
         available_filter = self._assignment_available_filter(current_user, now)
-        if available_filter:
-            query["$or"] = available_filter
+        query["$and"] = [
+            {"$or": available_filter},
+            self._assignment_revision_condition(previous_revision),
+        ]
         updated = self.db.questions.find_one_and_update(
             query,
             {"$set": {"review_assignment": assignment, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
-            raise PermissionError("Câu hỏi đang được Reviewer khác xử lý")
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
         self._assignment_audit(
             action="QUESTION_REVIEW_CLAIMED",
             question=updated,
@@ -994,22 +1053,36 @@ class QuestionWorkflowService:
         pair = self._pair(question_id)
         question, version = pair
         now = utc_now()
+        previous_assignment = question.get("review_assignment") or {}
+        previous_revision = self._assignment_revision(question)
+        if (
+            current_user.role == "Admin"
+            and self._has_active_review_lock(previous_assignment, now)
+            and previous_assignment.get("reviewer_user_id") != current_user.id
+        ):
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
         query = {
             "_id": question["_id"],
             "current_version_id": version["_id"],
             "lifecycle_status": "ACTIVE",
             "review_status": "PENDING",
+            "review_assignment.finalization_token": None,
+            "$and": [self._assignment_revision_condition(previous_revision)],
         }
         if current_user.role != "Admin":
             query["review_assignment.reviewer_user_id"] = current_user.id
-        assignment = _empty_review_assignment(now, "released")
+        assignment = _empty_review_assignment(
+            now,
+            "released",
+            revision=previous_revision + 1,
+        )
         updated = self.db.questions.find_one_and_update(
             query,
             {"$set": {"review_assignment": assignment, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
-            raise PermissionError("Bạn không thể release assignment này")
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
         self._assignment_audit(
             action="QUESTION_REVIEW_RELEASED",
             question=updated,
@@ -1031,6 +1104,15 @@ class QuestionWorkflowService:
         if question["review_status"] != "PENDING":
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể phân công")
         now = utc_now()
+        previous_assignment = question.get("review_assignment") or {}
+        previous_revision = self._assignment_revision(question)
+        if payload.expected_revision != previous_revision:
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
+        active_lock = self._has_active_review_lock(previous_assignment, now)
+        if active_lock and not payload.force:
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
+        if payload.force and not payload.note.strip():
+            raise ValueError("Cần ghi rõ lý do khi ghi đè phân công đang xử lý")
         if payload.reviewer_user_id:
             reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
             assignment = {
@@ -1042,10 +1124,16 @@ class QuestionWorkflowService:
                 "lock_expires_at": self._lock_expires_at(now),
                 "last_released_at": None,
                 "release_reason": payload.note or None,
+                "revision": previous_revision + 1,
+                "finalization_token": None,
             }
             action = "QUESTION_REVIEW_ASSIGNED"
         else:
-            assignment = _empty_review_assignment(now, payload.note or "unassigned")
+            assignment = _empty_review_assignment(
+                now,
+                payload.note or "unassigned",
+                revision=previous_revision + 1,
+            )
             action = "QUESTION_REVIEW_UNASSIGNED"
         updated = self.db.questions.find_one_and_update(
             {
@@ -1053,12 +1141,14 @@ class QuestionWorkflowService:
                 "current_version_id": version["_id"],
                 "lifecycle_status": "ACTIVE",
                 "review_status": "PENDING",
+                "review_assignment.finalization_token": None,
+                "$and": [self._assignment_revision_condition(previous_revision)],
             },
             {"$set": {"review_assignment": assignment, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
-            raise RuntimeError("VERSION_CONFLICT")
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
         self._assignment_audit(
             action=action,
             question=updated,
@@ -1066,7 +1156,11 @@ class QuestionWorkflowService:
             current_user=current_user,
             before=question.get("review_assignment"),
             after=assignment,
-            metadata={"note": payload.note},
+            metadata={
+                "note": payload.note,
+                "force": payload.force,
+                "overrode_active_lock": active_lock,
+            },
         )
         if payload.reviewer_user_id:
             safe_notify_review_assigned(
@@ -1080,6 +1174,8 @@ class QuestionWorkflowService:
 
     def review(self, question_id: str, payload: ReviewCreateRequest, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
+        if question["review_status"] != "PENDING":
+            raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể được kiểm duyệt")
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
         if (
@@ -1092,6 +1188,22 @@ class QuestionWorkflowService:
             )
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
+        assignment = question.get("review_assignment") or {}
+        admin_direct_review = (
+            current_user.role == "Admin"
+            and not (
+                assignment.get("status") == "IN_REVIEW"
+                and assignment.get("reviewer_user_id") == current_user.id
+                and self._has_active_review_lock(assignment, now)
+            )
+        )
+        if (
+            admin_direct_review
+            and not payload.note.strip()
+            and not payload.review_form.overall_note.strip()
+        ):
+            raise ValueError("Admin duyệt thay Reviewer phải ghi rõ lý do")
+        assignment_revision = self._assignment_revision(question)
         secondary = question.get("secondary_review") or {}
         awaiting_secondary = (
             payload.decision == "APPROVED"
@@ -1132,6 +1244,7 @@ class QuestionWorkflowService:
             "review_assignment": _empty_review_assignment(
                 now,
                 f"review_{payload.decision.lower()}",
+                revision=assignment_revision + 1,
             ),
         }
         if request_secondary:
@@ -1205,21 +1318,84 @@ class QuestionWorkflowService:
             },
             "created_at": now,
         }
-        with mongo_transaction() as session:
-            self.db.question_reviews.insert_one(review, session=session)
-            result = self.db.questions.update_one(
+        reservation_query = {
+            "_id": question["_id"],
+            "current_version_id": version["_id"],
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+            "latest_review_id": question.get("latest_review_id"),
+            "review_assignment.finalization_token": None,
+            "$and": [self._assignment_revision_condition(assignment_revision)],
+        }
+        if current_user.role != "Admin":
+            reservation_query.update(
+                {
+                    "review_assignment.status": "IN_REVIEW",
+                    "review_assignment.reviewer_user_id": current_user.id,
+                }
+            )
+            reservation_query["$and"].append(
+                {
+                    "$or": [
+                        {"review_assignment.lock_expires_at": None},
+                        {"review_assignment.lock_expires_at": {"$gt": now}},
+                    ]
+                }
+            )
+        reserved = self.db.questions.find_one_and_update(
+            reservation_query,
+            {
+                "$set": {
+                    "review_assignment.finalization_token": review["_id"],
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not reserved:
+            raise RuntimeError("ASSIGNMENT_CONFLICT")
+
+        inserted_review = False
+        try:
+            with mongo_transaction() as session:
+                self.db.question_reviews.insert_one(review, session=session)
+                inserted_review = True
+                result = self.db.questions.update_one(
+                    {
+                        "_id": question["_id"],
+                        "current_version_id": version["_id"],
+                        "lifecycle_status": "ACTIVE",
+                        "review_status": "PENDING",
+                        "latest_review_id": question.get("latest_review_id"),
+                        "review_assignment.finalization_token": review["_id"],
+                    },
+                    {"$set": question_fields},
+                    session=session,
+                )
+                if not result.matched_count:
+                    raise RuntimeError("VERSION_CONFLICT")
+                self.db.audit_logs.insert_one(audit, session=session)
+        except Exception:
+            rollback = self.db.questions.update_one(
                 {
                     "_id": question["_id"],
-                    "current_version_id": version["_id"],
-                    "lifecycle_status": "ACTIVE",
-                    "latest_review_id": question.get("latest_review_id"),
+                    "review_status": "PENDING",
+                    "review_assignment.finalization_token": review["_id"],
                 },
-                {"$set": question_fields},
-                session=session,
+                {
+                    "$set": {
+                        "review_assignment.finalization_token": None,
+                        "updated_at": utc_now(),
+                    }
+                },
             )
-            if not result.matched_count:
-                raise RuntimeError("VERSION_CONFLICT")
-            self.db.audit_logs.insert_one(audit, session=session)
+            if (
+                rollback.matched_count
+                and inserted_review
+                and hasattr(self.db.question_reviews, "delete_one")
+            ):
+                self.db.question_reviews.delete_one({"_id": review["_id"]})
+            raise
         if not request_secondary:
             safe_notify_review_decision(
                 database=self.db,

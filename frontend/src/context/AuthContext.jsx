@@ -2,6 +2,7 @@ import { createContext, useState, useEffect, useRef } from 'react';
 import { onIdTokenChanged, signOut } from 'firebase/auth';
 
 import { auth } from '../../firebase';
+import { AUTH_FAILURE_EVENT } from '../auth/authFailure';
 import { apiRequest } from '../services/apiClient';
 
 export const AuthContext = createContext();
@@ -47,6 +48,7 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(() => readCachedUser());
     const [loading, setLoading] = useState(true);
     const authGeneration = useRef(0);
+    const endingSession = useRef(false);
 
     const persistUser = (userInfo) => {
         localStorage.setItem("userInfo", JSON.stringify(userInfo));
@@ -123,6 +125,27 @@ export const AuthProvider = ({ children }) => {
             active = false;
             unsubscribe();
         };
+    }, []);
+
+    useEffect(() => {
+        const handleAuthFailure = async (event) => {
+            if (endingSession.current) return;
+            endingSession.current = true;
+            authGeneration.current += 1;
+            const message = event?.detail?.message
+                || 'Phiên đăng nhập không còn hiệu lực. Vui lòng đăng nhập lại.';
+            sessionStorage.setItem('authNotice', message);
+            localStorage.removeItem('userInfo');
+            setUser(null);
+            setLoading(false);
+            try {
+                await signOut(auth);
+            } finally {
+                endingSession.current = false;
+            }
+        };
+        window.addEventListener(AUTH_FAILURE_EVENT, handleAuthFailure);
+        return () => window.removeEventListener(AUTH_FAILURE_EVENT, handleAuthFailure);
     }, []);
 
     const login = async (firebaseUser) => {

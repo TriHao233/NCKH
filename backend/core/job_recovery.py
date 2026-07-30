@@ -69,6 +69,7 @@ def _recover_evaluation_jobs(db, cutoff: datetime, now: datetime, message: str) 
         db.evaluation_jobs.find(
             {
                 "status": {"$in": ["QUEUED", "PROCESSING"]},
+                "finalization_token": None,
                 **_stale_time_filter(cutoff),
             }
         )
@@ -76,7 +77,11 @@ def _recover_evaluation_jobs(db, cutoff: datetime, now: datetime, message: str) 
     error = {"message": message, "at": now}
     for job in active_jobs:
         db.evaluation_jobs.update_one(
-            {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+            {
+                "_id": job["_id"],
+                "status": {"$in": ["QUEUED", "PROCESSING"]},
+                "finalization_token": None,
+            },
             {
                 "$set": {
                     "status": "STALE",

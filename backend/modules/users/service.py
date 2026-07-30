@@ -248,6 +248,7 @@ class UserService:
             "total": total,
             "page": page,
             "page_size": page_size,
+            "summary": self.repository.count_by_role(search),
         }
 
     def list_teacher_options(self, search: str | None = None) -> dict:
@@ -477,11 +478,40 @@ class UserService:
             return None
         self._ensure_admin_floor(user, fields)
         before = self._user_audit_snapshot(user)
+        identity_fields = {}
+        identity_rollback = {}
         if payload.display_name is not None:
-            self.identity.update_user(user["firebase_uid"], display_name=payload.display_name)
+            identity_fields["display_name"] = payload.display_name
+            identity_rollback["display_name"] = user.get("display_name") or ""
         if payload.is_active is not None:
-            self.identity.set_user_disabled(user["firebase_uid"], not payload.is_active)
-        updated = self.repository.update(user_id, fields)
+            identity_fields["disabled"] = not payload.is_active
+            identity_rollback["disabled"] = not user.get("is_active", True)
+        if identity_fields:
+            self.identity.update_user(user["firebase_uid"], **identity_fields)
+        try:
+            updated = self.repository.update(user_id, fields)
+        except Exception:
+            if identity_fields:
+                try:
+                    self.identity.update_user(
+                        user["firebase_uid"],
+                        **identity_rollback,
+                    )
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        "MongoDB update thất bại và không thể rollback Firebase identity"
+                    ) from rollback_error
+            raise
+        if not updated and identity_fields:
+            try:
+                self.identity.update_user(
+                    user["firebase_uid"],
+                    **identity_rollback,
+                )
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Không cập nhật được MongoDB và không thể rollback Firebase identity"
+                ) from rollback_error
         if updated and payload.is_active is False:
             self.sessions.upsert(user["firebase_uid"], None)
         if updated and {"role", "is_active"} & set(fields):
@@ -504,7 +534,29 @@ class UserService:
         self._ensure_admin_floor(user, {"is_active": False})
         before = self._user_audit_snapshot(user)
         self.identity.set_user_disabled(user["firebase_uid"], True)
-        updated = self.repository.update(user_id, {"is_active": False})
+        try:
+            updated = self.repository.update(user_id, {"is_active": False})
+        except Exception:
+            try:
+                self.identity.set_user_disabled(
+                    user["firebase_uid"],
+                    not user.get("is_active", True),
+                )
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "MongoDB update thất bại và không thể rollback trạng thái Firebase"
+                ) from rollback_error
+            raise
+        if not updated:
+            try:
+                self.identity.set_user_disabled(
+                    user["firebase_uid"],
+                    not user.get("is_active", True),
+                )
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Không cập nhật được MongoDB và không thể rollback trạng thái Firebase"
+                ) from rollback_error
         if updated:
             self.sessions.upsert(user["firebase_uid"], None)
             record_audit_event(

@@ -157,6 +157,21 @@ const QUESTION_BANK_EXPORT_FORMATS = [
   { value: 'xml', label: 'XML Moodle' },
 ];
 const QUESTION_IMPORT_ACCEPT = '.csv,.xlsx,.gift,.txt,.xml';
+const DOCUMENT_PAGE_SIZE = 100;
+
+function manageFiltersFromSearch(search, canManageDocuments) {
+  const params = new URLSearchParams(search);
+  const requestedTab = params.get('tab');
+  const tab = (
+    ['questions', 'documents', 'revision'].includes(requestedTab)
+    && (requestedTab !== 'documents' || canManageDocuments)
+  ) ? requestedTab : 'questions';
+  const requestedDocumentStatus = params.get('status');
+  const documentStatus = Object.prototype.hasOwnProperty.call(DOC_STATUS_LABEL, requestedDocumentStatus)
+    ? requestedDocumentStatus
+    : 'all';
+  return { tab, documentStatus };
+}
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -460,7 +475,9 @@ function ManagePage() {
   const { user } = useContext(AuthContext);
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
-  const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
+  const canReviewQuestions = user?.role === 'Reviewer';
+  const initialManageFilters = manageFiltersFromSearch(location.search, canManageDocuments);
+  const [activeManageTab, setActiveManageTab] = useState(initialManageFilters.tab);
 
   const [questions, setQuestions] = useState([]);
   const [questionsLoading, setQuestionsLoading] = useState(true);
@@ -469,6 +486,9 @@ function ManagePage() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [documentsError, setDocumentsError] = useState('');
+  const [documentStatusFilter, setDocumentStatusFilter] = useState(initialManageFilters.documentStatus);
+  const [documentPage, setDocumentPage] = useState(1);
+  const [documentTotal, setDocumentTotal] = useState(0);
   const [documentJobsById, setDocumentJobsById] = useState({});
   const [documentJobsLoadingId, setDocumentJobsLoadingId] = useState('');
   const [documentJobActionKey, setDocumentJobActionKey] = useState('');
@@ -483,7 +503,9 @@ function ManagePage() {
   const [subjects, setSubjects] = useState([]);
   const [subjectsError, setSubjectsError] = useState('');
 
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(
+    initialManageFilters.tab === 'revision' ? 'NEEDS_REVISION' : 'all',
+  );
   const [typeFilter, setTypeFilter] = useState('all-type');
   const [documentFilter, setDocumentFilter] = useState('all-documents');
   const [subjectFilter, setSubjectFilter] = useState('all-subjects');
@@ -710,6 +732,7 @@ function ManagePage() {
   const fetchDocuments = async () => {
     if (!canManageDocuments) {
       setDocuments([]);
+      setDocumentTotal(0);
       setDocumentsLoading(false);
       setDocumentsError('');
       return;
@@ -717,13 +740,17 @@ function ManagePage() {
     setDocumentsLoading(true);
     setDocumentsError('');
     try {
-      const result = await listDocuments({ page: 1, pageSize: 100 });
-      const items = result.items || [];
-      setDocuments(items);
-      return items;
+      const result = await listDocuments({
+        page: documentPage,
+        pageSize: DOCUMENT_PAGE_SIZE,
+        status: documentStatusFilter === 'all' ? undefined : documentStatusFilter,
+      });
+      setDocuments(result.items || []);
+      setDocumentTotal(result.total || 0);
     } catch (error) {
       setDocumentsError(error.message || 'Không tải được danh sách tài liệu');
-      return [];
+      setDocuments([]);
+      setDocumentTotal(0);
     } finally {
       setDocumentsLoading(false);
     }
@@ -745,28 +772,43 @@ function ManagePage() {
     if (!keepMessage) setWorkflowMessage('');
     setVersionHistory([]);
     setVersionCompare({ left: '', right: '' });
-    try {
-      const [evaluations, reviews, publications, versions] = await Promise.all([
-        listQuestionEvaluations(question.id),
-        listQuestionReviews(question.id),
-        listQuestionMoodlePublications(question.id),
-        listQuestionVersions(question.id),
-      ]);
-      const versionItems = versions || [];
-      setSelectedQuestion(question);
-      setEvaluationHistory(evaluations.items || []);
-      setReviewHistory(reviews.items || []);
-      setPublicationHistory(publications.items || []);
-      setVersionHistory(versionItems);
-      setVersionCompare({
-        left: versionItems[1]?.id || versionItems[0]?.id || '',
-        right: versionItems[0]?.id || '',
-      });
-    } catch (error) {
-      setWorkflowMessage(error.message || 'Không tải được lịch sử kiểm duyệt');
-    } finally {
-      setHistoryLoading(false);
+    setSelectedQuestion(question);
+    const [evaluations, reviews, publications, versions] = await Promise.allSettled([
+      listQuestionEvaluations(question.id),
+      listQuestionReviews(question.id),
+      listQuestionMoodlePublications(question.id),
+      listQuestionVersions(question.id),
+    ]);
+    const failedParts = [];
+    if (evaluations.status === 'fulfilled') {
+      setEvaluationHistory(evaluations.value.items || []);
+    } else {
+      setEvaluationHistory([]);
+      failedParts.push('đánh giá AI');
     }
+    if (reviews.status === 'fulfilled') {
+      setReviewHistory(reviews.value.items || []);
+    } else {
+      setReviewHistory([]);
+      failedParts.push('kiểm duyệt');
+    }
+    if (publications.status === 'fulfilled') {
+      setPublicationHistory(publications.value.items || []);
+    } else {
+      setPublicationHistory([]);
+      failedParts.push('Moodle');
+    }
+    const versionItems = versions.status === 'fulfilled' ? (versions.value || []) : [];
+    if (versions.status === 'rejected') failedParts.push('phiên bản');
+    setVersionHistory(versionItems);
+    setVersionCompare({
+      left: versionItems[1]?.id || versionItems[0]?.id || '',
+      right: versionItems[0]?.id || '',
+    });
+    if (failedParts.length > 0) {
+      setWorkflowMessage(`Không tải được ${failedParts.join(', ')}. Các phần còn lại vẫn có thể sử dụng.`);
+    }
+    setHistoryLoading(false);
   };
 
   useEffect(() => {
@@ -788,7 +830,16 @@ function ManagePage() {
 
   useEffect(() => {
     fetchDocuments();
-  }, [canManageDocuments]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageDocuments, documentPage, documentStatusFilter]);
+
+  useEffect(() => {
+    const next = manageFiltersFromSearch(location.search, canManageDocuments);
+    setActiveManageTab(next.tab);
+    setDocumentStatusFilter(next.documentStatus);
+    setDocumentPage(1);
+    if (next.tab === 'revision') setStatusFilter('NEEDS_REVISION');
+  }, [canManageDocuments, location.search]);
 
   useEffect(() => {
     fetchSubjects();
@@ -830,6 +881,42 @@ function ManagePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, questions, openedDeepLinkId]);
 
+  const applyManageTab = (tab) => {
+    const nextTab = tab === 'documents' && !canManageDocuments ? 'questions' : tab;
+    setActiveManageTab(nextTab);
+    if (nextTab === 'revision') {
+      setStatusFilter('NEEDS_REVISION');
+    } else if (nextTab === 'questions' && statusFilter === 'NEEDS_REVISION') {
+      setStatusFilter('all');
+    }
+    const params = new URLSearchParams(location.search);
+    params.set('tab', nextTab);
+    if (nextTab === 'documents') {
+      params.delete('questionId');
+      if (documentStatusFilter === 'all') params.delete('status');
+      else params.set('status', documentStatusFilter);
+    } else {
+      params.delete('status');
+    }
+    navigate(
+      { pathname: location.pathname, search: `?${params.toString()}` },
+      { replace: true },
+    );
+  };
+
+  const updateDocumentStatusFilter = (value) => {
+    setDocumentStatusFilter(value);
+    setDocumentPage(1);
+    const params = new URLSearchParams(location.search);
+    params.set('tab', 'documents');
+    if (value === 'all') params.delete('status');
+    else params.set('status', value);
+    navigate(
+      { pathname: location.pathname, search: `?${params.toString()}` },
+      { replace: true },
+    );
+  };
+
   const counts = useMemo(() => ({
     all: questions.length,
     DRAFT: questions.filter((q) => q.review_status === 'DRAFT').length,
@@ -838,6 +925,7 @@ function ManagePage() {
     NEEDS_REVISION: questions.filter((q) => q.review_status === 'NEEDS_REVISION').length,
     REJECTED: questions.filter((q) => q.review_status === 'REJECTED').length,
   }), [questions]);
+  const documentPageCount = Math.max(1, Math.ceil(documentTotal / DOCUMENT_PAGE_SIZE));
 
   const filtered = useMemo(() => {
     return questions.filter((q) => {
@@ -1403,10 +1491,15 @@ function ManagePage() {
     setDocumentJobsError(null);
     try {
       const [documentsResult, jobsResult] = await Promise.all([
-        listDocuments({ page: 1, pageSize: 100 }),
+        listDocuments({
+          page: documentPage,
+          pageSize: DOCUMENT_PAGE_SIZE,
+          status: documentStatusFilter === 'all' ? undefined : documentStatusFilter,
+        }),
         listDocumentJobs(documentId, { limit: 12 }),
       ]);
       setDocuments(documentsResult.items || []);
+      setDocumentTotal(documentsResult.total || 0);
       setDocumentJobsById((current) => ({
         ...current,
         [documentId]: jobsResult.items || [],
@@ -1691,35 +1784,69 @@ function ManagePage() {
         <div className="container manage-hero-row">
           <div>
             <div className="page-hero-badge">Khu vực quản lý</div>
-            <h1 className="page-hero-title">Quản lý ngân hàng câu hỏi</h1>
+            <h1 className="page-hero-title">Quản lý nội dung</h1>
             <p className="page-hero-desc">
-              Theo dõi, chỉnh sửa và phê duyệt câu hỏi trước khi export hoặc ghi mô phỏng Moodle.
+              Quản lý tài liệu nguồn, ngân hàng câu hỏi và các phản hồi cần chỉnh sửa.
             </p>
           </div>
-          <div className="manage-hero-actions">
+          {activeManageTab !== 'documents' && (
+            <div className="manage-hero-actions">
             <button
               type="button"
               className="btn btn--outline"
-              onClick={() => setStatusFilter('PENDING')}
+              onClick={() => (
+                user?.role === 'Admin' ? navigate('/kiem-duyet') : setStatusFilter('PENDING')
+              )}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
               Hàng đợi duyệt
             </button>
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={!canReviewQuestions || approvedForPublication.length === 0}
-              onClick={() => handlePublishMoodle(approvedForPublication[0])}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></svg>
-              Mô phỏng Moodle
-            </button>
-          </div>
+            {canReviewQuestions && (
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={approvedForPublication.length === 0}
+                onClick={() => handlePublishMoodle(approvedForPublication[0])}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></svg>
+                Mô phỏng Moodle
+              </button>
+            )}
+            </div>
+          )}
         </div>
       </section>
 
+      <nav className="manage-tabs" aria-label="Khu vực quản lý nội dung">
+        <div className="container">
+          <button
+            type="button"
+            className={activeManageTab === 'questions' ? 'manage-tab--active' : ''}
+            onClick={() => applyManageTab('questions')}
+          >
+            Ngân hàng câu hỏi
+          </button>
+          {canManageDocuments && (
+            <button
+              type="button"
+              className={activeManageTab === 'documents' ? 'manage-tab--active' : ''}
+              onClick={() => applyManageTab('documents')}
+            >
+              Tài liệu nguồn
+            </button>
+          )}
+          <button
+            type="button"
+            className={activeManageTab === 'revision' ? 'manage-tab--active' : ''}
+            onClick={() => applyManageTab('revision')}
+          >
+            Cần sửa theo Reviewer
+          </button>
+        </div>
+      </nav>
+
       <section className="manage-body">
-        <div className="container manage-grid">
+        <div className={`container manage-grid ${activeManageTab === 'documents' ? 'manage-grid--documents' : ''}`}>
           {/* Main column */}
           <div className="manage-main">
             <div className="stats-row">
@@ -1745,8 +1872,8 @@ function ManagePage() {
               </button>
             </div>
 
-            <div className="coverage-panel">
-              <div className="coverage-panel-header">
+            <details className="coverage-panel">
+              <summary className="coverage-panel-header">
                 <div>
                   <h3>Độ phủ ngân hàng</h3>
                   <span>{coverageScopeLabel}</span>
@@ -1755,7 +1882,7 @@ function ManagePage() {
                   <b>{questionCoverage.total}</b>
                   <span>{questionCoverage.approvedTotal} đã duyệt</span>
                 </div>
-              </div>
+              </summary>
               <div className="coverage-grid">
                 {coverageSections.map((section) => (
                   <section className={`coverage-section coverage-section--${section.key}`} key={section.key}>
@@ -1785,7 +1912,7 @@ function ManagePage() {
                   </section>
                 ))}
               </div>
-            </div>
+            </details>
 
             <div className="card list-card">
               <div className="list-card-header">
@@ -1799,34 +1926,39 @@ function ManagePage() {
                       + Thêm câu hỏi
                     </button>
                   )}
-                  {canEditQuestions && (
-                    <label className={`btn btn--outline question-import-button ${questionExchangeBusy ? 'question-import-button--disabled' : ''}`}>
-                      Nhập CSV/XLSX/GIFT/XML
-                      <input
-                        type="file"
-                        accept={QUESTION_IMPORT_ACCEPT}
-                        disabled={Boolean(questionExchangeBusy)}
-                        onChange={handleQuestionBankImportFile}
-                      />
-                    </label>
-                  )}
-                  <select
-                    className="field-select exchange-format-select"
-                    value={questionExportFormat}
-                    onChange={(e) => setQuestionExportFormat(e.target.value)}
-                  >
-                    {QUESTION_BANK_EXPORT_FORMATS.map((format) => (
-                      <option key={format.value} value={format.value}>{format.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="btn btn--outline"
-                    disabled={exportableQuestions.length === 0}
-                    onClick={handleQuestionBankExport}
-                  >
-                    Xuất {exportScopeLabel}
-                  </button>
+                  <details className="question-tools">
+                    <summary className="btn btn--outline">Công cụ nhập/xuất</summary>
+                    <div>
+                      {canEditQuestions && (
+                        <label className={`btn btn--outline question-import-button ${questionExchangeBusy ? 'question-import-button--disabled' : ''}`}>
+                          Nhập CSV/XLSX/GIFT/XML
+                          <input
+                            type="file"
+                            accept={QUESTION_IMPORT_ACCEPT}
+                            disabled={Boolean(questionExchangeBusy)}
+                            onChange={handleQuestionBankImportFile}
+                          />
+                        </label>
+                      )}
+                      <select
+                        className="field-select exchange-format-select"
+                        value={questionExportFormat}
+                        onChange={(e) => setQuestionExportFormat(e.target.value)}
+                      >
+                        {QUESTION_BANK_EXPORT_FORMATS.map((format) => (
+                          <option key={format.value} value={format.value}>{format.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="btn btn--outline"
+                        disabled={exportableQuestions.length === 0}
+                        onClick={handleQuestionBankExport}
+                      >
+                        Xuất {exportScopeLabel}
+                      </button>
+                    </div>
+                  </details>
                 </div>
               </div>
 
@@ -1995,8 +2127,10 @@ function ManagePage() {
                     />
                     <span>Chọn danh sách đang hiển thị</span>
                   </label>
-                  <span className="bulk-count">{selectedQuestions.length} đã chọn</span>
-                  <div className="bulk-actions">
+                  {selectedQuestions.length > 0 && (
+                    <>
+                      <span className="bulk-count">{selectedQuestions.length} đã chọn</span>
+                      <div className="bulk-actions">
                     <button
                       type="button"
                       className="btn btn--outline"
@@ -2021,7 +2155,9 @@ function ManagePage() {
                     >
                       Lưu trữ
                     </button>
-                  </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -2167,8 +2303,23 @@ function ManagePage() {
           {/* Sidebar */}
           <aside className="manage-side">
 	            {canManageDocuments && (
-	              <div className="card side-card">
-	                <h3>Tài liệu nguồn</h3>
+	              <div className="card side-card manage-document-side">
+	                <div className="document-card-head">
+	                  <div>
+	                    <h3>Tài liệu nguồn</h3>
+	                    <span>{documentTotal} tài liệu</span>
+	                  </div>
+	                  <select
+	                    className="field-select"
+	                    value={documentStatusFilter}
+	                    onChange={(event) => updateDocumentStatusFilter(event.target.value)}
+	                  >
+	                    <option value="all">Tất cả trạng thái</option>
+	                    {Object.entries(DOC_STATUS_LABEL).map(([value, label]) => (
+	                      <option key={value} value={value}>{label}</option>
+	                    ))}
+	                  </select>
+	                </div>
 	                {documentsError && <p className="manage-error">{documentsError}</p>}
 	                {documentsLoading ? (
 	                  <p className="side-note">Đang tải danh sách tài liệu...</p>
@@ -2353,13 +2504,32 @@ function ManagePage() {
 	                    )}
 	                  </div>
 	                )}
+	                {documentPageCount > 1 && (
+	                  <div className="document-pagination">
+	                    <button
+	                      type="button"
+	                      disabled={documentsLoading || documentPage <= 1}
+	                      onClick={() => setDocumentPage((current) => Math.max(1, current - 1))}
+	                    >
+	                      Trang trước
+	                    </button>
+	                    <span>Trang {documentPage} / {documentPageCount}</span>
+	                    <button
+	                      type="button"
+	                      disabled={documentsLoading || documentPage >= documentPageCount}
+	                      onClick={() => setDocumentPage((current) => Math.min(documentPageCount, current + 1))}
+	                    >
+	                      Trang sau
+	                    </button>
+	                  </div>
+	                )}
 	                <button type="button" className="btn btn--outline doc-upload-btn" onClick={() => navigate('/sinh-cau-hoi')}>
 	                  + Tải tài liệu mới
 	                </button>
 	              </div>
 	            )}
 
-            <div className="card side-card workflow-card">
+            <div className="card side-card workflow-card manage-question-side">
               <h3>Luồng kiểm duyệt</h3>
               {!selectedQuestion ? (
                 <p className="side-note">Chọn "Chi tiết" trên một câu hỏi để xem kết quả đánh giá, kiểm duyệt và mô phỏng Moodle.</p>
@@ -2557,7 +2727,7 @@ function ManagePage() {
               )}
             </div>
 
-            <div className="card side-card">
+            <div className="card side-card manage-question-side">
               <h3>Trạng thái mô phỏng Moodle</h3>
               <p className="side-note">
                 Câu hỏi đã duyệt có thể được ghi mô phỏng Moodle trong môi trường demo.
