@@ -41,6 +41,18 @@ const REVIEW_STATUS_LABEL = {
   REJECTED: 'Từ chối',
 };
 
+const REVIEW_DECISION_LABEL = {
+  APPROVED: 'Duyệt câu hỏi',
+  NEEDS_REVISION: 'Yêu cầu chỉnh sửa',
+  REJECTED: 'Từ chối câu hỏi',
+};
+
+const REVIEW_SUBMIT_LABEL = {
+  APPROVED: 'Xác nhận duyệt',
+  NEEDS_REVISION: 'Gửi yêu cầu chỉnh sửa',
+  REJECTED: 'Xác nhận từ chối',
+};
+
 const QUESTION_ID_PATTERN = /^[a-f\d]{24}$/i;
 
 function isValidQuestionId(value) {
@@ -142,7 +154,7 @@ function defaultReviewDraft(question, decision) {
     secondaryReason: '',
     checklist: REVIEW_RUBRIC.map((item) => ({
       ...item,
-      passed: decision === 'APPROVED',
+      passed: false,
       note: '',
     })),
     issues: [],
@@ -233,8 +245,10 @@ function isEvaluationBusy(question) {
   return ['QUEUED', 'PROCESSING', 'RUNNING'].includes(question?.evaluation_status);
 }
 
-function canRetryEvaluation(question) {
-  return question && ['ERROR', 'FAILED', 'STALE'].includes(question.evaluation_status);
+function canRequestEvaluation(question) {
+  if (!question || isEvaluationBusy(question)) return false;
+  const hasScore = typeof question.quality_summary?.overall_score === 'number';
+  return !hasScore || ['ERROR', 'FAILED', 'STALE', 'NOT_STARTED'].includes(question.evaluation_status);
 }
 
 function publicationStatusLabel(value) {
@@ -396,12 +410,15 @@ function ReviewQueuePage() {
   const [activeSourcePage, setActiveSourcePage] = useState(1);
   const [sourcePdf, setSourcePdf] = useState(null);
   const [sourcePdfLoading, setSourcePdfLoading] = useState(false);
+  const [sourcePdfExpanded, setSourcePdfExpanded] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [actionError, setActionError] = useState('');
   const [busyId, setBusyId] = useState('');
   const [reviewDraft, setReviewDraft] = useState(null);
   const [reviewFormError, setReviewFormError] = useState('');
+  const [evaluationRequest, setEvaluationRequest] = useState(null);
+  const [evaluationDialogError, setEvaluationDialogError] = useState('');
   const [reviewTemplates, setReviewTemplates] = useState([...DEFAULT_REVIEW_COMMENT_TEMPLATES]);
   const [templateTitle, setTemplateTitle] = useState('');
   const [assignmentDraft, setAssignmentDraft] = useState(null);
@@ -502,6 +519,8 @@ function ReviewQueuePage() {
   const loadHistory = async (question) => {
     setSelected(question);
     setReviewDraft(null);
+    setEvaluationRequest(null);
+    setEvaluationDialogError('');
     setAssignmentDraft(null);
     setReviewFormError('');
     setAssignmentError('');
@@ -517,6 +536,7 @@ function ReviewQueuePage() {
     setSourceViewer(null);
     setSourcePdf(null);
     setSourcePdfLoading(false);
+    setSourcePdfExpanded(false);
     setActiveSourceIndex(0);
     setActiveSourcePage(1);
     try {
@@ -692,6 +712,66 @@ function ReviewQueuePage() {
       URL.revokeObjectURL(sourcePdf.url);
     }
   }, [sourcePdf?.url]);
+
+  useEffect(() => {
+    if (!sourcePdfExpanded) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setSourcePdfExpanded(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [sourcePdfExpanded]);
+
+  useEffect(() => {
+    if (!reviewDraft && !assignmentDraft && !evaluationRequest) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape' || busyId) return;
+      setReviewDraft(null);
+      setAssignmentDraft(null);
+      setEvaluationRequest(null);
+      setEvaluationDialogError('');
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [Boolean(reviewDraft), Boolean(assignmentDraft), Boolean(evaluationRequest), busyId]);
+
+  useEffect(() => {
+    if (!selected?.id || !isEvaluationBusy(selected)) return undefined;
+    let cancelled = false;
+    const refreshEvaluationStatus = async () => {
+      try {
+        const [freshQuestion, evaluationResult] = await Promise.all([
+          getQuestion(selected.id),
+          listQuestionEvaluations(selected.id),
+        ]);
+        if (cancelled) return;
+        setSelected(freshQuestion);
+        setEvaluations(evaluationResult.items || []);
+        if (!isEvaluationBusy(freshQuestion)) {
+          fetchQuestions();
+          fetchDashboard();
+        }
+      } catch {
+        // Keep the current evaluation state; the next poll or manual refresh can recover.
+      }
+    };
+    const intervalId = window.setInterval(refreshEvaluationStatus, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, selected?.evaluation_status]);
 
   useEffect(() => {
     if (!reviewDraft?.questionId || !reviewDraft?.decision) return;
@@ -1013,14 +1093,16 @@ function ReviewQueuePage() {
   const runEvaluation = async (question) => {
     setBusyId(question.id);
     setActionError('');
+    setEvaluationDialogError('');
     try {
       await autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
         fallback_to_heuristic: false,
       });
+      setEvaluationRequest(null);
       await refreshAfterAction(question);
     } catch (err) {
-      setActionError(`Không thể thử lại đánh giá AI: ${err.message}`);
+      setEvaluationDialogError(`Không thể chạy đánh giá AI: ${err.message}`);
     } finally {
       setBusyId('');
     }
@@ -1030,6 +1112,13 @@ function ReviewQueuePage() {
     if (!selected || !reviewDraft) return;
     if (!canReviewQuestion(selected)) {
       setReviewFormError('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
+      return;
+    }
+    if (
+      reviewDraft.decision === 'APPROVED'
+      && reviewDraft.checklist.some((item) => !item.passed)
+    ) {
+      setReviewFormError('Cần tự xác nhận đầy đủ checklist trước khi duyệt câu hỏi.');
       return;
     }
     const revisionIssues = compactIssues(reviewDraft.issues);
@@ -1052,7 +1141,7 @@ function ReviewQueuePage() {
       return;
     }
     if (reviewDraft.decision === 'REJECTED' && !overallNote && revisionIssues.length === 0) {
-      setReviewFormError('Cần ghi lý do khi từ chối câu hỏi.');
+      setReviewFormError('Cần ghi lý do hoặc thêm căn cứ khi từ chối câu hỏi.');
       return;
     }
     if (reviewDraft.decision === 'NEEDS_REVISION' && revisionIssues.length === 0) {
@@ -1136,10 +1225,7 @@ function ReviewQueuePage() {
 
   const latestEvaluation = evaluations[0];
   const dashboardWorkload = dashboard?.workload || {};
-  const dashboardPerformance = dashboard?.performance || {};
   const dashboardDecisions = dashboard?.decisions || {};
-  const dashboardSubjects = dashboard?.subjects || [];
-  const dashboardCalibration = dashboard?.calibration || {};
   const mentionOptions = useMemo(() => {
     const map = new Map();
     [...teacherOptions, ...reviewerOptions].forEach((option) => {
@@ -1171,6 +1257,7 @@ function ReviewQueuePage() {
   const latestWeights = latestEvaluation?.policy?.weights || {};
   const qualitySummary = selected?.quality_summary || {};
   const overallScore = latestScores.overall ?? qualitySummary.overall_score;
+  const hasEvaluationScore = typeof overallScore === 'number';
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
   const latestModel = latestEvaluation?.evaluator_model || {};
   const selectedAssignment = assignmentOf(selected);
@@ -1202,113 +1289,19 @@ function ReviewQueuePage() {
     <main className="review-page">
       <section className="review-toolbar">
         <div className="review-toolbar__title">
-          <span>Hàng đợi kiểm duyệt</span>
-          <h1>Kiểm duyệt câu hỏi</h1>
+          <span>Reviewer workspace</span>
+          <h1>Bàn làm việc kiểm duyệt</h1>
+          <p>Chọn một câu hỏi, đối chiếu nguồn và hoàn tất quyết định ngay trong cùng màn hình.</p>
+        </div>
+        <div className="review-toolbar__workload" aria-label="Khối lượng đang chờ">
+          <span>Đang chờ xử lý</span>
+          <b>{dashboardLoading ? '--' : dashboardWorkload.pending || 0}</b>
+          <small>
+            {dashboardWorkload.lock_expired || 0} phiên quá hạn · {dashboardWorkload.unassigned || 0} câu chưa nhận
+          </small>
         </div>
       </section>
 
-      <section className="review-dashboard" aria-label="Tổng quan công việc kiểm duyệt">
-        <div className="review-dashboard__group">
-          <div className="review-dashboard__head">
-            <span>Khối lượng xử lý</span>
-            <b>{dashboardLoading ? 'Đang tải' : `${dashboardWorkload.pending || 0} câu chờ`}</b>
-          </div>
-          <div className="review-dashboard__metrics">
-            <div>
-              <b>{dashboardWorkload.unassigned || 0}</b>
-              <span>Chưa nhận</span>
-            </div>
-            <div>
-              <b>{dashboardWorkload.assigned || 0}</b>
-              <span>Đã gán</span>
-            </div>
-            <div>
-              <b>{dashboardWorkload.in_review || 0}</b>
-              <span>Đang xử lý</span>
-            </div>
-            <div>
-              <b>{dashboardWorkload.lock_expired || 0}</b>
-              <span>Quá hạn giữ câu</span>
-            </div>
-            <div>
-              <b>{dashboardWorkload.mine || 0}</b>
-              <span>Của tôi</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="review-dashboard__group review-dashboard__group--performance">
-          <div className="review-dashboard__head">
-            <span>30 ngày gần nhất</span>
-            <b>{dashboardPerformance.reviews_30d || 0} lượt kiểm duyệt</b>
-          </div>
-          <div className="review-dashboard__metrics">
-            <div>
-              <b>{dashboardPerformance.reviews_7d || 0}</b>
-              <span>7 ngày</span>
-            </div>
-            <div>
-              <b>{percent(dashboardPerformance.approval_rate)}</b>
-              <span>Tỷ lệ duyệt</span>
-            </div>
-            <div>
-              <b>{dashboardPerformance.override_count || 0}</b>
-              <span>Override AI</span>
-            </div>
-            <div>
-              <b>{hours(dashboardPerformance.average_review_hours)}</b>
-              <span>TB xử lý</span>
-            </div>
-            <div>
-              <b>{dashboardPerformance.revision_issues || 0}</b>
-              <span>Lỗi cần sửa</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="review-dashboard__group review-dashboard__group--calibration">
-          <div className="review-dashboard__head">
-            <span>Calibration AI</span>
-            <b>{percent(dashboardCalibration.agreement_rate)}</b>
-          </div>
-          <div className="review-dashboard__metrics">
-            <div>
-              <b>{dashboardCalibration.sample_size || 0}</b>
-              <span>Mẫu so sánh</span>
-            </div>
-            <div>
-              <b>{dashboardCalibration.disagreements || 0}</b>
-              <span>Lệch AI-human</span>
-            </div>
-            <div>
-              <b>{dashboardCalibration.ai_failed_but_approved || 0}</b>
-              <span>AI rớt, human duyệt</span>
-            </div>
-            <div>
-              <b>{dashboardCalibration.ai_passed_but_not_approved || 0}</b>
-              <span>AI đạt, human giữ lại</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="review-dashboard__group review-dashboard__group--subjects">
-          <div className="review-dashboard__head">
-            <span>Theo môn</span>
-            <b>{dashboardDecisions.APPROVED || 0} duyệt</b>
-          </div>
-          <div className="review-subject-bars">
-            {dashboardSubjects.slice(0, 4).map((subject) => (
-              <div className="review-subject-bar" key={subject.subject_id || subject.label}>
-                <span>{subject.label}</span>
-                <b>{subject.reviewed}</b>
-              </div>
-            ))}
-            {dashboardSubjects.length === 0 && (
-              <p>{dashboardLoading ? 'Đang tính theo môn...' : 'Chưa có lượt kiểm duyệt theo môn.'}</p>
-            )}
-          </div>
-        </div>
-      </section>
       {dashboardError && <p className="review-error review-error--dashboard">{dashboardError}</p>}
 
       <section className="review-queue-tabs" aria-label="Luồng công việc kiểm duyệt">
@@ -1317,29 +1310,39 @@ function ReviewQueuePage() {
           className={activeQueueTab === 'mine' ? 'review-queue-tab--active' : ''}
           onClick={() => applyQueueTab('mine')}
         >
+          <span>Việc của tôi</span>
           <b>{dashboardWorkload.mine || 0}</b>
-          <span>Cần tôi xử lý</span>
+          <small>Đã nhận và cần hoàn tất</small>
         </button>
         <button
           type="button"
           className={activeQueueTab === 'unassigned' ? 'review-queue-tab--active' : ''}
           onClick={() => applyQueueTab('unassigned')}
         >
-          <b>{dashboardWorkload.unassigned || 0}</b>
           <span>Chưa có người nhận</span>
+          <b>{dashboardWorkload.unassigned || 0}</b>
+          <small>Có thể nhận để bắt đầu duyệt</small>
         </button>
         <button
           type="button"
           className={activeQueueTab === 'processed' ? 'review-queue-tab--active' : ''}
           onClick={() => applyQueueTab('processed')}
         >
+          <span>Đã hoàn tất</span>
           <b>{processedCount}</b>
-          <span>Đã xử lý</span>
+          <small>Tra cứu quyết định trước đây</small>
         </button>
       </section>
 
       <section className="review-layout">
         <div className="review-list-panel">
+          <div className="review-list-heading">
+            <div>
+              <span>Hàng đợi hiện tại</span>
+              <b>{loading ? 'Đang tải...' : `${total} câu hỏi`}</b>
+            </div>
+            <small>Ưu tiên câu chờ lâu hoặc có cảnh báo chất lượng</small>
+          </div>
           <div className="review-filter-bar">
             <input
               aria-label="Tìm câu hỏi"
@@ -1537,11 +1540,18 @@ function ReviewQueuePage() {
 
         <aside className="review-detail-panel">
           {!selected ? (
-            <p className="review-empty">Chọn một câu hỏi để xem minh chứng, tài liệu nguồn và lịch sử.</p>
+            <div className="review-detail-empty">
+              <span>01</span>
+              <h2>Chọn một câu hỏi để bắt đầu</h2>
+              <p>Nội dung, nguồn trích dẫn, đánh giá AI và biểu mẫu quyết định sẽ xuất hiện tại đây.</p>
+            </div>
           ) : (
             <>
               <div className="detail-head">
-                <span>{selected.question_code}</span>
+                <div className="detail-head__eyebrow">
+                  <span>{selected.question_code}</span>
+                  <b>{REVIEW_STATUS_LABEL[selected.review_status] || selected.review_status}</b>
+                </div>
                 <h2>{selected.content}</h2>
                 {(selected.clos || []).length > 0 && (
                   <div className="detail-clo-list">
@@ -1609,11 +1619,6 @@ function ReviewQueuePage() {
                     Bỏ gán
                   </button>
                 )}
-                {canRetryEvaluation(selected) && (
-                  <button type="button" disabled={busyId === selected.id} onClick={() => runEvaluation(selected)}>
-                    Thử lại đánh giá AI
-                  </button>
-                )}
                 <button
                   type="button"
                   className={user?.role === 'Admin' ? '' : 'detail-action-primary'}
@@ -1654,6 +1659,34 @@ function ReviewQueuePage() {
                 <>
                   {historyError && <p className="review-error review-error--history">{historyError}</p>}
                   <section className="evaluation-panel">
+                    {(canRequestEvaluation(selected) || isEvaluationBusy(selected)) && (
+                      <div className={`evaluation-action ${isEvaluationBusy(selected) ? 'evaluation-action--busy' : ''}`}>
+                        <div>
+                          <strong>
+                            {isEvaluationBusy(selected)
+                              ? 'AI đang đánh giá câu hỏi'
+                              : (hasEvaluationScore ? 'Kết quả AI cần được cập nhật' : 'Chưa có điểm đánh giá AI')}
+                          </strong>
+                          <span>
+                            {isEvaluationBusy(selected)
+                              ? 'Điểm số sẽ tự cập nhật khi tác vụ hoàn tất.'
+                              : 'Gửi câu hỏi và nguồn trích dẫn tới mô hình đánh giá trước khi đưa ra quyết định.'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={busyId === selected.id || isEvaluationBusy(selected)}
+                          onClick={() => {
+                            setEvaluationDialogError('');
+                            setEvaluationRequest(selected);
+                          }}
+                        >
+                          {isEvaluationBusy(selected)
+                            ? 'Đang xử lý…'
+                            : (hasEvaluationScore ? 'Chạy lại AI' : 'Chạy đánh giá AI')}
+                        </button>
+                      </div>
+                    )}
                     <div className="evaluation-total">
                       <div>
                         <span>Tổng điểm</span>
@@ -1696,7 +1729,7 @@ function ReviewQueuePage() {
                       <span>Bộ tiêu chí: <b>{latestEvaluation?.policy?.name || '--'}</b></span>
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
                     </div>
-                    {!latestEvaluation && (
+                    {!latestEvaluation && !isEvaluationBusy(selected) && (
                       <p className="evaluation-note">
                         Chưa có kết quả đánh giá AI cho câu hỏi này.
                       </p>
@@ -1765,14 +1798,35 @@ function ReviewQueuePage() {
                                 </button>
                               ))}
                             </div>
-                            <div className="source-pdf">
-                              {sourcePdfLoading ? (
-                                <p>Đang mở PDF...</p>
-                              ) : sourcePdfUrl ? (
-                                <iframe src={sourcePdfUrl} title={`PDF nguồn ${sourceViewer?.document?.original_filename || ''}`} />
-                              ) : (
-                                <p>Không có PDF gốc khả dụng.</p>
-                              )}
+                            <div className={`source-pdf ${sourcePdfExpanded ? 'source-pdf--expanded' : ''}`}>
+                              <div className="source-pdf__toolbar">
+                                <div>
+                                  <strong>Tài liệu gốc</strong>
+                                  <span>
+                                    {sourceViewer?.document?.original_filename || 'PDF nguồn'}
+                                    {' · '}
+                                    Trang {pdfPage}
+                                  </span>
+                                </div>
+                                {sourcePdfUrl && (
+                                  <button
+                                    type="button"
+                                    aria-pressed={sourcePdfExpanded}
+                                    onClick={() => setSourcePdfExpanded((expanded) => !expanded)}
+                                  >
+                                    {sourcePdfExpanded ? 'Thu nhỏ' : 'Xem toàn màn hình'}
+                                  </button>
+                                )}
+                              </div>
+                              <div className="source-pdf__frame">
+                                {sourcePdfLoading ? (
+                                  <p>Đang mở PDF...</p>
+                                ) : sourcePdfUrl ? (
+                                  <iframe src={sourcePdfUrl} title={`PDF nguồn ${sourceViewer?.document?.original_filename || ''}`} />
+                                ) : (
+                                  <p>Không có PDF gốc khả dụng.</p>
+                                )}
+                              </div>
                             </div>
                             <SourceText source={activeSource} page={activePageRecord} />
                           </div>
@@ -1863,6 +1917,9 @@ function ReviewQueuePage() {
         <div className="review-modal-backdrop">
           <form
             className="review-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-dialog-title"
             onSubmit={(event) => {
               event.preventDefault();
               submitReviewForm();
@@ -1871,13 +1928,21 @@ function ReviewQueuePage() {
             <div className="review-modal__head">
               <div>
                 <span>{reviewDraft.questionCode}</span>
-                <h2>{REVIEW_STATUS_LABEL[reviewDraft.decision] || reviewDraft.decision}</h2>
+                <h2 id="review-dialog-title">{REVIEW_DECISION_LABEL[reviewDraft.decision] || reviewDraft.decision}</h2>
               </div>
-              <button type="button" onClick={() => setReviewDraft(null)}>Đóng</button>
+              <button type="button" aria-label="Đóng hộp thoại kiểm duyệt" onClick={() => setReviewDraft(null)}>Đóng</button>
             </div>
 
             <section className="review-form-section">
-              <h3>Checklist</h3>
+              <div className="review-form-section__head">
+                <div>
+                  <h3>Checklist Reviewer</h3>
+                  <p>Tự xác nhận từng tiêu chí; hệ thống không đánh dấu thay người duyệt.</p>
+                </div>
+                <strong>
+                  {reviewDraft.checklist.filter((item) => item.passed).length}/{reviewDraft.checklist.length}
+                </strong>
+              </div>
               <div className="review-rubric-grid">
                 {reviewDraft.checklist.map((item) => (
                   <div className="review-rubric-item" key={item.key}>
@@ -1929,13 +1994,17 @@ function ReviewQueuePage() {
               </div>
               <label className="review-form-field">
                 <span>
-                  Ghi chú tổng
+                  {reviewDraft.decision === 'REJECTED' ? 'Lý do từ chối' : 'Ghi chú tổng'}
                   {isAdminDirectReview ? ' (bắt buộc khi duyệt thay Reviewer)' : ''}
+                  {reviewDraft.decision === 'REJECTED' ? ' (bắt buộc nếu không thêm căn cứ)' : ''}
                 </span>
                 <textarea
                   value={reviewDraft.overallNote}
                   onChange={(event) => updateReviewDraft({ overallNote: event.target.value })}
                   rows={4}
+                  placeholder={reviewDraft.decision === 'REJECTED'
+                    ? 'Nêu rõ lý do câu hỏi không thể đưa vào ngân hàng...'
+                    : 'Tóm tắt nhận xét hoặc hướng dẫn cho giảng viên...'}
                   required={isAdminDirectReview}
                 />
               </label>
@@ -1972,63 +2041,82 @@ function ReviewQueuePage() {
               )}
             </section>
 
-            <section className="review-form-section">
-              <div className="review-issue-head">
-                <h3>Lỗi cần giảng viên sửa</h3>
-                <button type="button" onClick={addReviewIssue}>Thêm lỗi</button>
-              </div>
-              {reviewDraft.issues.length === 0 && (
-                <p className="review-form-muted">Chưa có lỗi cần sửa.</p>
-              )}
-              {reviewDraft.issues.map((issue) => (
-                <div className="review-issue-row" key={issue.id}>
-                  <input
-                    value={issue.title}
-                    onChange={(event) => updateReviewIssue(issue.id, { title: event.target.value })}
-                    placeholder="Tiêu đề lỗi"
-                  />
-                  <select
-                    value={issue.severity}
-                    onChange={(event) => updateReviewIssue(issue.id, { severity: event.target.value })}
-                  >
-                    <option value="LOW">Nhẹ</option>
-                    <option value="MEDIUM">Vừa</option>
-                    <option value="HIGH">Nghiêm trọng</option>
-                  </select>
-                  <select
-                    value={issue.source_chunk_id}
-                    onChange={(event) => updateReviewIssue(issue.id, { source_chunk_id: event.target.value })}
-                  >
-                    <option value="">Không gắn nguồn</option>
-                    {sourceItems.map((source, index) => (
-                      <option key={source.chunk_id || index} value={source.chunk_id || ''}>
-                        Citation #{source.citation_order} · {pageRangeLabel(source.page_range)}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min="1"
-                    value={issue.page_number}
-                    onChange={(event) => updateReviewIssue(issue.id, { page_number: event.target.value })}
-                    placeholder="Trang"
-                  />
-                  <textarea
-                    value={issue.detail}
-                    onChange={(event) => updateReviewIssue(issue.id, { detail: event.target.value })}
-                    placeholder="Chi tiết"
-                    rows={2}
-                  />
-                  <button type="button" onClick={() => removeReviewIssue(issue.id)}>Xóa</button>
+            {reviewDraft.decision !== 'APPROVED' && (
+              <section className="review-form-section">
+                <div className="review-issue-head">
+                  <div>
+                    <h3>
+                      {reviewDraft.decision === 'NEEDS_REVISION'
+                        ? 'Lỗi cần giảng viên sửa'
+                        : 'Căn cứ từ chối bổ sung'}
+                    </h3>
+                    <p className="review-form-muted">
+                      {reviewDraft.decision === 'NEEDS_REVISION'
+                        ? 'Bắt buộc thêm ít nhất một lỗi cụ thể để giảng viên biết cần sửa gì.'
+                        : 'Có thể gắn vấn đề với trích dẫn hoặc số trang để quyết định rõ ràng hơn.'}
+                    </p>
+                  </div>
+                  <button type="button" onClick={addReviewIssue}>
+                    {reviewDraft.decision === 'NEEDS_REVISION' ? 'Thêm lỗi' : 'Thêm căn cứ'}
+                  </button>
                 </div>
-              ))}
-            </section>
+                {reviewDraft.issues.length === 0 && (
+                  <p className="review-form-muted">
+                    {reviewDraft.decision === 'NEEDS_REVISION'
+                      ? 'Chưa có lỗi cần sửa.'
+                      : 'Chưa có căn cứ bổ sung.'}
+                  </p>
+                )}
+                {reviewDraft.issues.map((issue) => (
+                  <div className="review-issue-row" key={issue.id}>
+                    <input
+                      value={issue.title}
+                      onChange={(event) => updateReviewIssue(issue.id, { title: event.target.value })}
+                      placeholder={reviewDraft.decision === 'NEEDS_REVISION' ? 'Tiêu đề lỗi' : 'Tiêu đề căn cứ'}
+                    />
+                    <select
+                      value={issue.severity}
+                      onChange={(event) => updateReviewIssue(issue.id, { severity: event.target.value })}
+                    >
+                      <option value="LOW">Nhẹ</option>
+                      <option value="MEDIUM">Vừa</option>
+                      <option value="HIGH">Nghiêm trọng</option>
+                    </select>
+                    <select
+                      value={issue.source_chunk_id}
+                      onChange={(event) => updateReviewIssue(issue.id, { source_chunk_id: event.target.value })}
+                    >
+                      <option value="">Không gắn nguồn</option>
+                      {sourceItems.map((source, index) => (
+                        <option key={source.chunk_id || index} value={source.chunk_id || ''}>
+                          Citation #{source.citation_order} · {pageRangeLabel(source.page_range)}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min="1"
+                      value={issue.page_number}
+                      onChange={(event) => updateReviewIssue(issue.id, { page_number: event.target.value })}
+                      placeholder="Trang"
+                    />
+                    <textarea
+                      value={issue.detail}
+                      onChange={(event) => updateReviewIssue(issue.id, { detail: event.target.value })}
+                      placeholder="Chi tiết"
+                      rows={2}
+                    />
+                    <button type="button" onClick={() => removeReviewIssue(issue.id)}>Xóa</button>
+                  </div>
+                ))}
+              </section>
+            )}
 
             {reviewFormError && <p className="review-form-error">{reviewFormError}</p>}
             <div className="review-modal__foot">
               <button type="button" onClick={() => setReviewDraft(null)}>Hủy</button>
               <button type="submit" className="detail-action-primary" disabled={busyId === selected?.id}>
-                Lưu kết quả kiểm duyệt
+                {REVIEW_SUBMIT_LABEL[reviewDraft.decision] || 'Lưu kết quả kiểm duyệt'}
               </button>
             </div>
           </form>
@@ -2039,6 +2127,9 @@ function ReviewQueuePage() {
         <div className="review-modal-backdrop">
           <form
             className="review-modal review-modal--compact"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assignment-dialog-title"
             onSubmit={(event) => {
               event.preventDefault();
               submitAssignmentForm();
@@ -2047,9 +2138,9 @@ function ReviewQueuePage() {
             <div className="review-modal__head">
               <div>
                 <span>{assignmentDraft.question.question_code}</span>
-                <h2>Gán người duyệt</h2>
+                <h2 id="assignment-dialog-title">Gán người duyệt</h2>
               </div>
-              <button type="button" onClick={() => setAssignmentDraft(null)}>Đóng</button>
+              <button type="button" aria-label="Đóng hộp thoại phân công" onClick={() => setAssignmentDraft(null)}>Đóng</button>
             </div>
             <label className="review-form-field">
               <span>Người duyệt/quản trị viên đang hoạt động</span>
@@ -2109,6 +2200,78 @@ function ReviewQueuePage() {
               <button type="button" onClick={() => setAssignmentDraft(null)}>Hủy</button>
               <button type="submit" className="detail-action-primary" disabled={busyId === assignmentDraft.question.id}>
                 Lưu phân công
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {evaluationRequest && (
+        <div className="review-modal-backdrop">
+          <form
+            className="review-modal review-modal--compact"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="evaluation-dialog-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              runEvaluation(evaluationRequest);
+            }}
+          >
+            <div className="review-modal__head">
+              <div>
+                <span>{evaluationRequest.question_code}</span>
+                <h2 id="evaluation-dialog-title">
+                  {hasEvaluationScore ? 'Chạy lại đánh giá AI' : 'Chạy đánh giá AI'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Đóng hộp thoại đánh giá AI"
+                disabled={busyId === evaluationRequest.id}
+                onClick={() => {
+                  setEvaluationRequest(null);
+                  setEvaluationDialogError('');
+                }}
+              >
+                Đóng
+              </button>
+            </div>
+            <div className="evaluation-confirmation">
+              <strong>AI chỉ hỗ trợ chấm điểm; Reviewer vẫn là người quyết định.</strong>
+              <p>
+                Hệ thống sẽ gửi nội dung câu hỏi và nguồn trích dẫn tới mô hình đánh giá.
+                Quá trình có thể mất vài phút và điểm sẽ tự cập nhật khi hoàn tất.
+              </p>
+              <dl>
+                <div>
+                  <dt>Trạng thái hiện tại</dt>
+                  <dd>{evaluationStatusLabel(evaluationRequest.evaluation_status)}</dd>
+                </div>
+                <div>
+                  <dt>Điểm hiện tại</dt>
+                  <dd>{score(evaluationRequest.quality_summary?.overall_score)}</dd>
+                </div>
+              </dl>
+            </div>
+            {evaluationDialogError && <p className="review-form-error">{evaluationDialogError}</p>}
+            <div className="review-modal__foot">
+              <button
+                type="button"
+                disabled={busyId === evaluationRequest.id}
+                onClick={() => {
+                  setEvaluationRequest(null);
+                  setEvaluationDialogError('');
+                }}
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                className="detail-action-primary"
+                disabled={busyId === evaluationRequest.id}
+              >
+                {busyId === evaluationRequest.id ? 'Đang gửi AI…' : 'Gửi AI đánh giá'}
               </button>
             </div>
           </form>

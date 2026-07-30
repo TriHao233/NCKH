@@ -405,3 +405,714 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Admin AI triage: human decision first */
+.admin-ai-review-page {
+  background: #f4f6f8;
+  padding: 24px 28px 64px;
+}
+
+.ai-review-toolbar,
+.ai-review-summary,
+.ai-review-layout {
+  max-width: 1380px;
+}
+
+.ai-review-toolbar {
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.ai-review-toolbar__title span {
+  color: #52606d;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+}
+
+.ai-review-toolbar__title h1 {
+  color: #172b4d;
+  font-size: clamp(1.65rem, 2vw, 2rem);
+  letter-spacing: -0.025em;
+}
+
+.ai-review-toolbar__title p {
+  color: #5f6b7a;
+}
+
+.admin-ai-review-page .btn,
+.ai-review-detail-actions button {
+  border-color: #cfd6df;
+  border-radius: 6px;
+}
+
+.admin-ai-review-page .btn--primary,
+.ai-review-detail-actions .primary {
+  border-color: #0c66e4;
+  background: #0c66e4;
+}
+
+.admin-ai-review-page .btn--outline {
+  color: #172b4d;
+}
+
+.ai-review-summary {
+  gap: 0;
+  border: 1px solid #dfe4ea;
+  border-radius: 9px 9px 0 0;
+  background: #fff;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.ai-review-summary button {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: center;
+  min-height: 86px;
+  border: 0;
+  border-right: 1px solid #dfe4ea;
+  border-radius: 0;
+  padding: 12px 14px;
+}
+
+.ai-review-summary button:last-child {
+  border-right: 0;
+}
+
+.ai-review-summary button:hover {
+  background: #f7f8fa;
+}
+
+.ai-review-summary button.active {
+  border-color: #dfe4ea;
+  background: #f0f6ff;
+}
+
+.ai-review-summary button.active::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: #0c66e4;
+  content: "";
+}
+
+.ai-review-summary span {
+  color: #172b4d;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.ai-review-summary b {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: #172b4d;
+  font-size: 1.4rem;
+}
+
+.ai-review-summary small {
+  color: #6b778c;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.ai-review-layout {
+  grid-template-columns: minmax(410px, 0.82fr) minmax(530px, 1.18fr);
+  gap: 14px;
+}
+
+.ai-review-list-panel,
+.ai-review-detail-panel {
+  border-color: #dfe4ea;
+  border-radius: 0 0 9px 9px;
+  box-shadow: none;
+  padding: 16px;
+}
+
+.ai-review-list-panel {
+  border-top: 0;
+}
+
+.ai-review-detail-panel {
+  top: 82px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.ai-review-list-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.ai-review-list-heading span,
+.ai-review-list-heading b {
+  display: block;
+}
+
+.ai-review-list-heading span {
+  color: #6b778c;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ai-review-list-heading b {
+  color: #172b4d;
+  font-size: 1rem;
+  margin-top: 3px;
+}
+
+.ai-review-list-heading small {
+  max-width: 210px;
+  color: #6b778c;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.ai-review-filters input {
+  border-color: #cfd6df;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.ai-review-filters input:focus {
+  border-color: #0c66e4;
+  outline: 2px solid rgba(12, 102, 228, 0.14);
+  outline-offset: 1px;
+}
+
+.ai-review-list {
+  gap: 0;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ai-review-row {
+  position: relative;
+  border: 0;
+  border-bottom: 1px solid #e7ebf0;
+  border-radius: 0;
+  padding: 13px 14px;
+}
+
+.ai-review-row:last-child {
+  border-bottom: 0;
+}
+
+.ai-review-row:hover {
+  background: #f7f8fa;
+}
+
+.ai-review-row--active {
+  border-color: #e7ebf0;
+  background: #eef4ff;
+  box-shadow: none;
+}
+
+.ai-review-row--active::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: #0c66e4;
+  content: "";
+}
+
+.ai-review-row strong,
+.ai-review-detail-head h2,
+.ai-review-question p {
+  color: #172b4d;
+}
+
+.ai-review-detail-empty {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  padding: 48px 28px;
+  text-align: center;
+}
+
+.ai-review-detail-empty > span {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid #b7c8e6;
+  border-radius: 50%;
+  color: #0c66e4;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.ai-review-detail-empty h2 {
+  color: #172b4d;
+  font-size: 1.1rem;
+  margin: 14px 0 6px;
+}
+
+.ai-review-detail-empty p {
+  max-width: 390px;
+  color: #6b778c;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.ai-review-question,
+.ai-evaluation-total div,
+.ai-score-grid div,
+.ai-evidence-block {
+  border-color: #dfe4ea;
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+
+.ai-review-detail-actions {
+  position: sticky;
+  z-index: 4;
+  top: -16px;
+  margin: 0 -16px 14px;
+  border-top: 1px solid #dfe4ea;
+  border-bottom: 1px solid #dfe4ea;
+  background: rgba(255, 255, 255, 0.97);
+  padding: 10px 16px;
+  backdrop-filter: blur(8px);
+}
+
+.ai-review-detail-actions button:last-child:not(.primary) {
+  border-color: #f0c36d;
+  color: #8a4b08;
+}
+
+@media (max-width: 1120px) {
+  .ai-review-layout {
+    grid-template-columns: minmax(350px, 0.9fr) minmax(440px, 1.1fr);
+  }
+
+  .ai-review-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .ai-review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-review-detail-panel {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-ai-review-page {
+    padding: 18px 12px 48px;
+  }
+
+  .ai-review-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-review-summary button {
+    border-right: 0;
+    border-bottom: 1px solid #dfe4ea;
+  }
+
+  .ai-review-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ai-review-list-heading small {
+    max-width: none;
+    text-align: left;
+  }
+
+  .ai-review-detail-actions {
+    position: static;
+    margin: 0 0 14px;
+    padding: 10px 0;
+  }
+}
+
+/* Admin workbench filters */
+.ai-review-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ai-review-filter {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ai-review-filter > span,
+.ai-admin-dialog__field > span {
+  color: #44546f;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.ai-review-filter--search > div {
+  position: relative;
+}
+
+.ai-review-filter--search {
+  grid-column: 1 / -1;
+}
+
+.ai-review-filter input,
+.ai-review-filter select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  background: #fff;
+  color: #172b4d;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 8px 10px;
+}
+
+.ai-review-filter--search input {
+  padding-right: 36px;
+}
+
+.ai-review-filter--search button {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #626f86;
+  font-size: 1rem;
+  transform: translateY(-50%);
+}
+
+.ai-review-filter--search button:hover {
+  background: #f1f2f4;
+}
+
+.ai-review-filter-reset {
+  justify-self: end;
+  min-height: 38px;
+  min-width: 96px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  background: #fff;
+  color: #0c66e4;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 8px 12px;
+}
+
+.ai-review-filter-reset:disabled {
+  color: #97a0af;
+  cursor: default;
+}
+
+.ai-review-empty--action {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  text-align: center;
+}
+
+.ai-review-empty--action b {
+  color: #172b4d;
+}
+
+.ai-review-empty--action span {
+  max-width: 380px;
+  color: #6b778c;
+}
+
+.ai-review-empty--action button {
+  margin-top: 4px;
+  border: 0;
+  background: transparent;
+  color: #0c66e4;
+  font-weight: 800;
+}
+
+.ai-review-detail-actions .danger {
+  border-color: #f1b7b7;
+  color: #ae2e24;
+}
+
+.ai-review-detail-actions .danger:hover {
+  background: #fff0f0;
+}
+
+/* Transactional dialogs */
+.ai-admin-dialog-backdrop {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  background: rgba(9, 30, 66, 0.54);
+  padding: 24px;
+}
+
+.ai-admin-dialog {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  border: 1px solid #dfe4ea;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(9, 30, 66, 0.3);
+}
+
+.ai-admin-dialog__head,
+.ai-admin-dialog__foot {
+  position: sticky;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #fff;
+  padding: 16px 20px;
+}
+
+.ai-admin-dialog__head {
+  top: 0;
+  border-bottom: 1px solid #dfe4ea;
+}
+
+.ai-admin-dialog__head span {
+  display: block;
+  color: #626f86;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ai-admin-dialog__head h2 {
+  color: #172b4d;
+  font-size: 1.15rem;
+  margin: 3px 0 0;
+}
+
+.ai-admin-dialog__head button {
+  border: 0;
+  background: transparent;
+  color: #44546f;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.ai-admin-dialog__body {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.ai-admin-dialog__question,
+.ai-admin-model-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  background: #f7f8fa;
+  padding: 14px;
+}
+
+.ai-admin-dialog__question b {
+  color: #172b4d;
+  font-size: 0.87rem;
+  line-height: 1.5;
+}
+
+.ai-admin-dialog__question span,
+.ai-admin-model-card span,
+.ai-admin-model-card small,
+.ai-admin-dialog__hint {
+  color: #626f86;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.ai-admin-model-card b {
+  color: #0c66e4;
+  font-size: 0.92rem;
+}
+
+.ai-admin-dialog__hint {
+  margin: 0;
+}
+
+.ai-admin-dialog__warning {
+  border-left: 4px solid #e56910;
+  border-radius: 4px;
+  background: #fff7d6;
+  color: #5f3811;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 11px 13px;
+}
+
+.ai-admin-checklist {
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ai-admin-checklist > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #f7f8fa;
+  padding: 12px 14px;
+}
+
+.ai-admin-checklist h3 {
+  color: #172b4d;
+  font-size: 0.86rem;
+  margin: 0;
+}
+
+.ai-admin-checklist > div span {
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #0c66e4;
+  font-size: 0.7rem;
+  font-weight: 900;
+  padding: 3px 8px;
+}
+
+.ai-admin-checklist > p {
+  color: #626f86;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 14px 4px;
+}
+
+.ai-admin-checklist label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #ebecf0;
+  color: #172b4d;
+  font-size: 0.8rem;
+  padding: 11px 14px;
+}
+
+.ai-admin-checklist input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0c66e4;
+}
+
+.ai-admin-dialog__field {
+  display: grid;
+  gap: 7px;
+}
+
+.ai-admin-dialog__field textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #cfd6df;
+  border-radius: 7px;
+  color: #172b4d;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 10px 12px;
+}
+
+.ai-admin-dialog__error {
+  border-radius: 6px;
+  background: #fff0f0;
+  color: #ae2e24;
+  font-size: 0.78rem;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.ai-admin-dialog__foot {
+  bottom: 0;
+  justify-content: flex-end;
+  border-top: 1px solid #dfe4ea;
+}
+
+.ai-admin-dialog__foot button {
+  min-height: 38px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  background: #fff;
+  color: #172b4d;
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 8px 14px;
+}
+
+.ai-admin-dialog__foot .primary {
+  border-color: #0c66e4;
+  background: #0c66e4;
+  color: #fff;
+}
+
+.ai-admin-dialog__foot .danger {
+  border-color: #ae2e24;
+  background: #ae2e24;
+  color: #fff;
+}
+
+.ai-admin-dialog button:focus-visible,
+.ai-admin-dialog input:focus-visible,
+.ai-admin-dialog textarea:focus-visible,
+.ai-review-filter input:focus-visible,
+.ai-review-filter select:focus-visible,
+.ai-review-filter-reset:focus-visible {
+  outline: 2px solid #0c66e4;
+  outline-offset: 2px;
+}
+
+@media (max-width: 560px) {
+  .ai-review-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-review-filter--search {
+    grid-column: auto;
+  }
+
+  .ai-review-filter-reset {
+    justify-self: stretch;
+  }
+
+  .ai-admin-dialog-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .ai-admin-dialog {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 12px 12px 0 0;
+  }
+}

@@ -42,6 +42,12 @@ const POLICY_THRESHOLD_FIELDS = [
 const EMPTY_SUBJECT_FORM = { id: '', subject_code: '', subject_name: '', description: '', is_active: true };
 const EMPTY_CHAPTER_FORM = { id: '', chapter_code: '', chapter_name: '', sequence_no: 1, is_active: true };
 const EMPTY_CLO_FORM = { id: '', clo_code: '', description: '', target_weight: 1, is_active: true };
+const CATALOG_SECTIONS = [
+  { key: 'subjects', label: 'Cấu trúc đào tạo', description: 'Môn học, chương và CLO' },
+  { key: 'models', label: 'Mô hình AI', description: 'Runtime và health-check' },
+  { key: 'prompts', label: 'Mẫu prompt', description: 'Phiên bản và test-build' },
+  { key: 'policy', label: 'Tiêu chí đánh giá', description: 'Trọng số và ngưỡng đạt' },
+];
 
 function usageText(counts = {}) {
   const parts = [
@@ -158,6 +164,8 @@ function CatalogAdminPage() {
   const [promptTesting, setPromptTesting] = useState(false);
   const [promptPreview, setPromptPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [activeSection, setActiveSection] = useState('subjects');
+  const [confirmAction, setConfirmAction] = useState(null);
 
   const activeSubject = useMemo(
     () => catalog.subjects.find((subject) => subject.id === activeSubjectId) || catalog.subjects[0],
@@ -211,6 +219,20 @@ function CatalogAdminPage() {
     loadCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!confirmAction) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !saving) setConfirmAction(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [confirmAction, saving]);
 
   const runSave = async (action) => {
     setSaving(true);
@@ -289,49 +311,76 @@ function CatalogAdminPage() {
 
   const toggleSubjectActive = () => {
     if (!activeSubject) return;
-    if (
-      activeSubject.is_active !== false
-      && usageTotal(activeSubject.usage_counts) > 0
-      && !window.confirm(
-        `Tạm khóa ${activeSubject.subject_code}? Đang liên quan: ${usageText(activeSubject.usage_counts)}. Dữ liệu cũ vẫn được giữ nhưng không thể chọn cho dữ liệu mới.`,
-      )
-    ) return;
-    runSave(async () => {
+    const execute = () => runSave(async () => {
       const updated = await updateSubject(activeSubject.id, { is_active: !activeSubject.is_active });
       setSubjectForm(subjectToForm(updated));
     });
+    if (
+      activeSubject.is_active !== false
+      && usageTotal(activeSubject.usage_counts) > 0
+    ) {
+      setConfirmAction({
+        eyebrow: activeSubject.subject_code,
+        title: `Tạm khóa môn ${activeSubject.subject_code}?`,
+        description: `Môn học đang liên quan đến ${usageText(activeSubject.usage_counts)}. Dữ liệu cũ vẫn được giữ, nhưng môn này sẽ không thể chọn cho dữ liệu mới.`,
+        confirmLabel: 'Tạm khóa môn',
+        run: execute,
+      });
+      return;
+    }
+    execute();
   };
 
   const toggleChapterActive = (chapter) => {
     if (!activeSubject) return;
-    if (
-      chapter.is_active !== false
-      && usageTotal(chapter.usage_counts) > 0
-      && !window.confirm(
-        `Tạm khóa chương ${chapter.chapter_code}? Đang liên quan: ${usageText(chapter.usage_counts)}.`,
-      )
-    ) return;
-    runSave(async () => updateSubjectChapter(
+    const execute = () => runSave(async () => updateSubjectChapter(
       activeSubject.id,
       childId(chapter),
       { is_active: chapter.is_active === false },
     ));
+    if (
+      chapter.is_active !== false
+      && usageTotal(chapter.usage_counts) > 0
+    ) {
+      setConfirmAction({
+        eyebrow: `${activeSubject.subject_code} · ${chapter.chapter_code}`,
+        title: `Tạm khóa chương ${chapter.chapter_code}?`,
+        description: `Chương đang liên quan đến ${usageText(chapter.usage_counts)}. Nội dung cũ không bị xóa, nhưng chương sẽ không thể chọn cho dữ liệu mới.`,
+        confirmLabel: 'Tạm khóa chương',
+        run: execute,
+      });
+      return;
+    }
+    execute();
   };
 
   const toggleCloActive = (clo) => {
     if (!activeSubject) return;
-    if (
-      clo.is_active !== false
-      && usageTotal(clo.usage_counts) > 0
-      && !window.confirm(
-        `Tạm khóa ${clo.clo_code}? Đang liên quan: ${usageText(clo.usage_counts)}.`,
-      )
-    ) return;
-    runSave(async () => updateSubjectLearningOutcome(
+    const execute = () => runSave(async () => updateSubjectLearningOutcome(
       activeSubject.id,
       childId(clo),
       { is_active: clo.is_active === false },
     ));
+    if (
+      clo.is_active !== false
+      && usageTotal(clo.usage_counts) > 0
+    ) {
+      setConfirmAction({
+        eyebrow: `${activeSubject.subject_code} · ${clo.clo_code}`,
+        title: `Tạm khóa ${clo.clo_code}?`,
+        description: `Chuẩn đầu ra đang liên quan đến ${usageText(clo.usage_counts)}. Dữ liệu cũ được giữ nguyên, nhưng CLO này sẽ không thể chọn cho dữ liệu mới.`,
+        confirmLabel: 'Tạm khóa CLO',
+        run: execute,
+      });
+      return;
+    }
+    execute();
+  };
+
+  const confirmCatalogAction = () => {
+    const action = confirmAction;
+    setConfirmAction(null);
+    action?.run?.();
   };
 
   const handleSaveModel = (event) => {
@@ -498,6 +547,7 @@ function CatalogAdminPage() {
         <div>
           <span>Khu vực quản trị</span>
           <h1>Cấu hình dữ liệu nền</h1>
+          <p>Quản lý từng nhóm cấu hình độc lập để giảm nhầm lẫn khi vận hành.</p>
         </div>
         <button type="button" onClick={() => loadCatalog()} disabled={loading || saving}>Làm mới</button>
       </section>
@@ -544,7 +594,24 @@ function CatalogAdminPage() {
             )}
           </div>
 
-          <div className="catalog-card catalog-card--wide">
+          <nav className="catalog-section-tabs" aria-label="Nhóm cấu hình dữ liệu nền" role="tablist">
+            {CATALOG_SECTIONS.map((section) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeSection === section.key}
+                className={activeSection === section.key ? 'active' : ''}
+                key={section.key}
+                onClick={() => setActiveSection(section.key)}
+              >
+                <b>{section.label}</b>
+                <span>{section.description}</span>
+              </button>
+            ))}
+          </nav>
+
+          {activeSection === 'subjects' && (
+          <div className="catalog-card catalog-card--wide" role="tabpanel">
             <div className="catalog-card-title-row">
               <h2>Môn học / Chương / CLO</h2>
               <button type="button" className="catalog-ghost-button" onClick={handleNewSubject} disabled={saving}>
@@ -663,8 +730,10 @@ function CatalogAdminPage() {
               </div>
             </div>
           </div>
+          )}
 
-          <div className="catalog-card">
+          {activeSection === 'models' && (
+          <div className="catalog-card catalog-card--wide" role="tabpanel">
             <h2>Mô hình AI</h2>
             <form className="catalog-form" onSubmit={handleSaveModel}>
               <input placeholder="Mã mô hình" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
@@ -710,8 +779,10 @@ function CatalogAdminPage() {
               </p>
             )}
           </div>
+          )}
 
-          <div className="catalog-card catalog-card--wide">
+          {activeSection === 'prompts' && (
+          <div className="catalog-card catalog-card--wide" role="tabpanel">
             <div className="catalog-card-title-row">
               <h2>Mẫu prompt</h2>
               <button
@@ -724,14 +795,17 @@ function CatalogAdminPage() {
               </button>
             </div>
             <div className="prompt-layout">
-              <select value={selectedPromptKey} onChange={(e) => handleSelectPrompt(e.target.value)}>
-                <option value="">Chọn prompt</option>
-                {promptOptions.map((template) => (
-                  <option key={template.template_key} value={template.template_key}>
-                    {template.name || template.template_key} - phiên bản {template.version}
-                  </option>
-                ))}
-              </select>
+              <label className="catalog-select-field">
+                <span>Prompt đang chỉnh</span>
+                <select value={selectedPromptKey} onChange={(e) => handleSelectPrompt(e.target.value)}>
+                  <option value="">Chọn prompt</option>
+                  {promptOptions.map((template) => (
+                    <option key={template.template_key} value={template.template_key}>
+                      {template.name || template.template_key} - phiên bản {template.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <form className="catalog-form" onSubmit={handleSavePrompt}>
                 <input placeholder="Mã prompt" value={promptForm.template_key} onChange={(e) => setPromptForm({ ...promptForm, template_key: e.target.value })} />
                 <input placeholder="Nhóm prompt" value={promptForm.kind} onChange={(e) => setPromptForm({ ...promptForm, kind: e.target.value })} />
@@ -792,8 +866,10 @@ function CatalogAdminPage() {
               ))}
             </div>
           </div>
+          )}
 
-          <div className="catalog-card">
+          {activeSection === 'policy' && (
+          <div className="catalog-card catalog-card--wide" role="tabpanel">
             <h2>Bộ tiêu chí đánh giá</h2>
             <form className="catalog-form" onSubmit={handleSavePolicy}>
               <label className="policy-field">
@@ -877,7 +953,38 @@ function CatalogAdminPage() {
               ))}
             </div>
           </div>
+          )}
         </section>
+      )}
+
+      {confirmAction && (
+        <div className="catalog-dialog-backdrop">
+          <section
+            className="catalog-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="catalog-dialog-title"
+          >
+            <header>
+              <span>{confirmAction.eyebrow}</span>
+              <h2 id="catalog-dialog-title">{confirmAction.title}</h2>
+            </header>
+            <div className="catalog-dialog__body">
+              <p>{confirmAction.description}</p>
+              <div>
+                Hành động này có thể hoàn tác bằng cách chọn <b>Kích hoạt</b> lại.
+              </div>
+            </div>
+            <footer>
+              <button type="button" onClick={() => setConfirmAction(null)} disabled={saving}>
+                Hủy
+              </button>
+              <button type="button" className="danger" onClick={confirmCatalogAction} disabled={saving}>
+                {saving ? 'Đang xử lý...' : confirmAction.confirmLabel}
+              </button>
+            </footer>
+          </section>
+        </div>
       )}
     </main>
   );

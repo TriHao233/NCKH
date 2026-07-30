@@ -225,7 +225,7 @@ function AdminAuditPage() {
       const csv = rowsToCsv(AUDIT_EXPORT_COLUMNS, exportRows);
       downloadCsv(timestampedCsvFilename('admin-audit'), csv);
     } catch (err) {
-      window.alert(err.message || 'Xuất CSV thất bại');
+      setError(err.message || 'Xuất CSV thất bại');
     } finally {
       setExportKey('');
     }
@@ -237,7 +237,7 @@ function AdminAuditPage() {
       const exportRows = await fetchAuditForExport();
       downloadXlsx(timestampedXlsxFilename('admin-audit'), AUDIT_EXPORT_COLUMNS, exportRows, 'Admin audit');
     } catch (err) {
-      window.alert(err.message || 'Xuất XLSX thất bại');
+      setError(err.message || 'Xuất XLSX thất bại');
     } finally {
       setExportKey('');
     }

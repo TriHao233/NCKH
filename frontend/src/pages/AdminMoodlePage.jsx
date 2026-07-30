@@ -103,6 +103,8 @@ function AdminMoodlePage() {
   const [saving, setSaving] = useState(false);
   const [checkingKey, setCheckingKey] = useState('');
   const [retryingId, setRetryingId] = useState('');
+  const [actionDialog, setActionDialog] = useState(null);
+  const [dialogError, setDialogError] = useState('');
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -235,33 +237,40 @@ function AdminMoodlePage() {
     }
   };
 
-  const handleDeactivate = async (target) => {
-    if (!window.confirm(`Khóa Moodle target "${target.site_name}"?`)) return;
-    setSaving(true);
-    setError('');
-    try {
-      await deactivateMoodleTarget(target.site_key);
-      await loadTargets();
-    } catch (err) {
-      setError(err.message || 'Khóa Moodle target thất bại');
-    } finally {
-      setSaving(false);
-    }
+  const handleDeactivate = (target) => {
+    setDialogError('');
+    setActionDialog({ type: 'deactivate', target });
   };
 
-  const handleRetryPublication = async (item) => {
-    const realSync = item.publication_mode === 'REST_API' && item.external_sync !== false;
-    const consequence = realSync
-      ? 'Thao tác này có thể gửi lại câu hỏi sang Moodle thật.'
-      : 'Thao tác này chỉ tạo lại bản ghi mô phỏng cục bộ.';
-    if (!window.confirm(`Chạy lại lượt xuất bản "${item.question_code || item.question_id}"? ${consequence}`)) return;
-    setRetryingId(item.id);
+  const handleRetryPublication = (item) => {
+    setDialogError('');
+    setActionDialog({ type: 'retry', item });
+  };
+
+  const confirmMoodleAction = async () => {
+    if (!actionDialog) return;
+    setDialogError('');
     setError('');
+    if (actionDialog.type === 'deactivate') {
+      setSaving(true);
+      try {
+        await deactivateMoodleTarget(actionDialog.target.site_key);
+        setActionDialog(null);
+        await loadTargets();
+      } catch (err) {
+        setDialogError(err.message || 'Khóa Moodle target thất bại');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    setRetryingId(actionDialog.item.id);
     try {
-      await retryMoodlePublication(item.id);
+      await retryMoodlePublication(actionDialog.item.id);
+      setActionDialog(null);
       await loadPublications();
     } catch (err) {
-      setError(err.message || 'Retry publication Moodle thất bại');
+      setDialogError(err.message || 'Retry publication Moodle thất bại');
     } finally {
       setRetryingId('');
     }
@@ -270,6 +279,12 @@ function AdminMoodlePage() {
   const publicationPageCount = Math.max(
     1,
     Math.ceil(publicationTotal / PUBLICATION_PAGE_SIZE),
+  );
+  const dialogBusy = saving || Boolean(retryingId);
+  const retryIsRealSync = (
+    actionDialog?.type === 'retry'
+    && actionDialog.item.publication_mode === 'REST_API'
+    && actionDialog.item.external_sync !== false
   );
 
   return (
@@ -510,20 +525,33 @@ function AdminMoodlePage() {
             <small>{publicationTotal} kết quả theo bộ lọc hiện tại</small>
           </div>
           <div className="publication-filters">
-            <select value={siteFilter} onChange={(event) => { setSiteFilter(event.target.value); setPublicationPage(1); }}>
+            <select
+              aria-label="Lọc theo điểm kết nối Moodle"
+              value={siteFilter}
+              onChange={(event) => { setSiteFilter(event.target.value); setPublicationPage(1); }}
+            >
               <option value="all">Tất cả site</option>
               {targets.map((target) => (
                 <option key={target.site_key} value={target.site_key}>{target.site_name}</option>
               ))}
             </select>
-            <select value={publicationStatus} onChange={(event) => { setPublicationStatus(event.target.value); setPublicationPage(1); }}>
+            <select
+              aria-label="Lọc theo trạng thái xuất bản"
+              value={publicationStatus}
+              onChange={(event) => { setPublicationStatus(event.target.value); setPublicationPage(1); }}
+            >
               {Object.entries(STATUS_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
             <label>
               <FontAwesomeIcon icon={faSearch} />
-              <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Mã câu hỏi, ref, ghi chú..." />
+              <input
+                aria-label="Tìm trong nhật ký xuất bản Moodle"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Mã câu hỏi, ref, ghi chú..."
+              />
             </label>
           </div>
         </div>
@@ -607,6 +635,63 @@ function AdminMoodlePage() {
           </div>
         )}
       </section>
+
+      {actionDialog && (
+        <div className="moodle-dialog-backdrop">
+          <section
+            className="moodle-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="moodle-action-dialog-title"
+          >
+            <header>
+              <span>
+                {actionDialog.type === 'deactivate'
+                  ? actionDialog.target.site_key
+                  : (actionDialog.item.question_code || actionDialog.item.question_id)}
+              </span>
+              <h2 id="moodle-action-dialog-title">
+                {actionDialog.type === 'deactivate'
+                  ? 'Khóa điểm kết nối Moodle?'
+                  : 'Chạy lại lượt xuất bản?'}
+              </h2>
+            </header>
+            <div className="moodle-dialog__body">
+              {actionDialog.type === 'deactivate' ? (
+                <p>
+                  <b>{actionDialog.target.site_name}</b> sẽ không còn nhận lượt xuất bản mới.
+                  Nhật ký và cấu hình hiện tại vẫn được giữ lại.
+                </p>
+              ) : (
+                <>
+                  <p>Lượt xuất bản lỗi sẽ được đưa vào xử lý lại với cấu hình hiện tại.</p>
+                  <div className={retryIsRealSync ? 'danger' : 'safe'}>
+                    {retryIsRealSync
+                      ? 'Đây là kết nối thật: câu hỏi có thể được gửi lại sang Moodle bên ngoài.'
+                      : 'Đây là chế độ mô phỏng: hệ thống chỉ tạo lại bản ghi cục bộ.'}
+                  </div>
+                </>
+              )}
+              {dialogError && <p className="moodle-dialog__error" role="alert">{dialogError}</p>}
+            </div>
+            <footer>
+              <button type="button" onClick={() => setActionDialog(null)} disabled={dialogBusy}>
+                Hủy
+              </button>
+              <button
+                type="button"
+                className={actionDialog.type === 'deactivate' || retryIsRealSync ? 'danger' : 'primary'}
+                onClick={confirmMoodleAction}
+                disabled={dialogBusy}
+              >
+                {dialogBusy
+                  ? 'Đang xử lý...'
+                  : (actionDialog.type === 'deactivate' ? 'Khóa điểm kết nối' : 'Chạy lại xuất bản')}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

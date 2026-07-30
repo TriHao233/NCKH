@@ -159,6 +159,8 @@ function AdminJobsPage() {
   const [actionKey, setActionKey] = useState('');
   const [exportKey, setExportKey] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
+  const [cancelJob, setCancelJob] = useState(null);
+  const [cancelError, setCancelError] = useState('');
 
   useEffect(() => {
     const next = jobFiltersFromSearch(location.search);
@@ -293,21 +295,23 @@ function AdminJobsPage() {
     }
   };
 
-  const handleCancel = async (job) => {
-    const consequence = {
-      generation: 'Hệ thống sẽ dừng sinh thêm câu hỏi; các câu đã lưu trước thời điểm hủy vẫn được giữ lại.',
-      evaluation: 'Kết quả AI chưa hoàn tất sẽ không được ghi vào câu hỏi.',
-      document: 'Pipeline xử lý tài liệu sẽ dừng và cần chạy lại từ màn quản lý tài liệu.',
-    }[job.kind] || 'Tác vụ đang chạy sẽ bị dừng.';
-    if (!window.confirm(`Hủy tác vụ ${compactId(job.id)}? ${consequence}`)) return;
+  const handleCancel = (job) => {
+    setCancelError('');
+    setCancelJob(job);
+  };
+
+  const confirmCancel = async () => {
+    if (!cancelJob) return;
+    const job = cancelJob;
     const key = `cancel:${jobKey(job)}`;
     setActionKey(key);
-    setError('');
+    setCancelError('');
     try {
       await cancelAdminJob(job.kind, job.id);
+      setCancelJob(null);
       await fetchJobs();
     } catch (err) {
-      setError(err.message || 'Hủy tác vụ thất bại');
+      setCancelError(err.message || 'Hủy tác vụ thất bại');
     } finally {
       setActionKey('');
     }
@@ -335,7 +339,7 @@ function AdminJobsPage() {
       const csv = rowsToCsv(JOB_EXPORT_COLUMNS, exportRows);
       downloadCsv(timestampedCsvFilename('admin-jobs'), csv);
     } catch (err) {
-      window.alert(err.message || 'Xuất CSV thất bại');
+      setError(err.message || 'Xuất CSV thất bại');
     } finally {
       setExportKey('');
     }
@@ -347,7 +351,7 @@ function AdminJobsPage() {
       const exportRows = await fetchJobsForExport();
       downloadXlsx(timestampedXlsxFilename('admin-jobs'), JOB_EXPORT_COLUMNS, exportRows, 'Admin jobs');
     } catch (err) {
-      window.alert(err.message || 'Xuất XLSX thất bại');
+      setError(err.message || 'Xuất XLSX thất bại');
     } finally {
       setExportKey('');
     }
@@ -628,6 +632,41 @@ function AdminJobsPage() {
           )}
         </aside>
       </section>
+
+      {cancelJob && (
+        <div className="jobs-dialog-backdrop">
+          <section
+            className="jobs-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cancel-job-dialog-title"
+          >
+            <header>
+              <span>{KIND_LABEL[cancelJob.kind] || cancelJob.kind}</span>
+              <h2 id="cancel-job-dialog-title">Hủy tác vụ {compactId(cancelJob.id)}?</h2>
+            </header>
+            <div className="jobs-dialog__body">
+              <p>
+                {{
+                  generation: 'Hệ thống sẽ dừng sinh thêm câu hỏi; các câu đã lưu trước thời điểm hủy vẫn được giữ lại.',
+                  evaluation: 'Kết quả AI chưa hoàn tất sẽ không được ghi vào câu hỏi.',
+                  document: 'Pipeline xử lý tài liệu sẽ dừng và cần chạy lại từ màn quản lý tài liệu.',
+                }[cancelJob.kind] || 'Tác vụ đang chạy sẽ bị dừng.'}
+              </p>
+              <div>Hủy chỉ áp dụng cho tác vụ này và không xóa dữ liệu đã hoàn tất.</div>
+              {cancelError && <p className="jobs-dialog__error" role="alert">{cancelError}</p>}
+            </div>
+            <footer>
+              <button type="button" onClick={() => setCancelJob(null)} disabled={Boolean(actionKey)}>
+                Quay lại
+              </button>
+              <button type="button" className="danger" onClick={confirmCancel} disabled={Boolean(actionKey)}>
+                {actionKey ? 'Đang hủy...' : 'Hủy tác vụ'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

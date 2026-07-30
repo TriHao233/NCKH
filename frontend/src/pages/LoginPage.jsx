@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect, useRef } from "react";
+import React, { useState, useContext, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import "../css/LoginPage.css";
 import { AuthContext } from "../context/AuthContext";
@@ -6,7 +6,6 @@ import {
   getRedirectResult,
   signInWithCustomToken,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
 } from "firebase/auth";
@@ -22,10 +21,16 @@ import {
 
 const DEMO_LOGIN_ENABLED = String(import.meta.env.VITE_DEMO_MODE).toLowerCase() === "true";
 
-const POPUP_FALLBACK_CODES = new Set([
-  "auth/operation-not-supported-in-this-environment",
-  "auth/popup-blocked",
-]);
+let googleRedirectResultPromise = null;
+
+function consumeGoogleRedirectResult() {
+  if (!googleRedirectResultPromise) {
+    googleRedirectResultPromise = getRedirectResult(auth).finally(() => {
+      googleRedirectResultPromise = null;
+    });
+  }
+  return googleRedirectResultPromise;
+}
 
 function googleLoginErrorMessage(error) {
   if (error?.code === "auth/unauthorized-domain") {
@@ -45,7 +50,6 @@ function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [authNotice, setAuthNotice] = useState(null);
-  const redirectChecked = useRef(false);
 
   const [formData, setFormData] = useState({
     email: "",
@@ -76,10 +80,8 @@ function LoginPage() {
   }, [loading, navigate, requestedPath, user]);
 
   useEffect(() => {
-    if (redirectChecked.current) return undefined;
-    redirectChecked.current = true;
     let active = true;
-    getRedirectResult(auth)
+    consumeGoogleRedirectResult()
       .then(async (result) => {
         if (!active || !result?.user) return;
         setIsLoading(true);
@@ -105,21 +107,14 @@ function LoginPage() {
   // Xử lý đăng nhập bằng Google
   const handleGoogleAuth = async () => {
     setIsLoading(true);
-    setAuthNotice(null);
+    setAuthNotice({
+      type: "info",
+      message: "Đang chuyển đến Google để đăng nhập...",
+    });
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const appUser = await login(result.user);
-      navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
+      await signInWithRedirect(auth, googleProvider);
     } catch (error) {
       await signOut(auth).catch(() => {});
-      if (POPUP_FALLBACK_CODES.has(error?.code)) {
-        setAuthNotice({
-          type: "info",
-          message: "Trình duyệt đang chuyển sang đăng nhập Google...",
-        });
-        await signInWithRedirect(auth, googleProvider);
-        return;
-      }
       setAuthNotice({
         type: "error",
         message: "Đăng nhập Google thất bại: " + googleLoginErrorMessage(error),

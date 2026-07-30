@@ -516,3 +516,99 @@
     padding: 12px;
   }
 }
+
+.jobs-dialog-backdrop {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(9, 30, 66, 0.54);
+  padding: 24px;
+}
+
+.jobs-dialog {
+  width: min(520px, 100%);
+  overflow: hidden;
+  border: 1px solid #dfe4ea;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(9, 30, 66, 0.3);
+}
+
+.jobs-dialog header,
+.jobs-dialog__body,
+.jobs-dialog footer {
+  padding: 16px 20px;
+}
+
+.jobs-dialog header {
+  border-bottom: 1px solid #dfe4ea;
+}
+
+.jobs-dialog header span {
+  color: #626f86;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.jobs-dialog h2 {
+  color: #172b4d;
+  font-size: 1.1rem;
+  margin: 4px 0 0;
+}
+
+.jobs-dialog__body {
+  display: grid;
+  gap: 12px;
+}
+
+.jobs-dialog__body p {
+  color: #44546f;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.jobs-dialog__body > div {
+  border-left: 3px solid #e56910;
+  border-radius: 4px;
+  background: #fff7d6;
+  color: #5f3811;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  padding: 9px 11px;
+}
+
+.jobs-dialog__body .jobs-dialog__error {
+  border-radius: 6px;
+  background: #fff0f0;
+  color: #ae2e24;
+  padding: 10px 12px;
+}
+
+.jobs-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #dfe4ea;
+  background: #f7f8fa;
+}
+
+.jobs-dialog footer button {
+  min-height: 38px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  background: #fff;
+  color: #172b4d;
+  font-weight: 800;
+  padding: 8px 14px;
+}
+
+.jobs-dialog footer .danger {
+  border-color: #ae2e24;
+  background: #ae2e24;
+  color: #fff;
+}

@@ -57,6 +57,45 @@ function compactId(value) {
   return `${text.slice(0, 6)}...${text.slice(-4)}`;
 }
 
+const ADMIN_WORKSPACES = [
+  {
+    label: 'Điều phối kiểm duyệt',
+    description: 'Phân công, theo dõi quá hạn và xử lý hàng đợi câu hỏi.',
+    path: '/kiem-duyet',
+    icon: faClipboardCheck,
+  },
+  {
+    label: 'Thẩm định AI',
+    description: 'Xem cảnh báo chất lượng và quyết định các trường hợp cần can thiệp.',
+    path: '/duyet-ai',
+    icon: faServer,
+  },
+  {
+    label: 'Người dùng & quyền',
+    description: 'Quản lý tài khoản, vai trò và trạng thái hoạt động.',
+    path: '/quan-ly-nguoi-dung',
+    icon: faUsers,
+  },
+  {
+    label: 'Danh mục đào tạo',
+    description: 'Quản lý môn học, chương, CLO và cấu trúc ngân hàng.',
+    path: '/danh-muc',
+    icon: faBookOpen,
+  },
+  {
+    label: 'Tác vụ hệ thống',
+    description: 'Theo dõi job đang chạy, lỗi và các tác vụ cần chạy lại.',
+    path: '/quan-ly-job',
+    icon: faDatabase,
+  },
+  {
+    label: 'Moodle & tích hợp',
+    description: 'Kiểm tra cấu hình đích và lịch sử xuất bản.',
+    path: '/quan-ly-moodle',
+    icon: faPlugCircleCheck,
+  },
+];
+
 function AdminOverviewPage() {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -84,41 +123,47 @@ function AdminOverviewPage() {
     const documents = overview?.documents || {};
     const jobs = overview?.jobs || {};
     const moodle = overview?.moodle || {};
+    const attentionCount = (overview?.attention || []).reduce(
+      (sum, item) => sum + Number(item.count || 0),
+      0,
+    );
+    const operationalIssues = (
+      Number(documents.failed || 0)
+      + Number(jobs.failed || 0)
+      + Number(moodle.publications?.failed || 0)
+    );
     return [
       {
+        key: 'attention',
+        label: 'Cần xử lý ngay',
+        value: attentionCount,
+        detail: 'Các mục đang chặn hoặc có nguy cơ quá hạn',
+        icon: faTriangleExclamation,
+        path: overview?.attention?.[0]?.path || '/kiem-duyet',
+      },
+      {
+        key: 'review',
+        label: 'Hàng đợi kiểm duyệt',
+        value: questions.pending,
+        detail: `${formatNumber(questions.needs_revision)} cần sửa · ${formatNumber(questions.approved)} đã duyệt`,
+        icon: faClipboardCheck,
+        path: '/kiem-duyet',
+      },
+      {
+        key: 'operations',
+        label: 'Sự cố vận hành',
+        value: operationalIssues,
+        detail: `${formatNumber(jobs.active)} job đang chạy · ${formatNumber(jobs.long_running)} quá ngưỡng`,
+        icon: faServer,
+        path: '/quan-ly-job',
+      },
+      {
         key: 'users',
-        label: 'Người dùng hoạt động',
+        label: 'Tài khoản hoạt động',
         value: users.active,
         detail: `${formatNumber(users.teachers)} giảng viên · ${formatNumber(users.reviewers)} người duyệt`,
         icon: faUsers,
-      },
-      {
-        key: 'questions',
-        label: 'Câu hỏi đang dùng',
-        value: questions.total,
-        detail: `${formatNumber(questions.pending)} chờ duyệt · ${formatNumber(questions.approved)} đã duyệt`,
-        icon: faBookOpen,
-      },
-      {
-        key: 'documents',
-        label: 'Tài liệu',
-        value: documents.total,
-        detail: `${formatNumber(documents.processing)} đang xử lý · ${formatNumber(documents.failed)} lỗi`,
-        icon: faDatabase,
-      },
-      {
-        key: 'jobs',
-        label: 'Hàng đợi cần xử lý',
-        value: jobs.failed,
-        detail: `${formatNumber(jobs.active)} đang chạy · ${formatNumber(jobs.long_running)} quá ngưỡng`,
-        icon: faServer,
-      },
-      {
-        key: 'moodle',
-        label: 'Ghi mô phỏng Moodle',
-        value: moodle.publications?.total,
-        detail: `${formatNumber(moodle.publications?.simulated)} lượt mô phỏng · ${formatNumber(moodle.active_targets)} cấu hình hoạt động`,
-        icon: faPlugCircleCheck,
+        path: '/quan-ly-nguoi-dung',
       },
     ];
   }, [overview]);
@@ -136,9 +181,9 @@ function AdminOverviewPage() {
     <main className="admin-overview-page">
       <section className="overview-header">
         <div>
-          <span>Quản trị hệ thống</span>
-          <h1>Tổng quan vận hành</h1>
-          <p>Theo dõi sức khỏe hệ thống, hàng đợi, kiểm duyệt và mô phỏng Moodle trong một màn hình.</p>
+          <span>TRUNG TÂM QUẢN TRỊ · QBankCTU</span>
+          <h1>Trung tâm điều hành</h1>
+          <p>Một màn hình để nắm ưu tiên kiểm duyệt, sức khỏe hệ thống và các điểm cần can thiệp.</p>
         </div>
         <button type="button" className="overview-primary-button" onClick={loadOverview} disabled={loading}>
           <FontAwesomeIcon icon={faRotateRight} />
@@ -148,25 +193,48 @@ function AdminOverviewPage() {
 
       {error && <p className="overview-error">{error}</p>}
 
-      <section className="overview-stats" aria-label="Chỉ số vận hành">
+      <section className="overview-stats" aria-label="Ưu tiên quản trị">
         {stats.map((item) => (
-          <article className={`overview-stat overview-stat--${item.key}`} key={item.key}>
+          <Link className={`overview-stat overview-stat--${item.key}`} key={item.key} to={item.path}>
             <FontAwesomeIcon icon={item.icon} />
             <div>
               <span>{item.label}</span>
               <b>{formatNumber(item.value)}</b>
               <small>{item.detail}</small>
             </div>
-          </article>
+            <em>Mở khu vực →</em>
+          </Link>
         ))}
+      </section>
+
+      <section className="overview-workspaces" aria-labelledby="admin-workspaces-title">
+        <div className="overview-section-heading">
+          <div>
+            <span>Khu vực quản trị</span>
+            <h2 id="admin-workspaces-title">Chọn đúng nơi để xử lý công việc</h2>
+          </div>
+          <Link to="/nhat-ky-he-thong">Xem nhật ký hệ thống</Link>
+        </div>
+        <div className="overview-workspace-grid">
+          {ADMIN_WORKSPACES.map((workspace) => (
+            <Link to={workspace.path} className="overview-workspace" key={workspace.path}>
+              <FontAwesomeIcon icon={workspace.icon} />
+              <div>
+                <b>{workspace.label}</b>
+                <span>{workspace.description}</span>
+              </div>
+              <strong aria-hidden="true">→</strong>
+            </Link>
+          ))}
+        </div>
       </section>
 
       <section className="overview-grid">
         <section className="overview-panel overview-panel--attention">
           <div className="overview-panel-heading">
             <div>
-              <span>Cần chú ý</span>
-              <h2>Hàng đợi vận hành</h2>
+              <span>Ưu tiên hôm nay</span>
+              <h2>Cần xử lý ngay</h2>
             </div>
             <FontAwesomeIcon icon={faTriangleExclamation} />
           </div>
@@ -177,6 +245,9 @@ function AdminOverviewPage() {
                 <b>{formatNumber(item.count)}</b>
               </Link>
             ))}
+            {!loading && attention.length === 0 && (
+              <p className="overview-empty">Không có cảnh báo cần xử lý.</p>
+            )}
           </div>
         </section>
 
@@ -219,22 +290,22 @@ function AdminOverviewPage() {
         <section className="overview-panel">
           <div className="overview-panel-heading">
             <div>
-              <span>Quality</span>
-              <h2>Màu đánh giá</h2>
+              <span>Chất lượng AI</span>
+              <h2>Phân tầng đánh giá</h2>
             </div>
             <FontAwesomeIcon icon={faClipboardCheck} />
           </div>
           <dl className="overview-breakdown">
             <div>
-              <dt>Green</dt>
+              <dt>Đạt tốt</dt>
               <dd>{formatNumber(quality.green)}</dd>
             </div>
             <div>
-              <dt>Yellow</dt>
+              <dt>Cần xem lại</dt>
               <dd>{formatNumber(quality.yellow)}</dd>
             </div>
             <div>
-              <dt>Red</dt>
+              <dt>Rủi ro cao</dt>
               <dd>{formatNumber(quality.red)}</dd>
             </div>
             <div>
@@ -271,6 +342,11 @@ function AdminOverviewPage() {
             </div>
           </dl>
         </section>
+
+        <div className="overview-section-divider overview-panel--wide">
+          <span>Chi tiết vận hành</span>
+          <p>Dành cho việc theo dõi kỹ thuật, phân tích lỗi và truy vết.</p>
+        </div>
 
         <section className="overview-panel overview-panel--wide">
           <div className="overview-panel-heading">
