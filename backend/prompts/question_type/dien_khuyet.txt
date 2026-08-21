@@ -1,10 +1,7 @@
-QUESTION TYPE: dien_khuyet (Fill in the Blank)
+LOẠI CÂU HỎI: dien_khuyet - điền khuyết
 
-RULES:
-1. The `question` text MUST contain exactly one placeholder represented by five underscores: "_____".
-2. The blank must target a key technical concept, algorithm, or important term from the context, NOT a trivial connecting word.
-3. There is only ONE precise correct answer (the exact text that fills the blank).
-4. The `options` field in JSON MUST be set to `null`.
-5. The `correct_answer` field MUST contain the exact word/phrase to fill in the blank.
-6. The sentence must be meaningful as a standalone academic statement without saying "Theo tài liệu", "Theo mô tả", or similar wording.
-7. Do not blank out a phrase that requires outside knowledge or has multiple valid synonyms not anchored in the context.
+ĐỊNH NGHĨA:
+1. Câu hỏi yêu cầu người học điền một thuật ngữ, khái niệm, thuộc tính hoặc kết quả còn thiếu.
+2. Phù hợp để kiểm tra khả năng nhớ chính xác hoặc hiểu vai trò của một thành phần quan trọng.
+3. Câu hỏi tốt có đủ manh mối để suy ra một đáp án cụ thể, tránh nhiều đáp án đồng nghĩa.
+4. Không dùng để hỏi từ nối, chi tiết vụn vặt hoặc câu trả lời cần diễn giải dài.

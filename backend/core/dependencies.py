@@ -36,6 +36,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "questions.share_bank",
         "questions.use_shared_bank",
         "exams.manage_own",
+        "catalog.subjects.manage_own",
     },
     "Reviewer": {
         "reviews.manage",
@@ -146,6 +147,20 @@ def require_permissions(*permissions: str) -> Callable:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Yêu cầu quyền: {', '.join(sorted(allowed))}",
+            )
+        return current_user
+
+    return dependency
+
+
+def require_any_permission(*permissions: str) -> Callable:
+    allowed = set(permissions)
+
+    def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not allowed & set(current_user.permissions):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Yêu cầu một trong các quyền: {', '.join(sorted(allowed))}",
             )
         return current_user
 

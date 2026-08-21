@@ -1,0 +1,5 @@
+KIỂM TRA LOẠI CÂU: trac_nghiem
+- Cần có đúng 4 lựa chọn A-D và đúng 1 đáp án.
+- Stem phải hỏi một ý rõ ràng, không phụ thuộc mẹo chữ.
+- Phương án nhiễu nên hợp lý, cùng loại khái niệm, không quá lộ do độ dài hoặc ngữ pháp.
+- Không trừ nặng nếu nhiễu chưa hoàn hảo nhưng đáp án vẫn rõ và kiến thức đúng.

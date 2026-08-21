@@ -1,11 +1,7 @@
-QUESTION TYPE: tinh_huong (Scenario-Based)
+LOẠI CÂU HỎI: tinh_huong - vận dụng theo tình huống
 
-RULES:
-1. Open the `question` with a realistic, practical scenario (e.g., a programmer facing a bug, a system design choice) based on the context.
-2. Do NOT explicitly mention "trong tài liệu", "trong đoạn văn", or "theo ngữ liệu". Act as if this is a real-world problem.
-3. Generate exactly 4 options: A, B, C, D. Only ONE correct answer.
-4. The correct answer must require reasoning and applying the context knowledge, not just mere recognition or keyword matching.
-5. The `options` field in JSON must be an object with keys "A", "B", "C", "D".
-6. The scenario must include a concrete role, goal, constraint, error, input/output, or decision point so the learner has enough information to reason.
-7. Keep the scenario inside the context's domain. Do not switch to a different programming language, framework, subject, or real-world domain unless the context explicitly supports it.
-8. Options should represent different actions, diagnoses, implementations, or conclusions; avoid options that are only restatements of definitions.
+ĐỊNH NGHĨA:
+1. Câu hỏi đặt người học vào một tình huống thực tế để chọn hành động, chẩn đoán hoặc kết luận phù hợp.
+2. Phù hợp với mức vận dụng, phân tích hoặc đánh giá khi cần dùng kiến thức để ra quyết định.
+3. Tình huống tốt có đủ dữ kiện cần thiết, không lan man và không kịch tính hóa.
+4. Đáp án đúng phải cần lập luận từ tình huống, không chỉ nhận diện định nghĩa.

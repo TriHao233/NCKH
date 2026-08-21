@@ -1,0 +1,5 @@
+KIỂM TRA LOẠI CÂU: nhieu_lua_chon
+- Stem phải báo rõ có thể chọn nhiều đáp án.
+- Cần ít nhất 2 đáp án đúng; số lựa chọn có thể hơn 4 nếu hợp lý.
+- Tất cả đáp án đúng phải được nguồn/ngữ cảnh hỗ trợ.
+- Trừ nặng nếu thiếu đáp án đúng, có đáp án sai được đánh đúng, hoặc format không thể chấm.

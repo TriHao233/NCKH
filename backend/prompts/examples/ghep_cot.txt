@@ -1,4 +1,4 @@
-EXAMPLE OUTPUT (For ghep_cot):
+VÍ DỤ CHUẨN: ghep_cot
 {
   "questions": [
     {

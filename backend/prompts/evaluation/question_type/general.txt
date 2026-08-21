@@ -1,0 +1,4 @@
+KIỂM TRA LOẠI CÂU: chung
+- Câu hỏi phải rõ yêu cầu, có đáp án kiểm tra được và giải thích phù hợp.
+- Cấu trúc dữ liệu phải đủ để hệ thống chấm hoặc người duyệt kiểm tra.
+- Trừ nặng nếu loại câu hỏi không rõ, thiếu đáp án, hoặc không thể nhập sang Moodle.

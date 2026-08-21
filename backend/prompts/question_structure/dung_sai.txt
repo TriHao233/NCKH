@@ -1,0 +1,6 @@
+CẤU TRÚC: dung_sai
+1. `question` là một mệnh đề hoàn chỉnh, tự đọc độc lập, ví dụ "Mảng có kích thước cố định sau khi khởi tạo."
+2. Không viết câu bỏ lửng cần A/B để hoàn tất nghĩa, như "Mảng là", "Thuật toán gồm", "Biến được".
+3. Mệnh đề phải hoàn toàn đúng hoặc hoàn toàn sai.
+4. `options` bắt buộc là {"A": "Đúng", "B": "Sai"}.
+5. `correct_answer` chỉ là "A" hoặc "B".

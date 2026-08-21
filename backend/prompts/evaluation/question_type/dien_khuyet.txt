@@ -1,0 +1,5 @@
+KIỂM TRA LOẠI CÂU: dien_khuyet
+- Câu hỏi phải có chỗ trống rõ bằng "_____" hoặc cấu trúc tương đương.
+- Đáp án cần ngắn, xác định được, không quá rộng.
+- Nếu có ngân hàng từ/lựa chọn thì phải đủ dữ liệu để chấm.
+- Không biến câu điền khuyết thành câu tự luận dài.

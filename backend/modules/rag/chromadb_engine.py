@@ -1,6 +1,11 @@
 import json
 import logging
+import os
 from threading import Lock
+
+# Dự án chỉ dùng backend PyTorch. Nếu môi trường tình cờ có TensorFlow/Keras 3,
+# transformers sẽ nạp nhánh TF và lỗi import, nên tắt sẵn trước khi import.
+os.environ.setdefault("USE_TF", "0")
 
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings

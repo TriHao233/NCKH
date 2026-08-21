@@ -1,7 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_permissions, require_teacher_reviewer_or_admin
+from core.dependencies import (
+    CurrentUser,
+    require_any_permission,
+    require_permissions,
+    require_teacher_reviewer_or_admin,
+)
 from modules.catalog.schemas import (
     AiModelActivationPayload,
     AiModelHealthCheckPayload,
@@ -27,17 +32,26 @@ router = APIRouter(prefix=f"{settings.api_prefix}/catalog", tags=["Catalog"])
 def _translate(exc: Exception):
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, PermissionError):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     raise exc
 
 
+# Giáo viên tự quản lý học phần của mình; quản trị viên catalog quản lý tất cả.
+require_subject_manager = require_any_permission(
+    "admin.catalog",
+    "catalog.subjects.manage_own",
+)
+
+
 @router.get("/overview")
 def catalog_overview(
-    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.overview()
+    return service.overview(user)
 
 
 @router.get("/runtime-config")
@@ -50,20 +64,20 @@ def runtime_config(
 
 @router.get("/subjects", response_model=list[SubjectResponse])
 def list_subjects(
-    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.list_subjects()
+    return service.list_subjects(user)
 
 
 @router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def upsert_subject(
     payload: SubjectPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.upsert_subject(payload)
+        return service.upsert_subject(payload, user)
     except Exception as exc:
         _translate(exc)
 
@@ -72,11 +86,24 @@ def upsert_subject(
 def update_subject(
     subject_id: str,
     payload: SubjectUpdatePayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.update_subject(subject_id, payload)
+        return service.update_subject(subject_id, payload, user)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.delete("/subjects/{subject_id}", response_model=SubjectResponse)
+def deactivate_subject(
+    subject_id: str,
+    user: CurrentUser = Depends(require_subject_manager),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Xoá mềm: học phần bị ẩn khỏi danh sách chọn nhưng dữ liệu liên quan vẫn giữ nguyên."""
+    try:
+        return service.deactivate_subject(subject_id, user)
     except Exception as exc:
         _translate(exc)
 
@@ -85,11 +112,11 @@ def update_subject(
 def add_chapter(
     subject_id: str,
     payload: ChapterPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.add_chapter(subject_id, payload)
+        return service.add_chapter(subject_id, payload, user)
     except Exception as exc:
         _translate(exc)
 
@@ -99,11 +126,11 @@ def update_chapter(
     subject_id: str,
     chapter_id: str,
     payload: ChapterUpdatePayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.update_chapter(subject_id, chapter_id, payload)
+        return service.update_chapter(subject_id, chapter_id, payload, user)
     except Exception as exc:
         _translate(exc)
 
@@ -112,11 +139,11 @@ def update_chapter(
 def add_learning_outcome(
     subject_id: str,
     payload: LearningOutcomePayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.add_learning_outcome(subject_id, payload)
+        return service.add_learning_outcome(subject_id, payload, user)
     except Exception as exc:
         _translate(exc)
 
@@ -126,11 +153,11 @@ def update_learning_outcome(
     subject_id: str,
     clo_id: str,
     payload: LearningOutcomeUpdatePayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.update_learning_outcome(subject_id, clo_id, payload)
+        return service.update_learning_outcome(subject_id, clo_id, payload, user)
     except Exception as exc:
         _translate(exc)
 

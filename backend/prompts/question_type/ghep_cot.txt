@@ -1,19 +1,7 @@
-QUESTION TYPE: ghep_cot (Matching)
+LOẠI CÂU HỎI: ghep_cot - ghép cột
 
-RULES:
-1. Create two groups of items: Numbered items (Group 1: 1, 2, 3...) and Lettered items (Group 2: a, b, c...).
-2. There must be a minimum of 3 to 4 matching pairs.
-3. CRITICAL - MANDATORY DISTRACTOR COUNT: Group 2 (lettered) MUST contain exactly ONE MORE item than Group 1 (numbered). This is NOT optional.
-   - If Group 1 has N items (e.g. "1".."4"), Group 2 MUST have N+1 items (e.g. "a".."e").
-   - The extra lettered item is a distractor: a plausible but WRONG definition that does not correctly match any numbered item.
-   - A matching question where Group 1 and Group 2 have the SAME number of items is INVALID output and must be rejected before answering. Before finalizing your answer, COUNT the items in each group and verify Group 2 count = Group 1 count + 1.
-4. The `options` field in JSON must be a dictionary combining both groups. Example format (4 numbered items -> 5 lettered items, one distractor "e"):
-   "options": {
-     "1": "Term 1", "2": "Term 2", "3": "Term 3", "4": "Term 4",
-     "a": "Definition X", "b": "Definition Y", "c": "Definition Z", "d": "Definition W", "e": "Distractor Definition (does not match any term)"
-   }
-5. The `correct_answer` field MUST follow the exact format of pairs separated by commas, covering every numbered item (the distractor letter is NOT included). Example: "1-b, 2-a, 3-c, 4-d".
-6. Group 1 should contain comparable items such as terms, commands, steps, components, concepts, or problem cases from the same topic.
-7. Group 2 should contain precise descriptions, functions, outcomes, constraints, or examples that can be matched by meaning, not by obvious keyword repetition.
-8. The distractor must be plausible and same-domain, but unsupported or mismatched for every numbered item.
-9. Do not create matching pairs from topics outside the context, and do not introduce unrelated technologies or subjects.
+ĐỊNH NGHĨA:
+1. Câu hỏi yêu cầu người học ghép các mục ở một nhóm với mô tả, chức năng, kết quả hoặc ví dụ tương ứng.
+2. Phù hợp để kiểm tra quan hệ giữa thuật ngữ và mô tả, thành phần và chức năng, bước và ý nghĩa.
+3. Câu hỏi tốt ghép bằng hiểu nghĩa, không lộ đáp án do lặp nguyên từ khóa.
+4. Các mục trong cùng nhóm nên cùng loại để tránh ghép theo mẹo hình thức.

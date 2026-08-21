@@ -1,0 +1,6 @@
+CẤU TRÚC: trac_nghiem
+1. `question` là câu hỏi/câu dẫn hoàn chỉnh, nêu rõ nhiệm vụ chọn một đáp án.
+2. Không viết câu bỏ lửng để ghép nghĩa với phương án.
+3. `options` là object có đúng 4 khóa "A", "B", "C", "D".
+4. `correct_answer` là đúng một khóa trong options, ví dụ "B".
+5. Các phương án cùng loại, không trùng nghĩa; không dùng "Tất cả..." hoặc "Không có...".

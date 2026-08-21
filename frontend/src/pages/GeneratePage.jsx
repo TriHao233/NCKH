@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { chunkDocument } from '../api/chunk';
+import { listSubjects } from '../api/catalog';
 import { listDocuments } from '../api/documents';
 import { enqueueGenerateQuestions, getGenerateStatus } from '../api/generate';
 import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
@@ -39,6 +40,7 @@ const PHASE_LABELS = {
 };
 
 const MAX_TOTAL_QUESTIONS = 20;
+const DRAFTS_PER_PAGE = 3;
 const SUPPORTED_SOURCE_EXTENSIONS = ['.pdf', '.docx'];
 const PRESET_STORAGE_KEY = 'qbank_generation_presets';
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
@@ -239,6 +241,10 @@ function GeneratePage() {
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentsError, setDocumentsError] = useState('');
   const [selectedDocumentId, setSelectedDocumentId] = useState('');
+  const [subjects, setSubjects] = useState([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [subjectsError, setSubjectsError] = useState('');
+  const [selectedSubjectId, setSelectedSubjectId] = useState('');
   const [planItems, setPlanItems] = useState(createInitialPlan);
   const [presets, setPresets] = useState(loadStoredPresets);
   const [selectedPresetId, setSelectedPresetId] = useState('');
@@ -253,6 +259,8 @@ function GeneratePage() {
   const [generationSummary, setGenerationSummary] = useState([]);
   const [timings, setTimings] = useState({});
   const [chunkReady, setChunkReady] = useState(false);
+  const [presetSectionOpen, setPresetSectionOpen] = useState(false);
+  const [draftPage, setDraftPage] = useState(0);
   const [editingDraftId, setEditingDraftId] = useState(null);
   const [draftEditSnapshot, setDraftEditSnapshot] = useState(null);
   const [savingDraftId, setSavingDraftId] = useState(null);
@@ -271,6 +279,16 @@ function GeneratePage() {
   const totalQuestions = questionPlan.reduce((total, item) => total + item.num_questions, 0);
   const reusableDocuments = documents.filter(isDocumentOcrReady);
   const selectedDocument = reusableDocuments.find((item) => item.id === selectedDocumentId);
+  const activeSubjects = subjects.filter((item) => item.is_active !== false);
+  const selectedDocumentSubjectName = selectedDocument
+    ? subjects.find((item) => (item.id || item._id) === selectedDocument.subject_id)?.subject_name
+    : null;
+  const draftPageCount = Math.max(1, Math.ceil(drafts.length / DRAFTS_PER_PAGE));
+  const safeDraftPage = Math.min(draftPage, draftPageCount - 1);
+  const visibleDrafts = drafts.slice(
+    safeDraftPage * DRAFTS_PER_PAGE,
+    safeDraftPage * DRAFTS_PER_PAGE + DRAFTS_PER_PAGE,
+  );
   const generationShortfalls = generationSummary.filter((item) => (
     item.skipped_count > 0 || item.duplicate_count > 0 || (item.warnings || []).length > 0
   ));
@@ -305,6 +323,10 @@ function GeneratePage() {
   ].filter(Boolean);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    setDraftPage((current) => Math.min(current, draftPageCount - 1));
+  }, [draftPageCount]);
 
   const resetPoll = () => {
     abortRef.current?.abort();
@@ -342,6 +364,19 @@ function GeneratePage() {
     }
   };
 
+  const fetchSubjects = async () => {
+    setSubjectsLoading(true);
+    setSubjectsError('');
+    try {
+      const result = await listSubjects();
+      setSubjects(result || []);
+    } catch (err) {
+      setSubjectsError(err.message || 'Không tải được danh sách học phần');
+    } finally {
+      setSubjectsLoading(false);
+    }
+  };
+
   const syncGenerationPresets = async () => {
     try {
       const result = await listGenerationPresets();
@@ -369,6 +404,7 @@ function GeneratePage() {
 
   useEffect(() => {
     fetchReusableDocuments();
+    fetchSubjects();
     syncGenerationPresets();
   }, []);
 
@@ -376,6 +412,7 @@ function GeneratePage() {
     if (sourceMode === 'upload') {
       if (!file) return 'Vui lòng chọn file PDF hoặc DOCX';
       if (!isSupportedSourceFile(file)) return 'Chỉ hỗ trợ file PDF hoặc DOCX';
+      if (!selectedSubjectId) return 'Vui lòng chọn học phần';
     } else {
       if (!selectedDocumentId) return 'Vui lòng chọn tài liệu đã xử lý';
       if (!selectedDocument) return 'Không tìm thấy tài liệu đã chọn';
@@ -791,7 +828,7 @@ function GeneratePage() {
     setPhase('uploading');
     setStatusDetail('Đang upload tài liệu...');
     const uploadStartedAt = nowMs();
-    const uploadResult = await uploadSourceDocument(sourceFile);
+    const uploadResult = await uploadSourceDocument(sourceFile, { subjectId: selectedSubjectId || undefined });
     markTiming('uploadMs', uploadStartedAt);
     const ocrJobId = uploadResult.job_id;
     const docId = uploadResult.document_id;
@@ -873,6 +910,7 @@ function GeneratePage() {
     setDraftEditSnapshot(null);
     setGenerationSummary(genResult.summary || []);
     setDrafts(mapGeneratedQuestions(genResult.data || []));
+    setDraftPage(0);
     setGenerationInfo({
       jobId: genJobId,
       documentId: docId,
@@ -1173,53 +1211,103 @@ function GeneratePage() {
 
             <div className="field-group">
               <label className="field-label">Học phần</label>
-              <select className="field-select" defaultValue="ctdl" disabled={isBusy}>
-                <option value="ctdl">Cấu trúc dữ liệu</option>
-                <option value="soon" disabled>Học phần khác (sắp ra mắt)</option>
-              </select>
+              {sourceMode === 'upload' ? (
+                <>
+                  <select
+                    className="field-select"
+                    value={selectedSubjectId}
+                    disabled={isBusy || subjectsLoading}
+                    onChange={(e) => setSelectedSubjectId(e.target.value)}
+                  >
+                    <option value="">
+                      {subjectsLoading ? 'Đang tải học phần...' : 'Chọn học phần'}
+                    </option>
+                    {activeSubjects.map((subject) => (
+                      <option key={subject.id || subject._id} value={subject.id || subject._id}>
+                        {subject.subject_code} - {subject.subject_name}
+                      </option>
+                    ))}
+                  </select>
+                  {subjectsError && <p className="source-note source-note--error">{subjectsError}</p>}
+                  {!subjectsLoading && !subjectsError && activeSubjects.length === 0 && (
+                    <p className="source-note">
+                      Chưa có học phần nào. Vào "Quản lý học phần" để tạo trước khi sinh câu hỏi.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="source-note">
+                  {selectedDocument
+                    ? (selectedDocumentSubjectName || 'Tài liệu này chưa được gán học phần.')
+                    : 'Chọn một tài liệu đã xử lý để xem học phần tương ứng.'}
+                </p>
+              )}
             </div>
 
-            <div className="field-group">
-              <div className="field-label-row">
-                <label className="field-label">Mẫu cấu hình sinh câu hỏi</label>
-                <button
-                  type="button"
-                  className="preset-save-btn"
-                  disabled={isBusy}
-                  onClick={openPresetDialog}
+            <div className="field-group preset-section">
+              <button
+                type="button"
+                className="preset-toggle"
+                aria-expanded={presetSectionOpen}
+                onClick={() => setPresetSectionOpen((current) => !current)}
+              >
+                <span className="preset-toggle-label">
+                  Mẫu cấu hình sinh câu hỏi
+                  <small>Lưu lại ma trận (dạng câu hỏi, mức Bloom) để dùng lại cho lần sau</small>
+                </span>
+                {presets.length > 0 && <span className="preset-toggle-count">{presets.length}</span>}
+                <svg
+                  className={`preset-toggle-chevron ${presetSectionOpen ? 'preset-toggle-chevron--open' : ''}`}
+                  width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                 >
-                  Lưu mẫu
-                </button>
-              </div>
-              <div className="preset-control-row">
-                <select
-                  className="field-select"
-                  value={selectedPresetId}
-                  disabled={isBusy || presets.length === 0}
-                  onChange={(e) => {
-                    if (!e.target.value) {
-                      setSelectedPresetId('');
-                      return;
-                    }
-                    applyPreset(e.target.value);
-                  }}
-                >
-                  <option value="">
-                    {presets.length ? 'Chọn mẫu cấu hình đã lưu' : 'Chưa có mẫu đã lưu'}
-                  </option>
-                  {presets.map((preset) => (
-                    <option key={preset.id} value={preset.id}>{preset.name}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="preset-delete-btn"
-                  disabled={isBusy || !selectedPresetId}
-                  onClick={deleteSelectedPreset}
-                >
-                  Xóa mẫu
-                </button>
-              </div>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+
+              {presetSectionOpen && (
+                <div className="preset-section-body">
+                  <div className="field-label-row">
+                    <label className="field-label">Mẫu đã lưu</label>
+                    <button
+                      type="button"
+                      className="preset-save-btn"
+                      disabled={isBusy}
+                      onClick={openPresetDialog}
+                    >
+                      Lưu mẫu hiện tại
+                    </button>
+                  </div>
+                  <div className="preset-control-row">
+                    <select
+                      className="field-select"
+                      value={selectedPresetId}
+                      disabled={isBusy || presets.length === 0}
+                      onChange={(e) => {
+                        if (!e.target.value) {
+                          setSelectedPresetId('');
+                          return;
+                        }
+                        applyPreset(e.target.value);
+                      }}
+                    >
+                      <option value="">
+                        {presets.length ? 'Chọn mẫu cấu hình đã lưu' : 'Chưa có mẫu đã lưu'}
+                      </option>
+                      {presets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>{preset.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="preset-delete-btn"
+                      disabled={isBusy || !selectedPresetId}
+                      onClick={deleteSelectedPreset}
+                    >
+                      Xóa mẫu
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="field-group">
@@ -1379,7 +1467,7 @@ function GeneratePage() {
               </div>
             ) : (
               <div className="draft-list">
-                {drafts.map((question) => {
+                {visibleDrafts.map((question) => {
                   const isEditing = editingDraftId === question.id;
                   const isSaving = savingDraftId === question.id;
                   const isRemoving = removingDraftId === question.id;
@@ -1416,7 +1504,10 @@ function GeneratePage() {
                               onChange={(e) => updateDraft(question.id, { text: e.target.value })}
                             />
                           </label>
-                          {renderDraftAnswerEditor(question, isSaving || isRemoving)}
+                          <div className="draft-edit-field">
+                            <span>Đáp án</span>
+                            {renderDraftAnswerEditor(question, isSaving || isRemoving)}
+                          </div>
                           <label className="draft-edit-field">
                             <span>Giải thích</span>
                             <textarea
@@ -1429,24 +1520,43 @@ function GeneratePage() {
                           </label>
                         </div>
                       ) : (
-                        <>
-                          <p className="draft-item-text">{question.text}</p>
-                          {question.explanation && (
-                            <p className="draft-item-explanation">{question.explanation}</p>
-                          )}
-                        </>
-                      )}
+                        <div className="draft-item-body">
+                          <section className="draft-section">
+                            <h4 className="draft-section-label">Nội dung</h4>
+                            <p className="draft-item-text">{question.text}</p>
+                          </section>
 
-                      <div className="draft-item-choices">
-                        {question.choices.map((choice) => (
-                          <span
-                            key={choice.text}
-                            className={`choice ${choice.isCorrect ? 'choice--correct' : ''}`}
-                          >
-                            {choice.text}
-                          </span>
-                        ))}
-                      </div>
+                          <section className="draft-section">
+                            <h4 className="draft-section-label">Đáp án</h4>
+                            <div className="draft-item-choices">
+                              {question.choices.map((choice) => (
+                                <span
+                                  key={choice.text}
+                                  className={`choice ${choice.isCorrect ? 'choice--correct' : ''}`}
+                                >
+                                  {choice.text}
+                                </span>
+                              ))}
+                            </div>
+                          </section>
+
+                          {question.explanation && (
+                            <section className="draft-section">
+                              <h4 className="draft-section-label">Giải thích</h4>
+                              <p className="draft-item-explanation">{question.explanation}</p>
+                            </section>
+                          )}
+
+                          {question.sourceContext && (
+                            <section className="draft-section draft-section--evidence">
+                              <h4 className="draft-section-label">Dẫn chứng</h4>
+                              <blockquote className="draft-item-evidence">
+                                {question.sourceContext}
+                              </blockquote>
+                            </section>
+                          )}
+                        </div>
+                      )}
 
                       <div className="draft-item-actions">
                         {isEditing ? (
@@ -1502,6 +1612,39 @@ function GeneratePage() {
                     </article>
                   );
                 })}
+              </div>
+            )}
+
+            {draftPageCount > 1 && (
+              <div className="draft-pagination">
+                <button
+                  type="button"
+                  className="draft-pagination-btn"
+                  disabled={safeDraftPage === 0}
+                  onClick={() => setDraftPage((current) => Math.max(0, current - 1))}
+                >
+                  ‹ Trước
+                </button>
+                <div className="draft-pagination-pages">
+                  {Array.from({ length: draftPageCount }, (_, index) => (
+                    <button
+                      type="button"
+                      key={index}
+                      className={`draft-pagination-page ${index === safeDraftPage ? 'draft-pagination-page--active' : ''}`}
+                      onClick={() => setDraftPage(index)}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="draft-pagination-btn"
+                  disabled={safeDraftPage >= draftPageCount - 1}
+                  onClick={() => setDraftPage((current) => Math.min(draftPageCount - 1, current + 1))}
+                >
+                  Sau ›
+                </button>
               </div>
             )}
           </div>

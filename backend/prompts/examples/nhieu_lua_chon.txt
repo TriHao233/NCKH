@@ -1,4 +1,4 @@
-EXAMPLE OUTPUT (For nhieu_lua_chon):
+VÍ DỤ CHUẨN: nhieu_lua_chon
 {
   "questions": [
     {

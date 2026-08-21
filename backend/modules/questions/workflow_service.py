@@ -41,9 +41,15 @@ DEFAULT_WEIGHTS = {
     "bloom_alignment": 0.15,
     "clo_alignment": 0.15,
 }
-DEFAULT_THRESHOLDS = {"yellow_min": 0.60, "green_min": 0.80, "pass_min": 0.80}
+DEFAULT_THRESHOLDS = {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65}
 EVALUATION_PROMPT_KEY = "evaluation:question_quality"
 EVALUATION_PROMPT_PATH = "evaluation/question_quality.txt"
+EVALUATION_SCORING_PROMPT_KEY = "evaluation:scoring_policy"
+EVALUATION_SCORING_PROMPT_PATH = "evaluation/scoring_policy.txt"
+EVALUATION_OUTPUT_PROMPT_KEY = "evaluation:output_contract"
+EVALUATION_OUTPUT_PROMPT_PATH = "evaluation/output_contract.txt"
+EVALUATION_TYPE_PROMPT_PREFIX = "evaluation:question_type"
+EVALUATION_TYPE_PROMPT_DIR = "evaluation/question_type"
 DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
 EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
 EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
@@ -241,11 +247,43 @@ class QuestionWorkflowService:
             if source.get("excerpt")
         )
 
-    def _evaluation_prompt_template(self) -> str:
-        return PromptBuilder._load_template(
-            EVALUATION_PROMPT_KEY,
-            EVALUATION_PROMPT_PATH,
-        )
+    @staticmethod
+    def _normalized_question_type(question_type: str | None) -> str:
+        normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(question_type or "").strip().lower()).strip("_")
+        return normalized or "general"
+
+    def _evaluation_prompt_template(self, question_type: str | None) -> tuple[str, list[dict]]:
+        normalized_type = self._normalized_question_type(question_type)
+        specs = [
+            (EVALUATION_PROMPT_KEY, EVALUATION_PROMPT_PATH),
+            (EVALUATION_SCORING_PROMPT_KEY, EVALUATION_SCORING_PROMPT_PATH),
+            (
+                f"{EVALUATION_TYPE_PROMPT_PREFIX}:{normalized_type}",
+                f"{EVALUATION_TYPE_PROMPT_DIR}/{normalized_type}.txt",
+            ),
+            (EVALUATION_OUTPUT_PROMPT_KEY, EVALUATION_OUTPUT_PROMPT_PATH),
+        ]
+        parts = []
+        loaded = []
+        for key, path in specs:
+            try:
+                body = PromptBuilder._load_template(key, path)
+            except FileNotFoundError:
+                if key != f"{EVALUATION_TYPE_PROMPT_PREFIX}:{normalized_type}":
+                    raise
+                fallback_key = f"{EVALUATION_TYPE_PROMPT_PREFIX}:general"
+                fallback_path = f"{EVALUATION_TYPE_PROMPT_DIR}/general.txt"
+                body = PromptBuilder._load_template(fallback_key, fallback_path)
+                key, path = fallback_key, fallback_path
+            parts.append(body)
+            loaded.append(
+                {
+                    "template_key": key,
+                    "template_path": path,
+                    "template_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                }
+            )
+        return "\n\n".join(parts), loaded
 
     def _build_evaluation_prompt(
         self,
@@ -284,7 +322,7 @@ class QuestionWorkflowService:
             "weights": policy.get("weights") or DEFAULT_WEIGHTS,
             "thresholds": policy.get("thresholds") or DEFAULT_THRESHOLDS,
         }
-        template = self._evaluation_prompt_template()
+        template, prompt_parts = self._evaluation_prompt_template(payload["question_type"])
         prompt = template.format(
             evaluation_policy=json.dumps(policy_payload, ensure_ascii=False, default=str),
             question_payload=json.dumps(payload, ensure_ascii=False, default=str),
@@ -293,6 +331,8 @@ class QuestionWorkflowService:
             "template_key": EVALUATION_PROMPT_KEY,
             "template_path": EVALUATION_PROMPT_PATH,
             "template_hash": hashlib.sha256(template.encode("utf-8")).hexdigest(),
+            "template_parts": prompt_parts,
+            "question_type_prompt": self._normalized_question_type(payload["question_type"]),
             "rendered_prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "rendered_prompt_chars": len(prompt),
             "source_limit": EVALUATION_SOURCE_LIMIT,

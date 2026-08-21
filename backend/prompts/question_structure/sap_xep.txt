@@ -1,0 +1,6 @@
+CẤU TRÚC: sap_xep
+1. `question` là yêu cầu hoàn chỉnh kiểu "Sắp xếp các bước..." và không chứa danh sách bước.
+2. `options` liệt kê ít nhất 4 bước đã xáo trộn bằng khóa "1", "2", "3", "4", ...
+3. Mỗi bước là một hành động/trạng thái riêng, ngắn gọn, không gần nghĩa nhau.
+4. `correct_answer` là thứ tự đúng của mọi khóa, cách nhau bằng dấu phẩy và khoảng trắng, ví dụ "3, 1, 4, 2".
+5. Chỉ tạo khi CONTEXT có trình tự thật.

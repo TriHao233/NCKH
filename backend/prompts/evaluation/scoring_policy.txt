@@ -1,0 +1,23 @@
+THANG ĐIỂM
+- Mỗi điểm nằm trong 0.0-1.0; dùng đủ thang điểm, tránh dồn mọi câu hỏi quanh 0.80.
+- 0.85-1.00: tốt, rõ, có căn cứ, sẵn sàng dùng.
+- 0.75-0.84: khá tốt, chỉ cần chỉnh nhẹ nếu muốn hoàn thiện.
+- 0.65-0.74: đạt tối thiểu; có thể duyệt nếu không có lỗi nghiêm trọng.
+- 0.50-0.64: cần sửa trước khi dùng.
+- 0.00-0.49: không đạt ở tiêu chí đó.
+
+TIÊU CHÍ
+- faithfulness: câu hỏi, đáp án, giải thích có được nguồn hỗ trợ không.
+- contextual_relevancy: câu hỏi có đánh vào ý quan trọng trong ngữ cảnh không.
+- answer_relevancy: đáp án đúng, duy nhất/đủ, giải thích hợp lý, phương án nhiễu phù hợp.
+- bloom_alignment: yêu cầu tư duy có khớp Bloom được yêu cầu không.
+- clo_alignment: câu hỏi có đo được CLO đã gắn không.
+
+GIỚI HẠN ĐIỂM
+- Ngưỡng pass mặc định: overall_score từ 0.65 trở lên là đạt để chuyển duyệt, nếu không có lỗi HIGH.
+- Nguồn rỗng/không liên quan: faithfulness và contextual_relevancy tối đa 0.45.
+- Thiếu CLO: clo_alignment tối đa 0.65; chỉ tối đa 0.45 nếu bắt buộc phải gắn CLO.
+- Đáp án sai, thiếu, hoặc mâu thuẫn lựa chọn: answer_relevancy tối đa 0.40.
+- Cấu trúc chưa thật chuẩn nhưng vẫn chấm được: answer_relevancy tối đa 0.75 và moodle_readiness = "NEEDS_FIX".
+- Cấu trúc không thể chấm/nhập Moodle: answer_relevancy tối đa 0.50.
+- Lệch Bloom nhẹ: bloom_alignment khoảng 0.65-0.80; lệch rõ cấp độ tư duy: tối đa 0.55.

@@ -1,10 +1,8 @@
-BLOOM LEVEL: SANG_TAO (Creating)
+MỨC BLOOM: sang_tao - Sáng tạo
+ĐỘNG TỪ TRỌNG TÂM: THIẾT KẾ, XÂY DỰNG, ĐỀ XUẤT, LẬP KẾ HOẠCH, KẾT HỢP, TẠO RA, CẢI TIẾN.
 
-DEMAND: The ability to put elements together to form a novel, coherent whole or make an original product/solution.
-KEY VERBS TO TARGET: Design, propose, construct, combine, plan, invent, develop, formulate.
-
-RULE: 
-- The question should challenge the student to synthesize ideas into a new structure, plan, or alternative solution.
-- The student must go beyond the basic text, applying principles to construct a solution that meets specific constraints.
-- Require the learner to assemble multiple ideas, steps, rules, or components from the context into a coherent plan, design, algorithm, outline, or improvement.
-- The expected answer must still be bounded by the context; do not ask for open-ended invention that cannot be judged from the provided evidence.
+YÊU CẦU:
+1. Yêu cầu người học kết hợp nhiều ý, bước, quy tắc hoặc thành phần để tạo một cấu trúc/giải pháp mới.
+2. Sản phẩm mong đợi có thể là kế hoạch, thuật toán, quy trình, thiết kế, phương án cải tiến hoặc giải pháp thay thế.
+3. Câu hỏi phải có ràng buộc đủ rõ để chấm được, không mở quá rộng.
+4. Giải pháp vẫn phải dựa trên nguyên tắc và dữ kiện trong CONTEXT, không phát minh ngoài căn cứ.

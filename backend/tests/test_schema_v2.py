@@ -4763,14 +4763,12 @@ class SchemaV2Tests(unittest.TestCase):
             _heading_matches_target({"heading": "Hàng đợi"}, normalized_target)
         )
 
-    def test_output_format_keeps_question_type_option_shapes(self):
+    def test_output_format_delegates_type_shapes_to_question_structure(self):
         prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "output_format.txt"
         output_format = prompt_path.read_text(encoding="utf-8")
 
-        self.assertIn("trac_nghiem", output_format)
-        self.assertIn('"A", "B", "C", "D"', output_format)
-        self.assertIn("dung_sai", output_format)
-        self.assertIn('"A": "Đúng", "B": "Sai"', output_format)
+        self.assertIn("QUESTION_STRUCTURE", output_format)
+        self.assertIn('"options": "object hoặc null theo QUESTION_STRUCTURE"', output_format)
 
     def test_question_rule_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
@@ -4780,9 +4778,21 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("FORBIDDEN QUESTION RULES", prompt)
-        self.assertIn("Do not create source-referencing questions", prompt)
-        self.assertIn("If any rule is violated, reject the item and generate a replacement", prompt)
+        self.assertIn("RULES - KHÔNG TẠO CÂU HỎI NẾU", prompt)
+        self.assertIn("Nhắc trực tiếp nguồn học liệu", prompt)
+        self.assertIn("Nếu vi phạm bất kỳ quy tắc nào", prompt)
+
+    def test_question_structure_is_loaded_into_generation_prompt(self):
+        prompt = PromptBuilder().build(
+            context="Stack hoạt động theo nguyên tắc LIFO.",
+            bloom_level="hieu",
+            question_type="dung_sai",
+            num_questions=1,
+        )
+
+        self.assertIn("CẤU TRÚC: dung_sai", prompt)
+        self.assertIn("mệnh đề hoàn chỉnh", prompt)
+        self.assertIn('{"A": "Đúng", "B": "Sai"}', prompt)
 
     def test_mcq_validation_rejects_two_option_shape(self):
         error = _check_type_format(
@@ -4806,6 +4816,28 @@ class SchemaV2Tests(unittest.TestCase):
             )
         )
 
+    def test_true_false_validation_rejects_incomplete_statement(self):
+        error = _check_type_format(
+            {
+                "question": "Mặt trời là",
+                "options": {"A": "Đúng", "B": "Sai"},
+                "correct_answer": "A",
+            },
+            "dung_sai",
+        )
+        self.assertIn("mệnh đề hoàn chỉnh", error)
+
+        self.assertIsNone(
+            _check_type_format(
+                {
+                    "question": "Mặt Trời là một ngôi sao.",
+                    "options": {"A": "Đúng", "B": "Sai"},
+                    "correct_answer": "A",
+                },
+                "dung_sai",
+            )
+        )
+
     def test_retry_prompt_reinforces_mcq_option_shape(self):
         prompt = _build_retry_prompt(
             original_prompt="ORIGINAL",
@@ -4818,7 +4850,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn('exactly "A", "B", "C", "D"', prompt)
         self.assertIn("Generate exactly 2 additional questions", prompt)
 
-    def test_multi_answer_validation_allows_five_options(self):
+    def test_multi_answer_validation_allows_six_options(self):
         self.assertIsNone(
             _check_type_format(
                 {
@@ -4829,8 +4861,9 @@ class SchemaV2Tests(unittest.TestCase):
                         "C": "Ba",
                         "D": "Bốn",
                         "E": "Năm",
+                        "F": "Sáu",
                     },
-                    "correct_answer": "A, C, E",
+                    "correct_answer": "A, C, F",
                 },
                 "nhieu_lua_chon",
             )
@@ -4847,16 +4880,16 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertIn("không được chọn tất cả", error)
 
-    def test_retry_prompt_allows_five_option_multi_answer_shape(self):
+    def test_retry_prompt_allows_variable_multi_answer_shape(self):
         prompt = _build_retry_prompt(
             original_prompt="ORIGINAL",
             question_type="nhieu_lua_chon",
             bloom_level="phan_tich",
             missing_count=3,
-            validation_errors=["nhieu_lua_chon phải có 4 hoặc 5 lựa chọn"],
+            validation_errors=["nhieu_lua_chon phải có 4 đến 6 lựa chọn"],
             avoid_questions=[],
         )
-        self.assertIn('"A", "B", "C", "D", "E"', prompt)
+        self.assertIn("4 to 6 consecutive keys", prompt)
         self.assertIn("Generate exactly 3 additional questions", prompt)
 
     def test_generation_preset_payload_limits_plan_rows(self):

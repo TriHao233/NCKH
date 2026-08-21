@@ -1,4 +1,4 @@
-EXAMPLE OUTPUT (For sap_xep):
+VÍ DỤ CHUẨN: sap_xep
 {
   "questions": [
     {

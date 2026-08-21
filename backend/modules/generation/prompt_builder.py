@@ -37,6 +37,10 @@ class PromptBuilder:
         question_rule = self._load_template("question_rule", "question_rule.txt")
         bloom = self._load_template(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
         qtype = self._load_template(f"question_type:{question_type}", f"question_type/{question_type}.txt")
+        qstructure = self._load_template(
+            f"question_structure:{question_type}",
+            f"question_structure/{question_type}.txt",
+        )
         output = self._load_template("output_format", "output_format.txt")
         instruction_block = ""
         if instruction:
@@ -65,6 +69,7 @@ Do not repeat or paraphrase the following previously generated questions:
 {question_rule}
 {bloom}
 {qtype}
+{qstructure}
 
 TASK: Generate exactly {num_questions} questions.
 {instruction_block}

@@ -565,13 +565,13 @@ def _seed_reference_data() -> None:
         "clo_alignment": 0.15,
     }
     db.evaluation_policies.update_one(
-        {"policy_name": "Default question quality policy", "version": 1},
+        {"policy_name": "Default question quality policy", "version": 2},
         {
             "$setOnInsert": {
                 "schema_version": SCHEMA_VERSION,
                 "weights": weights,
                 "weights_hash": hashlib.sha256(str(sorted(weights.items())).encode()).hexdigest(),
-                "thresholds": {"yellow_min": 0.60, "green_min": 0.80, "pass_min": 0.80},
+                "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
                 "is_active": True,
                 "created_at": now,
             }
@@ -655,12 +655,15 @@ def _seed_prompt_templates(db, now: datetime) -> None:
     for folder, kind in (
         ("bloom", "BLOOM"),
         ("question_type", "QUESTION_TYPE"),
+        ("question_structure", "QUESTION_STRUCTURE"),
         ("evaluation", "EVALUATION"),
     ):
         folder_path = prompt_root / folder
         if folder_path.exists():
-            for path in folder_path.glob("*.txt"):
-                specs.append((f"{folder}:{path.stem}", kind, path.stem, path))
+            for path in sorted(folder_path.rglob("*.txt")):
+                relative_key = path.relative_to(folder_path).with_suffix("").as_posix()
+                template_key = relative_key.replace("/", ":")
+                specs.append((f"{folder}:{template_key}", kind, relative_key, path))
     for template_key, kind, name, path in specs:
         if not path.exists():
             continue

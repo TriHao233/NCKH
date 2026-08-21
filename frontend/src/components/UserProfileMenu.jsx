@@ -6,7 +6,9 @@ import {
   faCalendarCheck,
   faCog,
   faSignOutAlt,
-  faChevronDown
+  faChevronDown,
+  faListCheck,
+  faBook
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import './UserProfileMenu.css';
@@ -75,6 +77,19 @@ const UserProfileMenu = () => {
             <FontAwesomeIcon icon={faUser} className="dropdown-icon" />
             Hồ sơ cá nhân
           </Link>
+
+          {user.role === 'Teacher' && (
+            <>
+              <Link to="/quan-ly" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
+                Quản lý câu hỏi
+              </Link>
+              <Link to="/quan-ly-hoc-phan" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faBook} className="dropdown-icon" />
+                Quản lý học phần
+              </Link>
+            </>
+          )}
 
           {['Admin', 'Teacher', 'Reviewer'].includes(user.role) && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>

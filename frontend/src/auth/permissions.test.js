@@ -8,6 +8,7 @@ const PROTECTED_APP_ROUTES = [
   "/quan-ly",
   "/lam-de-thi",
   "/lam-de-thi/:examId",
+  "/quan-ly-hoc-phan",
   "/kiem-duyet",
   "/duyet-ai",
   "/tong-quan",

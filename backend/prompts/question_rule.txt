@@ -1,21 +1,20 @@
-FORBIDDEN QUESTION RULES:
+QUESTION RULES
 
-1. Do not create questions that ask students to remember the document's location or structure, including chapter, section, part, page, table of contents, content order, or where an idea appears.
+KHÔNG TẠO CÂU HỎI NẾU:
+1. Hỏi về hình thức học liệu: chương, mục, trang, thứ tự, tên file, bố cục, màu sắc, font chữ.
+2. Tham chiếu nguồn học liệu: "Theo tài liệu", "Theo giáo trình", "Dựa vào nội dung trên", "Trong đoạn văn" hoặc cách diễn đạt tương tự.
+3. Chỉ yêu cầu học thuộc nguyên văn, nhớ chi tiết vụn vặt hoặc không đánh giá kiến thức chuyên môn.
+4. Phụ thuộc vào ngữ cảnh bên ngoài câu hỏi như "ở trên", "đã nêu", "ví dụ trước", "hình bên dưới". Mỗi câu phải tự đứng độc lập.
+5. Thiếu dữ kiện, mơ hồ, có nhiều cách hiểu hoặc không xác định được một đáp án đúng rõ ràng.
+6. Dài dòng, lan man, tình huống vô lý, mang tính đánh đố hoặc không phù hợp văn phong học thuật.
+7. Sử dụng công nghệ, ngôn ngữ lập trình, ví dụ hoặc dữ kiện không có trong CONTEXT.
+8. Với câu hỏi một đáp án đúng: có nhiều đáp án đúng, lựa chọn trùng nghĩa hoặc phương án nhiễu vô lý/quá dễ loại.
 
-2. Do not create source-referencing questions. Forbidden wording includes "Theo tài liệu", "Theo chương", "Theo giáo trình", "Theo tác giả", "Dựa vào nội dung trên", "Trong tài liệu", and any equivalent phrasing.
+YÊU CẦU:
+- Ngắn gọn, rõ ràng, tự đủ nghĩa.
+- Có giá trị kiểm tra kiến thức chuyên môn.
+- Phù hợp chủ đề và phạm vi CONTEXT.
+- Không suy diễn hoặc bổ sung kiến thức ngoài CONTEXT.
+- Mức độ câu hỏi phải phù hợp với năng lực nhận thức cần đánh giá.
 
-3. Do not ask about document metadata or visual/formal features, including file name, page count, title as metadata, font, color, layout position, or presentation style.
-
-4. Do not ask students to memorize verbatim wording or trivial details that do not represent meaningful subject knowledge.
-
-5. Do not create questions that depend on external conversational context such as "the example above", "the previous paragraph", "the figure above", "as mentioned", or similar references. Each question must be semantically self-contained.
-
-6. Do not create vague questions, under-specified questions, or questions without a determinate correct answer.
-
-7. For single-choice questions, do not create more than one correct answer, and do not create options that are duplicated or nearly equivalent in meaning.
-
-8. Do not create distractors that are absurd, unrelated, or too easy to eliminate.
-
-9. Do not include any knowledge in the question, options, correct answer, or explanation that is unsupported by the source context. This includes hallucinated facts, outside technologies, outside programming languages, or examples not grounded in the context.
-
-GENERAL RULE: Questions must assess real knowledge, stand independently from the source document, be clear, evidence-based, and valuable for assessment. If any rule is violated, reject the item and generate a replacement.
+Nếu vi phạm bất kỳ quy tắc nào, hãy thay bằng câu hỏi khác phù hợp hơn.

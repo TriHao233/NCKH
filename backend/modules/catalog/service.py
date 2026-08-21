@@ -45,7 +45,7 @@ FALLBACK_EVALUATION_POLICY = {
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     },
-    "thresholds": {"yellow_min": 0.60, "green_min": 0.80, "pass_min": 0.80},
+    "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
     "is_active": True,
 }
 
@@ -63,7 +63,29 @@ def _with_child_usage(item: dict, usage_counts: dict[str, dict]) -> dict:
     }
 
 
-def _subject_response(record: dict, usage_counts: dict[str, Any] | None = None) -> dict:
+ADMIN_CATALOG_PERMISSION = "admin.catalog"
+SUBJECT_OWNER_PERMISSION = "catalog.subjects.manage_own"
+
+
+def _is_catalog_admin(viewer: Any) -> bool:
+    # viewer=None means an internal/system caller, which bypasses ownership rules.
+    if viewer is None:
+        return True
+    return ADMIN_CATALOG_PERMISSION in set(getattr(viewer, "permissions", ()) or ())
+
+
+def _can_manage_subject(record: dict, viewer: Any) -> bool:
+    if _is_catalog_admin(viewer):
+        return True
+    owner_id = record.get("owner_id")
+    return owner_id is not None and owner_id == getattr(viewer, "id", None)
+
+
+def _subject_response(
+    record: dict,
+    usage_counts: dict[str, Any] | None = None,
+    viewer: Any = None,
+) -> dict:
     usage_counts = usage_counts or {}
     chapters = sorted(
         record.get("chapters") or [],
@@ -86,6 +108,9 @@ def _subject_response(record: dict, usage_counts: dict[str, Any] | None = None) 
             ],
             "is_active": record.get("is_active", True),
             "usage_counts": usage_counts.get("subject", {}),
+            "owner_id": record.get("owner_id"),
+            "owner_email": record.get("owner_email", ""),
+            "can_manage": _can_manage_subject(record, viewer),
         }
     )
 
@@ -170,6 +195,11 @@ class CatalogService:
             raise LookupError("Không tìm thấy học phần")
         return subject
 
+    @staticmethod
+    def _ensure_can_manage(subject: dict, viewer: Any) -> None:
+        if not _can_manage_subject(subject, viewer):
+            raise PermissionError("Bạn chỉ có thể chỉnh sửa học phần do mình tạo")
+
     def _find_subject_by_code(self, subject_code: str) -> dict | None:
         normalized = subject_code.strip().lower()
         for subject in self.db.subjects.find():
@@ -207,17 +237,19 @@ class CatalogService:
                 raise ValueError("Mã đã tồn tại trong học phần này")
         return normalized
 
-    def list_subjects(self) -> list[dict]:
+    def list_subjects(self, viewer: Any = None) -> list[dict]:
         records = self.db.subjects.find().sort("subject_code", 1)
         return [
-            _subject_response(record, self._usage_counts(record))
+            _subject_response(record, self._usage_counts(record), viewer)
             for record in records
         ]
 
-    def upsert_subject(self, payload: SubjectPayload) -> dict:
+    def upsert_subject(self, payload: SubjectPayload, viewer: Any = None) -> dict:
         now = utc_now()
         subject_code = payload.subject_code.strip()
         existing = self._find_subject_by_code(subject_code)
+        if existing:
+            self._ensure_can_manage(existing, viewer)
         record = self.db.subjects.find_one_and_update(
             {"_id": existing["_id"]} if existing else {"subject_code": subject_code},
             {
@@ -234,15 +266,34 @@ class CatalogService:
                     "chapters": [],
                     "learning_outcomes": [],
                     "created_at": now,
+                    "owner_id": getattr(viewer, "id", None),
+                    "owner_email": getattr(viewer, "email", "") or "",
                 },
             },
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
-        return _subject_response(record, self._usage_counts(record))
+        return _subject_response(record, self._usage_counts(record), viewer)
 
-    def update_subject(self, subject_id: str, payload: SubjectUpdatePayload) -> dict:
+    def deactivate_subject(self, subject_id: str, viewer: Any = None) -> dict:
+        """Xoá mềm học phần: giữ nguyên dữ liệu lịch sử, chỉ ẩn khỏi danh sách chọn."""
         subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
+        record = self.db.subjects.find_one_and_update(
+            {"_id": subject["_id"]},
+            {"$set": {"is_active": False, "updated_at": utc_now()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return _subject_response(record, self._usage_counts(record), viewer)
+
+    def update_subject(
+        self,
+        subject_id: str,
+        payload: SubjectUpdatePayload,
+        viewer: Any = None,
+    ) -> dict:
+        subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
         fields = payload.model_dump(exclude_unset=True, exclude_none=True)
         if "subject_code" in fields:
             fields["subject_code"] = self._ensure_subject_code_available(
@@ -250,18 +301,24 @@ class CatalogService:
                 current_subject_id=subject["_id"],
             )
         if not fields:
-            return _subject_response(subject, self._usage_counts(subject))
+            return _subject_response(subject, self._usage_counts(subject), viewer)
         fields["updated_at"] = utc_now()
         record = self.db.subjects.find_one_and_update(
             {"_id": subject["_id"]},
             {"$set": fields},
             return_document=ReturnDocument.AFTER,
         )
-        return _subject_response(record, self._usage_counts(record))
+        return _subject_response(record, self._usage_counts(record), viewer)
 
-    def add_chapter(self, subject_id: str, payload: ChapterPayload) -> dict:
+    def add_chapter(
+        self,
+        subject_id: str,
+        payload: ChapterPayload,
+        viewer: Any = None,
+    ) -> dict:
         now = utc_now()
         subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
         chapter_code = self._ensure_child_code_available(
             subject,
             "chapters",
@@ -282,15 +339,17 @@ class CatalogService:
             {"$push": {"chapters": chapter}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
-        return _subject_response(record, self._usage_counts(record))
+        return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_chapter(
         self,
         subject_id: str,
         chapter_id: str,
         payload: ChapterUpdatePayload,
+        viewer: Any = None,
     ) -> dict:
         subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
         chapter_oid = object_id(chapter_id, "chapter_id")
         if not any(_subdoc_id(item) == chapter_oid for item in subject.get("chapters") or []):
             raise LookupError("Không tìm thấy chương")
@@ -304,7 +363,7 @@ class CatalogService:
                 current_child_id=chapter_oid,
             )
         if not fields:
-            return _subject_response(subject, self._usage_counts(subject))
+            return _subject_response(subject, self._usage_counts(subject), viewer)
         now = utc_now()
         update_fields = {
             f"chapters.$.{key}": value
@@ -319,11 +378,17 @@ class CatalogService:
         )
         if not record:
             raise LookupError("Không tìm thấy chương")
-        return _subject_response(record, self._usage_counts(record))
+        return _subject_response(record, self._usage_counts(record), viewer)
 
-    def add_learning_outcome(self, subject_id: str, payload: LearningOutcomePayload) -> dict:
+    def add_learning_outcome(
+        self,
+        subject_id: str,
+        payload: LearningOutcomePayload,
+        viewer: Any = None,
+    ) -> dict:
         now = utc_now()
         subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
         clo_code = self._ensure_child_code_available(
             subject,
             "learning_outcomes",
@@ -344,15 +409,17 @@ class CatalogService:
             {"$push": {"learning_outcomes": outcome}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
-        return _subject_response(record, self._usage_counts(record))
+        return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_learning_outcome(
         self,
         subject_id: str,
         clo_id: str,
         payload: LearningOutcomeUpdatePayload,
+        viewer: Any = None,
     ) -> dict:
         subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
         clo_oid = object_id(clo_id, "clo_id")
         if not any(
             _subdoc_id(item) == clo_oid
@@ -369,7 +436,7 @@ class CatalogService:
                 current_child_id=clo_oid,
             )
         if not fields:
-            return _subject_response(subject, self._usage_counts(subject))
+            return _subject_response(subject, self._usage_counts(subject), viewer)
         now = utc_now()
         update_fields = {
             f"learning_outcomes.$.{key}": value
@@ -384,7 +451,7 @@ class CatalogService:
         )
         if not record:
             raise LookupError("Không tìm thấy CLO")
-        return _subject_response(record, self._usage_counts(record))
+        return _subject_response(record, self._usage_counts(record), viewer)
 
     def list_ai_models(self) -> list[dict]:
         return [
@@ -608,6 +675,7 @@ class CatalogService:
             "question_rule",
             f"bloom:{payload.bloom_level}",
             f"question_type:{payload.question_type}",
+            f"question_structure:{payload.question_type}",
             "output_format",
         ]
         effective_sources = {}
@@ -696,9 +764,9 @@ class CatalogService:
         )
         return json_safe(record)
 
-    def overview(self) -> dict[str, Any]:
+    def overview(self, viewer: Any = None) -> dict[str, Any]:
         return {
-            "subjects": self.list_subjects(),
+            "subjects": self.list_subjects(viewer),
             "ai_models": self.list_ai_models(),
             "prompt_templates": self.list_prompt_templates(),
             "evaluation_policies": self.list_evaluation_policies(),

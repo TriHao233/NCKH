@@ -20,6 +20,10 @@ export function updateSubject(subjectId, payload) {
   return apiRequest(`/catalog/subjects/${subjectId}`, { method: 'PATCH', body: payload });
 }
 
+export function deactivateSubject(subjectId) {
+  return apiRequest(`/catalog/subjects/${subjectId}`, { method: 'DELETE' });
+}
+
 export function addSubjectChapter(subjectId, payload) {
   return apiRequest(`/catalog/subjects/${subjectId}/chapters`, { method: 'POST', body: payload });
 }

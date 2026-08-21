@@ -1,0 +1,5 @@
+KIỂM TRA LOẠI CÂU: dung_sai
+- Stem phải là một mệnh đề hoàn chỉnh có thể xác định Đúng/Sai.
+- Lựa chọn chuẩn: A = Đúng, B = Sai.
+- Không chấp nhận stem dang dở như "Mặt trời là" hoặc mệnh đề chỉ đúng một phần.
+- Giải thích cần nêu vì sao mệnh đề đúng hoặc sai.

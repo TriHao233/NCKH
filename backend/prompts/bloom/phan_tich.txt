@@ -1,10 +1,8 @@
-BLOOM LEVEL: PHAN_TICH (Analyzing)
+MỨC BLOOM: phan_tich - Phân tích
+ĐỘNG TỪ TRỌNG TÂM: PHÂN TÍCH, SO SÁNH, PHÂN BIỆT, TÁCH THÀNH PHẦN, SUY LUẬN, XÁC ĐỊNH QUAN HỆ.
 
-DEMAND: The ability to break information into its component parts and determine how the parts relate to one another and to an overall structure.
-KEY VERBS TO TARGET: Analyze, break down, compare, contrast, deduce, differentiate, investigate, examine.
-
-RULE: 
-- The question must require identifying relationships, underlying structures, or root causes.
-- The student must demonstrate understanding of how different parts of the knowledge interact with each other.
-- Ask about why one component affects another, how steps depend on each other, how concepts differ under specific conditions, or what cause leads to a stated effect.
-- Avoid questions that can be answered by naming a single definition; the learner must separate parts, compare alternatives, or infer a relationship grounded in the context.
+YÊU CẦU:
+1. Kiểm tra khả năng tách vấn đề thành phần và nhận ra quan hệ giữa các phần.
+2. Hỏi về nguyên nhân, điều kiện, phụ thuộc, khác biệt, cấu trúc hoặc tác động qua lại.
+3. Người học phải so sánh lựa chọn, suy ra quan hệ, hoặc chỉ ra phần nào dẫn đến hệ quả nào.
+4. Không tạo câu chỉ cần nhớ một định nghĩa hay nhận diện một thuật ngữ.

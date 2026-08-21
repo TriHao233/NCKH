@@ -1,0 +1,4 @@
+KIỂM TRA LOẠI CÂU: ghep_cot
+- Hai cột phải có các mục tương ứng rõ và có thể chấm bằng mapping.
+- Mỗi ghép nối đúng phải có căn cứ; tránh cặp mơ hồ hoặc trùng nghĩa.
+- Không chấp nhận đáp án chỉ dựa vào thứ tự hiển nhiên, ký hiệu lộ đáp án, hoặc thiếu khóa ghép.

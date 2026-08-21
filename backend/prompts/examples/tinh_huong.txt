@@ -1,4 +1,4 @@
-EXAMPLE OUTPUT (For tinh_huong):
+VÍ DỤ CHUẨN: tinh_huong
 {
   "questions": [
     {

@@ -26,7 +26,7 @@ const DEFAULT_WEIGHTS = {
   clo_alignment: 0.15,
 };
 
-const DEFAULT_THRESHOLDS = { yellow_min: 0.6, green_min: 0.8, pass_min: 0.8 };
+const DEFAULT_THRESHOLDS = { yellow_min: 0.5, green_min: 0.75, pass_min: 0.65 };
 const EMPTY_SUBJECT_FORM = { id: '', subject_code: '', subject_name: '', description: '', is_active: true };
 const EMPTY_CHAPTER_FORM = { id: '', chapter_code: '', chapter_name: '', sequence_no: 1, is_active: true };
 const EMPTY_CLO_FORM = { id: '', clo_code: '', description: '', target_weight: 1, is_active: true };

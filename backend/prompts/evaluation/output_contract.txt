@@ -1,0 +1,32 @@
+OUTPUT
+Chỉ trả về MỘT object JSON thô. Không dùng markdown, không giải thích ngoài JSON.
+
+{{
+  "scores": {{
+    "faithfulness": 0.0,
+    "contextual_relevancy": 0.0,
+    "answer_relevancy": 0.0,
+    "bloom_alignment": 0.0,
+    "clo_alignment": 0.0
+  }},
+  "feedback": {{
+    "summary": "Nhận xét tiếng Việt trong 1-2 câu",
+    "missing": ["Vấn đề cần bổ sung hoặc chỉnh sửa"],
+    "action": "APPROVE | NEEDS_REVISION | REJECT",
+    "severity": "LOW | MEDIUM | HIGH"
+  }},
+  "evidence": {{
+    "supporting_excerpt": "Trích ngắn hoặc diễn giải sát từ source_chunks",
+    "reasoning": "Lý do chấm điểm chính, viết tiếng Việt",
+    "criteria": ["Tiêu chí đã dùng"],
+    "risks": ["Rủi ro thực tế nếu có"],
+    "moodle_readiness": "READY | NEEDS_FIX",
+    "answer_diagnostics": "Nhận xét về đáp án, độ mơ hồ, phương án nhiễu và giải thích"
+  }}
+}}
+
+EVALUATION_POLICY:
+{evaluation_policy}
+
+QUESTION_PAYLOAD:
+{question_payload}

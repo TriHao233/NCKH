@@ -1,0 +1,6 @@
+CẤU TRÚC: tinh_huong
+1. `question` gồm tình huống ngắn và câu hỏi quyết định rõ ràng.
+2. Tình huống có vai trò, mục tiêu, ràng buộc, lỗi, đầu vào/đầu ra hoặc điểm cần quyết định.
+3. `options` là object có đúng 4 khóa "A", "B", "C", "D".
+4. `correct_answer` là đúng một khóa trong options.
+5. Các phương án là hành động, chẩn đoán, cách triển khai hoặc kết luận khác nhau nhưng cùng mức hợp lý.

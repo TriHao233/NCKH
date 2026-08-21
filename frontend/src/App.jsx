@@ -20,6 +20,7 @@ import ContactPage from './pages/ContactPage';
 import UserProfile from './pages/UserProfile';
 import TaskCalendarPage from './pages/TaskCalendarPage';
 import ExamListPage from './pages/ExamListPage';
+import SubjectManage from './pages/SubjectManage';
 import ExamBuilderPage from './pages/ExamBuilderPage';
 import { AuthContext } from './context/AuthContext';
 import { canAccessPath } from './auth/permissions';
@@ -61,6 +62,14 @@ function App() {
                     element={(
                         <ProtectedPage path="/quan-ly">
                             <ManagePage />
+                        </ProtectedPage>
+                    )}
+                />
+                <Route
+                    path="/quan-ly-hoc-phan"
+                    element={(
+                        <ProtectedPage path="/quan-ly-hoc-phan">
+                            <SubjectManage />
                         </ProtectedPage>
                     )}
                 />

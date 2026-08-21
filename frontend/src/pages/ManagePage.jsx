@@ -157,6 +157,7 @@ const QUESTION_BANK_EXPORT_FORMATS = [
   { value: 'xml', label: 'XML Moodle' },
 ];
 const QUESTION_IMPORT_ACCEPT = '.csv,.xlsx,.gift,.txt,.xml';
+const QUESTIONS_PER_PAGE = 7;
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -501,6 +502,11 @@ function ManagePage() {
   const [questionExportFormat, setQuestionExportFormat] = useState('csv');
   const [questionExchangeBusy, setQuestionExchangeBusy] = useState('');
   const [questionExchangeMessage, setQuestionExchangeMessage] = useState('');
+  // Các khối phụ trợ mặc định đóng để danh sách câu hỏi luôn là trọng tâm.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [coverageOpen, setCoverageOpen] = useState(false);
+  const [exchangeOpen, setExchangeOpen] = useState(false);
+  const [questionPage, setQuestionPage] = useState(0);
 
   const [editing, setEditing] = useState(null);
   const [editContent, setEditContent] = useState('');
@@ -787,6 +793,22 @@ function ManagePage() {
   ]);
 
   useEffect(() => {
+    setQuestionPage(0);
+  }, [
+    searchTerm,
+    statusFilter,
+    typeFilter,
+    documentFilter,
+    subjectFilter,
+    chapterFilter,
+    cloFilter,
+    bloomFilter,
+    difficultyFilter,
+    evaluationFilter,
+    publicationFilter,
+  ]);
+
+  useEffect(() => {
     fetchDocuments();
   }, [canManageDocuments]);
 
@@ -852,6 +874,19 @@ function ManagePage() {
     });
   }, [questions, statusFilter, typeFilter, documentFilter, bloomFilter]);
 
+  // Đếm số bộ lọc đang khác mặc định để hiển thị badge trên nút "Bộ lọc".
+  const activeFilterCount = [
+    [subjectFilter, 'all-subjects'],
+    [chapterFilter, 'all-chapters'],
+    [cloFilter, 'all-clos'],
+    [typeFilter, 'all-type'],
+    [documentFilter, 'all-documents'],
+    [bloomFilter, 'all-bloom'],
+    [difficultyFilter, 'all-difficulties'],
+    [evaluationFilter, 'all-evaluations'],
+    [publicationFilter, 'all-publications'],
+  ].filter(([value, fallback]) => value !== fallback).length;
+
   const approvedForPublication = questions.filter((q) => (
     q.review_status === 'APPROVED' && q.publication_status !== 'PUBLISHED'
   ));
@@ -891,6 +926,17 @@ function ManagePage() {
   const filteredQuestionIds = useMemo(() => filtered.map((question) => question.id), [filtered]);
   const allFilteredSelected = filteredQuestionIds.length > 0
     && filteredQuestionIds.every((questionId) => selectedQuestionIds.includes(questionId));
+  const questionPageCount = Math.max(1, Math.ceil(filtered.length / QUESTIONS_PER_PAGE));
+  const safeQuestionPage = Math.min(questionPage, questionPageCount - 1);
+  const visibleQuestions = filtered.slice(
+    safeQuestionPage * QUESTIONS_PER_PAGE,
+    safeQuestionPage * QUESTIONS_PER_PAGE + QUESTIONS_PER_PAGE,
+  );
+
+  useEffect(() => {
+    setQuestionPage((current) => Math.min(current, questionPageCount - 1));
+  }, [questionPageCount]);
+
   const selectedSubjectIds = Array.from(new Set(selectedQuestions.map(questionSubjectId).filter(Boolean)));
   const bulkCloSubject = selectedSubjectIds.length === 1 ? subjectById.get(selectedSubjectIds[0]) : null;
   const bulkLearningOutcomes = (bulkCloSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
@@ -1745,8 +1791,13 @@ function ManagePage() {
               </button>
             </div>
 
-            <div className="coverage-panel">
-              <div className="coverage-panel-header">
+            <div className={`coverage-panel ${coverageOpen ? '' : 'coverage-panel--collapsed'}`}>
+              <button
+                type="button"
+                className="coverage-panel-header"
+                aria-expanded={coverageOpen}
+                onClick={() => setCoverageOpen((current) => !current)}
+              >
                 <div>
                   <h3>Độ phủ ngân hàng</h3>
                   <span>{coverageScopeLabel}</span>
@@ -1755,8 +1806,14 @@ function ManagePage() {
                   <b>{questionCoverage.total}</b>
                   <span>{questionCoverage.approvedTotal} đã duyệt</span>
                 </div>
-              </div>
-              <div className="coverage-grid">
+                <svg
+                  className={`panel-chevron ${coverageOpen ? 'panel-chevron--open' : ''}`}
+                  width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <div className="coverage-grid" hidden={!coverageOpen}>
                 {coverageSections.map((section) => (
                   <section className={`coverage-section coverage-section--${section.key}`} key={section.key}>
                     <div className="coverage-section-title">
@@ -1799,6 +1856,40 @@ function ManagePage() {
                       + Thêm câu hỏi
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Thanh công cụ: tìm kiếm luôn hiển thị, phần còn lại thu gọn theo nhu cầu. */}
+              <div className="list-toolbar">
+                <input
+                  className="field-input search-input"
+                  placeholder="Tìm câu hỏi theo nội dung hoặc mã..."
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className={`toolbar-toggle ${filtersOpen ? 'toolbar-toggle--open' : ''} ${activeFilterCount > 0 ? 'toolbar-toggle--active' : ''}`}
+                  aria-expanded={filtersOpen}
+                  onClick={() => setFiltersOpen((current) => !current)}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+                  Bộ lọc
+                  {activeFilterCount > 0 && <span className="toolbar-badge">{activeFilterCount}</span>}
+                </button>
+                <button
+                  type="button"
+                  className={`toolbar-toggle ${exchangeOpen ? 'toolbar-toggle--open' : ''}`}
+                  aria-expanded={exchangeOpen}
+                  onClick={() => setExchangeOpen((current) => !current)}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+                  Nhập / Xuất
+                </button>
+              </div>
+
+              {exchangeOpen && (
+                <div className="toolbar-panel exchange-panel">
                   {canEditQuestions && (
                     <label className={`btn btn--outline question-import-button ${questionExchangeBusy ? 'question-import-button--disabled' : ''}`}>
                       Nhập CSV/XLSX/GIFT/XML
@@ -1828,9 +1919,10 @@ function ManagePage() {
                     Xuất {exportScopeLabel}
                   </button>
                 </div>
-              </div>
+              )}
 
-              <div className="question-filter-panel" aria-label="Bộ lọc câu hỏi">
+              {filtersOpen && (
+              <div className="toolbar-panel question-filter-panel" aria-label="Bộ lọc câu hỏi">
                 <div className="filter-row">
                   <select
                     className="field-select field-select--wide"
@@ -1938,54 +2030,49 @@ function ManagePage() {
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
+                </div>
+
+                <div className="saved-filter-bar">
+                  <select
+                    className="field-select field-select--wide"
+                    value={selectedSavedFilterId}
+                    onChange={(event) => handleSelectSavedQuestionFilter(event.target.value)}
+                  >
+                    <option value="">Bộ lọc đã lưu</option>
+                    {savedQuestionFilters.map((filter) => (
+                      <option key={filter.id} value={filter.id}>{filter.name}</option>
+                    ))}
+                  </select>
                   <input
-                    className="field-input search-input"
-                    placeholder="Tìm câu hỏi..."
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
+                    className="field-input saved-filter-name"
+                    placeholder="Tên bộ lọc"
+                    value={savedFilterName}
+                    onChange={(event) => setSavedFilterName(event.target.value)}
                   />
+                  <button type="button" className="btn btn--outline" onClick={handleSaveQuestionFilter}>
+                    Lưu bộ lọc
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--outline"
+                    disabled={!selectedSavedFilterId}
+                    onClick={handleDeleteSavedQuestionFilter}
+                  >
+                    Xóa
+                  </button>
+                  <button type="button" className="btn btn--outline" onClick={handleResetQuestionFilters}>
+                    Đặt lại
+                  </button>
                 </div>
               </div>
-
-              <div className="saved-filter-bar">
-                <select
-                  className="field-select field-select--wide"
-                  value={selectedSavedFilterId}
-                  onChange={(event) => handleSelectSavedQuestionFilter(event.target.value)}
-                >
-                  <option value="">Bộ lọc đã lưu</option>
-                  {savedQuestionFilters.map((filter) => (
-                    <option key={filter.id} value={filter.id}>{filter.name}</option>
-                  ))}
-                </select>
-                <input
-                  className="field-input saved-filter-name"
-                  placeholder="Tên bộ lọc"
-                  value={savedFilterName}
-                  onChange={(event) => setSavedFilterName(event.target.value)}
-                />
-                <button type="button" className="btn btn--outline" onClick={handleSaveQuestionFilter}>
-                  Lưu bộ lọc
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--outline"
-                  disabled={!selectedSavedFilterId}
-                  onClick={handleDeleteSavedQuestionFilter}
-                >
-                  Xóa
-                </button>
-                <button type="button" className="btn btn--outline" onClick={handleResetQuestionFilters}>
-                  Đặt lại
-                </button>
-              </div>
+              )}
 
               {questionExchangeMessage && (
                 <p className="question-exchange-message">{questionExchangeMessage}</p>
               )}
 
               {canEditQuestions && (
-                <div className="bulk-action-bar">
+                <div className={`bulk-action-bar ${selectedQuestions.length > 0 ? 'bulk-action-bar--active' : ''}`}>
                   <label className="bulk-select-all">
                     <input
                       type="checkbox"
@@ -1993,7 +2080,7 @@ function ManagePage() {
                       disabled={filteredQuestionIds.length === 0 || Boolean(bulkActionBusy)}
                       onChange={toggleFilteredSelection}
                     />
-                    <span>Chọn danh sách đang hiển thị</span>
+                    <span>Chọn tất cả đang hiển thị</span>
                   </label>
                   <span className="bulk-count">{selectedQuestions.length} đã chọn</span>
                   <div className="bulk-actions">
@@ -2031,7 +2118,7 @@ function ManagePage() {
                 <p className="empty-note">Đang tải danh sách câu hỏi...</p>
               ) : (
                 <div className="question-list">
-                  {filtered.map((item) => (
+                  {visibleQuestions.map((item) => (
                     <article key={item.id} className="question-item">
                       <div className="question-main">
                         <div className="question-meta-row">
@@ -2092,11 +2179,14 @@ function ManagePage() {
                           <button type="button" className="mini-action" onClick={() => loadWorkflowHistory(item)}>
                             Chi tiết
                           </button>
-                          {canEditQuestions && SUBMITTABLE_REVIEW_STATUSES.has(item.review_status) && (
+                          {canEditQuestions && (
                             <button
                               type="button"
                               className="mini-action mini-action--approve"
-                              disabled={workflowBusyId === item.id}
+                              title={SUBMITTABLE_REVIEW_STATUSES.has(item.review_status)
+                                ? 'Gửi câu hỏi này đi duyệt'
+                                : 'Câu hỏi không ở trạng thái có thể gửi duyệt'}
+                              disabled={workflowBusyId === item.id || !SUBMITTABLE_REVIEW_STATUSES.has(item.review_status)}
                               onClick={() => handleSubmitForReview(item)}
                             >
                               Gửi duyệt
@@ -2125,7 +2215,7 @@ function ManagePage() {
                             </>
                           )}
                           {canEditQuestions && (
-                            <>
+                            <div className="question-icon-group">
                               <button
                                 type="button"
                                 className="icon-btn"
@@ -2150,7 +2240,7 @@ function ManagePage() {
                               >
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
                               </button>
-                            </>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -2159,6 +2249,39 @@ function ManagePage() {
                   {filtered.length === 0 && (
                     <p className="empty-note">Không có câu hỏi nào ở trạng thái này.</p>
                   )}
+                </div>
+              )}
+
+              {questionPageCount > 1 && (
+                <div className="question-pagination">
+                  <button
+                    type="button"
+                    className="question-pagination-btn"
+                    disabled={safeQuestionPage === 0}
+                    onClick={() => setQuestionPage((current) => Math.max(0, current - 1))}
+                  >
+                    ‹ Trước
+                  </button>
+                  <div className="question-pagination-pages">
+                    {Array.from({ length: questionPageCount }, (_, index) => (
+                      <button
+                        type="button"
+                        key={index}
+                        className={`question-pagination-page ${index === safeQuestionPage ? 'question-pagination-page--active' : ''}`}
+                        onClick={() => setQuestionPage(index)}
+                      >
+                        {index + 1}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="question-pagination-btn"
+                    disabled={safeQuestionPage >= questionPageCount - 1}
+                    onClick={() => setQuestionPage((current) => Math.min(questionPageCount - 1, current + 1))}
+                  >
+                    Sau ›
+                  </button>
                 </div>
               )}
             </div>

@@ -26,8 +26,8 @@ MAX_FORMAT_RETRY_ATTEMPTS = 1
 QUESTION_TYPE_RETRY_RULES = {
     "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
     "tinh_huong": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
-    "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; correct_answer must be "A" or "B".',
-    "nhieu_lua_chon": 'options must contain either "A", "B", "C", "D" or "A", "B", "C", "D", "E"; correct_answer must contain at least two comma-separated keys but not every option key.',
+    "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; question must be a complete true/false statement; correct_answer must be "A" or "B".',
+    "nhieu_lua_chon": 'options must contain 4 to 6 consecutive keys from "A"; correct_answer must contain at least two comma-separated keys but not every option key.',
     "dien_khuyet": 'options must be null; question text must contain "_____".',
     "ghep_cot": "options must be a matching object with numbered keys and extra lettered distractors.",
     "sap_xep": "options must contain ordered step keys; correct_answer must list every key in the correct order.",
@@ -296,6 +296,20 @@ def _filter_duplicate_questions(
     return kept, duplicate_count
 
 
+def _looks_incomplete_true_false_statement(question: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (question or "").strip().lower())
+    if not normalized:
+        return True
+    if normalized.endswith("?"):
+        return True
+    dangling_patterns = (
+        r"\b(là|gồm|bao gồm|có|được|bị|khi|nếu|vì|do|của|trong|với|để|bằng|từ|và|hoặc)$",
+        r"\b(là một|là các|là những|được gọi là|được sử dụng để)$",
+        r"[:;,]$",
+    )
+    return any(re.search(pattern, normalized) for pattern in dangling_patterns)
+
+
 def _build_retry_prompt(
     *,
     original_prompt: str,
@@ -379,7 +393,7 @@ def _build_plan_summary(
 
 
 def _check_type_format(item: dict, question_type: str) -> str | None:
-    """Kiểm tra cấu trúc bắt buộc theo từng loại câu hỏi (xem app/prompts/question_type/*.txt).
+    """Kiểm tra cấu trúc bắt buộc theo từng loại câu hỏi (xem app/prompts/question_structure/*.txt).
     Trả về lý do lỗi nếu vi phạm, None nếu hợp lệ."""
     options = item.get("options")
     correct_answer = item.get("correct_answer") or ""
@@ -391,17 +405,25 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
             return "dien_khuyet phải có options = null"
 
     elif question_type == "dung_sai":
+        if _looks_incomplete_true_false_statement(item.get("question") or ""):
+            return "dung_sai phải là một mệnh đề hoàn chỉnh, không được bỏ lửng như 'X là'"
         if not isinstance(options, dict) or set(options.keys()) != {"A", "B"}:
             return "dung_sai phải có đúng 2 lựa chọn A/B"
+        if str(correct_answer).strip() not in {"A", "B"}:
+            return "dung_sai: correct_answer phải là A hoặc B"
 
     elif question_type in ("trac_nghiem", "tinh_huong"):
         if not isinstance(options, dict) or set(options.keys()) != {"A", "B", "C", "D"}:
             return f"{question_type} phải có đúng 4 lựa chọn A/B/C/D"
 
     elif question_type == "nhieu_lua_chon":
-        valid_option_sets = ({"A", "B", "C", "D"}, {"A", "B", "C", "D", "E"})
+        valid_option_sets = (
+            {"A", "B", "C", "D"},
+            {"A", "B", "C", "D", "E"},
+            {"A", "B", "C", "D", "E", "F"},
+        )
         if not isinstance(options, dict) or set(options.keys()) not in valid_option_sets:
-            return "nhieu_lua_chon phải có 4 hoặc 5 lựa chọn liên tiếp A/B/C/D(/E)"
+            return "nhieu_lua_chon phải có 4 đến 6 lựa chọn liên tiếp từ A"
         correct_keys = [c.strip() for c in correct_answer.split(",") if c.strip()]
         if len(correct_keys) < 2:
             return "nhieu_lua_chon phải có ít nhất 2 đáp án đúng"
@@ -437,7 +459,7 @@ def _validate_and_format(
     bloom_level: str,
 ) -> tuple[List[GeneratedQuestion], list[str]]:
     """Validate dữ liệu và ép kiểu về model chuẩn. Loại bỏ các câu hỏi không đúng
-    cấu trúc bắt buộc của question_type thay vì lưu dữ liệu hỏng vào ngân hàng câu hỏi."""
+    cấu trúc bắt buộc của question_structure thay vì lưu dữ liệu hỏng vào ngân hàng câu hỏi."""
     formatted = []
     validation_errors = []
     for item in questions:

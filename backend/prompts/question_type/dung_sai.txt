@@ -1,9 +1,7 @@
-QUESTION TYPE: dung_sai (True / False)
+LOẠI CÂU HỎI: dung_sai - đúng/sai
 
-RULES:
-1. Write a precise, clear declarative statement about the subject matter based on the context.
-2. The statement must be unambiguously true or unambiguously false.
-3. The `options` field in JSON MUST be exactly: {"A": "Đúng", "B": "Sai"}.
-4. The `correct_answer` field MUST be either "A" or "B".
-5. Avoid trick wording, double negatives, and source-reference phrases such as "Theo tài liệu" or "Theo chương".
-6. If writing a false statement, make it false by changing one meaningful concept, condition, relation, or consequence from the context, not by adding unrelated outside information.
+ĐỊNH NGHĨA:
+1. Câu hỏi yêu cầu người học đánh giá tính đúng/sai của một mệnh đề.
+2. Phù hợp để kiểm tra quan hệ, đặc điểm, điều kiện hoặc hệ quả có thể xác định rõ.
+3. Mệnh đề tốt phải hoàn toàn đúng hoặc hoàn toàn sai, không nửa đúng nửa sai.
+4. Nếu là mệnh đề sai, điểm sai nên nằm ở một khác biệt bản chất.

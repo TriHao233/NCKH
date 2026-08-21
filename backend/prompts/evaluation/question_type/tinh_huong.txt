@@ -1,0 +1,5 @@
+KIỂM TRA LOẠI CÂU: tinh_huong
+- Tình huống phải đủ dữ kiện để chọn đáp án, không dài dòng ngoài mục tiêu học tập.
+- Câu hỏi nên kiểm tra vận dụng/phân tích/đánh giá, không chỉ hỏi định nghĩa trá hình.
+- Lựa chọn phải xử lý cùng một vấn đề trong tình huống.
+- Không trừ nặng vì tình huống ngắn nếu vẫn đủ dữ kiện và đúng Bloom.

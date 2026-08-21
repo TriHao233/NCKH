@@ -1,0 +1,6 @@
+CẤU TRÚC: dien_khuyet
+1. `question` là một câu hoàn chỉnh sau khi điền đáp án và có đúng một chỗ trống "_____".
+2. Chỗ trống là thuật ngữ, khái niệm, thuộc tính hoặc kết quả quan trọng.
+3. Phần còn lại phải đủ manh mối để suy ra đúng một đáp án.
+4. `options` bắt buộc là `null`.
+5. `correct_answer` là từ/cụm từ điền vào chỗ trống, đủ cụ thể để chấm tự động.

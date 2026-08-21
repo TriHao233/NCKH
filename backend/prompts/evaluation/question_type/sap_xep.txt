@@ -1,0 +1,5 @@
+KIỂM TRA LOẠI CÂU: sap_xep
+- Các mục cần sắp xếp phải cùng một quy trình, trình tự hoặc quan hệ logic.
+- correct_answer phải biểu diễn thứ tự kiểm tra được.
+- Không chấp nhận câu có nhiều thứ tự đúng nhưng chỉ khai báo một đáp án.
+- Trừ nặng nếu thứ tự không được nguồn hỗ trợ.

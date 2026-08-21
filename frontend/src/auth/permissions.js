@@ -27,6 +27,7 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
     "questions.share_bank",
     "questions.use_shared_bank",
     "exams.manage_own",
+    "catalog.subjects.manage_own",
   ]),
   Reviewer: Object.freeze([
     "reviews.manage",
@@ -40,6 +41,7 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/sinh-cau-hoi": Object.freeze(["questions.generate"]),
   "/quan-ly": Object.freeze(["questions.manage_own"]),
   "/lam-de-thi": Object.freeze(["exams.manage_own"]),
+  "/quan-ly-hoc-phan": Object.freeze(["catalog.subjects.manage_own"]),
   "/lam-de-thi/:examId": Object.freeze(["exams.manage_own"]),
   "/kiem-duyet": Object.freeze(["reviews.manage"]),
   "/duyet-ai": Object.freeze(["admin.ai_review"]),
@@ -56,6 +58,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/quan-ly": PERMISSIONS.teacherAdminWorkspace,
   "/lam-de-thi": PERMISSIONS.teacherAdminWorkspace,
   "/lam-de-thi/:examId": PERMISSIONS.teacherAdminWorkspace,
+  "/quan-ly-hoc-phan": PERMISSIONS.teacherAdminWorkspace,
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
   "/duyet-ai": PERMISSIONS.adminWorkspace,
   "/tong-quan": PERMISSIONS.adminWorkspace,

@@ -1,11 +1,8 @@
-BLOOM LEVEL: NHO (Remembering)
+MỨC BLOOM: nho - Nhớ
+ĐỘNG TỪ TRỌNG TÂM: NHẬN BIẾT, NHẮC LẠI, NÊU, LIỆT KÊ, XÁC ĐỊNH, GỌI TÊN.
 
-DEMAND: The ability to recall information and facts without necessarily understanding their underlying meaning.
-KEY VERBS TO TARGET: Define, describe, list, name, identify, present, state, relate.
-
-RULE: 
-- Ask directly about terms, facts, or concepts. 
-- The question must test if the student can recall specific information directly from the learned material.
-- Focus on precise identifiers, definitions, properties, commands, syntax, roles, or steps that appear in the context.
-- Avoid vague memory checks; each answer must be a specific item that can be verified from the context.
-- Do not ask for deep explanations or complex problem-solving.
+YÊU CẦU:
+1. Kiểm tra khả năng nhớ lại thông tin đã học, chưa yêu cầu giải thích sâu.
+2. Hỏi trực tiếp về thuật ngữ, định nghĩa, ký hiệu, cú pháp, thuộc tính, vai trò hoặc bước xuất hiện trong CONTEXT.
+3. Đáp án phải là thông tin cụ thể, có thể đối chiếu rõ ràng với CONTEXT.
+4. Không yêu cầu phân tích, vận dụng tình huống, đánh giá hay thiết kế giải pháp.

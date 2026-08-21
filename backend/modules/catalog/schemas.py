@@ -54,6 +54,9 @@ class SubjectResponse(BaseModel):
     learning_outcomes: list[dict[str, Any]] = Field(default_factory=list)
     is_active: bool
     usage_counts: dict[str, Any] = Field(default_factory=dict)
+    owner_id: str | None = None
+    owner_email: str = ""
+    can_manage: bool = True
 
 
 class AiModelPayload(BaseModel):
