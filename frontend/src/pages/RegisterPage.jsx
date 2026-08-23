@@ -110,13 +110,7 @@ function DangKy() {
   };
 
   return (
-    <>
-      <div className="page-bg">
-        <div className="mesh-circle mesh-circle--1"></div>
-        <div className="mesh-circle mesh-circle--2"></div>
-        <div className="mesh-circle mesh-circle--3"></div>
-      </div>
-
+    <div className="register-page">
       <header className="topbar">
         <Link to="/" className="topbar-brand">
           <img
@@ -337,7 +331,7 @@ function DangKy() {
           </div>
         </div>
       </main>
-    </>
+    </div>
   );
 }
 

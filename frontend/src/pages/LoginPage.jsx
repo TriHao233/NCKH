@@ -166,13 +166,7 @@ function LoginPage() {
   };
 
   return (
-    <>
-      <div className="page-bg" aria-hidden="true">
-        <div className="mesh-circle mesh-circle--1"></div>
-        <div className="mesh-circle mesh-circle--2"></div>
-        <div className="mesh-circle mesh-circle--3"></div>
-      </div>
-
+    <div className="login-page">
       <header className="topbar">
         <Link to="/trang-chu" className="topbar-brand">
           <img
@@ -359,7 +353,7 @@ function LoginPage() {
           </div>
         </div>
       </main>
-    </>
+    </div>
   );
 }
 

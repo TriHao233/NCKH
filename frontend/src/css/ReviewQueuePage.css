@@ -14,28 +14,7 @@
   margin: 0 auto;
 }
 
-.review-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.review-toolbar__title span {
-  display: block;
-  color: #005bac;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-
-.review-toolbar__title h1 {
-  color: #003a75;
-  font-size: 1.8rem;
-  font-weight: 800;
-}
+/* .review-toolbar (layout, __title span/h1) dùng chung — xem css/admin-shared.css */
 
 .review-actions,
 .detail-actions {

@@ -10,28 +10,7 @@
   margin: 0 auto;
 }
 
-.catalog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.catalog-header span {
-  display: block;
-  color: #005bac;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-
-.catalog-header h1 {
-  color: #003a75;
-  font-size: 1.8rem;
-  font-weight: 800;
-}
+/* .catalog-header (layout, span/h1) dùng chung — xem css/admin-shared.css */
 
 .catalog-page button {
   border: 1px solid #0c78d4;

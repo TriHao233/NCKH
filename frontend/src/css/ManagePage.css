@@ -26,7 +26,7 @@
   border: none;
   white-space: nowrap;
 }
-.manage-page .btn--primary { color: #fff; background: var(--primary, #0c78d4); box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3); }
+/* .btn--primary base color dùng chung — xem css/shared.css */
 .manage-page .btn--primary:hover { background: var(--primary-strong, #03539a); }
 .manage-page .btn--outline { color: var(--secondary, #005bac); border: 1.5px solid var(--border, #d9e6f2); background: #fff; }
 .manage-page .btn--outline:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
@@ -53,6 +53,7 @@
 .manage-page .page-hero-title { font-family: 'Fraunces', serif; font-size: clamp(1.7rem, 3vw, 2.3rem); font-weight: 700; color: var(--navy, #003a75); margin-bottom: 12px; }
 .manage-page .page-hero-desc { font-size: 0.98rem; color: var(--text-muted, #5c6f89); max-width: 560px; line-height: 1.65; }
 .manage-page .manage-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.manage-page .manage-hero-actions svg { width: 16px; height: 16px; }
 
 /* ─── Body layout ────────────────────────────────────────────── */
 .manage-page .manage-body { padding: 40px 0 96px; background: #fafcff; }
@@ -118,6 +119,8 @@
 }
 .manage-page .panel-chevron {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
   color: var(--text-muted, #5c6f89);
   transition: transform 0.2s ease;
 }
@@ -274,6 +277,7 @@
   white-space: nowrap;
   transition: all 0.2s;
 }
+.manage-page .toolbar-toggle svg { width: 15px; height: 15px; }
 .manage-page .toolbar-toggle:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
 .manage-page .toolbar-toggle--open { background: #eaf4ff; border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); }
 .manage-page .toolbar-toggle--active { border-color: var(--primary, #0c78d4); }
@@ -595,21 +599,15 @@
 .manage-page .icon-btn:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); }
 .manage-page .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .manage-page .icon-btn--danger:hover { border-color: #DC2626; color: #DC2626; background: #FFF0F0; }
+.manage-page .question-icon-group .icon-btn svg { width: 15px; height: 15px; }
+.manage-page .doc-actions .icon-btn svg { width: 13px; height: 13px; }
+.manage-page .doc-job-action svg { width: 12px; height: 12px; }
 .manage-page .empty-note { text-align: center; color: var(--text-muted, #5c6f89); font-size: 0.88rem; padding: 24px 0; }
 .manage-page .manage-error { color: #DC2626; font-size: 0.85rem; margin-bottom: 12px; }
 .manage-page .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ─── Edit modal ─────────────────────────────────────────────── */
-.manage-page .modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(5, 20, 45, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  z-index: 100;
-}
+/* .modal-overlay dùng chung — xem css/admin-shared.css */
 .manage-page .modal-card {
   background: #fff;
   border-radius: 16px;
@@ -640,6 +638,7 @@
   cursor: pointer;
 }
 .manage-page .modal-close-btn:hover { border-color: #DC2626; color: #DC2626; background: #FFF0F0; }
+.manage-page .modal-close-btn svg { width: 16px; height: 16px; }
 .manage-page .question-view-head {
   display: flex;
   align-items: center;
@@ -756,7 +755,7 @@
   border-bottom: 0;
   padding-bottom: 0;
 }
-.manage-page .doc-item svg { color: var(--primary, #0c78d4); flex-shrink: 0; margin-top: 2px; }
+.manage-page .doc-item svg { width: 18px; height: 18px; color: var(--primary, #0c78d4); flex-shrink: 0; margin-top: 2px; }
 .manage-page .doc-info { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
 .manage-page .doc-actions {
   grid-column: 2;

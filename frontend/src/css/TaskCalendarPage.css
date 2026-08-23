@@ -36,7 +36,7 @@
   padding: 10px 18px; transition: all 0.25s; cursor: pointer; border: none; white-space: nowrap;
 }
 .task-calendar-page .btn--small { padding: 6px 12px; font-size: 0.78rem; }
-.task-calendar-page .btn--primary { color: #fff; background: var(--primary, #0c78d4); box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3); }
+/* .btn--primary base color dùng chung — xem css/shared.css */
 .task-calendar-page .btn--primary:hover { background: var(--primary-strong, #03539a); }
 .task-calendar-page .btn--outline { color: var(--secondary, #005bac); border: 1.5px solid var(--border, #d9e6f2); background: #fff; }
 .task-calendar-page .btn--outline:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
@@ -137,10 +137,7 @@
 .task-calendar-page .month-cell-more { font-size: 0.66rem; color: var(--text-muted, #5c6f89); }
 
 /* ─── Modal ──────────────────────────────────────────────────── */
-.task-calendar-page .modal-overlay {
-  position: fixed; inset: 0; background: rgba(5, 20, 45, 0.45);
-  display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 100;
-}
+/* .modal-overlay dùng chung — xem css/admin-shared.css */
 .task-calendar-page .modal-card {
   background: #fff; border-radius: 16px; padding: 28px; width: 100%; max-width: 480px;
   max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(5, 40, 90, 0.25);

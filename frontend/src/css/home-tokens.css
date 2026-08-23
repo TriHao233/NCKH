@@ -1,0 +1,86 @@
+/* ═══════════════════════════════════════════════════════════════
+   home-tokens.css | Hallmark token block — CTU Academic
+   ───────────────────────────────────────────────────────────────
+   Scoped to .home-page on purpose. The project's global :root
+   (src/index.css) declares --bg/--surface/--line/--text/--muted/
+   --primary/--accent but NOT --navy/--secondary/--border/
+   --text-muted/--radius-*, which every page currently reaches via
+   inline var() fallbacks. Declaring them globally would change
+   specificity for admin pages that are out of scope for this
+   redesign, so the Hallmark system is scoped here instead.
+   ═══════════════════════════════════════════════════════════════ */
+
+.home-page {
+  /* ─── Paper & ink ─────────────────────────────────────────── */
+  --h-paper:        oklch(99.2% 0.004 240);   /* near-white, tinted cool — never #fff */
+  --h-paper-2:      oklch(97.6% 0.008 240);   /* section alternate */
+  --h-paper-3:      oklch(95.4% 0.016 240);   /* inset / well */
+
+  --h-ink:          oklch(27.8% 0.078 252);   /* headline navy ≈ #003a75 */
+  --h-ink-2:        oklch(52.0% 0.036 250);   /* muted body   ≈ #5c6f89 */
+  /* ink-3 carries 12–13px captions, which never qualify as WCAG
+     "large text" — so it has to clear 4.5:1 on paper, not 3:1.
+     Measured 4.72:1 at this lightness. */
+  --h-ink-3:        oklch(55.5% 0.030 250);   /* captions */
+
+  /* ─── Accent — single cool hue, held under 5% of viewport ─── */
+  --h-accent:       oklch(55.4% 0.152 250);   /* ≈ #0c78d4 */
+  --h-accent-deep:  oklch(42.0% 0.140 252);   /* ≈ #03539a */
+  --h-accent-wash:  oklch(96.0% 0.028 245);   /* tint behind chips */
+  --h-accent-ink:   oklch(99.0% 0.004 240);   /* text on accent */
+
+  /* Verify — a second hue, used ONLY for the approved/verified state.
+     --h-verify is the border/fill weight; it only reaches 3.6:1 as
+     text, so small "Đã duyệt" labels use --h-verify-ink instead. */
+  --h-verify:       oklch(58.0% 0.118 165);   /* ≈ #12b886 project accent */
+  --h-verify-ink:   oklch(44.0% 0.115 165);
+  --h-verify-wash:  oklch(95.8% 0.030 165);
+
+  /* ─── Rules ───────────────────────────────────────────────── */
+  --h-rule:         oklch(91.0% 0.014 245);
+  --h-rule-strong:  oklch(80.0% 0.030 248);
+  --h-focus:        oklch(48.0% 0.160 250);
+
+  /* ─── Type ────────────────────────────────────────────────── */
+  --h-font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --h-font-body:    'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --h-text-xs:      0.75rem;
+  --h-text-sm:      0.8125rem;
+  --h-text-base:    0.9375rem;
+  --h-text-md:      1.0625rem;
+  --h-text-lg:      1.25rem;
+  --h-text-xl:      1.5rem;
+  --h-text-2xl:     clamp(1.6rem, 2.6vw, 2.1rem);
+  --h-text-3xl:     clamp(2rem, 3.4vw, 2.7rem);
+  --h-display:      clamp(2.3rem, 5.2vw, 4.05rem);
+
+  /* ─── Space — 4pt scale ───────────────────────────────────── */
+  --h-space-3xs:    0.25rem;
+  --h-space-2xs:    0.5rem;
+  --h-space-xs:     0.75rem;
+  --h-space-sm:     1rem;
+  --h-space-md:     1.5rem;
+  --h-space-lg:     2rem;
+  --h-space-xl:     3rem;
+  --h-space-2xl:    4.5rem;
+  --h-space-3xl:    7rem;
+
+  /* ─── Motion ──────────────────────────────────────────────── */
+  --h-ease-out:     cubic-bezier(0.16, 1, 0.3, 1);
+  --h-ease-in-out:  cubic-bezier(0.65, 0, 0.35, 1);
+  --h-dur-short:    200ms;
+  --h-dur-mid:      380ms;
+
+  /* ─── Radius ──────────────────────────────────────────────── */
+  --h-radius-sm:    6px;
+  --h-radius-md:    10px;
+  --h-radius-lg:    16px;
+  --h-radius-pill:  999px;
+
+  /* ─── Elevation ───────────────────────────────────────────── */
+  --h-lift:         0 1px 2px oklch(28% 0.07 250 / 0.05),
+                    0 8px 28px oklch(28% 0.07 250 / 0.07);
+  --h-lift-strong:  0 2px 4px oklch(28% 0.07 250 / 0.06),
+                    0 18px 48px oklch(28% 0.07 250 / 0.12);
+}

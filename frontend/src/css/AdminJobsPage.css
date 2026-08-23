@@ -13,38 +13,7 @@
   margin: 0 auto;
 }
 
-.jobs-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.jobs-header span,
-.job-detail-header span,
-.job-detail-error span,
-.job-detail-json span {
-  display: block;
-  color: #005bac;
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-
-.jobs-header h1 {
-  color: #003a75;
-  font-size: 1.8rem;
-  font-weight: 800;
-  margin-bottom: 5px;
-}
-
-.jobs-header p {
-  color: #5c6f89;
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
+/* .jobs-header (layout, span/h1/p) dùng chung — xem css/admin-shared.css */
 
 .jobs-header-actions {
   display: flex;

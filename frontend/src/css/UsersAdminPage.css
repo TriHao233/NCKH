@@ -94,16 +94,7 @@
 .users-page .btn--outline:hover { border-color: #0c78d4; color: #0c78d4; background: #f0f8ff; }
 .users-page .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.users-page .modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(5, 20, 45, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  z-index: 100;
-}
+/* .modal-overlay dùng chung — xem css/admin-shared.css */
 .users-page .modal-card {
   background: #fff;
   border-radius: 16px;

@@ -7,7 +7,7 @@
   font-family: inherit; font-weight: 600; font-size: 0.84rem;
   border-radius: 8px; padding: 8px 16px; transition: all 0.25s; cursor: pointer; border: none; white-space: nowrap;
 }
-.subject-manage-page .btn--primary { color: #fff; background: var(--primary, #0c78d4); box-shadow: 0 4px 14px rgba(12, 120, 212, 0.3); }
+/* .btn--primary base color dùng chung — xem css/shared.css */
 .subject-manage-page .btn--primary:hover { background: var(--primary-strong, #03539a); }
 .subject-manage-page .btn--outline { color: var(--secondary, #005bac); border: 1.5px solid var(--border, #d9e6f2); background: #fff; }
 .subject-manage-page .btn--outline:hover { border-color: var(--primary, #0c78d4); color: var(--primary, #0c78d4); background: #f0f8ff; }
@@ -104,7 +104,7 @@
 .subject-manage-page .detail-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---------- Modal ---------- */
-.subject-manage-page .modal-overlay { position: fixed; inset: 0; background: rgba(5, 20, 45, 0.45); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 100; }
+/* .modal-overlay dùng chung — xem css/admin-shared.css */
 .subject-manage-page .modal-card {
   background: #fff; border-radius: 16px; padding: 28px; width: 100%; max-width: 460px; max-height: 90vh; overflow-y: auto;
   box-shadow: 0 20px 60px rgba(5, 40, 90, 0.25); display: flex; flex-direction: column; gap: 16px;

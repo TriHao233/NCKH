@@ -59,3 +59,15 @@ a {
     color: var(--muted);
     font-weight: 700;
 }
+
+/* ==========================================================================
+   5. Reduced motion (tôn trọng lựa chọn hệ điều hành của người dùng)
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}

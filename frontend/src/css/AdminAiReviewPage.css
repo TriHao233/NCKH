@@ -13,35 +13,9 @@
   margin: 0 auto;
 }
 
-.ai-review-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.ai-review-toolbar__title span {
-  display: block;
-  color: #005bac;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-
-.ai-review-toolbar__title h1 {
-  color: #003a75;
-  font-size: 1.8rem;
-  font-weight: 800;
-  margin-bottom: 6px;
-}
-
+/* .ai-review-toolbar (layout, __title span/h1/p) dùng chung — xem css/admin-shared.css */
 .ai-review-toolbar__title p {
   max-width: 680px;
-  color: #5c6f89;
-  line-height: 1.6;
-  font-size: 0.92rem;
 }
 
 .ai-review-actions,

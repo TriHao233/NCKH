@@ -1,5 +1,22 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faArrowsRotate,
+  faChevronDown,
+  faClone,
+  faDownload,
+  faFile,
+  faFileLines,
+  faFilter,
+  faListUl,
+  faPen,
+  faPlay,
+  faShareNodes,
+  faTrashCan,
+  faUpload,
+  faXmark,
+} from '@fortawesome/free-solid-svg-icons';
 import {
   autoEvaluateQuestion,
   createQuestion,
@@ -1748,7 +1765,7 @@ function ManagePage() {
               className="btn btn--outline"
               onClick={() => setStatusFilter('PENDING')}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+              <FontAwesomeIcon icon={faDownload} />
               Hàng đợi duyệt
             </button>
             <button
@@ -1757,7 +1774,7 @@ function ManagePage() {
               disabled={!canReviewQuestions || approvedForPublication.length === 0}
               onClick={() => handlePublishMoodle(approvedForPublication[0])}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></svg>
+              <FontAwesomeIcon icon={faArrowsRotate} />
               Mô phỏng Moodle
             </button>
           </div>
@@ -1806,12 +1823,10 @@ function ManagePage() {
                   <b>{questionCoverage.total}</b>
                   <span>{questionCoverage.approvedTotal} đã duyệt</span>
                 </div>
-                <svg
+                <FontAwesomeIcon
+                  icon={faChevronDown}
                   className={`panel-chevron ${coverageOpen ? 'panel-chevron--open' : ''}`}
-                  width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
+                />
               </button>
               <div className="coverage-grid" hidden={!coverageOpen}>
                 {coverageSections.map((section) => (
@@ -1873,7 +1888,7 @@ function ManagePage() {
                   aria-expanded={filtersOpen}
                   onClick={() => setFiltersOpen((current) => !current)}
                 >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+                  <FontAwesomeIcon icon={faFilter} />
                   Bộ lọc
                   {activeFilterCount > 0 && <span className="toolbar-badge">{activeFilterCount}</span>}
                 </button>
@@ -1883,7 +1898,7 @@ function ManagePage() {
                   aria-expanded={exchangeOpen}
                   onClick={() => setExchangeOpen((current) => !current)}
                 >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+                  <FontAwesomeIcon icon={faUpload} />
                   Nhập / Xuất
                 </button>
               </div>
@@ -2223,13 +2238,13 @@ function ManagePage() {
                                 disabled={duplicatingQuestionId === item.id}
                                 onClick={() => handleDuplicateQuestion(item)}
                               >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+                                <FontAwesomeIcon icon={faClone} />
                               </button>
                               <button type="button" className="icon-btn" title="Chia sẻ" onClick={() => openSharing('question', item)}>
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.59 13.51l6.83 3.98M15.41 6.51L8.59 10.49" /></svg>
+                                <FontAwesomeIcon icon={faShareNodes} />
                               </button>
                               <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+                                <FontAwesomeIcon icon={faPen} />
                               </button>
                               <button
                                 type="button"
@@ -2238,7 +2253,7 @@ function ManagePage() {
                                 disabled={deletingId === item.id}
                                 onClick={() => handleDelete(item)}
                               >
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                                <FontAwesomeIcon icon={faTrashCan} />
                               </button>
                             </div>
                           )}
@@ -2299,7 +2314,7 @@ function ManagePage() {
 	                  <div className="doc-list">
 	                    {documents.map((d) => (
 	                      <div className="doc-item" key={d.id}>
-	                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
+	                        <FontAwesomeIcon icon={faFile} />
 	                        <div className="doc-info">
 	                          <span className="doc-name">{d.title}</span>
 	                          <span className="doc-meta">
@@ -2347,7 +2362,7 @@ function ManagePage() {
                                             disabled={!canRetryDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleRetryDocumentJob(d, job)}
                                           >
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+                                            <FontAwesomeIcon icon={faPlay} />
                                           </button>
                                           <button
                                             type="button"
@@ -2356,7 +2371,7 @@ function ManagePage() {
                                             disabled={!canCancelDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleCancelDocumentJob(d, job)}
                                           >
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                                            <FontAwesomeIcon icon={faXmark} />
                                           </button>
                                         </div>
                                       </div>
@@ -2423,7 +2438,7 @@ function ManagePage() {
                               disabled={documentJobsLoadingId === d.id}
                               onClick={() => toggleDocumentJobs(d)}
                             >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></svg>
+                              <FontAwesomeIcon icon={faListUl} />
                             </button>
                             <button
                               type="button"
@@ -2432,7 +2447,7 @@ function ManagePage() {
                               disabled={documentPagesLoadingId === d.id}
                               onClick={() => toggleDocumentPages(d)}
                             >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+                              <FontAwesomeIcon icon={faFileLines} />
                             </button>
                             <button
                               type="button"
@@ -2441,7 +2456,7 @@ function ManagePage() {
                               disabled={!canReindexDocument(d) || Boolean(documentJobActionKey)}
                               onClick={() => handleReindexDocument(d)}
                             >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></svg>
+                              <FontAwesomeIcon icon={faArrowsRotate} />
                             </button>
                             <button
                               type="button"
@@ -2449,7 +2464,7 @@ function ManagePage() {
                               title="Chia sẻ/chuyển giao"
                               onClick={() => openSharing('document', d)}
                             >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.59 13.51l6.83 3.98M15.41 6.51L8.59 10.49" /></svg>
+                              <FontAwesomeIcon icon={faShareNodes} />
                             </button>
                             <button
                               type="button"
@@ -2457,7 +2472,7 @@ function ManagePage() {
                               title="Sửa tài liệu"
                               onClick={() => openEditDocument(d)}
                             >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+                              <FontAwesomeIcon icon={faPen} />
                             </button>
                             <button
                               type="button"
@@ -2466,7 +2481,7 @@ function ManagePage() {
                               disabled={deletingDocId === d.id}
                               onClick={() => handleDeleteDocument(d)}
                             >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                              <FontAwesomeIcon icon={faTrashCan} />
                             </button>
                           </div>
                         </div>
@@ -2778,7 +2793,7 @@ function ManagePage() {
               aria-label="Đóng"
               onClick={() => setViewingQuestion(null)}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+              <FontAwesomeIcon icon={faXmark} />
             </button>
 
             <div className="question-view-head">

@@ -196,7 +196,7 @@
   border-radius: 999px;
   padding: 2px 9px;
 }
-.generate-page .preset-toggle-chevron { flex-shrink: 0; color: var(--text-muted, #5c6f89); transition: transform 0.2s ease; }
+.generate-page .preset-toggle-chevron { flex-shrink: 0; width: 14px; height: 14px; color: var(--text-muted, #5c6f89); transition: transform 0.2s ease; }
 .generate-page .preset-toggle-chevron--open { transform: rotate(180deg); }
 .generate-page .preset-section-body { padding: 0 14px 14px; }
 
@@ -424,6 +424,7 @@
   pointer-events: none;
 }
 .generate-page .upload-drop span { font-size: 0.88rem; font-weight: 600; }
+.generate-page .upload-dropzone-icon { width: 26px; height: 26px; }
 .generate-page .upload-hint { font-size: 0.75rem !important; font-weight: 400 !important; color: var(--text-muted, #5c6f89) !important; }
 
 .generate-page .chip-group { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -446,6 +447,7 @@
 }
 
 .generate-page .gen-submit { width: 100%; margin-top: 4px; }
+.generate-page .gen-submit svg { width: 18px; height: 18px; }
 .generate-page .gen-form-note { font-size: 0.78rem; color: var(--text-muted, #5c6f89); line-height: 1.6; margin-top: 14px; text-align: center; }
 
 .generate-page .gen-status {

@@ -2,8 +2,8 @@
    LoginPage.css  |  QBankCTU — Trang đăng nhập
    ═══════════════════════════════════════════════════════════════ */
 
-/* ─── CSS Variables ───────────────────────── */
-:root {
+/* ─── CSS Variables (scoped to .login-page — không ghi đè token toàn cục) ───── */
+.login-page {
   --primary:      #0099E5;
   --primary-dark: #007CC4;
   --secondary:    #005BAC;
@@ -35,40 +35,9 @@
   --font-display: 'Fraunces', serif;
 
   --transition:   0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
 
-/* ─── Mesh background ────────────────────────────────────────── */
-.page-bg {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  overflow: hidden;
+  min-height: 100vh;
   background: var(--bg);
-}
-
-.mesh-circle {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.38;
-}
-.mesh-circle--1 {
-  width: 560px; height: 560px;
-  background: radial-gradient(circle, #5CC8FF 0%, transparent 70%);
-  top: -200px; right: -100px;
-}
-.mesh-circle--2 {
-  width: 380px; height: 380px;
-  background: radial-gradient(circle, #0099E5 0%, transparent 70%);
-  bottom: -140px; left: -80px;
-  opacity: 0.20;
-}
-.mesh-circle--3 {
-  width: 240px; height: 240px;
-  background: radial-gradient(circle, #005BAC 0%, transparent 70%);
-  top: 55%; left: 35%;
-  opacity: 0.10;
 }
 
 /* ─── Top bar ────────────────────────────────────────────────── */

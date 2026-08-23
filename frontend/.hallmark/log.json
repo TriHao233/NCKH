@@ -1,0 +1,15 @@
+[
+  {
+    "date": "2026-08-23",
+    "scope": "page",
+    "target": "src/pages/HomePage.jsx",
+    "genre": "editorial",
+    "macrostructure": "Narrative Workflow",
+    "theme": "CTU Academic (project-locked)",
+    "theme_axes": "light paper / roman-serif display (Fraunces) / cool accent",
+    "enrichment": "Tier D — R3F knowledge pipeline (interactive)",
+    "nav": "existing Header (not redesigned)",
+    "footer": "existing Footer (not redesigned)",
+    "brief": "QBankCTU homepage — university research project. Document -> RAG -> LLM -> draft -> human review -> Moodle."
+  }
+]

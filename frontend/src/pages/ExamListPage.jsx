@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faClone, faTrashCan } from '@fortawesome/free-solid-svg-icons';
 import { createExam, deleteExam, duplicateExam, listExams } from '../api/exams';
 import { listSubjects } from '../api/catalog';
 import '../css/ExamListPage.css';
@@ -170,7 +172,7 @@ function ExamListPage() {
 	                      disabled={duplicatingId === exam.id}
 	                      onClick={() => handleDuplicate(exam)}
 	                    >
-	                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+	                      <FontAwesomeIcon icon={faClone} />
 	                    </button>
 	                    <button
 	                      type="button"
@@ -179,7 +181,7 @@ function ExamListPage() {
                       disabled={deletingId === exam.id}
                       onClick={() => handleDelete(exam)}
                     >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+                      <FontAwesomeIcon icon={faTrashCan} />
                     </button>
                   </div>
                 </div>

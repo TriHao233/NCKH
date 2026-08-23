@@ -1,0 +1,74 @@
+/* ═══════════════════════════════════════════════════════════════
+   admin-shared.css | Thành phần dùng chung giữa các trang admin
+   (toolbar/header trang, modal overlay)
+   6 trang admin từng khai báo lặp lại khối header lệch giá trị
+   nhẹ (font-size 0.76/0.78rem, margin-bottom 5/6px...) — gộp về
+   đây để tránh trôi giá trị.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Page toolbar/header ────────────────────────────────────── */
+.overview-header,
+.jobs-header,
+.moodle-header,
+.catalog-header,
+.ai-review-toolbar,
+.review-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.overview-header span,
+.overview-panel-heading span,
+.jobs-header span,
+.job-detail-header span,
+.job-detail-error span,
+.job-detail-json span,
+.moodle-header span,
+.panel-heading span,
+.catalog-header span,
+.ai-review-toolbar__title span,
+.review-toolbar__title span {
+  display: block;
+  color: #005bac;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.overview-header h1,
+.jobs-header h1,
+.moodle-header h1,
+.catalog-header h1,
+.ai-review-toolbar__title h1,
+.review-toolbar__title h1 {
+  color: #003a75;
+  font-size: 1.8rem;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.overview-header p,
+.jobs-header p,
+.moodle-header p,
+.ai-review-toolbar__title p,
+.review-toolbar__title p {
+  color: #5c6f89;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* ─── Modal overlay ──────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 20, 45, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}

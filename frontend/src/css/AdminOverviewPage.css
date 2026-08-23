@@ -12,36 +12,7 @@
   margin: 0 auto;
 }
 
-.overview-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.overview-header span,
-.overview-panel-heading span {
-  display: block;
-  color: #005bac;
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-
-.overview-header h1 {
-  color: #003a75;
-  font-size: 1.8rem;
-  font-weight: 800;
-  margin-bottom: 5px;
-}
-
-.overview-header p {
-  color: #5c6f89;
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
+/* .overview-header (layout, span/h1/p) dùng chung — xem css/admin-shared.css */
 
 .overview-primary-button {
   display: inline-flex;
@@ -74,7 +45,7 @@
 
 .overview-stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
@@ -92,6 +63,15 @@
   gap: 12px;
   min-height: 114px;
   padding: 16px;
+  grid-column: span 1;
+}
+
+/* Chỉ số hàng đợi lỗi cần chú ý — chiếm 2 cột và nổi bật hơn thay vì
+   xếp ngang hàng đều với 4 chỉ số còn lại */
+.overview-stat--jobs {
+  grid-column: span 2;
+  background: #fff7f7;
+  border-color: #fecaca;
 }
 
 .overview-stat > svg {
@@ -377,6 +357,10 @@
   .overview-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .overview-stat--jobs {
+    grid-column: span 2;
+  }
 }
 
 @media (max-width: 920px) {
@@ -400,5 +384,9 @@
   .overview-breakdown,
   .model-usage-summary {
     grid-template-columns: 1fr;
+  }
+
+  .overview-stat--jobs {
+    grid-column: span 1;
   }
 }

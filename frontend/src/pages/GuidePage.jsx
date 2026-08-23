@@ -117,7 +117,6 @@ function GuidePage() {
       <section className="steps">
         <div className="container">
           <div className="section-header">
-            <div className="section-badge">Quy trình</div>
             <h2 className="section-title">6 bước sử dụng hệ thống</h2>
             <p className="section-desc">Áp dụng nguyên tắc "Con người trong vòng lặp" — AI hỗ trợ khởi tạo, giảng viên giữ quyền quyết định cuối cùng.</p>
           </div>
@@ -139,7 +138,6 @@ function GuidePage() {
       <section className="faq">
         <div className="container">
           <div className="section-header">
-            <div className="section-badge">Câu hỏi thường gặp</div>
             <h2 className="section-title">Giải đáp nhanh</h2>
           </div>
           <div className="faq-list">
