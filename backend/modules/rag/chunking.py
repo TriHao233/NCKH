@@ -72,7 +72,7 @@ async def chunk_document(
 ):
     doc = get_document_record(req.document_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
     try:
         document_service.can_use(req.document_id, current_user)
     except PermissionError as exc:
@@ -421,7 +421,7 @@ def chunk_document_and_store(
 ) -> DocumentChunkResponse:
     doc = get_document_record(document_id)
     if not doc:
-        raise ValueError("Document not found")
+        raise ValueError("Không tìm thấy tài liệu")
 
     run_config = _chunk_run_config(
         {

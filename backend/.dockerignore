@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Môi trường ảo
+.env
+.venv/
+venv/
+env/
+
+# Dữ liệu sẽ ánh xạ volume
+data/
+chroma_data/

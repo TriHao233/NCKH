@@ -30,10 +30,25 @@ const KIND_LABEL = {
   document: 'Tài liệu',
 };
 
+const JOB_TYPE_LABEL = {
+  'generation': 'Sinh câu hỏi',
+  'Generation': 'Sinh câu hỏi',
+  'evaluation': 'Đánh giá câu hỏi',
+  'Evaluation': 'Đánh giá câu hỏi',
+  'document': 'Tài liệu',
+  'DOCUMENT': 'Tài liệu',
+  'EXTRACT_TEXT': 'Trích xuất văn bản',
+  'CHUNK_AND_EMBED': 'Phân mảnh & Nhúng',
+};
+
 const STATUS_LABEL = {
   queued: 'Đang chờ',
   processing: 'Đang xử lý',
   failed: 'Thất bại',
+  completed: 'Hoàn tất',
+  error: 'Lỗi',
+  stale: 'Cần chạy lại',
+  cancelled: 'Đã hủy',
   QUEUED: 'Đang chờ',
   PROCESSING: 'Đang xử lý',
   COMPLETED: 'Hoàn tất',
@@ -106,24 +121,24 @@ function entityText(job) {
 }
 
 const JOB_EXPORT_COLUMNS = [
-  { header: 'Job ID', value: (job) => job.id },
-  { header: 'Kind', value: (job) => KIND_LABEL[job.kind] || job.kind || '' },
-  { header: 'Status', value: (job) => STATUS_LABEL[job.status] || job.status || '' },
-  { header: 'Entity label', value: entityText },
-  { header: 'Entity type', value: (job) => job.entity?.type || '' },
-  { header: 'Entity ID', value: (job) => job.entity?.id || '' },
-  { header: 'Actor user ID', value: (job) => job.actor_user_id || '' },
-  { header: 'Queued at', value: (job) => job.queued_at || '' },
-  { header: 'Started at', value: (job) => job.started_at || '' },
-  { header: 'Finished at', value: (job) => job.finished_at || '' },
-  { header: 'Updated at', value: (job) => job.updated_at || '' },
-  { header: 'Progress', value: (job) => job.progress ?? '' },
-  { header: 'Age seconds', value: (job) => job.age_seconds ?? '' },
-  { header: 'Long running', value: (job) => (job.is_long_running ? 'yes' : 'no') },
-  { header: 'Can retry', value: (job) => (job.can_retry ? 'yes' : 'no') },
-  { header: 'Can cancel', value: (job) => (job.can_cancel ? 'yes' : 'no') },
-  { header: 'Error', value: (job) => job.error_message || '' },
-  { header: 'Snapshot', value: (job) => job.snapshot || {} },
+  { header: 'Mã tác vụ (Job ID)', value: (job) => job.id },
+  { header: 'Loại (Kind)', value: (job) => KIND_LABEL[job.kind] || job.kind || '' },
+  { header: 'Trạng thái', value: (job) => STATUS_LABEL[job.status] || job.status || '' },
+  { header: 'Tên đối tượng', value: entityText },
+  { header: 'Loại đối tượng', value: (job) => job.entity?.type || '' },
+  { header: 'Mã đối tượng', value: (job) => job.entity?.id || '' },
+  { header: 'Tên người tạo', value: (job) => job.actor_user_name || job.actor_user_id || '' },
+  { header: 'Ngày vào hàng đợi', value: (job) => job.queued_at || '' },
+  { header: 'Ngày bắt đầu', value: (job) => job.started_at || '' },
+  { header: 'Ngày hoàn tất', value: (job) => job.finished_at || '' },
+  { header: 'Ngày cập nhật', value: (job) => job.updated_at || '' },
+  { header: 'Tiến độ', value: (job) => job.progress ?? '' },
+  { header: 'Thời gian chạy (giây)', value: (job) => job.age_seconds ?? '' },
+  { header: 'Quá thời gian (Long running)', value: (job) => (job.is_long_running ? 'có' : 'không') },
+  { header: 'Có thể chạy lại', value: (job) => (job.can_retry ? 'có' : 'không') },
+  { header: 'Có thể hủy', value: (job) => (job.can_cancel ? 'có' : 'không') },
+  { header: 'Lỗi', value: (job) => job.error_message || '' },
+  { header: 'Dữ liệu trạng thái', value: (job) => job.snapshot || {} },
 ];
 
 function AdminJobsPage() {
@@ -480,7 +495,6 @@ function AdminJobsPage() {
                     >
                       <td>
                         <strong>{KIND_LABEL[job.kind] || job.kind}</strong>
-                        <small>{compactId(job.id)}</small>
                       </td>
                       <td>
                         <span className={`status-pill status-pill--${statusClass(job.status)}`}>
@@ -490,9 +504,8 @@ function AdminJobsPage() {
                       </td>
                       <td>
                         <span className="entity-text">{entityText(job)}</span>
-                        <small>{job.entity?.type || 'đối tượng'} {compactId(job.entity?.id)}</small>
                       </td>
-                      <td>{compactId(job.actor_user_id)}</td>
+                      <td>{job.actor_user_name || compactId(job.actor_user_id)}</td>
                       <td>
                         <span>{formatDateTime(job.updated_at || job.finished_at || job.started_at || job.queued_at)}</span>
                         <small>{formatAge(job.age_seconds)}</small>
@@ -554,7 +567,7 @@ function AdminJobsPage() {
             <>
               <div className="job-detail-header">
                 <span>{KIND_LABEL[selectedJob.kind] || selectedJob.kind}</span>
-                <h2>{compactId(selectedJob.id)}</h2>
+                <h2>{JOB_TYPE_LABEL[selectedJob.type] || selectedJob.type || compactId(selectedJob.id)}</h2>
               </div>
               <dl className="job-detail-list">
                 <div>

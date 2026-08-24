@@ -4642,7 +4642,7 @@ class SchemaV2Tests(unittest.TestCase):
             correct_answer="B",
             explanation="Queue xử lý phần tử vào trước ra trước.",
             question_type="trac_nghiem",
-            bloom_level="hieu",
+            bloom_level="2_hieu",
             source_context="Queue là hàng đợi FIFO.",
             question_id="507f1f77bcf86cd799439011",
             question_code="Q-507F1F77BCF86CD799439011",
@@ -4657,7 +4657,7 @@ class SchemaV2Tests(unittest.TestCase):
         summary = GenerationPlanSummary(
             plan_index=2,
             question_type="trac_nghiem",
-            bloom_level="phan_tich",
+            bloom_level="4_phan_tich",
             requested_count=5,
             parsed_count=5,
             valid_count=4,
@@ -4773,7 +4773,7 @@ class SchemaV2Tests(unittest.TestCase):
     def test_question_rule_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
             context="Stack hoạt động theo nguyên tắc LIFO.",
-            bloom_level="hieu",
+            bloom_level="2_hieu",
             question_type="trac_nghiem",
             num_questions=1,
         )
@@ -4785,7 +4785,7 @@ class SchemaV2Tests(unittest.TestCase):
     def test_question_structure_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
             context="Stack hoạt động theo nguyên tắc LIFO.",
-            bloom_level="hieu",
+            bloom_level="2_hieu",
             question_type="dung_sai",
             num_questions=1,
         )
@@ -4842,7 +4842,7 @@ class SchemaV2Tests(unittest.TestCase):
         prompt = _build_retry_prompt(
             original_prompt="ORIGINAL",
             question_type="trac_nghiem",
-            bloom_level="hieu",
+            bloom_level="2_hieu",
             missing_count=2,
             validation_errors=["trac_nghiem phải có đúng 4 lựa chọn A/B/C/D"],
             avoid_questions=["Câu đã nhận"],
@@ -4884,7 +4884,7 @@ class SchemaV2Tests(unittest.TestCase):
         prompt = _build_retry_prompt(
             original_prompt="ORIGINAL",
             question_type="nhieu_lua_chon",
-            bloom_level="phan_tich",
+            bloom_level="4_phan_tich",
             missing_count=3,
             validation_errors=["nhieu_lua_chon phải có 4 đến 6 lựa chọn"],
             avoid_questions=[],

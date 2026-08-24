@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class AuditActor(BaseModel):
     type: str | None = None
     user_id: str | None = None
+    user_name: str | None = None
     role: str | None = None
     model_id: str | None = None
     service_name: str | None = None

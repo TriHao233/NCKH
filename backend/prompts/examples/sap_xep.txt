@@ -12,7 +12,7 @@ VÍ DỤ CHUẨN: sap_xep
       "correct_answer": "2, 1, 3, 4",
       "explanation": "Giải thuật bắt đầu bằng việc nhập hai số (bước 2), sau đó kiểm tra điều kiện dừng (bước 1), nếu chưa thỏa thì trừ dần (bước 3) rồi quay lại kiểm tra (bước 4).",
       "question_type": "sap_xep",
-      "bloom_level": "van_dung",
+      "bloom_level": "3_van_dung",
       "source_context": "Giải thuật tìm UCLN bằng phương pháp trừ dần: nhập hai số, kiểm tra bằng nhau, nếu không thì trừ số lớn hơn cho số nhỏ hơn, lặp lại."
     }
   ]

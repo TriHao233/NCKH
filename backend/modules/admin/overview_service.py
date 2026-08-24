@@ -211,6 +211,55 @@ class AdminOverviewService:
             },
         ]
 
+
+        subjects_map = {
+            str(s['_id']): s.get('subject_name') or s.get('subject_code')
+            for s in self.db.subjects.find({}, {'subject_name': 1, 'subject_code': 1})
+        }
+        models_map = {
+            str(m.get('model_code')): m.get('model_name') or m.get('model_code')
+            for m in self.db.ai_models.find({}, {'model_name': 1, 'model_code': 1})
+        }
+
+        user_entity_ids = []
+        for audit in audit_page['items']:
+            entity = audit.get('entity')
+            if isinstance(entity, dict) and str(entity.get('type')).lower() == 'user' and entity.get('id'):
+                try:
+                    from bson import ObjectId
+                    user_entity_ids.append(ObjectId(entity['id']))
+                except:
+                    pass
+        
+        users_map = {}
+        if user_entity_ids:
+            users_map = {
+                str(u['_id']): u.get('display_name') or str(u['_id'])
+                for u in self.db.users.find({'_id': {'$in': user_entity_ids}}, {'display_name': 1})
+            }
+
+        for job in retryable_jobs['items']:
+            entity = job.get('entity')
+            if isinstance(entity, dict) and entity.get('type') == 'subject' and entity.get('id'):
+                subj_id = str(entity['id'])
+                if subj_id in subjects_map:
+                    entity['label'] = subjects_map[subj_id]
+
+        for audit in audit_page['items']:
+            entity = audit.get('entity')
+            if isinstance(entity, dict) and entity.get('id'):
+                etype = str(entity.get('type')).lower()
+                eid = str(entity['id'])
+                if etype == 'subject' and eid in subjects_map:
+                    entity['label'] = subjects_map[eid]
+                elif etype == 'user' and eid in users_map:
+                    entity['label'] = users_map[eid]
+
+        for row in model_report['rows']:
+            mc = str(row.get('model_code', ''))
+            if mc in models_map:
+                row['model_name'] = models_map[mc]
+
         return json_safe(
             {
                 "generated_at": utc_now(),

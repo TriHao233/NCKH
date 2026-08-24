@@ -147,6 +147,70 @@ class AdminJobService:
         if "document" in requested_kinds:
             jobs.extend(self._document_jobs(status, user_oid))
 
+
+        # Enrich user names
+        user_ids = []
+        for job in jobs:
+            actor = job.get('actor_user_id')
+            if actor:
+                user_ids.append(_parse_object_id(actor))
+        if user_ids:
+            users_map = {
+                str(u['_id']): u.get('display_name') or str(u['_id'])
+                for u in self.db.users.find({'_id': {'$in': user_ids}}, {'display_name': 1})
+            }
+            for job in jobs:
+                actor = str(job.get('actor_user_id', ''))
+                if actor and actor in users_map:
+                    job['actor_user_name'] = users_map[actor]
+
+        # Enrich entity labels (subjects)
+        document_ids = []
+        question_ids = []
+        for job in jobs:
+            entity = job.get('entity', {})
+            if entity.get('type') == 'document' and entity.get('id'):
+                try:
+                    document_ids.append(_parse_object_id(entity['id']))
+                except:
+                    pass
+            elif entity.get('type') == 'question' and entity.get('id'):
+                try:
+                    question_ids.append(_parse_object_id(entity['id']))
+                except:
+                    pass
+
+        subject_ids = set()
+        doc_subject_map = {}
+        if document_ids:
+            for doc in self.db.documents.find({"_id": {"$in": document_ids}}, {"subject_id": 1}):
+                if doc.get("subject_id"):
+                    subject_ids.add(doc["subject_id"])
+                    doc_subject_map[str(doc["_id"])] = doc["subject_id"]
+
+        question_subject_map = {}
+        if question_ids:
+            for qv in self.db.question_versions.find({"question_id": {"$in": question_ids}}, {"question_id": 1, "classification.subject.id": 1}):
+                subj_id = (qv.get("classification") or {}).get("subject", {}).get("id")
+                if subj_id:
+                    subject_ids.add(subj_id)
+                    question_subject_map[str(qv["question_id"])] = subj_id
+
+        if subject_ids:
+            subjects_map = {
+                str(s["_id"]): s.get("subject_name") or s.get("subject_code") or str(s["_id"])
+                for s in self.db.subjects.find({"_id": {"$in": list(subject_ids)}}, {"subject_name": 1, "subject_code": 1})
+            }
+            for job in jobs:
+                entity = job.get('entity', {})
+                subj_id = None
+                if entity.get('type') == 'document' and entity.get('id'):
+                    subj_id = doc_subject_map.get(str(entity['id']))
+                elif entity.get('type') == 'question' and entity.get('id'):
+                    subj_id = question_subject_map.get(str(entity['id']))
+                if subj_id and str(subj_id) in subjects_map:
+                    entity['label'] = subjects_map[str(subj_id)]
+
         if stale_only:
             jobs = [job for job in jobs if job["is_long_running"]]
         if search:

@@ -3,10 +3,12 @@ import json
 import re
 from modules.generation.llm.base import LLMProvider
 
+import os
+
 class QwenProvider(LLMProvider):
     def __init__(self):
-        # Địa chỉ API mặc định của Ollama
-        self.url = "http://localhost:11434/api/generate"
+        # Sử dụng host.docker.internal để backend trong Docker gọi được Ollama cài trên máy host (Windows)
+        self.url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/api/generate")
         # Đảm bảo tên này khớp với cột NAME trong lệnh 'ollama list'
         self.model_name = "qwen2.5:7b"
 
@@ -32,6 +34,10 @@ class QwenProvider(LLMProvider):
             except Exception as e:
                 import traceback
                 error_msg = f"{type(e).__name__}: {str(e)}"
+                if "All connection attempts failed" in error_msg:
+                    error_msg = "Không thể kết nối đến máy chủ AI (Tất cả kết nối đều thất bại)"
+                elif "timeout" in error_msg.lower():
+                    error_msg = "Máy chủ AI phản hồi quá lâu (Timeout)"
                 print(f"--- Qwen Error: {error_msg} ---")
                 traceback.print_exc()
                 raise Exception(f"Lỗi khi gọi Qwen (Ollama): {error_msg}")

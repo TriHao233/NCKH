@@ -883,7 +883,7 @@ export function parseQuestionBankImport(text, { filename = '', format = '', subj
   else if (detectedFormat === 'gift') parsed = parseGiftRecords(text);
   else if (detectedFormat === 'xml') parsed = parseXmlRecords(text);
   else {
-    return { items: [], errors: [`Unsupported import format: ${filename || format || 'unknown'}`] };
+    return { items: [], errors: [`Định dạng file không được hỗ trợ: ${filename || format || 'unknown'}`] };
   }
 
   const built = buildPayloads(parsed.records, subjects);
@@ -906,7 +906,7 @@ export async function parseQuestionBankImportFile(file, { subjects = [] } = {}) 
         format: detectedFormat,
       };
     } catch (error) {
-      return { items: [], errors: [error.message || 'Cannot parse XLSX file'], format: detectedFormat };
+      return { items: [], errors: [error.message || 'Không thể đọc file'], format: detectedFormat };
     }
   }
   return parseQuestionBankImport(await file.text(), { filename: file?.name || '', subjects });

@@ -5,7 +5,7 @@ import {
   updatePassword,
 } from 'firebase/auth';
 import { AuthContext } from '../context/AuthContext';
-import { auth } from '../../firebase';
+import { auth } from '../firebase';
 import { getMe, getMyStats, updateMe } from '../api/users';
 import '../css/UserProfile.css';
 

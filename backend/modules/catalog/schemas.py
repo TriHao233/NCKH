@@ -108,7 +108,7 @@ class PromptTemplateTestPayload(BaseModel):
         min_length=1,
         max_length=4000,
     )
-    bloom_level: str = Field("hieu", min_length=1, max_length=80)
+    bloom_level: str = Field("2_hieu", min_length=1, max_length=80)
     question_type: str = Field("trac_nghiem", min_length=1, max_length=80)
     num_questions: int = Field(1, ge=1, le=10)
     instruction: str | None = Field(None, max_length=1000)

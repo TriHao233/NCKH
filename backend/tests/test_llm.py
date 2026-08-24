@@ -3,7 +3,7 @@ import sys
 import json
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from modules.generation.prompt_builder import PromptBuilder
@@ -16,9 +16,9 @@ async def run_test():
     """
     
     test_cases = [
-        {"bloom": "nho", "type": "trac_nghiem", "num": 1},
-        {"bloom": "hieu", "type": "trac_nghiem", "num": 1},
-        {"bloom": "van_dung", "type": "tinh_huong", "num": 1}
+        {"bloom": "1_nho", "type": "trac_nghiem", "num": 1},
+        {"bloom": "2_hieu", "type": "trac_nghiem", "num": 1},
+        {"bloom": "3_van_dung", "type": "tinh_huong", "num": 1}
     ]
     
     provider = "qwen" 

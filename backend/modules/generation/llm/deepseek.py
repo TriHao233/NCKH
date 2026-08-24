@@ -31,5 +31,9 @@ class DeepseekProvider:
 
         except Exception as e:
             error_msg = str(e)
+            if "All connection attempts failed" in error_msg:
+                error_msg = "Không thể kết nối đến máy chủ AI (Tất cả kết nối đều thất bại)"
+            elif "timeout" in error_msg.lower():
+                error_msg = "Máy chủ AI phản hồi quá lâu (Timeout)"
             logger.error(f"--- Deepseek Error: {error_msg}  ---")
             raise Exception(f"Lỗi khi gọi Deepseek (Ollama): {error_msg}")

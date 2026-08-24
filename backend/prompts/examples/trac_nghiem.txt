@@ -12,7 +12,7 @@ VÍ DỤ CHUẨN: trac_nghiem
       "correct_answer": "B",
       "explanation": "Vì các phần tử trong mảng được lưu trữ liên tiếp, việc chèn/xóa ở giữa đòi hỏi phải dịch chuyển các phần tử phía sau để tạo chỗ trống hoặc lấp đầy khoảng trống, làm giảm hiệu suất.",
       "question_type": "trac_nghiem",
-      "bloom_level": "hieu",
+      "bloom_level": "2_hieu",
       "source_context": "việc chèn/xóa phần tử ở giữa mảng tốn nhiều thời gian do phải dịch chuyển các phần tử khác."
     }
   ]

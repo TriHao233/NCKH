@@ -12,7 +12,7 @@ VÍ DỤ CHUẨN: nhieu_lua_chon
       "correct_answer": "A, C",
       "explanation": "Mảng lưu trữ liên tục trong bộ nhớ (A) nên hỗ trợ truy cập ngẫu nhiên O(1) (C). Kích thước mảng tĩnh thường cố định (B sai), và chèn/xóa giữa mảng tốn O(n) do phải dịch chuyển phần tử (D sai).",
       "question_type": "nhieu_lua_chon",
-      "bloom_level": "phan_tich",
+      "bloom_level": "4_phan_tich",
       "source_context": "Mảng lưu trữ liên tục trong bộ nhớ, hỗ trợ truy cập ngẫu nhiên O(1); chèn/xóa giữa mảng tốn O(n) do phải dịch chuyển phần tử."
     }
   ]

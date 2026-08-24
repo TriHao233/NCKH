@@ -14,6 +14,44 @@ import {
 import { getAdminOverview } from '../api/adminOverview';
 import '../css/AdminOverviewPage.css';
 
+const JOB_TYPE_LABEL = {
+  generation: 'Sinh câu hỏi',
+  Generation: 'Sinh câu hỏi',
+  evaluation: 'Đánh giá',
+  Evaluation: 'Đánh giá',
+  document: 'Tài liệu',
+  DOCUMENT: 'Tài liệu',
+};
+
+const ACTION_LABEL = {
+  'user.admin_update': 'Cập nhật người dùng',
+  'user.deactivate': 'Khóa người dùng',
+  'QUESTION_EVALUATED': 'Đánh giá câu hỏi',
+  'QUESTION_APPROVED': 'Duyệt câu hỏi',
+  'QUESTION_REJECTED': 'Từ chối câu hỏi',
+  'QUESTION_NEEDS_REVISION': 'Yêu cầu sửa',
+  'QUESTION_REVIEW_CLAIMED': 'Nhận kiểm duyệt',
+  'QUESTION_REVIEW_RELEASED': 'Trả câu kiểm duyệt',
+  'admin.job_retry': 'Chạy lại tác vụ',
+  'admin.job_cancel': 'Hủy tác vụ',
+  'admin.moodle_target_save': 'Lưu cấu hình Moodle',
+  'admin.moodle_target_deactivate': 'Tắt cấu hình Moodle',
+  'admin.moodle_target_check': 'Kiểm tra cấu hình Moodle',
+  'auth.demo_login': 'Đăng nhập demo',
+  'user.password_reset': 'Đặt lại mật khẩu',
+};
+
+const ENTITY_TYPE_LABEL = {
+  'user': 'Người dùng',
+  'QUESTION': 'Câu hỏi',
+  'question': 'Câu hỏi',
+  'generation': 'Sinh câu hỏi',
+  'evaluation': 'Đánh giá',
+  'document': 'Tài liệu',
+  'moodle_target': 'Cấu hình Moodle',
+  'subject': 'Môn học',
+};
+
 function formatNumber(value) {
   return new Intl.NumberFormat('vi-VN').format(value || 0);
 }
@@ -219,22 +257,22 @@ function AdminOverviewPage() {
         <section className="overview-panel">
           <div className="overview-panel-heading">
             <div>
-              <span>Quality</span>
+              <span>Chất lượng (Quality)</span>
               <h2>Màu đánh giá</h2>
             </div>
             <FontAwesomeIcon icon={faClipboardCheck} />
           </div>
           <dl className="overview-breakdown">
             <div>
-              <dt>Green</dt>
+              <dt>Xanh lá</dt>
               <dd>{formatNumber(quality.green)}</dd>
             </div>
             <div>
-              <dt>Yellow</dt>
+              <dt>Vàng</dt>
               <dd>{formatNumber(quality.yellow)}</dd>
             </div>
             <div>
-              <dt>Red</dt>
+              <dt>Đỏ</dt>
               <dd>{formatNumber(quality.red)}</dd>
             </div>
             <div>
@@ -352,7 +390,7 @@ function AdminOverviewPage() {
               <tbody>
                 {modelPerformance.map((item) => (
                   <tr key={item.key}>
-                    <td><strong>{item.model_code}</strong></td>
+                    <td><strong>{item.model_name || item.model_code}</strong></td>
                     <td>{item.kind_label}</td>
                     <td>{formatNumber(item.total)}</td>
                     <td>{formatNumber(item.completed)}</td>
@@ -394,8 +432,7 @@ function AdminOverviewPage() {
                 {recentJobs.map((job) => (
                   <tr key={`${job.kind}:${job.id}`}>
                     <td>
-                      <strong>{job.type || job.kind}</strong>
-                      <small>{compactId(job.id)}</small>
+                      <strong>{JOB_TYPE_LABEL[job.type] || JOB_TYPE_LABEL[job.kind] || job.type || job.kind}</strong>
                     </td>
                     <td>{job.entity?.label || compactId(job.entity?.id)}</td>
                     <td>{formatDateTime(job.updated_at || job.finished_at || job.started_at || job.queued_at)}</td>
@@ -419,8 +456,8 @@ function AdminOverviewPage() {
           <div className="audit-list-compact">
             {recentAudit.map((item) => (
               <article key={item.id}>
-                <strong>{item.action}</strong>
-                <span>{item.entity?.type || 'đối tượng'} · {compactId(item.entity?.id)}</span>
+                <strong>{ACTION_LABEL[item.action] || item.action}</strong>
+                <span>{ENTITY_TYPE_LABEL[item.entity?.type] || item.entity?.type || 'đối tượng'} · {item.entity?.label || compactId(item.entity?.id)}</span>
                 <small>{formatDateTime(item.created_at)}</small>
               </article>
             ))}

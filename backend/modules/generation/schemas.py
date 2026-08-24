@@ -6,12 +6,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from core.config import settings
 
 class BloomLevel(str, Enum):
-    NHO = "nho"
-    HIEU = "hieu"
-    VAN_DUNG = "van_dung"
-    PHAN_TICH = "phan_tich"
-    DANH_GIA = "danh_gia"
-    SANG_TAO = "sang_tao"
+    NHO = "1_nho"
+    HIEU = "2_hieu"
+    VAN_DUNG = "3_van_dung"
+    PHAN_TICH = "4_phan_tich"
+    DANH_GIA = "5_danh_gia"
+    SANG_TAO = "6_sang_tao"
 
 class QuestionType(str, Enum):
     TRAC_NGHIEM = "trac_nghiem"

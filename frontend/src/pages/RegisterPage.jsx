@@ -2,7 +2,7 @@ import { useState, useContext } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import { signInWithPopup, signOut } from "firebase/auth";
-import { auth, googleProvider } from "../../firebase";
+import { auth, googleProvider } from "../firebase";
 import { apiRequest } from "../services/apiClient";
 
 import {

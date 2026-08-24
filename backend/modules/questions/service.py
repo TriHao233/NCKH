@@ -327,7 +327,7 @@ class QuestionService:
     ) -> dict:
         initial_review_status = initial_review_status.upper()
         if initial_review_status not in INITIAL_REVIEW_STATUSES:
-            raise ValueError("Trang thai review khoi tao khong hop le")
+            raise ValueError("Trạng thái kiểm duyệt khởi tạo không hợp lệ")
         now = utc_now()
         question_id = ObjectId()
         version_id = ObjectId()
@@ -1041,7 +1041,7 @@ class QuestionService:
         if review_status == "PENDING":
             return serialize_question(question, version)
         if review_status not in SUBMITTABLE_REVIEW_STATUSES:
-            raise ValueError("Chi cau hoi nhap hoac can sua moi duoc gui duyet")
+            raise ValueError("Chỉ câu hỏi nháp hoặc cần sửa mới được gửi duyệt")
 
         updated = self.repository.update_review_status(
             question_id,

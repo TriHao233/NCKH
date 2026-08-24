@@ -5,3 +5,17 @@ source_dump.txt
 frontend/.claude/launch.json
 /rag-ocr-pipeline/
 /docs/
+
+# Sensitive files
+.env
+backend/.env
+
+# Data directories (uploads, OCR outputs, ChromaDB, etc.)
+backend/data/
+
+# Node modules
+node_modules/
+
+# Python
+__pycache__/
+*.pyc

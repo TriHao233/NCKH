@@ -10,7 +10,7 @@ import {
   signInWithRedirect,
   signOut,
 } from "firebase/auth";
-import { auth, googleProvider } from "../../firebase";
+import { auth, googleProvider } from "../firebase";
 import { apiRequest } from "../services/apiClient";
 import { landingPathForRole } from "../auth/permissions";
 import {

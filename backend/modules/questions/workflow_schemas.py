@@ -36,7 +36,7 @@ class ReviewOverride(BaseModel):
     @model_validator(mode="after")
     def require_reason(self):
         if self.applied and not (self.reason or "").strip():
-            raise ValueError("Override reason is required")
+            raise ValueError("Lý do ghi đè (override reason) là bắt buộc")
         return self
 
 

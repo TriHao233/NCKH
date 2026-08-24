@@ -96,7 +96,7 @@ function createPlanItem(overrides = {}) {
   return {
     id: globalThis.crypto?.randomUUID?.() || fallbackId,
     questionTypeId: 'mcq',
-    bloomId: 'understand',
+    bloomId: 'remember',
     count: 1,
     ...overrides,
   };

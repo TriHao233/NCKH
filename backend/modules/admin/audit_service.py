@@ -146,8 +146,29 @@ class AdminAuditService:
             .skip((page - 1) * page_size)
             .limit(page_size)
         )
+        items = [_normalize_audit_log(record) for record in cursor]
+        user_ids = []
+        for item in items:
+            actor = item.get("actor", {})
+            user_id = actor.get("user_id")
+            if user_id:
+                try:
+                    user_ids.append(ObjectId(user_id))
+                except Exception:
+                    pass
+        if user_ids:
+            users_map = {
+                str(u["_id"]): u.get("display_name") or str(u["_id"])
+                for u in self.db.users.find({"_id": {"$in": user_ids}}, {"display_name": 1})
+            }
+            for item in items:
+                actor = item.get("actor", {})
+                user_id = str(actor.get("user_id", ""))
+                if user_id and user_id in users_map:
+                    actor["user_name"] = users_map[user_id]
+
         return {
-            "items": [_normalize_audit_log(record) for record in cursor],
+            "items": items,
             "total": total,
             "page": page,
             "page_size": page_size,

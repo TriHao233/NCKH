@@ -9,12 +9,12 @@ export const QUESTION_TYPES = [
 ];
 
 export const BLOOM_LEVELS = [
-  { id: 'remember', level: 1, label: 'Nhớ', caption: 'Thuật ngữ, định nghĩa', backend: 'nho' },
-  { id: 'understand', level: 2, label: 'Hiểu', caption: 'Diễn giải nguyên lý', backend: 'hieu' },
-  { id: 'apply', level: 3, label: 'Vận dụng', caption: 'Áp dụng vào bài toán', backend: 'van_dung' },
-  { id: 'analyze', level: 4, label: 'Phân tích', caption: 'Tách ý, so sánh', backend: 'phan_tich' },
-  { id: 'evaluate', level: 5, label: 'Đánh giá', caption: 'Nhận xét, lựa chọn', backend: 'danh_gia' },
-  { id: 'create', level: 6, label: 'Sáng tạo', caption: 'Thiết kế giải pháp', backend: 'sang_tao' },
+  { id: 'remember', level: 1, label: '1. Nhớ', caption: 'Thuật ngữ, định nghĩa', backend: '1_nho' },
+  { id: 'understand', level: 2, label: '2. Hiểu', caption: 'Diễn giải nguyên lý', backend: '2_hieu' },
+  { id: 'apply', level: 3, label: '3. Vận dụng', caption: 'Áp dụng vào bài toán', backend: '3_van_dung' },
+  { id: 'analyze', level: 4, label: '4. Phân tích', caption: 'Tách ý, so sánh', backend: '4_phan_tich' },
+  { id: 'evaluate', level: 5, label: '5. Đánh giá', caption: 'Nhận xét, lựa chọn', backend: '5_danh_gia' },
+  { id: 'create', level: 6, label: '6. Sáng tạo', caption: 'Thiết kế giải pháp', backend: '6_sang_tao' },
 ];
 
 const questionTypeByUi = Object.fromEntries(QUESTION_TYPES.map((item) => [item.id, item]));

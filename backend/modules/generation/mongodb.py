@@ -11,12 +11,12 @@ from modules.questions.schemas import QuestionCreateRequest
 from modules.questions.service import get_question_service
 
 BLOOM_TO_LEVEL = {
-    "nho": 1,
-    "hieu": 2,
-    "van_dung": 3,
-    "phan_tich": 4,
-    "danh_gia": 5,
-    "sang_tao": 6,
+    "1_nho": 1,
+    "2_hieu": 2,
+    "3_van_dung": 3,
+    "4_phan_tich": 4,
+    "5_danh_gia": 5,
+    "6_sang_tao": 6,
 }
 
 

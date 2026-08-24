@@ -37,7 +37,8 @@ const ACTION_OPTIONS = [
   { value: 'admin.moodle_target_save', label: 'Lưu cấu hình Moodle' },
   { value: 'admin.moodle_target_deactivate', label: 'Tắt cấu hình Moodle' },
   { value: 'admin.moodle_target_check', label: 'Kiểm tra cấu hình Moodle' },
-  { value: 'auth.demo_login', label: 'Demo login' },
+  { value: 'auth.demo_login', label: 'Đăng nhập demo' },
+  { value: 'user.password_reset', label: 'Đặt lại mật khẩu' },
 ];
 
 const ENTITY_OPTIONS = [
@@ -88,26 +89,27 @@ function entityText(log) {
 
 function actorText(log) {
   const actor = log.actor || {};
+  if (actor.user_name) return actor.user_name;
   if (actor.user_id) return compactId(actor.user_id);
-  return actor.service_name || actor.type || 'System';
+  return actor.service_name || actor.type || 'Hệ thống';
 }
 
 const AUDIT_EXPORT_COLUMNS = [
-  { header: 'Audit ID', value: (log) => log.id },
-  { header: 'Created at', value: (log) => log.created_at || '' },
-  { header: 'Action', value: (log) => log.action || '' },
-  { header: 'Action label', value: (log) => actionLabel(log.action) },
-  { header: 'Actor', value: actorText },
-  { header: 'Actor role', value: (log) => log.actor?.role || '' },
-  { header: 'Actor type', value: (log) => log.actor?.type || '' },
-  { header: 'Entity', value: entityText },
-  { header: 'Entity type', value: (log) => log.entity?.type || '' },
-  { header: 'Entity ID', value: (log) => log.entity?.id || '' },
-  { header: 'Entity version ID', value: (log) => log.entity?.version_id || '' },
-  { header: 'Before', value: (log) => log.before || {} },
-  { header: 'After', value: (log) => log.after || {} },
-  { header: 'Changes', value: (log) => log.changes || [] },
-  { header: 'Metadata', value: (log) => log.metadata || {} },
+  { header: 'Mã nhật ký (Audit ID)', value: (log) => log.id },
+  { header: 'Ngày tạo', value: (log) => log.created_at || '' },
+  { header: 'Thao tác (Action)', value: (log) => log.action || '' },
+  { header: 'Nhãn thao tác', value: (log) => actionLabel(log.action) },
+  { header: 'Người dùng/Hệ thống', value: actorText },
+  { header: 'Vai trò', value: (log) => log.actor?.role || '' },
+  { header: 'Loại tác nhân', value: (log) => log.actor?.type || '' },
+  { header: 'Đối tượng', value: entityText },
+  { header: 'Loại đối tượng', value: (log) => log.entity?.type || '' },
+  { header: 'Mã đối tượng', value: (log) => log.entity?.id || '' },
+  { header: 'Mã phiên bản đối tượng', value: (log) => log.entity?.version_id || '' },
+  { header: 'Dữ liệu trước (Before)', value: (log) => log.before || {} },
+  { header: 'Dữ liệu sau (After)', value: (log) => log.after || {} },
+  { header: 'Thay đổi (Changes)', value: (log) => log.changes || [] },
+  { header: 'Thông tin thêm (Metadata)', value: (log) => log.metadata || {} },
 ];
 
 function AdminAuditPage() {
@@ -358,11 +360,9 @@ function AdminAuditPage() {
                   >
                     <td>
                       <span>{formatDateTime(log.created_at)}</span>
-                      <small>{compactId(log.id)}</small>
                     </td>
                     <td>
                       <strong>{actionLabel(log.action)}</strong>
-                      <small>{log.action}</small>
                     </td>
                     <td>
                       <span>{actorText(log)}</span>

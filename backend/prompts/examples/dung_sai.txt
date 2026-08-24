@@ -7,7 +7,7 @@ VÍ DỤ CHUẨN: dung_sai
       "correct_answer": "B",
       "explanation": "Ngăn xếp tuân theo nguyên tắc vào sau ra trước (LIFO - Last In First Out), không phải FIFO. FIFO là nguyên tắc của hàng đợi (Queue).",
       "question_type": "dung_sai",
-      "bloom_level": "hieu",
+      "bloom_level": "2_hieu",
       "source_context": "Ngăn xếp (Stack) là cấu trúc dữ liệu tuân theo nguyên tắc LIFO (Last In First Out)."
     }
   ]

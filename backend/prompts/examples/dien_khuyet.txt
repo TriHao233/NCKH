@@ -7,7 +7,7 @@ VÍ DỤ CHUẨN: dien_khuyet
       "correct_answer": "ngăn xếp (Stack)",
       "explanation": "Ngăn xếp (Stack) là cấu trúc dữ liệu tuyến tính hoạt động theo nguyên tắc LIFO, chỉ cho phép thêm và xóa phần tử ở một đầu duy nhất gọi là đỉnh (top).",
       "question_type": "dien_khuyet",
-      "bloom_level": "nho",
+      "bloom_level": "1_nho",
       "source_context": "Ngăn xếp (Stack) là cấu trúc dữ liệu tuân theo nguyên tắc LIFO (Last In First Out)."
     }
   ]

@@ -1947,7 +1947,7 @@ function ManagePage() {
                     <option value="all-subjects">Tất cả môn</option>
                     {subjects.map((subject) => (
                       <option key={refId(subject)} value={refId(subject)}>
-                        {subject.name || subject.title || refId(subject)}
+                        {subject.subject_name || subject.name || subject.title || refId(subject)}
                       </option>
                     ))}
                   </select>
@@ -3098,7 +3098,7 @@ function ManagePage() {
               >
                 <option value="">Không chọn</option>
                 {subjects.map((subject) => (
-                  <option key={refId(subject)} value={refId(subject)}>{subject.name || subject.title || refId(subject)}</option>
+                  <option key={refId(subject)} value={refId(subject)}>{subject.subject_name || subject.name || subject.title || refId(subject)}</option>
                 ))}
               </select>
             </div>
@@ -3192,7 +3192,7 @@ function ManagePage() {
               >
                 <option value="">Không chọn</option>
                 {subjects.map((subject) => (
-                  <option key={refId(subject)} value={refId(subject)}>{subject.name || subject.title || refId(subject)}</option>
+                  <option key={refId(subject)} value={refId(subject)}>{subject.subject_name || subject.name || subject.title || refId(subject)}</option>
                 ))}
               </select>
             </div>

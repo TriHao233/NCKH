@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 # Thêm thư mục gốc vào sys.path để có thể import package 'app'
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from modules.generation.prompt_builder import PromptBuilder
@@ -20,7 +20,7 @@ def main():
     """
     
     # Test case 1: Mức độ Hiểu - Trắc nghiệm 1 lựa chọn
-    bloom_level = "hieu"           
+    bloom_level = "2_hieu"           
     question_type = "trac_nghiem"  
     num_questions = 2
 

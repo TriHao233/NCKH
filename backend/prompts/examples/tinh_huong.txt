@@ -12,7 +12,7 @@ VÍ DỤ CHUẨN: tinh_huong
       "correct_answer": "B",
       "explanation": "Chức năng Undo cần lấy ra thao tác được thêm vào sau cùng trước tiên, đúng với nguyên tắc LIFO của Ngăn xếp (Stack).",
       "question_type": "tinh_huong",
-      "bloom_level": "van_dung",
+      "bloom_level": "3_van_dung",
       "source_context": "Ngăn xếp (Stack) hoạt động theo nguyên tắc LIFO (Last In First Out)."
     }
   ]

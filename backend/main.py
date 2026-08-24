@@ -50,6 +50,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import time
+from fastapi import Request
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = (time.time() - start_time) * 1000
+    
+    status = response.status_code
+    
+    # Add colors to status codes
+    if 200 <= status < 300:
+        color = "\033[92m" # Green
+    elif 300 <= status < 400:
+        color = "\033[96m" # Cyan
+    elif 400 <= status < 500:
+        color = "\033[93m" # Yellow
+    else:
+        color = "\033[91m" # Red
+    reset = "\033[0m"
+    
+    client_ip = request.client.host if request.client else "unknown"
+    
+    if request.url.path not in ["/health", "/api/v1/notifications/unread-count"]:
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        method = f"\033[1m{request.method}\033[0m"
+        print(f"\033[90m{timestamp}\033[0m | \033[92m  INFO  \033[0m | [{client_ip}] {method:^16} {request.url.path} - {color}{status}{reset} - {process_time:.1f}ms", flush=True)
+        
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

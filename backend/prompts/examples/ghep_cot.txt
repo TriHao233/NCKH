@@ -15,7 +15,7 @@ VÍ DỤ CHUẨN: ghep_cot
       "correct_answer": "1-b, 2-a, 3-c",
       "explanation": "Ngăn xếp hoạt động theo LIFO (b); Hàng đợi hoạt động theo FIFO (a); Danh sách liên kết gồm các nút liên kết qua con trỏ (c). Đáp án d là phương án nhiễu, mô tả đặc điểm của mảng (array), không thuộc về ba cấu trúc trên.",
       "question_type": "ghep_cot",
-      "bloom_level": "phan_tich",
+      "bloom_level": "4_phan_tich",
       "source_context": "Ngăn xếp tuân theo LIFO; Hàng đợi tuân theo FIFO; Danh sách liên kết gồm các nút liên kết với nhau qua con trỏ."
     }
   ]

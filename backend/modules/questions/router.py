@@ -257,14 +257,14 @@ def submit_question_for_review(
             )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
-            raise HTTPException(status_code=409, detail="Cau hoi da duoc cap nhat boi nguoi khac") from exc
+            raise HTTPException(status_code=409, detail="Câu hỏi đã được cập nhật bởi người khác") from exc
         raise
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not question:
-        raise HTTPException(status_code=404, detail="Khong tim thay cau hoi")
+        raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
     return question
 
 

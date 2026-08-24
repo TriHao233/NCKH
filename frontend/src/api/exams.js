@@ -1,4 +1,4 @@
-import { auth } from '../../firebase';
+import { auth } from '../firebase';
 import { apiRequest, ApiError } from '../services/apiClient';
 
 const API_BASE_URL = (

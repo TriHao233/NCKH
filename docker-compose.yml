@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nckh-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/.env:/app/.env
+      # Ánh xạ thư mục data để không bị mất dữ liệu VectorDB (Chroma) và file tải lên
+      - ./backend/data:/app/data
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    
+    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU BẠN CHẠY BẰNG GPU (NVIDIA) 
+    # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:latest
+    container_name: nckh-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nckh-frontend
+    ports:
+      - "80:80" # Publish web frontend ra cổng 80 (truy cập bằng http://localhost)
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
