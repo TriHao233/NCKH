@@ -647,10 +647,13 @@ def _chunk_buffer(
 			heading_norm = _normalize_heading_meta(section["heading"]) if section["heading"] else ""
 			heading_path_norm = _normalize_heading_meta(heading_path_text) if heading_path_text else ""
 
+			parent_heading = section["heading_path"][-2] if len(section["heading_path"]) > 1 else section["heading"]
+
 			metadata = {
 				"document_id": document_id,
 				"heading_path": section["heading_path"],
 				"heading": section["heading"],
+				"parent_heading": parent_heading,
 				"heading_path_text": heading_path_text,
 				"heading_norm": heading_norm,
 				"heading_path_norm": heading_path_norm,
@@ -664,10 +667,13 @@ def _chunk_buffer(
 				"token_count": token_count,
 			}
 
-			chunk_id = _generate_chunk_id(document_id, chunk_index, clean_text)
+			# Context enrichment: Prepend heading path to content for better embedding semantic
+			enriched_content = f"[{heading_path_text}]\n\n{clean_text}" if heading_path_text else clean_text
+
+			chunk_id = _generate_chunk_id(document_id, chunk_index, enriched_content)
 			yield {
 				"chunk_id": chunk_id,
-				"content": clean_text,
+				"content": enriched_content,
 				"metadata": metadata,
 			}
 
@@ -808,13 +814,42 @@ def _mask_blocks(text: str, max_code_block_lines: int) -> tuple[str, dict]:
 
 		return "\n\n".join(segments)
 
+	def _split_table_block(block: str) -> str:
+		lines = block.strip().splitlines()
+		# Bảng Markdown cần ít nhất 3 dòng: header, separator, 1 row data
+		if len(lines) < 3:
+			return _store("TABLE", block)
+		
+		# Chia bảng theo nhóm dòng nếu quá dài (ví dụ: tối đa 15 dòng data)
+		header = lines[0]
+		separator = lines[1]
+		rows = lines[2:]
+		
+		max_rows = 15
+		if len(rows) <= max_rows:
+			return _store("TABLE", block)
+
+		segments = []
+		total = (len(rows) + max_rows - 1) // max_rows
+		for idx in range(total):
+			start = idx * max_rows
+			end = min(start + max_rows, len(rows))
+			seg_rows = rows[start:end]
+			seg_block = "\n".join([header, separator] + seg_rows)
+			segments.append(_store("TABLE", seg_block))
+			
+		return "\n\n".join(segments)
+
 	def _replace_code(match: re.Match) -> str:
 		return _split_code_block(match.group())
+
+	def _replace_table(match: re.Match) -> str:
+		return _split_table_block(match.group())
 
 	text = CODE_BLOCK_PATTERN.sub(_replace_code, text)
 	text = FORMULA_BLOCK_PATTERN.sub(lambda m: _store("FORMULA", m.group()), text)
 	text = LATEX_BLOCK_PATTERN.sub(lambda m: _store("LATEX", m.group()), text)
-	text = TABLE_BLOCK_PATTERN.sub(lambda m: _store("TABLE", m.group()), text)
+	text = TABLE_BLOCK_PATTERN.sub(_replace_table, text)
 
 	return text, protected
 

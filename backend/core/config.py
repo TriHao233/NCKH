@@ -107,7 +107,11 @@ class Settings(BaseModel):
 
     chromadb_collection_name: str = os.getenv("CHROMADB_COLLECTION_NAME", "chunks")
     chromadb_batch_size: int = int(os.getenv("CHROMADB_BATCH_SIZE", "50"))
-    embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+    embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+
+    # Docling OCR
+    docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001")
+    docling_timeout: int = int(os.getenv("DOCLING_TIMEOUT", "600"))
 
     chromadb_path: str = os.getenv("CHROMADB_PATH", "./data/chroma_data")
     output_dir: str = os.getenv("OUTPUT_DIR", "./data/outputs")

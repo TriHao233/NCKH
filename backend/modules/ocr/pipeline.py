@@ -5,10 +5,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from modules.ocr.easyocr_engine import is_easyocr_available, stream_and_ocr_pdf
-from modules.ocr.formula_processor import process_pages_with_formula_blocks
+from modules.ocr.docling_engine import is_docling_available, ocr_pdf
 from modules.ocr.text_cleaner import clean_ocr_pages
-from modules.ocr.formula_detector import mark_formulas_in_pages
 
 logger = logging.getLogger(__name__)
 
@@ -90,44 +88,6 @@ def remove_headers_footers(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return cleaned_pages
 
 
-def clean_text_basic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Làm sạch văn bản OCR cơ bản trước khi chạy text cleaner nâng cao.
-    Xóa bớt các dấu lạ hoặc format rác sinh ra từ OCR.
-    """
-    cleaned_pages: list[dict[str, Any]] = []
-
-    for page in pages:
-        lines = page["text"].split("\n")
-        processed_lines = []
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Bỏ qua công thức toán học đã bọc
-            if stripped.startswith("$$") and stripped.endswith("$$"):
-                processed_lines.append(stripped)
-                continue
-
-            cleaned = re.sub(r"\*\*+|###+|@@+|~~+", "", line)
-            # Chỉ giữ lại chữ cái, số, và các dấu câu thông dụng
-            cleaned = re.sub(
-                r"[^\w\s\.,;:!?\-—–\(\)\[\]\{\}\'\"\/\\+*=<>%^&|~àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ$±×÷∑∫√∞≤≥≠≈∝∈∉⊂⊃∩∪∀∃∄∅∇∂αβγδεζηθικλμνξπρσςτυφχψωΓΔΘΛΞΠΣΦΨΩ]",
-                " ",
-                cleaned,
-            )
-            cleaned = re.sub(r"[ \t]+", " ", cleaned).strip()
-
-            if len(cleaned) > 2 or cleaned == "":
-                processed_lines.append(cleaned)
-
-        text = "\n".join(processed_lines)
-        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-        cleaned_pages.append({"page_number": page["page_number"], "text": text.strip()})
-
-    return cleaned_pages
-
-
 def save_markdown(pages: list[dict[str, Any]], output_path: str, document_title: str) -> None:
     """Lưu kết quả cuối cùng ra file Markdown để dùng cho Chunking hoặc người dùng đọc"""
     out_path = Path(output_path)
@@ -156,48 +116,42 @@ def run_ocr_pipeline(
     pdf_path: str,
     output_path: str,
     document_title: str | None = None,
+    # Legacy params — ignored (kept for backward compatibility with callers)
     languages: list[str] | None = None,
     gpu: bool | None = None,
     poppler_path: str | None = None,
 ) -> dict[str, Any]:
-    if languages is None:
-        languages = ["vi", "en"]
-
-    if not is_easyocr_available():
-        raise RuntimeError("EasyOCR is not installed")
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
-    logger.info(f"====== BẮT ĐẦU TIẾN TRÌNH OCR: {document_title or pdf_path} ======")
-
-    raw_pages = stream_and_ocr_pdf(
-        pdf_path=pdf_path,
-        languages=languages,
-        gpu=gpu,
-        poppler_path=poppler_path
-    )
-    logger.info("[Filter 0/4] Đang nhận diện và gắn thẻ Công thức Toán học...")
-    pages_with_formulas = mark_formulas_in_pages(raw_pages)
-
-    logger.info("[Filter 1/4] Đang xóa Header/Footer trùng lặp...")
-    no_header_footer_pages = remove_headers_footers(pages_with_formulas)
-
-    logger.info("[Filter 2/4] Đang làm sạch các ký tự rác cơ bản...")
-    basic_cleaned_pages = clean_text_basic(no_header_footer_pages)
-
-    logger.info("[Filter 3/4] Đang dọn rác nâng cao và định dạng Code Block...")
-    cleaned_pages = clean_ocr_pages(basic_cleaned_pages)
-
-    logger.info("[Filter 4/4] Đang bóc tách và đóng gói Công thức Toán học (LaTeX)...")
-    final_pages = process_pages_with_formula_blocks(cleaned_pages)
+    if not is_docling_available():
+        raise RuntimeError(
+            "Docling service không khả dụng. "
+            "Hãy chắc chắn container 'nckh-docling' đang chạy: "
+            "docker compose up docling -d"
+        )
 
     title = document_title or Path(pdf_path).stem.replace("_", " ")
+    logger.info(f"====== BẮT ĐẦU TIẾN TRÌNH OCR (Docling): {title} ======")
+
+    # Gọi Docling API — nhận về Markdown có cấu trúc
+    result = ocr_pdf(pdf_path)
+    raw_pages = result["pages"]
+
+    logger.info("[Filter 1/2] Đang xóa Header/Footer trùng lặp...")
+    no_header_footer_pages = remove_headers_footers(raw_pages)
+
+    # Docling đã output Markdown sạch, chỉ cần clean nhẹ
+    logger.info("[Filter 2/2] Đang làm sạch văn bản...")
+    final_pages = clean_ocr_pages(no_header_footer_pages)
+
     total_chars = sum(len(p["text"]) for p in final_pages)
 
     stats_data = {
         "total_pages": len(final_pages),
         "total_chars": total_chars,
         "avg_chars_per_page": round(total_chars / max(len(final_pages), 1)),
+        "ocr_engine": "docling",
     }
 
     logger.info(f"Đang lưu kết quả Markdown tại: {output_path}")

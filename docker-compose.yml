@@ -26,6 +26,19 @@ services:
 
     depends_on:
       - mongodb
+      - docling
+    restart: unless-stopped
+
+  docling:
+    image: quay.io/docling-project/docling-serve
+    container_name: nckh-docling
+    ports:
+      - "5001:5001"
+    environment:
+      - OCR_ENGINE=paddleocr
+      - PADDLE_OCR_LANG=vi
+    volumes:
+      - docling_models:/root/.cache
     restart: unless-stopped
 
   mongodb:
@@ -50,3 +63,4 @@ services:
 
 volumes:
   mongodb_data:
+  docling_models:
