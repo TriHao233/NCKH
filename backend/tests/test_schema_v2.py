@@ -3588,6 +3588,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         class FakeAuditDatabase:
             def __init__(self):
+                self.users = InMemoryCollection([])
                 self.audit_logs = InMemoryCollection(
                     [
                         {
@@ -3661,6 +3662,9 @@ class SchemaV2Tests(unittest.TestCase):
 
         class FakeJobDatabase:
             def __init__(self):
+                self.users = InMemoryCollection([])
+                self.question_versions = InMemoryCollection([])
+                self.subjects = InMemoryCollection([])
                 self.generation_jobs = InMemoryCollection(
                     [
                         {
@@ -3905,6 +3909,8 @@ class SchemaV2Tests(unittest.TestCase):
 
         class FakeOverviewDatabase:
             def __init__(self):
+                self.subjects = InMemoryCollection([])
+                self.ai_models = InMemoryCollection([])
                 self.users = InMemoryCollection(
                     [
                         {"_id": ObjectId(), "role": "Admin", "is_active": True},
@@ -4255,6 +4261,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         class FakeDatabase:
             def __init__(self, records):
+                self.users = InMemoryCollection([])
                 self.audit_logs = FakeAuditLogs(records)
 
         now = datetime.now(timezone.utc)
@@ -4797,8 +4804,8 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("RULES - KHÔNG TẠO CÂU HỎI NẾU", prompt)
-        self.assertIn("Nhắc trực tiếp nguồn học liệu", prompt)
+        self.assertIn("QUESTION RULES", prompt)
+        self.assertIn("Tham chiếu nguồn học liệu", prompt)
         self.assertIn("Nếu vi phạm bất kỳ quy tắc nào", prompt)
 
     def test_question_structure_is_loaded_into_generation_prompt(self):
