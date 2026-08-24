@@ -76,6 +76,7 @@ class CurrentUser:
     role: str
     is_active: bool
     permissions: tuple[str, ...] = ()
+    display_name: str = ""
 
 
 def get_current_user(
@@ -117,6 +118,7 @@ def get_current_user(
         role=user["role"],
         is_active=user.get("is_active", True),
         permissions=effective_permissions(user),
+        display_name=user.get("display_name", ""),
     )
 
 

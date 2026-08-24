@@ -11,6 +11,8 @@ export const QUESTION_FILTER_DEFAULTS = Object.freeze({
   difficultyFilter: 'all-difficulties',
   evaluationFilter: 'all-evaluations',
   publicationFilter: 'all-publications',
+  createdFromFilter: '',
+  createdToFilter: '',
   searchInput: '',
 });
 

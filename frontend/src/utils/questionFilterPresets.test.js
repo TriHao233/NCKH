@@ -50,4 +50,6 @@ test('saved question filter parser ignores bad payloads and backfills defaults',
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0].filters.statusFilter, 'PENDING');
   assert.equal(parsed[0].filters.publicationFilter, 'all-publications');
+  assert.equal(parsed[0].filters.createdFromFilter, '');
+  assert.equal(parsed[0].filters.createdToFilter, '');
 });

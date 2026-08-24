@@ -36,6 +36,40 @@ def json_safe(value):
 
 
 def serialize_question(question: dict, version: dict) -> dict:
+    classification = version.get("classification") or {}
+    subject = classification.get("subject") or {}
+    subject_id = question.get("subject_id")
+    if subject_id is None and isinstance(subject, dict):
+        subject_id = subject.get("id")
+    elif subject_id is None and subject:
+        subject_id = subject
+    subject_snapshot = {
+        "id": subject_id,
+        "code": (
+            subject.get("code") or subject.get("subject_code") or ""
+            if isinstance(subject, dict)
+            else ""
+        ),
+        "name": (
+            subject.get("name") or subject.get("subject_name") or ""
+            if isinstance(subject, dict)
+            else ""
+        ),
+    }
+    review_submission = deepcopy(question.get("review_submission") or {})
+    # Read compatibility for the first additive version of these fields.
+    if not review_submission and (
+        question.get("submitted_by_user_id") or question.get("submitted_at")
+    ):
+        review_submission = {
+            "submitted_by_user_id": question.get("submitted_by_user_id"),
+            "submitted_by": {"id": question.get("submitted_by_user_id")},
+            "submitted_at": question.get("submitted_at"),
+            "subject_id": subject_id,
+            "subject": subject_snapshot,
+        }
+    submitted_by_user_id = review_submission.get("submitted_by_user_id")
+    submitted_at = review_submission.get("submitted_at")
     return json_safe(
         {
             "id": question["_id"],
@@ -44,6 +78,11 @@ def serialize_question(question: dict, version: dict) -> dict:
             "current_version_id": question["current_version_id"],
             "approved_version_id": question.get("approved_version_id"),
             "document_id": version.get("document_id"),
+            "subject_id": subject_id,
+            "subject": subject_snapshot,
+            "review_submission": review_submission,
+            "submitted_by_user_id": submitted_by_user_id,
+            "submitted_at": submitted_at,
             "lifecycle_status": question["lifecycle_status"],
             "evaluation_status": question["evaluation_status"],
             "review_status": question["review_status"],
@@ -95,7 +134,12 @@ class QuestionRepository(Protocol):
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
-    ) -> tuple[list[tuple[dict, dict]], int]: ...
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        submitted_from: datetime | None = None,
+        submitted_to: datetime | None = None,
+        include_status_counts: bool = False,
+    ) -> tuple[list[tuple[dict, dict]], int] | tuple[list[tuple[dict, dict]], int, dict[str, int]]: ...
 
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]: ...
 
@@ -104,6 +148,8 @@ class QuestionRepository(Protocol):
         question_id: str | ObjectId,
         expected_version: int,
         version: dict,
+        *,
+        review_submission: dict | None = None,
     ) -> tuple[dict, dict] | None: ...
 
     def update_review_status(
@@ -111,6 +157,8 @@ class QuestionRepository(Protocol):
         question_id: str | ObjectId,
         allowed_statuses: set[str],
         review_status: str,
+        *,
+        review_submission: dict | None = None,
     ) -> tuple[dict, dict] | None: ...
 
     def archive(self, question_id: str | ObjectId) -> bool: ...
@@ -216,9 +264,14 @@ class MongoQuestionRepository:
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
-    ) -> tuple[list[tuple[dict, dict]], int]:
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        submitted_from: datetime | None = None,
+        submitted_to: datetime | None = None,
+        include_status_counts: bool = False,
+    ) -> tuple[list[tuple[dict, dict]], int] | tuple[list[tuple[dict, dict]], int, dict[str, int]]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
-        if review_status:
+        if review_status and not include_status_counts:
             match["review_status"] = review_status
         if publication_status:
             match["publication_status"] = publication_status
@@ -236,6 +289,22 @@ class MongoQuestionRepository:
             match["updated_at"] = {"$lte": waiting_since}
         if overdue_at is not None:
             match["review_assignment.lock_expires_at"] = {"$lte": overdue_at}
+        if created_from is not None or created_to is not None:
+            created_at_match: dict = {}
+            if created_from is not None:
+                created_at_match["$gte"] = created_from
+            if created_to is not None:
+                created_at_match["$lte"] = created_to
+            match["created_at"] = created_at_match
+        if submitted_from is not None or submitted_to is not None:
+            submitted_at_match: dict = {}
+            if submitted_from is not None:
+                submitted_at_match["$gte"] = submitted_from
+            if submitted_to is not None:
+                submitted_at_match["$lte"] = submitted_to
+            match["review_submission.submitted_at"] = submitted_at_match
+        if subject_id:
+            match["subject_id"] = object_id(subject_id, "subject_id")
         pipeline: list[dict] = [
             {"$match": match},
             {
@@ -298,8 +367,6 @@ class MongoQuestionRepository:
             version_match["version.classification.bloom.level"] = int(bloom_level)
         if document_id:
             version_match["version.document_id"] = object_id(document_id, "document_id")
-        if subject_id:
-            version_match["version.classification.subject.id"] = object_id(subject_id, "subject_id")
         if chapter_id:
             version_match["version.classification.chapter.id"] = object_id(chapter_id, "chapter_id")
         if clo_id:
@@ -319,23 +386,36 @@ class MongoQuestionRepository:
                     }
                 }
             )
-        pipeline.extend(
-            [
-                {"$sort": {"updated_at": -1}},
-                {
-                    "$facet": {
-                        "items": [
-                            {"$skip": (page - 1) * page_size},
-                            {"$limit": page_size},
-                        ],
-                        "count": [{"$count": "total"}],
-                    }
-                },
-            ]
+        status_counts_pipeline = deepcopy(pipeline) if include_status_counts else None
+        if review_status and include_status_counts:
+            pipeline[0]["$match"]["review_status"] = review_status
+        pipeline.append(
+            {
+                "$facet": {
+                    "items": [
+                        {"$sort": {"updated_at": -1, "_id": -1}},
+                        {"$skip": (page - 1) * page_size},
+                        {"$limit": page_size},
+                    ],
+                    "count": [{"$count": "total"}],
+                }
+            }
         )
         result = list(self.db.questions.aggregate(pipeline))[0]
         total = result["count"][0]["total"] if result["count"] else 0
-        return [(item, item["version"]) for item in result["items"]], total
+        pairs = [(item, item["version"]) for item in result["items"]]
+        if not include_status_counts:
+            return pairs, total
+        status_counts_pipeline.append(
+            {"$group": {"_id": "$review_status", "count": {"$sum": 1}}}
+        )
+        status_count_rows = list(self.db.questions.aggregate(status_counts_pipeline))
+        status_counts = {
+            str(item["_id"]): int(item["count"])
+            for item in status_count_rows
+            if item.get("_id")
+        }
+        return pairs, total, status_counts
 
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]:
         with mongo_transaction() as session:
@@ -348,6 +428,8 @@ class MongoQuestionRepository:
         question_id: str | ObjectId,
         expected_version: int,
         version: dict,
+        *,
+        review_submission: dict | None = None,
     ) -> tuple[dict, dict] | None:
         pair = self.find_pair(question_id)
         if not pair:
@@ -366,6 +448,36 @@ class MongoQuestionRepository:
             if question["review_status"] in {"DRAFT", "NEEDS_REVISION"}
             else "PENDING"
         )
+        aggregate_fields = {
+            "current_version": expected_version + 1,
+            "current_version_id": new_version["_id"],
+            "evaluation_status": "NOT_STARTED",
+            "review_status": next_review_status,
+            "publication_status": (
+                "STALE"
+                if question["publication_status"] == "PUBLISHED"
+                else question["publication_status"]
+            ),
+            "review_assignment": {
+                "status": "UNASSIGNED",
+                "reviewer_user_id": None,
+                "assigned_by_user_id": None,
+                "assigned_at": None,
+                "claimed_at": None,
+                "lock_expires_at": None,
+                "last_released_at": None,
+                "release_reason": None,
+            },
+            "quality_summary": {},
+            "subject_id": (
+                ((new_version.get("classification") or {}).get("subject") or {}).get("id")
+            ),
+            "updated_at": now,
+        }
+        if next_review_status == "PENDING" and review_submission:
+            normalized_submission = deepcopy(review_submission)
+            normalized_submission["submitted_at"] = now
+            aggregate_fields["review_submission"] = normalized_submission
         with mongo_transaction() as session:
             self.db.question_versions.insert_one(new_version, session=session)
             result = self.db.questions.update_one(
@@ -374,31 +486,7 @@ class MongoQuestionRepository:
                     "current_version": expected_version,
                     "lifecycle_status": "ACTIVE",
                 },
-                {
-                    "$set": {
-                        "current_version": expected_version + 1,
-                        "current_version_id": new_version["_id"],
-                        "evaluation_status": "NOT_STARTED",
-                        "review_status": next_review_status,
-                        "publication_status": (
-                            "STALE"
-                            if question["publication_status"] == "PUBLISHED"
-                            else question["publication_status"]
-                        ),
-                        "review_assignment": {
-                            "status": "UNASSIGNED",
-                            "reviewer_user_id": None,
-                            "assigned_by_user_id": None,
-                            "assigned_at": None,
-                            "claimed_at": None,
-                            "lock_expires_at": None,
-                            "last_released_at": None,
-                            "release_reason": None,
-                        },
-                        "quality_summary": {},
-                        "updated_at": now,
-                    }
-                },
+                {"$set": aggregate_fields},
                 session=session,
             )
             if not result.modified_count:
@@ -411,9 +499,29 @@ class MongoQuestionRepository:
         question_id: str | ObjectId,
         allowed_statuses: set[str],
         review_status: str,
+        *,
+        review_submission: dict | None = None,
     ) -> tuple[dict, dict] | None:
         question_oid = object_id(question_id, "question_id")
         now = utc_now()
+        fields = {
+            "review_status": review_status,
+            "review_assignment": {
+                "status": "UNASSIGNED",
+                "reviewer_user_id": None,
+                "assigned_by_user_id": None,
+                "assigned_at": None,
+                "claimed_at": None,
+                "lock_expires_at": None,
+                "last_released_at": None,
+                "release_reason": None,
+            },
+            "updated_at": now,
+        }
+        if review_status == "PENDING" and review_submission:
+            normalized_submission = deepcopy(review_submission)
+            normalized_submission["submitted_at"] = now
+            fields["review_submission"] = normalized_submission
         result = self.db.questions.update_one(
             {
                 "_id": question_oid,
@@ -421,22 +529,7 @@ class MongoQuestionRepository:
                 "lifecycle_status": "ACTIVE",
                 "review_status": {"$in": list(allowed_statuses)},
             },
-            {
-                "$set": {
-                    "review_status": review_status,
-                    "review_assignment": {
-                        "status": "UNASSIGNED",
-                        "reviewer_user_id": None,
-                        "assigned_by_user_id": None,
-                        "assigned_at": None,
-                        "claimed_at": None,
-                        "lock_expires_at": None,
-                        "last_released_at": None,
-                        "release_reason": None,
-                    },
-                    "updated_at": now,
-                }
-            },
+            {"$set": fields},
         )
         if not result.matched_count:
             return None

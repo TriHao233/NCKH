@@ -332,6 +332,13 @@
   width: 100%;
   min-width: 0;
 }
+.manage-page .date-filter-field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted, #5c6f89);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
 .manage-page .list-actions .exchange-format-select { width: 112px; }
 .manage-page .question-import-button {
   position: relative;

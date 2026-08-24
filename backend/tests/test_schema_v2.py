@@ -108,6 +108,7 @@ def _current_user(role="Teacher", user_id=None, permissions=None):
         role=role,
         is_active=True,
         permissions=tuple(permissions or ()),
+        display_name=f"{role} User",
     )
 
 
@@ -978,12 +979,24 @@ class SchemaV2Tests(unittest.TestCase):
             def find_pair(self, _question_id):
                 return self.question, self.version
 
-            def update_review_status(self, _question_id, allowed_statuses, review_status):
+            def update_review_status(
+                self,
+                _question_id,
+                allowed_statuses,
+                review_status,
+                *,
+                review_submission=None,
+            ):
                 self.update_calls += 1
                 if self.question["review_status"] not in allowed_statuses:
                     return None
                 self.question["review_status"] = review_status
                 self.question["updated_at"] = datetime.now(timezone.utc)
+                if review_submission:
+                    self.question["review_submission"] = {
+                        **review_submission,
+                        "submitted_at": self.question["updated_at"],
+                    }
                 return self.question, self.version
 
         for initial_status in ("DRAFT", "NEEDS_REVISION"):
@@ -994,6 +1007,12 @@ class SchemaV2Tests(unittest.TestCase):
             submitted_again = service.submit_for_review(str(repository.question["_id"]), teacher)
 
             self.assertEqual(submitted["review_status"], "PENDING")
+            self.assertEqual(submitted["submitted_by_user_id"], str(teacher.id))
+            self.assertIsNotNone(submitted["submitted_at"])
+            self.assertEqual(
+                submitted["review_submission"]["submitted_by"]["display_name"],
+                "Teacher User",
+            )
             self.assertEqual(submitted_again["review_status"], "PENDING")
             self.assertEqual(repository.update_calls, 1)
 
@@ -4951,11 +4970,18 @@ class SchemaV2Tests(unittest.TestCase):
     def test_question_repository_list_pushes_reviewer_filters_to_mongo(self):
         class FakeQuestionsCollection:
             def __init__(self):
-                self.pipeline = None
+                self.pipelines = []
 
             def aggregate(self, pipeline):
-                self.pipeline = pipeline
-                return [{"items": [], "count": [{"total": 0}]}]
+                self.pipelines.append(pipeline)
+                if "$group" in pipeline[-1]:
+                    return [{"_id": "PENDING", "count": 12}]
+                return [
+                    {
+                        "items": [],
+                        "count": [{"total": 0}],
+                    }
+                ]
 
         class FakeDatabase:
             def __init__(self):
@@ -4971,8 +4997,12 @@ class SchemaV2Tests(unittest.TestCase):
         creator_id = ObjectId()
         waiting_since = datetime.now(timezone.utc) - timedelta(hours=24)
         overdue_at = datetime.now(timezone.utc)
+        created_from = datetime.now(timezone.utc) - timedelta(days=30)
+        created_to = datetime.now(timezone.utc)
+        submitted_from = datetime.now(timezone.utc) - timedelta(days=7)
+        submitted_to = datetime.now(timezone.utc)
 
-        pairs, total = repo.list(
+        pairs, total, status_counts = repo.list(
             2,
             10,
             "PENDING",
@@ -4993,14 +5023,24 @@ class SchemaV2Tests(unittest.TestCase):
             creator_user_id=creator_id,
             waiting_since=waiting_since,
             overdue_at=overdue_at,
+            created_from=created_from,
+            created_to=created_to,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+            include_status_counts=True,
         )
 
         self.assertEqual(pairs, [])
         self.assertEqual(total, 0)
-        pipeline = fake_db.questions.pipeline
+        self.assertEqual(status_counts, {"PENDING": 12})
+        self.assertEqual(len(fake_db.questions.pipelines), 2)
+        pipeline = fake_db.questions.pipelines[0]
+        status_counts_pipeline = fake_db.questions.pipelines[1]
         self.assertIsNotNone(pipeline)
         question_match = pipeline[0]["$match"]
         self.assertEqual(question_match["review_status"], "PENDING")
+        self.assertNotIn("review_status", status_counts_pipeline[0]["$match"])
+        self.assertEqual(question_match["subject_id"], subject_id)
         self.assertEqual(question_match["publication_status"], "NOT_PUBLISHED")
         self.assertEqual(question_match["evaluation_status"], "PASSED")
         self.assertEqual(question_match["review_assignment.status"], "IN_REVIEW")
@@ -5009,6 +5049,14 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(question_match["quality_summary.overall_score"], {"$gte": 0.8})
         self.assertEqual(question_match["updated_at"], {"$lte": waiting_since})
         self.assertEqual(question_match["review_assignment.lock_expires_at"], {"$lte": overdue_at})
+        self.assertEqual(
+            question_match["created_at"],
+            {"$gte": created_from, "$lte": created_to},
+        )
+        self.assertEqual(
+            question_match["review_submission.submitted_at"],
+            {"$gte": submitted_from, "$lte": submitted_to},
+        )
 
         creator_match = pipeline[3]["$match"]
         self.assertIn({"created_by_user_id": creator_id}, creator_match["$or"])
@@ -5018,7 +5066,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(version_match["version.classification.assessment_type"], "TRAC_NGHIEM")
         self.assertEqual(version_match["version.classification.bloom.level"], 3)
         self.assertEqual(version_match["version.document_id"], document_id)
-        self.assertEqual(version_match["version.classification.subject.id"], subject_id)
+        self.assertNotIn("version.classification.subject.id", version_match)
         self.assertEqual(version_match["version.classification.chapter.id"], chapter_id)
         self.assertEqual(version_match["version.clos.id"], clo_id)
         self.assertEqual(version_match["version.classification.difficulty"], "kho")
@@ -5027,8 +5075,12 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn({"question_code": {"$regex": "queue", "$options": "i"}}, search_match["$or"])
         self.assertIn({"version.content": {"$regex": "queue", "$options": "i"}}, search_match["$or"])
         facet = pipeline[-1]["$facet"]
-        self.assertEqual(facet["items"][0], {"$skip": 10})
-        self.assertEqual(facet["items"][1], {"$limit": 10})
+        self.assertEqual(facet["items"][1], {"$skip": 10})
+        self.assertEqual(facet["items"][2], {"$limit": 10})
+        self.assertEqual(
+            status_counts_pipeline[-1],
+            {"$group": {"_id": "$review_status", "count": {"$sum": 1}}},
+        )
 
     def test_question_repository_can_filter_approved_current_version_in_mongo(self):
         class FakeQuestionsCollection:
