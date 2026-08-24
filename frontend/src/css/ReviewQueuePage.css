@@ -251,6 +251,18 @@
   min-height: 0;
 }
 
+.review-date-filter {
+  display: grid;
+  gap: 3px;
+  color: #5c6f89;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.review-date-filter input {
+  min-height: 36px;
+}
+
 .review-list {
   display: flex;
   flex-direction: column;

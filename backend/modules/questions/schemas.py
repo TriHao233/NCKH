@@ -58,6 +58,11 @@ class QuestionResponse(BaseModel):
     current_version_id: str
     approved_version_id: str | None
     document_id: str | None
+    subject_id: str | None = None
+    subject: dict[str, Any] = Field(default_factory=dict)
+    review_submission: dict[str, Any] = Field(default_factory=dict)
+    submitted_by_user_id: str | None = None
+    submitted_at: datetime | None = None
     lifecycle_status: str
     evaluation_status: str
     review_status: str
@@ -152,3 +157,4 @@ class QuestionListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+    status_counts: dict[str, int] = Field(default_factory=dict)
