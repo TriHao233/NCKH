@@ -12,6 +12,7 @@ SCHEMA:
       "explanation": "string",
       "question_type": "string",
       "bloom_level": "string",
+      "difficulty": "de | trung_binh | kho",
       "source_context": "string (exact verbatim quote)"
     }
   ]

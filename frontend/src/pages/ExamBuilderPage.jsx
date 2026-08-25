@@ -18,7 +18,7 @@ import {
   updateExam,
 } from '../api/exams';
 import { listSubjects } from '../api/catalog';
-import { questionTypeLabel } from '../constants/generationEnums';
+import { difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ExamBuilderPage.css';
 
 function refId(value) {
@@ -621,7 +621,9 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
                 <label className="question-pick-item" key={q.id}>
                   <input type="checkbox" checked={selectedIds.includes(q.id)} onChange={() => toggleSelect(q.id)} disabled={readOnly} />
                   <span>
-                    <b>{questionTypeLabel((q.classification?.assessment_type || '').toLowerCase())}</b> — {q.content}
+                    <b>{questionTypeLabel((q.classification?.assessment_type || '').toLowerCase())}</b>
+                    {q.classification?.difficulty ? ` · ${difficultyLabel(q.classification.difficulty)}` : ''}
+                    {' — '}{q.content}
                   </span>
                 </label>
               ))}

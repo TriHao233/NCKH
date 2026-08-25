@@ -672,6 +672,7 @@ def _seed_prompt_templates(db, now: datetime) -> None:
     specs = [
         ("system", "SYSTEM", "System prompt", prompt_root / "system.txt"),
         ("question_rule", "QUESTION_RULE", "Forbidden question rules", prompt_root / "question_rule.txt"),
+        ("quy_dinh_do_kho", "DIFFICULTY_RULE", "Quy định độ khó", prompt_root / "quy_dinh_do_kho.txt"),
         ("output_format", "OUTPUT_FORMAT", "Output format", prompt_root / "output_format.txt"),
     ]
     for folder, kind in (

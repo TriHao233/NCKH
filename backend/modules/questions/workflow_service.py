@@ -48,6 +48,8 @@ EVALUATION_SCORING_PROMPT_KEY = "evaluation:scoring_policy"
 EVALUATION_SCORING_PROMPT_PATH = "evaluation/scoring_policy.txt"
 EVALUATION_OUTPUT_PROMPT_KEY = "evaluation:output_contract"
 EVALUATION_OUTPUT_PROMPT_PATH = "evaluation/output_contract.txt"
+DIFFICULTY_RULE_PROMPT_KEY = "quy_dinh_do_kho"
+DIFFICULTY_RULE_PROMPT_PATH = "quy_dinh_do_kho.txt"
 EVALUATION_TYPE_PROMPT_PREFIX = "evaluation:question_type"
 EVALUATION_TYPE_PROMPT_DIR = "evaluation/question_type"
 DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
@@ -257,6 +259,7 @@ class QuestionWorkflowService:
         specs = [
             (EVALUATION_PROMPT_KEY, EVALUATION_PROMPT_PATH),
             (EVALUATION_SCORING_PROMPT_KEY, EVALUATION_SCORING_PROMPT_PATH),
+            (DIFFICULTY_RULE_PROMPT_KEY, DIFFICULTY_RULE_PROMPT_PATH),
             (
                 f"{EVALUATION_TYPE_PROMPT_PREFIX}:{normalized_type}",
                 f"{EVALUATION_TYPE_PROMPT_DIR}/{normalized_type}.txt",
@@ -313,6 +316,7 @@ class QuestionWorkflowService:
             "correct_answer": question_data.get("correct_answer"),
             "explanation": question_data.get("explanation"),
             "requested_bloom": classification.get("bloom"),
+            "current_difficulty": classification.get("difficulty"),
             "clos": clos,
             "source_chunks": source_chunks,
         }
@@ -357,6 +361,9 @@ class QuestionWorkflowService:
         )
         feedback = parsed.get("feedback") if isinstance(parsed.get("feedback"), dict) else {}
         evidence = parsed.get("evidence") if isinstance(parsed.get("evidence"), dict) else {}
+        assessed = str(evidence.get("assessed_difficulty") or "").strip().lower().replace("-", "_")
+        assessed = assessed.replace(" ", "_")
+        evidence["assessed_difficulty"] = assessed if assessed in {"de", "trung_binh", "kho"} else None
         return scores, feedback, evidence
 
     def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:

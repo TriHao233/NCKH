@@ -648,6 +648,10 @@
 .generate-page .draft-item-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .generate-page .q-tag { font-size: 0.68rem; font-weight: 700; color: #fff; background: var(--primary, #0c78d4); border-radius: 5px; padding: 2px 8px; }
 .generate-page .bloom-tag { font-size: 0.7rem; font-weight: 600; border-radius: 6px; padding: 2px 9px; background: #FFF4E0; color: #B36500; }
+.generate-page .difficulty-tag { font-size: 0.7rem; font-weight: 700; border-radius: 6px; padding: 2px 9px; }
+.generate-page .difficulty-tag--de { background: #E8FFF0; color: #15803D; }
+.generate-page .difficulty-tag--trung_binh { background: #FFF4E0; color: #B36500; }
+.generate-page .difficulty-tag--kho { background: #FEECEC; color: #B42318; }
 .generate-page .draft-status { font-size: 0.72rem; font-weight: 600; color: var(--text-muted, #5c6f89); margin-left: auto; }
 .generate-page .draft-item-text { font-size: 0.92rem; color: var(--text, #13253f); font-weight: 500; line-height: 1.55; margin: 0; }
 .generate-page .draft-item-choices { display: flex; flex-wrap: wrap; gap: 6px; }

@@ -96,6 +96,7 @@ class GeneratedQuestion(BaseModel):
     explanation: str
     question_type: str
     bloom_level: str
+    difficulty: Optional[str] = None
     source_context: str
     question_id: Optional[str] = None
     question_code: Optional[str] = None
