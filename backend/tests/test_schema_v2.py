@@ -65,7 +65,7 @@ from modules.generation.schemas import (
 from modules.generation.llm.deepseek import DeepseekProvider
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
-from modules.generation.question import _build_retry_prompt, _check_type_format
+from modules.generation.question import _build_retry_prompt, _check_type_format, _normalize_difficulty
 from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionResponse,
@@ -4674,10 +4674,12 @@ class SchemaV2Tests(unittest.TestCase):
             question_code="Q-507F1F77BCF86CD799439011",
             current_version=1,
             current_version_id="507f1f77bcf86cd799439012",
+            difficulty="trung_binh",
         )
 
         self.assertEqual(question.question_id, "507f1f77bcf86cd799439011")
         self.assertEqual(question.current_version, 1)
+        self.assertEqual(question.difficulty, "trung_binh")
 
     def test_generation_plan_summary_reports_shortfall(self):
         summary = GenerationPlanSummary(
@@ -4795,6 +4797,58 @@ class SchemaV2Tests(unittest.TestCase):
 
         self.assertIn("QUESTION_STRUCTURE", output_format)
         self.assertIn('"options": "object hoặc null theo QUESTION_STRUCTURE"', output_format)
+        self.assertIn('"difficulty": "de | trung_binh | kho"', output_format)
+
+    def test_difficulty_rule_is_loaded_into_generation_prompt(self):
+        prompt = PromptBuilder().build(
+            context="Stack hoạt động theo nguyên tắc LIFO.",
+            bloom_level="2_hieu",
+            question_type="trac_nghiem",
+            num_questions=1,
+        )
+
+        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("de", prompt)
+        self.assertIn("trung_binh", prompt)
+        self.assertIn("kho", prompt)
+        self.assertIn("KEYWORD TRONG CÂU HỎI", prompt)
+
+    def test_normalize_difficulty_accepts_known_labels(self):
+        self.assertEqual(_normalize_difficulty("de"), "de")
+        self.assertEqual(_normalize_difficulty("Khó"), "kho")
+        self.assertEqual(_normalize_difficulty("trung bình"), "trung_binh")
+        self.assertIsNone(_normalize_difficulty("siêu khó"))
+        self.assertIsNone(_normalize_difficulty(None))
+
+    def test_evaluation_prompt_includes_difficulty_rule(self):
+        service = QuestionWorkflowService(database=None)
+        prompt, snapshot, _ = service._build_evaluation_prompt(
+            {"question_code": "Q-1", "_id": ObjectId()},
+            {
+                "_id": ObjectId(),
+                "document_id": None,
+                "content": "Nguyên tắc hoạt động của stack là gì?",
+                "question_data": {
+                    "options": {"A": "FIFO", "B": "LIFO", "C": "Random", "D": "Hash"},
+                    "correct_answer": "B",
+                    "explanation": "Stack theo LIFO.",
+                },
+                "classification": {
+                    "assessment_type": "TRAC_NGHIEM",
+                    "bloom": {"level": 1, "name": "Nhớ"},
+                    "difficulty": "de",
+                },
+                "clos": [],
+                "sources": [],
+            },
+        )
+
+        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("current_difficulty", prompt)
+        self.assertIn('"de"', prompt)
+        self.assertTrue(
+            any(part.get("template_key") == "quy_dinh_do_kho" for part in snapshot["template_parts"])
+        )
 
     def test_question_rule_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(

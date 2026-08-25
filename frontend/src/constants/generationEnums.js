@@ -37,3 +37,18 @@ export function questionTypeLabel(backendValue) {
 export function bloomLevelLabel(backendValue) {
   return bloomByBackend[backendValue]?.label || backendValue;
 }
+
+export const DIFFICULTIES = [
+  { id: 'de', label: 'Dễ', backend: 'de' },
+  { id: 'trung_binh', label: 'Trung bình', backend: 'trung_binh' },
+  { id: 'kho', label: 'Khó', backend: 'kho' },
+];
+
+const difficultyByValue = Object.fromEntries(
+  DIFFICULTIES.flatMap((item) => [[item.id, item], [item.backend, item]]),
+);
+
+export function difficultyLabel(value) {
+  if (!value) return '';
+  return difficultyByValue[String(value).trim()]?.label || '';
+}

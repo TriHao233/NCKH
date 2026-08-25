@@ -22,7 +22,7 @@ import {
 import { listSubjects } from '../api/catalog';
 import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
-import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import {
   DEFAULT_REVIEW_COMMENT_TEMPLATES,
   encodeSavedReviewTemplates,
@@ -1465,6 +1465,9 @@ function ReviewQueuePage() {
                       <span>{question.question_code}</span>
                       <span>{questionTypeLabel(assessmentType(question))}</span>
                       <span>{question.classification?.bloom?.name || 'Bloom --'}</span>
+                      <span className={`difficulty-tag ${question.classification?.difficulty ? `difficulty-tag--${question.classification.difficulty}` : 'difficulty-tag--empty'}`}>
+                        {difficultyLabel(question.classification?.difficulty) || 'Chưa gán độ khó'}
+                      </span>
                       <span>{subjectLabelForQuestion(question)}</span>
                       {question.submitted_by_user_id && (
                         <span>Gửi: {submitterLabelForQuestion(question)}</span>
@@ -1550,6 +1553,10 @@ function ReviewQueuePage() {
                 <div>
                   <span>Môn học</span>
                   <b>{subjectLabelForQuestion(selected)}</b>
+                </div>
+                <div>
+                  <span>Độ khó</span>
+                  <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b>
                 </div>
                 <div>
                   <span>Gửi duyệt lúc</span>
@@ -1673,6 +1680,11 @@ function ReviewQueuePage() {
                       </span>
                       <span>Bộ tiêu chí: <b>{latestEvaluation?.policy?.name || '--'}</b></span>
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
+                      {latestEvidence.assessed_difficulty ? (
+                        <span>
+                          Độ khó AI: <b>{difficultyLabel(latestEvidence.assessed_difficulty)}</b>
+                        </span>
+                      ) : null}
                     </div>
                     {!latestEvaluation && (
                       <p className="evaluation-note">

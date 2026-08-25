@@ -7,7 +7,7 @@ from bson.objectid import ObjectId
 from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database
 from modules.documents.repository import object_id
-from modules.questions.schemas import QuestionCreateRequest
+from modules.questions.schemas import QuestionCreateRequest, QuestionDifficulty
 from modules.questions.service import get_question_service
 
 BLOOM_TO_LEVEL = {
@@ -159,12 +159,17 @@ def save_generated_questions(
     service = get_question_service()
     run_oid = object_id(generation_run_id, "generation_run_id")
     saved_questions = []
+    allowed_difficulties = {item.value for item in QuestionDifficulty}
     for question in questions:
+        difficulty = question.get("difficulty")
+        if difficulty not in allowed_difficulties:
+            difficulty = None
         saved_question = service.create(
             QuestionCreateRequest(
                 content=question["question"],
                 question_type=question["question_type"],
                 bloom_level=BLOOM_TO_LEVEL.get(question["bloom_level"]),
+                difficulty=difficulty,
                 question_data={
                     "options": question.get("options"),
                     "correct_answer": question.get("correct_answer"),

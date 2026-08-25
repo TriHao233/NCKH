@@ -7,6 +7,7 @@ NGUYÊN TẮC
 - Không tự thêm kiến thức ngoài nguồn nếu câu hỏi yêu cầu bám sát tài liệu.
 - Nếu thiếu dữ liệu nguồn hoặc CLO, ghi nhận đúng mức độ rủi ro; không phóng đại thành lỗi nghiêm trọng khi câu hỏi vẫn tự thân rõ và đúng.
 - Phản hồi cho người dùng phải viết bằng tiếng Việt, ngắn gọn và có hành động sửa cụ thể.
+- Đọc quy định độ khó kèm theo. Ghi assessed_difficulty trong evidence bằng de, trung_binh hoặc kho. Độ khó là phân loại, không dùng để APPROVE/REJECT.
 
 QUY TẮC KẾT LUẬN
 - APPROVE: câu hỏi đúng, rõ, kiểm tra được; overall ước lượng khoảng 0.65 trở lên và không có lỗi nghiêm trọng.

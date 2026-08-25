@@ -22,6 +22,19 @@ from modules.generation.mongodb import (
 
 logger = logging.getLogger(__name__)
 MAX_FORMAT_RETRY_ATTEMPTS = 1
+VALID_DIFFICULTIES = {"de", "trung_binh", "kho"}
+DIFFICULTY_ALIASES = {
+    "de": "de",
+    "dễ": "de",
+    "easy": "de",
+    "trung_binh": "trung_binh",
+    "trung binh": "trung_binh",
+    "trung bình": "trung_binh",
+    "medium": "trung_binh",
+    "kho": "kho",
+    "khó": "kho",
+    "hard": "kho",
+}
 
 QUESTION_TYPE_RETRY_RULES = {
     "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
@@ -349,7 +362,7 @@ DO NOT DUPLICATE THESE ACCEPTED/PREVIOUS QUESTIONS:
 {avoid_list}
 
 Return ONLY the same raw JSON object shape:
-{{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "source_context": "..."}}]}}
+{{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "difficulty": "de|trung_binh|kho", "source_context": "..."}}]}}
 """
 
 
@@ -452,6 +465,17 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
     return None
 
 
+def _normalize_difficulty(value) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("-", "_")
+    normalized = re.sub(r"\s+", " ", normalized)
+    mapped = DIFFICULTY_ALIASES.get(normalized) or DIFFICULTY_ALIASES.get(normalized.replace(" ", "_"))
+    if mapped in VALID_DIFFICULTIES:
+        return mapped
+    return None
+
+
 def _validate_and_format(
     questions: list,
     *,
@@ -469,10 +493,16 @@ def _validate_and_format(
             validation_errors.append(error)
             continue
 
+        raw_difficulty = item.get("difficulty")
+        difficulty = _normalize_difficulty(raw_difficulty)
+        if raw_difficulty not in (None, "") and difficulty is None:
+            logger.warning("Bỏ qua difficulty không hợp lệ: %s", raw_difficulty)
+
         # Cập nhật metadata đảm bảo nhất quán
         item.update({
             "question_type": question_type,
-            "bloom_level": bloom_level
+            "bloom_level": bloom_level,
+            "difficulty": difficulty,
         })
         try:
             formatted.append(GeneratedQuestion(**item))

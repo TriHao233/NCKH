@@ -21,7 +21,8 @@ Chỉ trả về MỘT object JSON thô. Không dùng markdown, không giải th
     "criteria": ["Tiêu chí đã dùng"],
     "risks": ["Rủi ro thực tế nếu có"],
     "moodle_readiness": "READY | NEEDS_FIX",
-    "answer_diagnostics": "Nhận xét về đáp án, độ mơ hồ, phương án nhiễu và giải thích"
+    "answer_diagnostics": "Nhận xét về đáp án, độ mơ hồ, phương án nhiễu và giải thích",
+    "assessed_difficulty": "de | trung_binh | kho"
   }}
 }}
 

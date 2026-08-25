@@ -334,6 +334,11 @@
   padding: 3px 8px;
 }
 
+.review-row__meta .difficulty-tag--de { background: #E8FFF0; color: #15803D; }
+.review-row__meta .difficulty-tag--trung_binh { background: #FFF4E0; color: #B36500; }
+.review-row__meta .difficulty-tag--kho { background: #FEECEC; color: #B42318; }
+.review-row__meta .difficulty-tag--empty { background: #F3F6FA; color: #5c6f89; }
+
 .review-row__meta .review-clo-chip {
   background: #e8fff0;
   color: #15803d;

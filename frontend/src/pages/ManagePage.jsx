@@ -47,7 +47,7 @@ import {
 } from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
-import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
   SINGLE_CHOICE_TYPES,
@@ -359,6 +359,11 @@ function versionDiffRows(left, right) {
       label: 'Bloom',
       before: leftClassification.bloom?.name || leftClassification.bloom?.level,
       after: rightClassification.bloom?.name || rightClassification.bloom?.level,
+    },
+    {
+      label: 'Độ khó',
+      before: leftClassification.difficulty,
+      after: rightClassification.difficulty,
     },
     {
       label: 'CLO',
@@ -2250,6 +2255,9 @@ function ManagePage() {
                           <span className="q-id">{item.question_code}</span>
                           <span className="q-tag">{questionTypeLabel((item.classification?.assessment_type || '').toLowerCase())}</span>
                           <span className="bloom-tag">{item.classification?.bloom?.name || '—'}</span>
+                          <span className={`difficulty-tag ${item.classification?.difficulty ? `difficulty-tag--${item.classification.difficulty}` : 'difficulty-tag--empty'}`}>
+                            {difficultyLabel(item.classification?.difficulty) || 'Chưa gán độ khó'}
+                          </span>
                           {(item.clos || []).slice(0, 2).map((clo) => (
                             <span className="clo-tag" key={refId(clo.id || clo)}>
                               {clo.code || clo.clo_code || 'CLO'}
@@ -2909,6 +2917,9 @@ function ManagePage() {
               <span className="q-id">{viewingQuestion.question_code}</span>
               <span className="q-tag">{questionTypeLabel((viewingQuestion.classification?.assessment_type || '').toLowerCase())}</span>
               <span className="bloom-tag">{viewingQuestion.classification?.bloom?.name || '—'}</span>
+              <span className={`difficulty-tag ${viewingQuestion.classification?.difficulty ? `difficulty-tag--${viewingQuestion.classification.difficulty}` : 'difficulty-tag--empty'}`}>
+                {difficultyLabel(viewingQuestion.classification?.difficulty) || 'Chưa gán độ khó'}
+              </span>
               <span className={`status-badge ${REVIEW_STATUS_CLASS[viewingQuestion.review_status] || ''}`}>
                 {REVIEW_STATUS_LABEL[viewingQuestion.review_status] || viewingQuestion.review_status}
               </span>

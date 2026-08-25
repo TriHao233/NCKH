@@ -1,4 +1,4 @@
-import { bloomLevelLabel, questionTypeLabel } from '../constants/generationEnums';
+import { bloomLevelLabel, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 
 export function formatChoices(options, correctAnswer) {
   const correctValues = String(correctAnswer || '')
@@ -46,6 +46,8 @@ export function mapGeneratedQuestions(questions = []) {
     bloomLevel: question.bloom_level,
     type: questionTypeLabel(question.question_type),
     bloom: bloomLevelLabel(question.bloom_level),
+    difficulty: question.difficulty || null,
+    difficultyLabel: difficultyLabel(question.difficulty),
     text: question.question,
     rawOptions: question.options,
     correctAnswer: question.correct_answer,

@@ -12,6 +12,7 @@ import {
   BLOOM_LEVELS,
   QUESTION_TYPES,
   bloomLevelLabel,
+  difficultyLabel,
   questionTypeLabel,
   toBackendBloomLevel,
   toBackendQuestionType,
@@ -1481,6 +1482,11 @@ function GeneratePage() {
                       <div className="draft-item-meta">
                         <span className="q-tag">{question.type}</span>
                         <span className="bloom-tag">{question.bloom}</span>
+                        {question.difficultyLabel ? (
+                          <span className={`difficulty-tag difficulty-tag--${question.difficulty}`}>
+                            {question.difficultyLabel}
+                          </span>
+                        ) : null}
                         <span className="draft-status" title={question.questionCode}>
                           {shortCode(question.questionCode)} · Phiên bản {question.currentVersion || 1} · {reviewStatusLabel}
                         </span>
