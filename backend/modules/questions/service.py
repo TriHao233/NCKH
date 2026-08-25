@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bson import ObjectId
@@ -231,10 +231,10 @@ class QuestionService:
         self,
         subject_id: str | ObjectId | None,
         chapter_id: str | ObjectId | None,
-    ) -> None:
+    ) -> dict | None:
         subject = self._validate_subject(subject_id)
         if chapter_id is None:
-            return
+            return subject
         if subject is None:
             raise ValueError("Chương phải thuộc một học phần")
         chapter_oid = object_id(chapter_id, "chapter_id")
@@ -245,15 +245,19 @@ class QuestionService:
         }
         if chapter_oid not in chapter_ids:
             raise ValueError("Chương không thuộc học phần đã chọn")
+        return subject
 
     def _clo_snapshots(
         self,
         subject_id: str | ObjectId | None,
         clo_ids: list[str] | None,
+        *,
+        subject: dict | None = None,
     ) -> list[dict]:
         if not clo_ids:
             return []
-        subject = self._validate_subject(subject_id)
+        if subject is None:
+            subject = self._validate_subject(subject_id)
         if subject is None:
             raise ValueError("CLO phải thuộc một học phần")
         requested = {object_id(clo_id, "clo_id") for clo_id in clo_ids}
@@ -292,18 +296,25 @@ class QuestionService:
         ):
             raise ValueError("Chunk nguồn không thuộc phiên xử lý hiện hành của tài liệu")
 
-    @staticmethod
     def _classification(
+        self,
         *,
         question_type: str,
         bloom_level: int | None,
-        subject_id: str | None,
-        chapter_id: str | None,
+        subject_id: str | ObjectId | None,
+        chapter_id: str | ObjectId | None,
         difficulty: str | None = None,
+        subject: dict | None = None,
     ) -> dict:
         bloom_code, bloom_name = BLOOM_LEVELS.get(bloom_level, ("", ""))
+        if subject is None and subject_id is not None:
+            subject = self._validate_subject(subject_id)
         return {
-            "subject": {"id": object_id(subject_id, "subject_id") if subject_id else None},
+            "subject": {
+                "id": subject.get("_id") if subject else None,
+                "code": subject.get("subject_code", "") if subject else "",
+                "name": subject.get("subject_name", "") if subject else "",
+            },
             "chapter": {"id": object_id(chapter_id, "chapter_id") if chapter_id else None},
             "assessment_type": question_type.upper(),
             "bloom": {
@@ -312,6 +323,47 @@ class QuestionService:
                 "name": bloom_name,
             },
             "difficulty": difficulty,
+        }
+
+    @staticmethod
+    def _review_submission(
+        current_user: CurrentUser | None,
+        version: dict,
+        submitted_at,
+        fallback_user_id: ObjectId | None = None,
+    ) -> dict:
+        user_id = current_user.id if current_user else fallback_user_id
+        subject = ((version.get("classification") or {}).get("subject") or {})
+        subject_id = subject.get("id") if isinstance(subject, dict) else subject
+        subject_code = (
+            subject.get("code") or subject.get("subject_code") or ""
+            if isinstance(subject, dict)
+            else ""
+        )
+        subject_name = (
+            subject.get("name") or subject.get("subject_name") or ""
+            if isinstance(subject, dict)
+            else ""
+        )
+        submitter_email = current_user.email if current_user else ""
+        submitter_name = (
+            current_user.display_name or submitter_email if current_user else ""
+        )
+        subject_snapshot = {
+            "id": subject_id,
+            "code": subject_code,
+            "name": subject_name,
+        }
+        return {
+            "submitted_by_user_id": user_id,
+            "submitted_by": {
+                "id": user_id,
+                "email": submitter_email,
+                "display_name": submitter_name,
+            },
+            "submitted_at": submitted_at,
+            "subject_id": subject_id,
+            "subject": subject_snapshot,
         }
 
     def create(
@@ -374,15 +426,20 @@ class QuestionService:
             raise ValueError("Chương câu hỏi không khớp với tài liệu nguồn")
         subject_id = document_subject_id or payload.subject_id
         chapter_id = document_chapter_id or payload.chapter_id
-        self._validate_classification_refs(subject_id, chapter_id)
+        validated_subject = self._validate_classification_refs(subject_id, chapter_id)
         classification = self._classification(
             question_type=payload.question_type,
             bloom_level=payload.bloom_level,
             subject_id=subject_id,
             chapter_id=chapter_id,
             difficulty=payload.difficulty.value if payload.difficulty else None,
+            subject=validated_subject,
         )
-        clos = self._clo_snapshots(subject_id, payload.clo_ids)
+        clos = self._clo_snapshots(
+            subject_id,
+            payload.clo_ids,
+            subject=validated_subject,
+        )
         content_hash = stable_hash(
             {
                 "content": payload.content,
@@ -391,6 +448,16 @@ class QuestionService:
                 "clos": clos,
                 "sources": sources,
             }
+        )
+        review_submission = (
+            self._review_submission(
+                current_user,
+                {"classification": classification},
+                now,
+                fallback_user_id=created_by_user_id,
+            )
+            if initial_review_status == "PENDING"
+            else {}
         )
         aggregate = {
             "_id": question_id,
@@ -419,6 +486,8 @@ class QuestionService:
             "secondary_review": {},
             "latest_review_id": None,
             "created_by_user_id": created_by_user_id,
+            "subject_id": classification["subject"].get("id"),
+            "review_submission": review_submission,
             "created_at": now,
             "updated_at": now,
             "archived_at": None,
@@ -507,6 +576,8 @@ class QuestionService:
             "secondary_review": {},
             "latest_review_id": None,
             "created_by_user_id": current_user.id,
+            "subject_id": (classification.get("subject") or {}).get("id"),
+            "review_submission": {},
             "created_at": now,
             "updated_at": now,
             "archived_at": None,
@@ -557,8 +628,25 @@ class QuestionService:
         creator_user_id: str | None = None,
         waiting_hours_min: float | None = None,
         overdue_only: bool = False,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        submitted_from: datetime | None = None,
+        submitted_to: datetime | None = None,
+        include_status_counts: bool = False,
         current_user: CurrentUser | None = None,
     ) -> dict:
+        if created_from and created_from.tzinfo is None:
+            created_from = created_from.replace(tzinfo=timezone.utc)
+        if created_to and created_to.tzinfo is None:
+            created_to = created_to.replace(tzinfo=timezone.utc)
+        if created_from and created_to and created_from > created_to:
+            raise ValueError("created_from phải trước hoặc bằng created_to")
+        if submitted_from and submitted_from.tzinfo is None:
+            submitted_from = submitted_from.replace(tzinfo=timezone.utc)
+        if submitted_to and submitted_to.tzinfo is None:
+            submitted_to = submitted_to.replace(tzinfo=timezone.utc)
+        if submitted_from and submitted_to and submitted_from > submitted_to:
+            raise ValueError("submitted_from phải trước hoặc bằng submitted_to")
         owner_user_id = (
             current_user.id
             if current_user
@@ -583,7 +671,7 @@ class QuestionService:
             waiting_since = utc_now() - timedelta(hours=waiting_hours_min)
         overdue_at = utc_now() if overdue_only else None
 
-        pairs, total = self.repository.list(
+        list_result = self.repository.list(
             page,
             page_size,
             review_status,
@@ -605,12 +693,23 @@ class QuestionService:
             visible_to_user_id=owner_user_id,
             waiting_since=waiting_since,
             overdue_at=overdue_at,
+            created_from=created_from,
+            created_to=created_to,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+            include_status_counts=include_status_counts,
         )
+        if len(list_result) == 3:
+            pairs, total, status_counts = list_result
+        else:
+            pairs, total = list_result
+            status_counts = {}
         return {
             "items": [serialize_question(question, version) for question, version in pairs],
             "total": total,
             "page": page,
             "page_size": page_size,
+            "status_counts": status_counts,
         }
 
     def versions(
@@ -831,6 +930,7 @@ class QuestionService:
             )
         _, current = pair
         classification = current["classification"]
+        validated_subject = None
         if any(
             value is not None
             for value in (
@@ -871,7 +971,10 @@ class QuestionService:
                     raise ValueError(
                         "Chương câu hỏi không khớp với tài liệu nguồn"
                     )
-            self._validate_classification_refs(next_subject_id, next_chapter_id)
+            validated_subject = self._validate_classification_refs(
+                next_subject_id,
+                next_chapter_id,
+            )
             classification = self._classification(
                 question_type=payload.question_type or classification["assessment_type"],
                 bloom_level=(
@@ -894,6 +997,7 @@ class QuestionService:
                     if payload.difficulty is not None
                     else classification.get("difficulty")
                 ),
+                subject=validated_subject,
             )
         content = payload.content or current["content"]
         question_data = (
@@ -905,6 +1009,7 @@ class QuestionService:
             clos = self._clo_snapshots(
                 classification["subject"].get("id"),
                 payload.clo_ids,
+                subject=validated_subject,
             )
         elif payload.subject_id is not None:
             clos = []
@@ -944,13 +1049,17 @@ class QuestionService:
                 raise ValueError("Chương câu hỏi không khớp với tài liệu nguồn")
             next_subject_id = source_subject_id or current_subject_id
             next_chapter_id = source_chapter_id or current_chapter_id
-            self._validate_classification_refs(next_subject_id, next_chapter_id)
+            validated_subject = self._validate_classification_refs(
+                next_subject_id,
+                next_chapter_id,
+            )
             classification = self._classification(
                 question_type=classification["assessment_type"],
                 bloom_level=classification["bloom"]["level"],
                 subject_id=next_subject_id,
                 chapter_id=next_chapter_id,
                 difficulty=classification.get("difficulty"),
+                subject=validated_subject,
             )
         if payload.source_chunk_ids is not None or payload.chunk_id is not None:
             document = self._document(resolved_document_id)
@@ -970,22 +1079,30 @@ class QuestionService:
                 "sources": sources,
             }
         )
+        version_created_at = utc_now()
+        next_version = {
+            "origin": "MANUAL",
+            "created_by_user_id": created_by_user_id,
+            "document_id": resolved_document_id,
+            "classification": classification,
+            "clos": clos,
+            "content": content,
+            "question_data": question_data,
+            "sources": sources,
+            "content_hash": content_hash,
+            "change_note": payload.change_note,
+            "created_at": version_created_at,
+        }
         updated = self.repository.create_version(
             question_id,
             payload.expected_version,
-            {
-                "origin": "MANUAL",
-                "created_by_user_id": created_by_user_id,
-                "document_id": resolved_document_id,
-                "classification": classification,
-                "clos": clos,
-                "content": content,
-                "question_data": question_data,
-                "sources": sources,
-                "content_hash": content_hash,
-                "change_note": payload.change_note,
-                "created_at": utc_now(),
-            },
+            next_version,
+            review_submission=self._review_submission(
+                actor,
+                next_version,
+                version_created_at,
+                fallback_user_id=created_by_user_id,
+            ),
         )
         return serialize_question(*updated) if updated else None
 
@@ -1043,13 +1160,33 @@ class QuestionService:
         if review_status not in SUBMITTABLE_REVIEW_STATUSES:
             raise ValueError("Chỉ câu hỏi nháp hoặc cần sửa mới được gửi duyệt")
 
+        submission = self._review_submission(
+            current_user,
+            version,
+            utc_now(),
+            fallback_user_id=question.get("created_by_user_id"),
+        )
         updated = self.repository.update_review_status(
             question_id,
             SUBMITTABLE_REVIEW_STATUSES,
             "PENDING",
+            review_submission=submission,
         )
         if not updated:
             raise RuntimeError("VERSION_CONFLICT")
+        record_audit_event(
+            action="question.submit_review",
+            entity_type="question",
+            entity_id=question["_id"],
+            actor_user_id=current_user.id if current_user else None,
+            actor_role=current_user.role if current_user else None,
+            before={"review_status": review_status},
+            after={"review_status": "PENDING"},
+            metadata={
+                "version_id": str(version["_id"]),
+                "review_submission": json_safe(submission),
+            },
+        )
         return serialize_question(*updated)
 
     def archive(

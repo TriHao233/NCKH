@@ -481,6 +481,8 @@ function ManagePage() {
   const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
 
   const [questions, setQuestions] = useState([]);
+  const [questionTotal, setQuestionTotal] = useState(0);
+  const [questionStatusCounts, setQuestionStatusCounts] = useState({});
   const [questionsLoading, setQuestionsLoading] = useState(true);
   const [questionsError, setQuestionsError] = useState('');
 
@@ -511,6 +513,8 @@ function ManagePage() {
   const [difficultyFilter, setDifficultyFilter] = useState('all-difficulties');
   const [evaluationFilter, setEvaluationFilter] = useState('all-evaluations');
   const [publicationFilter, setPublicationFilter] = useState('all-publications');
+  const [createdFromFilter, setCreatedFromFilter] = useState('');
+  const [createdToFilter, setCreatedToFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [savedQuestionFilters, setSavedQuestionFilters] = useState([]);
@@ -599,6 +603,8 @@ function ManagePage() {
     difficultyFilter,
     evaluationFilter,
     publicationFilter,
+    createdFromFilter,
+    createdToFilter,
     searchInput,
   }), [
     statusFilter,
@@ -611,6 +617,8 @@ function ManagePage() {
     difficultyFilter,
     evaluationFilter,
     publicationFilter,
+    createdFromFilter,
+    createdToFilter,
     searchInput,
   ]);
 
@@ -626,6 +634,8 @@ function ManagePage() {
     setDifficultyFilter(next.difficultyFilter);
     setEvaluationFilter(next.evaluationFilter);
     setPublicationFilter(next.publicationFilter);
+    setCreatedFromFilter(next.createdFromFilter);
+    setCreatedToFilter(next.createdToFilter);
     setSearchInput(next.searchInput);
     setSearchTerm(next.searchInput.trim());
     setSelectedSavedFilterId(selectId);
@@ -700,30 +710,48 @@ function ManagePage() {
     if (user) loadTeacherOptions();
   }, [user?.id]);
 
+  const questionListRequest = ({ page, pageSize, search, includeStatusCounts = false }) => ({
+    page,
+    pageSize,
+    search: search || undefined,
+    reviewStatus: statusFilter !== 'all' ? statusFilter : undefined,
+    questionType: typeFilter !== 'all-type' ? typeFilter : undefined,
+    bloomLevel: bloomFilter !== 'all-bloom' ? bloomFilter : undefined,
+    documentId: documentFilter !== 'all-documents' ? documentFilter : undefined,
+    subjectId: subjectFilter !== 'all-subjects' ? subjectFilter : undefined,
+    chapterId: chapterFilter !== 'all-chapters' ? chapterFilter : undefined,
+    cloId: cloFilter !== 'all-clos' ? cloFilter : undefined,
+    difficulty: difficultyFilter !== 'all-difficulties' ? difficultyFilter : undefined,
+    evaluationStatus: evaluationFilter !== 'all-evaluations' ? evaluationFilter : undefined,
+    publicationStatus: publicationFilter !== 'all-publications' ? publicationFilter : undefined,
+    createdFrom: createdFromFilter || undefined,
+    createdTo: createdToFilter || undefined,
+    includeStatusCounts,
+  });
+
   const fetchQuestions = async (search) => {
     setQuestionsLoading(true);
     setQuestionsError('');
     try {
-      const result = await listQuestions({
-        page: 1,
-        pageSize: 100,
-        search: search || undefined,
-        reviewStatus: statusFilter !== 'all' ? statusFilter : undefined,
-        questionType: typeFilter !== 'all-type' ? typeFilter : undefined,
-        bloomLevel: bloomFilter !== 'all-bloom' ? bloomFilter : undefined,
-        documentId: documentFilter !== 'all-documents' ? documentFilter : undefined,
-        subjectId: subjectFilter !== 'all-subjects' ? subjectFilter : undefined,
-        chapterId: chapterFilter !== 'all-chapters' ? chapterFilter : undefined,
-        cloId: cloFilter !== 'all-clos' ? cloFilter : undefined,
-        difficulty: difficultyFilter !== 'all-difficulties' ? difficultyFilter : undefined,
-        evaluationStatus: evaluationFilter !== 'all-evaluations' ? evaluationFilter : undefined,
-        publicationStatus: publicationFilter !== 'all-publications' ? publicationFilter : undefined,
-      });
+      const result = await listQuestions(questionListRequest({
+        page: questionPage + 1,
+        pageSize: QUESTIONS_PER_PAGE,
+        search,
+        includeStatusCounts: true,
+      }));
       const items = result.items || [];
       setQuestions(items);
+      setQuestionTotal(result.total || 0);
+      setQuestionStatusCounts(result.status_counts || {});
+      if (items.length === 0 && result.total > 0 && questionPage > 0) {
+        setQuestionPage(Math.max(0, Math.ceil(result.total / QUESTIONS_PER_PAGE) - 1));
+      }
       return items;
     } catch (error) {
       setQuestionsError(error.message || 'Không tải được danh sách câu hỏi');
+      setQuestions([]);
+      setQuestionTotal(0);
+      setQuestionStatusCounts({});
       return [];
     } finally {
       setQuestionsLoading(false);
@@ -796,6 +824,7 @@ function ManagePage() {
     fetchQuestions(searchTerm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    questionPage,
     searchTerm,
     statusFilter,
     typeFilter,
@@ -807,6 +836,8 @@ function ManagePage() {
     difficultyFilter,
     evaluationFilter,
     publicationFilter,
+    createdFromFilter,
+    createdToFilter,
   ]);
 
   useEffect(() => {
@@ -823,6 +854,8 @@ function ManagePage() {
     difficultyFilter,
     evaluationFilter,
     publicationFilter,
+    createdFromFilter,
+    createdToFilter,
   ]);
 
   useEffect(() => {
@@ -870,26 +903,15 @@ function ManagePage() {
   }, [location.search, questions, openedDeepLinkId]);
 
   const counts = useMemo(() => ({
-    all: questions.length,
-    DRAFT: questions.filter((q) => q.review_status === 'DRAFT').length,
-    APPROVED: questions.filter((q) => q.review_status === 'APPROVED').length,
-    PENDING: questions.filter((q) => q.review_status === 'PENDING').length,
-    NEEDS_REVISION: questions.filter((q) => q.review_status === 'NEEDS_REVISION').length,
-    REJECTED: questions.filter((q) => q.review_status === 'REJECTED').length,
-  }), [questions]);
+    all: Object.values(questionStatusCounts).reduce((sum, count) => sum + Number(count || 0), 0),
+    DRAFT: questionStatusCounts.DRAFT || 0,
+    APPROVED: questionStatusCounts.APPROVED || 0,
+    PENDING: questionStatusCounts.PENDING || 0,
+    NEEDS_REVISION: questionStatusCounts.NEEDS_REVISION || 0,
+    REJECTED: questionStatusCounts.REJECTED || 0,
+  }), [questionStatusCounts]);
 
-  const filtered = useMemo(() => {
-    return questions.filter((q) => {
-      if (statusFilter !== 'all' && q.review_status !== statusFilter) return false;
-      if (typeFilter !== 'all-type') {
-        const assessmentType = questionAssessmentType(q);
-        if (assessmentType !== typeFilter) return false;
-      }
-      if (documentFilter !== 'all-documents' && questionDocumentId(q) !== documentFilter) return false;
-      if (bloomFilter !== 'all-bloom' && questionBloomLevel(q) !== bloomFilter) return false;
-      return true;
-    });
-  }, [questions, statusFilter, typeFilter, documentFilter, bloomFilter]);
+  const filtered = questions;
 
   // Đếm số bộ lọc đang khác mặc định để hiển thị badge trên nút "Bộ lọc".
   const activeFilterCount = [
@@ -902,6 +924,8 @@ function ManagePage() {
     [difficultyFilter, 'all-difficulties'],
     [evaluationFilter, 'all-evaluations'],
     [publicationFilter, 'all-publications'],
+    [createdFromFilter, ''],
+    [createdToFilter, ''],
   ].filter(([value, fallback]) => value !== fallback).length;
 
   const approvedForPublication = questions.filter((q) => (
@@ -914,6 +938,31 @@ function ManagePage() {
     return items;
   }, [subjects]);
 
+  const teacherById = useMemo(() => {
+    const items = new Map();
+    teacherOptions.forEach((teacher) => items.set(refId(teacher), teacher));
+    return items;
+  }, [teacherOptions]);
+
+  const subjectLabelForQuestion = (question) => {
+    const snapshot = question?.subject || question?.review_submission?.subject;
+    if (snapshot?.name || snapshot?.subject_name) {
+      return snapshot.name || snapshot.subject_name;
+    }
+    const subject = subjectById.get(refId(question.subject_id) || questionSubjectId(question));
+    return subject?.subject_name || subject?.name || subject?.title || '';
+  };
+
+  const submitterLabelForQuestion = (question) => {
+    const submitterId = refId(question.submitted_by_user_id);
+    const snapshot = question?.review_submission?.submitted_by;
+    if (snapshot?.display_name || snapshot?.email) {
+      return snapshot.display_name || snapshot.email;
+    }
+    const submitter = teacherById.get(submitterId);
+    return submitter?.display_name || submitter?.email || submitterId;
+  };
+
   const selectedFilterSubject = subjectFilter !== 'all-subjects'
     ? subjectById.get(subjectFilter)
     : null;
@@ -925,8 +974,8 @@ function ManagePage() {
     bloomLevels: BLOOM_LEVELS,
   }), [filtered, selectedFilterSubject]);
   const coverageScopeLabel = selectedFilterSubject
-    ? selectedFilterSubject.subject_name || selectedFilterSubject.name || selectedFilterSubject.title || refId(selectedFilterSubject)
-    : 'Tất cả môn đang lọc';
+    ? `Trang hiện tại · ${selectedFilterSubject.subject_name || selectedFilterSubject.name || selectedFilterSubject.title || refId(selectedFilterSubject)}`
+    : 'Trang kết quả hiện tại';
   const coverageSections = [
     { key: 'bloom', label: 'Bloom', rows: questionCoverage.bloom, gapCount: questionCoverage.gaps.bloom },
     { key: 'chapters', label: 'Chương', rows: questionCoverage.chapters, gapCount: questionCoverage.gaps.chapters },
@@ -943,12 +992,18 @@ function ManagePage() {
   const filteredQuestionIds = useMemo(() => filtered.map((question) => question.id), [filtered]);
   const allFilteredSelected = filteredQuestionIds.length > 0
     && filteredQuestionIds.every((questionId) => selectedQuestionIds.includes(questionId));
-  const questionPageCount = Math.max(1, Math.ceil(filtered.length / QUESTIONS_PER_PAGE));
+  const questionPageCount = Math.max(1, Math.ceil(questionTotal / QUESTIONS_PER_PAGE));
   const safeQuestionPage = Math.min(questionPage, questionPageCount - 1);
-  const visibleQuestions = filtered.slice(
-    safeQuestionPage * QUESTIONS_PER_PAGE,
-    safeQuestionPage * QUESTIONS_PER_PAGE + QUESTIONS_PER_PAGE,
-  );
+  const visibleQuestions = filtered;
+  const questionPageNumbers = useMemo(() => {
+    const windowSize = 5;
+    const start = Math.max(
+      0,
+      Math.min(safeQuestionPage - Math.floor(windowSize / 2), questionPageCount - windowSize),
+    );
+    const count = Math.min(windowSize, questionPageCount);
+    return Array.from({ length: count }, (_, offset) => start + offset);
+  }, [questionPageCount, safeQuestionPage]);
 
   useEffect(() => {
     setQuestionPage((current) => Math.min(current, questionPageCount - 1));
@@ -957,10 +1012,9 @@ function ManagePage() {
   const selectedSubjectIds = Array.from(new Set(selectedQuestions.map(questionSubjectId).filter(Boolean)));
   const bulkCloSubject = selectedSubjectIds.length === 1 ? subjectById.get(selectedSubjectIds[0]) : null;
   const bulkLearningOutcomes = (bulkCloSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
-  const exportableQuestions = selectedQuestions.length > 0 ? selectedQuestions : filtered;
   const exportScopeLabel = selectedQuestions.length > 0
     ? `${selectedQuestions.length} đã chọn`
-    : `${filtered.length} đang lọc`;
+    : `${questionTotal} đang lọc`;
 
   const handleSubjectFilterChange = (value) => {
     setSubjectFilter(value);
@@ -1280,38 +1334,64 @@ function ManagePage() {
     }
   };
 
-  const handleQuestionBankExport = () => {
-    if (exportableQuestions.length === 0) {
+  const handleQuestionBankExport = async () => {
+    if (selectedQuestions.length === 0 && questionTotal === 0) {
       alert('Không có câu hỏi nào để xuất.');
       return;
     }
-    const prefix = selectedQuestions.length > 0 ? 'question-bank-selected' : 'question-bank-filtered';
-    if (questionExportFormat === 'csv') {
-      downloadCsv(
-        timestampedCsvFilename(prefix),
-        rowsToCsv(QUESTION_BANK_EXPORT_COLUMNS, exportableQuestions),
-      );
-    } else if (questionExportFormat === 'xlsx') {
-      downloadXlsx(
-        timestampedXlsxFilename(prefix),
-        QUESTION_BANK_EXPORT_COLUMNS,
-        exportableQuestions,
-        'Question bank',
-      );
-    } else if (questionExportFormat === 'gift') {
-      downloadTextFile(
-        timestampedQuestionBankFilename(prefix, 'gift'),
-        questionsToGift(exportableQuestions),
-        'text/plain;charset=utf-8',
-      );
-    } else if (questionExportFormat === 'xml') {
-      downloadTextFile(
-        timestampedQuestionBankFilename(prefix, 'xml'),
-        questionsToMoodleXml(exportableQuestions),
-        'application/xml;charset=utf-8',
-      );
+    setQuestionExchangeBusy('export');
+    try {
+      let exportableQuestions = selectedQuestions;
+      if (exportableQuestions.length === 0) {
+        const exportPageSize = 100;
+        const firstPage = await listQuestions(questionListRequest({
+          page: 1,
+          pageSize: exportPageSize,
+          search: searchTerm,
+        }));
+        exportableQuestions = [...(firstPage.items || [])];
+        const pageCount = Math.ceil((firstPage.total || 0) / exportPageSize);
+        for (let exportPage = 2; exportPage <= pageCount; exportPage += 1) {
+          const nextPage = await listQuestions(questionListRequest({
+            page: exportPage,
+            pageSize: exportPageSize,
+            search: searchTerm,
+          }));
+          exportableQuestions.push(...(nextPage.items || []));
+        }
+      }
+      const prefix = selectedQuestions.length > 0 ? 'question-bank-selected' : 'question-bank-filtered';
+      if (questionExportFormat === 'csv') {
+        downloadCsv(
+          timestampedCsvFilename(prefix),
+          rowsToCsv(QUESTION_BANK_EXPORT_COLUMNS, exportableQuestions),
+        );
+      } else if (questionExportFormat === 'xlsx') {
+        downloadXlsx(
+          timestampedXlsxFilename(prefix),
+          QUESTION_BANK_EXPORT_COLUMNS,
+          exportableQuestions,
+          'Question bank',
+        );
+      } else if (questionExportFormat === 'gift') {
+        downloadTextFile(
+          timestampedQuestionBankFilename(prefix, 'gift'),
+          questionsToGift(exportableQuestions),
+          'text/plain;charset=utf-8',
+        );
+      } else if (questionExportFormat === 'xml') {
+        downloadTextFile(
+          timestampedQuestionBankFilename(prefix, 'xml'),
+          questionsToMoodleXml(exportableQuestions),
+          'application/xml;charset=utf-8',
+        );
+      }
+      setQuestionExchangeMessage(`Đã xuất ${exportableQuestions.length} câu hỏi (${QUESTION_BANK_EXPORT_FORMATS.find((item) => item.value === questionExportFormat)?.label || questionExportFormat}).`);
+    } catch (error) {
+      setQuestionExchangeMessage(error.message || 'Không xuất được ngân hàng câu hỏi.');
+    } finally {
+      setQuestionExchangeBusy('');
     }
-    setQuestionExchangeMessage(`Đã xuất ${exportableQuestions.length} câu hỏi (${QUESTION_BANK_EXPORT_FORMATS.find((item) => item.value === questionExportFormat)?.label || questionExportFormat}).`);
   };
 
   const handleQuestionBankImportFile = async (event) => {
@@ -1863,7 +1943,7 @@ function ManagePage() {
               <div className="list-card-header">
                 <div className="list-card-title">
                   <h3>Danh sách câu hỏi</h3>
-                  <span>{filtered.length} / {questions.length} câu đang hiển thị</span>
+                  <span>{filtered.length} / {questionTotal} câu đang hiển thị</span>
                 </div>
                 <div className="list-actions">
                   {canEditQuestions && (
@@ -1928,7 +2008,7 @@ function ManagePage() {
                   <button
                     type="button"
                     className="btn btn--outline"
-                    disabled={exportableQuestions.length === 0}
+                    disabled={Boolean(questionExchangeBusy) || (selectedQuestions.length === 0 && questionTotal === 0)}
                     onClick={handleQuestionBankExport}
                   >
                     Xuất {exportScopeLabel}
@@ -2045,6 +2125,26 @@ function ManagePage() {
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
+                  <label className="date-filter-field">
+                    <span>Tạo từ ngày</span>
+                    <input
+                      className="field-input"
+                      type="date"
+                      value={createdFromFilter}
+                      max={createdToFilter || undefined}
+                      onChange={(event) => setCreatedFromFilter(event.target.value)}
+                    />
+                  </label>
+                  <label className="date-filter-field">
+                    <span>Tạo đến ngày</span>
+                    <input
+                      className="field-input"
+                      type="date"
+                      value={createdToFilter}
+                      min={createdFromFilter || undefined}
+                      onChange={(event) => setCreatedToFilter(event.target.value)}
+                    />
+                  </label>
                 </div>
 
                 <div className="saved-filter-bar">
@@ -2159,6 +2259,15 @@ function ManagePage() {
                             <span className="source-tag">+{item.clos.length - 2} CLO</span>
                           )}
                           <span className="source-tag">Phiên bản {item.current_version}</span>
+                          {subjectLabelForQuestion(item) && (
+                            <span className="source-tag">Môn: {subjectLabelForQuestion(item)}</span>
+                          )}
+                          {submitterLabelForQuestion(item) && (
+                            <span className="source-tag">
+                              Người gửi duyệt: {submitterLabelForQuestion(item)}
+                              {item.submitted_at ? ` · ${formatDateTime(item.submitted_at)}` : ''}
+                            </span>
+                          )}
                           {(item.shared_scope === 'SUBJECT' || (item.shared_with_user_ids || []).length > 0) && (
                             <span className="source-tag">Đang chia sẻ</span>
                           )}
@@ -2278,7 +2387,7 @@ function ManagePage() {
                     ‹ Trước
                   </button>
                   <div className="question-pagination-pages">
-                    {Array.from({ length: questionPageCount }, (_, index) => (
+                    {questionPageNumbers.map((index) => (
                       <button
                         type="button"
                         key={index}

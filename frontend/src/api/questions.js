@@ -5,6 +5,13 @@ const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || '/api/v1'
 ).replace(/\/$/, '');
 
+function localDateBoundary(value, endOfDay = false) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return value;
+  const time = endOfDay ? '23:59:59.999' : '00:00:00.000';
+  const date = new Date(`${value}T${time}`);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
 export function listQuestions({
   page = 1,
   pageSize = 20,
@@ -26,6 +33,11 @@ export function listQuestions({
   creatorUserId,
   waitingHoursMin,
   overdueOnly = false,
+  createdFrom,
+  createdTo,
+  submittedFrom,
+  submittedTo,
+  includeStatusCounts = false,
 } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -48,6 +60,11 @@ export function listQuestions({
   if (creatorUserId) params.set('creator_user_id', creatorUserId);
   if (waitingHoursMin) params.set('waiting_hours_min', waitingHoursMin);
   if (overdueOnly) params.set('overdue_only', 'true');
+  if (createdFrom) params.set('created_from', localDateBoundary(createdFrom));
+  if (createdTo) params.set('created_to', localDateBoundary(createdTo, true));
+  if (submittedFrom) params.set('submitted_from', localDateBoundary(submittedFrom));
+  if (submittedTo) params.set('submitted_to', localDateBoundary(submittedTo, true));
+  if (includeStatusCounts) params.set('include_status_counts', 'true');
   return apiRequest(`/questions?${params.toString()}`);
 }
 

@@ -162,6 +162,8 @@ VALIDATORS = {
                 "schema_version": {"bsonType": "int", "minimum": 2},
                 "question_code": {"bsonType": "string", "minLength": 1},
                 "created_by_user_id": {"bsonType": ["objectId", "null"]},
+                "subject_id": {"bsonType": ["objectId", "null"]},
+                "review_submission": {"bsonType": "object"},
                 "current_version": {"bsonType": "int", "minimum": 1},
                 "current_version_id": {"bsonType": "objectId"},
                 "lifecycle_status": {"enum": ["ACTIVE", "ARCHIVED"]},
@@ -443,6 +445,26 @@ def _ensure_indexes() -> None:
         [
             IndexModel([("question_code", ASCENDING)], unique=True, name="uq_question_code"),
             IndexModel([("created_by_user_id", ASCENDING), ("updated_at", DESCENDING)], name="ix_questions_owner"),
+            IndexModel(
+                [("lifecycle_status", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_questions_active_created",
+            ),
+            IndexModel(
+                [
+                    ("lifecycle_status", ASCENDING),
+                    ("subject_id", ASCENDING),
+                    ("created_at", DESCENDING),
+                ],
+                name="ix_questions_active_subject_created",
+            ),
+            IndexModel(
+                [
+                    ("lifecycle_status", ASCENDING),
+                    ("review_status", ASCENDING),
+                    ("review_submission.submitted_at", DESCENDING),
+                ],
+                name="ix_questions_active_review_submitted",
+            ),
             IndexModel(
                 [
                     ("review_status", ASCENDING),

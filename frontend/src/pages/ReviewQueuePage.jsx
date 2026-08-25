@@ -273,6 +273,25 @@ function refId(value) {
   return value.id || value._id || '';
 }
 
+function questionSubjectId(question) {
+  return refId(
+    question?.subject_id
+    || question?.classification?.subject?.id
+    || question?.classification?.subject,
+  );
+}
+
+function subjectOptionLabel(subject) {
+  if (!subject) return '';
+  const code = subject.subject_code || '';
+  const name = subject.subject_name || subject.name || subject.title || '';
+  return [code, name].filter(Boolean).join(' - ') || refId(subject);
+}
+
+function userOptionLabel(option) {
+  return option?.display_name || option?.email || refId(option);
+}
+
 function shortId(value) {
   const text = refId(value);
   if (!text) return '--';
@@ -347,6 +366,8 @@ function ReviewQueuePage() {
   const [publicationStatusFilter, setPublicationStatusFilter] = useState('all');
   const [creatorFilter, setCreatorFilter] = useState('all');
   const [minScore, setMinScore] = useState('');
+  const [submittedFromFilter, setSubmittedFromFilter] = useState('');
+  const [submittedToFilter, setSubmittedToFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
@@ -414,6 +435,8 @@ function ReviewQueuePage() {
         assignedTo: assignmentFilter === 'mine' ? 'me' : undefined,
         waitingHoursMin: waitingFilter === 'all' ? undefined : waitingFilter,
         overdueOnly,
+        submittedFrom: submittedFromFilter || undefined,
+        submittedTo: submittedToFilter || undefined,
       });
       const items = result.items || [];
       setQuestions(items);
@@ -555,6 +578,8 @@ function ReviewQueuePage() {
     publicationStatusFilter,
     creatorFilter,
     minScore,
+    submittedFromFilter,
+    submittedToFilter,
     searchTerm,
   ]);
 
@@ -1087,6 +1112,42 @@ function ReviewQueuePage() {
     });
     return Array.from(map.values());
   }, [teacherOptions, reviewerOptions]);
+  const catalogSubjectById = useMemo(() => {
+    const map = new Map();
+    catalogSubjects.forEach((subject) => map.set(refId(subject), subject));
+    return map;
+  }, [catalogSubjects]);
+  const teacherById = useMemo(() => {
+    const map = new Map();
+    teacherOptions.forEach((teacher) => map.set(refId(teacher), teacher));
+    return map;
+  }, [teacherOptions]);
+  const reviewerById = useMemo(() => {
+    const map = new Map();
+    reviewerOptions.forEach((reviewer) => map.set(refId(reviewer), reviewer));
+    return map;
+  }, [reviewerOptions]);
+  const subjectLabelForQuestion = (question) => {
+    const snapshot = question?.subject || question?.review_submission?.subject;
+    return snapshot?.name
+      || snapshot?.subject_name
+      || subjectOptionLabel(catalogSubjectById.get(questionSubjectId(question)))
+      || questionSubjectId(question)
+      || 'Chưa gắn môn';
+  };
+  const submitterLabelForQuestion = (question) => {
+    const submitterId = refId(question?.submitted_by_user_id);
+    const snapshot = question?.review_submission?.submitted_by;
+    return snapshot?.display_name
+      || snapshot?.email
+      || userOptionLabel(teacherById.get(submitterId))
+      || submitterId
+      || '--';
+  };
+  const reviewerLabelForQuestion = (question) => {
+    const reviewerId = refId(assignmentOf(question).reviewer_user_id);
+    return userOptionLabel(reviewerById.get(reviewerId)) || reviewerId || '--';
+  };
   const latestEvidence = latestEvaluation?.evidence || {};
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
@@ -1360,6 +1421,24 @@ function ReviewQueuePage() {
               value={minScore}
               onChange={(event) => updateFilter(setMinScore)(event.target.value)}
             />
+            <label className="review-date-filter">
+              <span>Gửi từ ngày</span>
+              <input
+                type="date"
+                value={submittedFromFilter}
+                max={submittedToFilter || undefined}
+                onChange={(event) => updateFilter(setSubmittedFromFilter)(event.target.value)}
+              />
+            </label>
+            <label className="review-date-filter">
+              <span>Gửi đến ngày</span>
+              <input
+                type="date"
+                value={submittedToFilter}
+                min={submittedFromFilter || undefined}
+                onChange={(event) => updateFilter(setSubmittedToFilter)(event.target.value)}
+              />
+            </label>
             <input
               placeholder="Tìm mã hoặc nội dung..."
               value={searchInput}
@@ -1386,6 +1465,10 @@ function ReviewQueuePage() {
                       <span>{question.question_code}</span>
                       <span>{questionTypeLabel(assessmentType(question))}</span>
                       <span>{question.classification?.bloom?.name || 'Bloom --'}</span>
+                      <span>{subjectLabelForQuestion(question)}</span>
+                      {question.submitted_by_user_id && (
+                        <span>Gửi: {submitterLabelForQuestion(question)}</span>
+                      )}
                       <span className={`assignment-chip assignment-chip--${assignmentOf(question).status.toLowerCase()}`}>
                         {assignmentStatusLabel(question, user)}
                       </span>
@@ -1461,8 +1544,20 @@ function ReviewQueuePage() {
                   <b>{assignmentStatusLabel(selected, user)}</b>
                 </div>
                 <div>
+                  <span>Người gửi duyệt</span>
+                  <b>{submitterLabelForQuestion(selected)}</b>
+                </div>
+                <div>
+                  <span>Môn học</span>
+                  <b>{subjectLabelForQuestion(selected)}</b>
+                </div>
+                <div>
+                  <span>Gửi duyệt lúc</span>
+                  <b>{formatDate(selected.submitted_at)}</b>
+                </div>
+                <div>
                   <span>Người duyệt</span>
-                  <b>{selectedAssignment.reviewer_user_id || '--'}</b>
+                  <b>{reviewerLabelForQuestion(selected)}</b>
                 </div>
                 <div>
                   <span>Nhận lúc</span>

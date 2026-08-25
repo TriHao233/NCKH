@@ -247,6 +247,87 @@ def migrate_questions(apply: bool) -> tuple[int, int]:
     return scanned, eligible
 
 
+def backfill_question_metadata(apply: bool) -> tuple[int, int]:
+    """Backfill exact subject/submission metadata without guessing historical actors."""
+    db = get_database()
+    query = {
+        "schema_version": SCHEMA_VERSION,
+        "$or": [
+            {"subject_id": {"$exists": False}},
+            {
+                "review_submission": {"$exists": False},
+                "submitted_by_user_id": {"$exists": True},
+            },
+        ],
+    }
+    scanned = eligible = 0
+    for question in db.questions.find(query):
+        scanned += 1
+        updates = {}
+        version = db.question_versions.find_one(
+            {"_id": question.get("current_version_id")},
+            {"classification.subject": 1},
+        )
+        subject = ((version or {}).get("classification") or {}).get("subject") or {}
+        subject_id = subject.get("id") if isinstance(subject, dict) else subject
+        subject_record = (
+            db.subjects.find_one(
+                {"_id": subject_id},
+                {"subject_code": 1, "subject_name": 1},
+            )
+            if subject_id
+            else None
+        )
+        subject_snapshot = {
+            "id": subject_id,
+            "code": (
+                (subject.get("code") or subject.get("subject_code"))
+                if isinstance(subject, dict)
+                else ""
+            )
+            or (subject_record or {}).get("subject_code", ""),
+            "name": (
+                (subject.get("name") or subject.get("subject_name"))
+                if isinstance(subject, dict)
+                else ""
+            )
+            or (subject_record or {}).get("subject_name", ""),
+        }
+        if "subject_id" not in question:
+            updates["subject_id"] = subject_id
+
+        legacy_submitter_id = question.get("submitted_by_user_id")
+        legacy_submitted_at = question.get("submitted_at")
+        if "review_submission" not in question and legacy_submitter_id:
+            user = db.users.find_one(
+                {"_id": legacy_submitter_id},
+                {"email": 1, "display_name": 1},
+            )
+            updates["review_submission"] = {
+                "submitted_by_user_id": legacy_submitter_id,
+                "submitted_by": {
+                    "id": legacy_submitter_id,
+                    "email": (user or {}).get("email", ""),
+                    "display_name": (user or {}).get("display_name", ""),
+                },
+                "submitted_at": legacy_submitted_at,
+                "subject_id": subject_id,
+                "subject": subject_snapshot,
+            }
+        if not updates:
+            continue
+        eligible += 1
+        if apply:
+            update = {"$set": updates}
+            if legacy_submitter_id:
+                update["$unset"] = {
+                    "submitted_by_user_id": "",
+                    "submitted_at": "",
+                }
+            db.questions.update_one({"_id": question["_id"]}, update)
+    return scanned, eligible
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -264,6 +345,7 @@ def main() -> int:
         ("users", migrate_users(args.apply)),
         ("documents/pages", migrate_documents(args.apply)),
         ("questions", migrate_questions(args.apply)),
+        ("question metadata", backfill_question_metadata(args.apply)),
     ):
         print(f"{name}: scanned={result[0]}, eligible={result[1]}")
     return 0

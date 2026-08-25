@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 
@@ -48,32 +50,45 @@ def list_questions(
     creator_user_id: str | None = Query(None),
     waiting_hours_min: float | None = Query(None, ge=0),
     overdue_only: bool = Query(False),
+    created_from: datetime | None = Query(None),
+    created_to: datetime | None = Query(None),
+    submitted_from: datetime | None = Query(None),
+    submitted_to: datetime | None = Query(None),
+    include_status_counts: bool = Query(False),
     current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
-    return service.list(
-        page,
-        page_size,
-        review_status,
-        search,
-        question_type=question_type,
-        bloom_level=bloom_level,
-        document_id=document_id,
-        subject_id=subject_id,
-        chapter_id=chapter_id,
-        clo_id=clo_id,
-        difficulty=difficulty,
-        quality_color=quality_color,
-        min_score=min_score,
-        publication_status=publication_status,
-        evaluation_status=evaluation_status,
-        assignment_status=assignment_status,
-        assigned_to=assigned_to,
-        creator_user_id=creator_user_id,
-        waiting_hours_min=waiting_hours_min,
-        overdue_only=overdue_only,
-        current_user=current_user,
-    )
+    try:
+        return service.list(
+            page,
+            page_size,
+            review_status,
+            search,
+            question_type=question_type,
+            bloom_level=bloom_level,
+            document_id=document_id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
+            clo_id=clo_id,
+            difficulty=difficulty,
+            quality_color=quality_color,
+            min_score=min_score,
+            publication_status=publication_status,
+            evaluation_status=evaluation_status,
+            assignment_status=assignment_status,
+            assigned_to=assigned_to,
+            creator_user_id=creator_user_id,
+            waiting_hours_min=waiting_hours_min,
+            overdue_only=overdue_only,
+            created_from=created_from,
+            created_to=created_to,
+            submitted_from=submitted_from,
+            submitted_to=submitted_to,
+            include_status_counts=include_status_counts,
+            current_user=current_user,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
