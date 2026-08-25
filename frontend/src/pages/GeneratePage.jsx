@@ -1449,6 +1449,23 @@ function GeneratePage() {
                     <span>
                       {questionTypeLabel(item.question_type)} · {bloomLevelLabel(item.bloom_level)} · {item.saved_count}/{item.requested_count}
                     </span>
+                    {(
+                      item.format_rejected_count > 0
+                      || item.grounding_rejected_count > 0
+                      || item.clarity_rejected_count > 0
+                      || item.exact_duplicate_count > 0
+                      || item.near_duplicate_count > 0
+                    ) && (
+                      <small>
+                        {[
+                          item.format_rejected_count > 0 && `Format: ${item.format_rejected_count}`,
+                          item.grounding_rejected_count > 0 && `Nguồn/keyword: ${item.grounding_rejected_count}`,
+                          item.clarity_rejected_count > 0 && `Diễn đạt: ${item.clarity_rejected_count}`,
+                          item.exact_duplicate_count > 0 && `Trùng: ${item.exact_duplicate_count}`,
+                          item.near_duplicate_count > 0 && `Gần trùng: ${item.near_duplicate_count}`,
+                        ].filter(Boolean).join(' · ')}
+                      </small>
+                    )}
                     {(item.warnings || []).length > 0 && <small>{item.warnings[0]}</small>}
                   </div>
                 ))}

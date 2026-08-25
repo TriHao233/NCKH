@@ -1,4 +1,4 @@
-import { bloomLevelLabel, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
+import { bloomLevelLabel, difficultyLabel, questionTypeLabel } from '../constants/generationEnums.js';
 
 export function formatChoices(options, correctAnswer) {
   const correctValues = String(correctAnswer || '')
@@ -54,5 +54,7 @@ export function mapGeneratedQuestions(questions = []) {
     choices: formatChoices(question.options, question.correct_answer),
     explanation: question.explanation,
     sourceContext: question.source_context,
+    sourceKeywords: question.source_keywords || [],
+    falseMutation: question.false_mutation || null,
   }));
 }

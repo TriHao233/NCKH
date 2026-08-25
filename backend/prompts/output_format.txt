@@ -13,7 +13,9 @@ SCHEMA:
       "question_type": "string",
       "bloom_level": "string",
       "difficulty": "de | trung_binh | kho",
-      "source_context": "string (exact verbatim quote)"
+      "source_context": "string (exact verbatim quote)",
+      "source_keywords": ["exact keyword or phrase from source_context"],
+      "false_mutation": "object for a false dung_sai statement; otherwise null"
     }
   ]
 }

@@ -108,7 +108,7 @@ def create_generation_run(
         "execution": {
             "attempt_no": 1,
             "latency_ms": None,
-            "parser_version": "question-json-v1",
+            "parser_version": "question-json-v2",
         },
         "raw_model_response": None,
         "status": "GENERATING",
@@ -131,21 +131,57 @@ def finish_generation_run(
     generated_count: int = 0,
     latency_ms: int | None = None,
     error_message: str | None = None,
+    validation_errors: list[dict] | None = None,
+    post_processing: dict | None = None,
 ) -> None:
     now = utc_now()
+    fields = {
+        "status": status.upper(),
+        "raw_model_response": raw_model_response,
+        "generated_count": generated_count,
+        "execution.latency_ms": latency_ms,
+        "error": {"message": error_message, "at": now} if error_message else None,
+        "finished_at": now,
+    }
+    if validation_errors is not None:
+        fields["validation_errors"] = validation_errors
+    if post_processing is not None:
+        fields["post_processing"] = post_processing
     get_database().generation_runs.update_one(
         {"_id": object_id(generation_run_id, "generation_run_id")},
+        {"$set": fields},
+    )
+
+
+def get_existing_question_texts(document_id: str, *, limit: int = 2000) -> list[str]:
+    """Load current active question text for post-generation deduplication only."""
+    document_oid = object_id(document_id, "document_id")
+    pipeline = [
         {
-            "$set": {
-                "status": status.upper(),
-                "raw_model_response": raw_model_response,
-                "generated_count": generated_count,
-                "execution.latency_ms": latency_ms,
-                "error": {"message": error_message, "at": now} if error_message else None,
-                "finished_at": now,
+            "$match": {
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+                "current_version_id": {"$exists": True},
             }
         },
-    )
+        {
+            "$lookup": {
+                "from": "question_versions",
+                "localField": "current_version_id",
+                "foreignField": "_id",
+                "as": "current_version",
+            }
+        },
+        {"$unwind": "$current_version"},
+        {"$match": {"current_version.document_id": document_oid}},
+        {"$project": {"_id": 0, "content": "$current_version.content"}},
+        {"$limit": max(1, limit)},
+    ]
+    return [
+        str(item.get("content") or "").strip()
+        for item in get_database().questions.aggregate(pipeline)
+        if str(item.get("content") or "").strip()
+    ]
 
 
 def save_generated_questions(
@@ -175,6 +211,12 @@ def save_generated_questions(
                     "correct_answer": question.get("correct_answer"),
                     "explanation": question.get("explanation"),
                     "model_source_context": question.get("source_context"),
+                    "source_keywords": question.get("source_keywords") or [],
+                    "false_mutation": question.get("false_mutation"),
+                    "post_processing": {
+                        "status": "ACCEPTED",
+                        "validator_version": "question-post-v2",
+                    },
                 },
                 document_id=document_id,
                 source_chunk_ids=source_chunk_ids,

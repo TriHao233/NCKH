@@ -5,3 +5,6 @@ LOẠI CÂU HỎI: dung_sai - đúng/sai
 2. Phù hợp để kiểm tra quan hệ, đặc điểm, điều kiện hoặc hệ quả có thể xác định rõ.
 3. Mệnh đề tốt phải hoàn toàn đúng hoặc hoàn toàn sai, không nửa đúng nửa sai.
 4. Nếu là mệnh đề sai, điểm sai nên nằm ở một khác biệt bản chất.
+5. Áp dụng evidence-first: chọn một trích dẫn nguyên văn trong CONTEXT trước, sau đó mới viết mệnh đề.
+6. Giữ nguyên ít nhất một thuật ngữ/keyword neo quan trọng từ trích dẫn trong mệnh đề.
+7. Nếu tạo mệnh đề Sai, chỉ thay đổi một dữ kiện xác định (tên, giá trị, quan hệ, điều kiện hoặc toán tử); không tạo mệnh đề không được CONTEXT đề cập.

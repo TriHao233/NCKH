@@ -9,7 +9,18 @@ from modules.generation.schemas import (
     QuestionGenerateRequest,
     QuestionGenerateResponse,
     GeneratedQuestion,
+    GenerationRejection,
     GenerationPlanSummary,
+)
+from modules.generation.postprocessing import (
+    POSTPROCESSOR_VERSION,
+    DuplicateStats,
+    filter_duplicate_questions,
+    normalize_exact_text,
+    question_fingerprint,
+    rejection_counts,
+    validate_source_grounding,
+    validate_true_false_clarity,
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.rag.search import get_context_snapshot
@@ -17,6 +28,7 @@ from modules.generation.llm.factory import get_llm_service
 from modules.generation.mongodb import (
     create_generation_run,
     finish_generation_run,
+    get_existing_question_texts,
     save_generated_questions,
 )
 
@@ -39,7 +51,7 @@ DIFFICULTY_ALIASES = {
 QUESTION_TYPE_RETRY_RULES = {
     "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
     "tinh_huong": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
-    "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; question must be a complete true/false statement; correct_answer must be "A" or "B".',
+    "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; question must be one complete true/false statement; source_context must be a verbatim CONTEXT quote; source_keywords must occur exactly in both source_context and question; false answers require one false_mutation.',
     "nhieu_lua_chon": 'options must contain 4 to 6 consecutive keys from "A"; correct_answer must contain at least two comma-separated keys but not every option key.',
     "dien_khuyet": 'options must be null; question text must contain "_____".',
     "ghep_cot": "options must be a matching object with numbered keys and extra lettered distractors.",
@@ -72,14 +84,26 @@ async def generate_questions_rag(
     llm = get_llm_service(req.model_provider)
     generated_questions: List[GeneratedQuestion] = []
     summaries: List[GenerationPlanSummary] = []
-    seen_question_fingerprints: set[str] = set()
+    try:
+        existing_questions = get_existing_question_texts(req.document_id)
+    except Exception as exc:
+        logger.warning("Không tải được câu hỏi hiện có để near-dedup: %s", exc)
+        existing_questions = []
+    seen_question_fingerprints = {
+        fingerprint
+        for question in existing_questions
+        if (fingerprint := question_fingerprint(question))
+    }
 
     for plan_index, plan_item in enumerate(plan, start=1):
         questions, summary = await _generate_questions_for_plan_item(
             req,
             plan_item,
             plan_index=plan_index,
-            avoid_questions=[question.question for question in generated_questions],
+            avoid_questions=[
+                *existing_questions[:12],
+                *(question.question for question in generated_questions),
+            ],
             seen_question_fingerprints=seen_question_fingerprints,
             context_snapshot=context_snapshot,
             context_text=context_text,
@@ -88,7 +112,7 @@ async def generate_questions_rag(
             requested_by_user_id=requested_by_user_id,
         )
         for question in questions:
-            seen_question_fingerprints.add(_question_fingerprint(question.question))
+            seen_question_fingerprints.add(question_fingerprint(question.question))
         generated_questions.extend(questions)
         summaries.append(summary)
 
@@ -154,9 +178,24 @@ async def _generate_questions_for_plan_item(
 
     # 4. Làm sạch và Parse JSON
     clean_json_str = _clean_llm_output(raw_response)
+    repair_attempt_count = 0
 
     try:
-        parsed_data = json.loads(clean_json_str)
+        try:
+            parsed_data = json.loads(clean_json_str)
+        except json.JSONDecodeError as initial_parse_error:
+            repair_attempt_count += 1
+            retry_prompt = _build_retry_prompt(
+                original_prompt=full_prompt,
+                question_type=plan_item.question_type.value,
+                bloom_level=bloom_level.value,
+                missing_count=plan_item.num_questions,
+                validation_errors=[f"Invalid JSON response: {initial_parse_error.msg}"],
+                avoid_questions=avoid_questions,
+            )
+            retry_raw_response = await llm.generate_text(retry_prompt)
+            raw_response = f"{raw_response}\n\n--- JSON REPAIR ---\n{retry_raw_response}"
+            parsed_data = json.loads(_clean_llm_output(retry_raw_response))
         questions_list = _extract_questions_list(parsed_data)
         parsed_count = len(questions_list)
 
@@ -165,8 +204,10 @@ async def _generate_questions_for_plan_item(
             questions_list,
             question_type=plan_item.question_type.value,
             bloom_level=bloom_level.value,
+            context_text=context_text,
         )
-        deduped_data, duplicate_count = _filter_duplicate_questions(
+        postprocessed_count = len(validated_data)
+        deduped_data, duplicate_stats = filter_duplicate_questions(
             validated_data,
             seen_question_fingerprints,
             limit=plan_item.num_questions,
@@ -174,6 +215,7 @@ async def _generate_questions_for_plan_item(
         if len(deduped_data) < plan_item.num_questions:
             missing_count = plan_item.num_questions - len(deduped_data)
             for retry_index in range(1, MAX_FORMAT_RETRY_ATTEMPTS + 1):
+                repair_attempt_count += 1
                 retry_started_at = time.perf_counter()
                 retry_prompt = _build_retry_prompt(
                     original_prompt=full_prompt,
@@ -199,23 +241,34 @@ async def _generate_questions_for_plan_item(
                         retry_questions,
                         question_type=plan_item.question_type.value,
                         bloom_level=bloom_level.value,
+                        context_text=context_text,
                     )
-                    retry_deduped, retry_duplicate_count = _filter_duplicate_questions(
+                    postprocessed_count += len(retry_validated)
+                    retry_deduped, retry_duplicate_stats = filter_duplicate_questions(
                         retry_validated,
                         seen_question_fingerprints,
                         limit=missing_count,
                     )
                     deduped_data.extend(retry_deduped)
                     validation_errors.extend(retry_errors)
-                    duplicate_count += retry_duplicate_count
+                    duplicate_stats = DuplicateStats(
+                        exact=duplicate_stats.exact + retry_duplicate_stats.exact,
+                        near=duplicate_stats.near + retry_duplicate_stats.near,
+                    )
                     missing_count = plan_item.num_questions - len(deduped_data)
                     if missing_count <= 0:
                         break
                 except Exception as retry_exc:
                     validation_errors.append(
-                        f"Retry {retry_index} failed after "
-                        f"{int((time.perf_counter() - retry_started_at) * 1000)}ms: "
-                        f"{retry_exc}"
+                        GenerationRejection(
+                            code="REPAIR_ATTEMPT_FAILED",
+                            message=(
+                                f"Retry {retry_index} failed after "
+                                f"{int((time.perf_counter() - retry_started_at) * 1000)}ms: "
+                                f"{retry_exc}"
+                            ),
+                            repairable=False,
+                        )
                     )
                     break
 
@@ -237,8 +290,8 @@ async def _generate_questions_for_plan_item(
             bloom_level=bloom_level.value,
             requested_count=plan_item.num_questions,
             parsed_count=parsed_count,
-            valid_count=len(validated_data),
-            duplicate_count=duplicate_count,
+            valid_count=postprocessed_count,
+            duplicate_stats=duplicate_stats,
             saved_count=len(saved_data),
             validation_errors=validation_errors,
         )
@@ -248,6 +301,17 @@ async def _generate_questions_for_plan_item(
             raw_model_response=raw_response,
             generated_count=len(saved_data),
             latency_ms=int((time.perf_counter() - started_at) * 1000),
+            validation_errors=[item.model_dump() for item in validation_errors],
+            post_processing={
+                "validator_version": POSTPROCESSOR_VERSION,
+                "parsed_count": parsed_count,
+                "validated_count": postprocessed_count,
+                "accepted_count": len(saved_data),
+                "repair_attempt_count": repair_attempt_count,
+                "duplicate_count": duplicate_stats.total,
+                "exact_duplicate_count": duplicate_stats.exact,
+                "near_duplicate_count": duplicate_stats.near,
+            },
         )
 
         return [GeneratedQuestion(**question) for question in saved_data], summary
@@ -283,32 +347,6 @@ def _extract_questions_list(data: dict | list) -> list:
     return data.get("questions") or data.get("data") or []
 
 
-def _question_fingerprint(question: str) -> str:
-    normalized = (question or "").lower()
-    normalized = re.sub(r"[_\W]+", " ", normalized, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", normalized).strip()
-
-
-def _filter_duplicate_questions(
-    questions: List[GeneratedQuestion],
-    seen_question_fingerprints: set[str],
-    *,
-    limit: int,
-) -> tuple[List[GeneratedQuestion], int]:
-    kept: List[GeneratedQuestion] = []
-    duplicate_count = 0
-    for question in questions:
-        fingerprint = _question_fingerprint(question.question)
-        if not fingerprint or fingerprint in seen_question_fingerprints:
-            duplicate_count += 1
-            continue
-        seen_question_fingerprints.add(fingerprint)
-        kept.append(question)
-        if len(kept) >= limit:
-            break
-    return kept, duplicate_count
-
-
 def _looks_incomplete_true_false_statement(question: str) -> bool:
     normalized = re.sub(r"\s+", " ", (question or "").strip().lower())
     if not normalized:
@@ -329,14 +367,15 @@ def _build_retry_prompt(
     question_type: str,
     bloom_level: str,
     missing_count: int,
-    validation_errors: list[str],
+    validation_errors: list[str | GenerationRejection],
     avoid_questions: list[str],
 ) -> str:
-    errors = "\n".join(
-        f"- {error}"
+    error_messages = [
+        error.message if isinstance(error, GenerationRejection) else str(error)
         for error in validation_errors[-5:]
         if error
-    ) or "- Not enough valid questions were produced."
+    ]
+    errors = "\n".join(f"- {error}" for error in error_messages) or "- Not enough valid questions were produced."
     avoid_list = "\n".join(
         f"- {question.strip()}"
         for question in avoid_questions[-12:]
@@ -362,7 +401,7 @@ DO NOT DUPLICATE THESE ACCEPTED/PREVIOUS QUESTIONS:
 {avoid_list}
 
 Return ONLY the same raw JSON object shape:
-{{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "difficulty": "de|trung_binh|kho", "source_context": "..."}}]}}
+{{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "difficulty": "de|trung_binh|kho", "source_context": "...", "source_keywords": ["..."], "false_mutation": null}}]}}
 """
 
 
@@ -374,22 +413,26 @@ def _build_plan_summary(
     requested_count: int,
     parsed_count: int,
     valid_count: int,
-    duplicate_count: int,
+    duplicate_stats: DuplicateStats,
     saved_count: int,
-    validation_errors: list[str],
+    validation_errors: list[GenerationRejection],
 ) -> GenerationPlanSummary:
     skipped_count = max(0, requested_count - saved_count)
     warnings = []
     invalid_count = len(validation_errors)
+    rejection_summary = rejection_counts(validation_errors)
     if parsed_count < requested_count:
         warnings.append(f"LLM chỉ trả {parsed_count}/{requested_count} câu.")
     if invalid_count:
-        warnings.append(f"Bỏ {invalid_count} câu sai định dạng.")
-    if duplicate_count:
-        warnings.append(f"Bỏ {duplicate_count} câu trùng nội dung.")
+        warnings.append(f"Ghi nhận {invalid_count} lỗi trong bước sàng lọc sau sinh.")
+    if duplicate_stats.total:
+        warnings.append(
+            f"Bỏ {duplicate_stats.total} câu trùng nội dung "
+            f"({duplicate_stats.exact} trùng tuyệt đối, {duplicate_stats.near} gần trùng)."
+        )
     if skipped_count:
         warnings.append(f"Lưu thiếu {skipped_count} câu so với yêu cầu.")
-    warnings.extend(validation_errors[:3])
+    warnings.extend(item.message for item in validation_errors[:3])
 
     return GenerationPlanSummary(
         plan_index=plan_index,
@@ -398,10 +441,16 @@ def _build_plan_summary(
         requested_count=requested_count,
         parsed_count=parsed_count,
         valid_count=valid_count,
-        duplicate_count=duplicate_count,
+        duplicate_count=duplicate_stats.total,
+        exact_duplicate_count=duplicate_stats.exact,
+        near_duplicate_count=duplicate_stats.near,
+        format_rejected_count=rejection_summary["format"],
+        grounding_rejected_count=rejection_summary["grounding"],
+        clarity_rejected_count=rejection_summary["clarity"],
         saved_count=saved_count,
         skipped_count=skipped_count,
         warnings=warnings,
+        rejection_reasons=validation_errors,
     )
 
 
@@ -422,6 +471,8 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
             return "dung_sai phải là một mệnh đề hoàn chỉnh, không được bỏ lửng như 'X là'"
         if not isinstance(options, dict) or set(options.keys()) != {"A", "B"}:
             return "dung_sai phải có đúng 2 lựa chọn A/B"
+        if normalize_exact_text(options.get("A")) != "đúng" or normalize_exact_text(options.get("B")) != "sai":
+            return 'dung_sai: options bắt buộc là {"A": "Đúng", "B": "Sai"}'
         if str(correct_answer).strip() not in {"A", "B"}:
             return "dung_sai: correct_answer phải là A hoặc B"
 
@@ -481,16 +532,75 @@ def _validate_and_format(
     *,
     question_type: str,
     bloom_level: str,
-) -> tuple[List[GeneratedQuestion], list[str]]:
+    context_text: str,
+) -> tuple[List[GeneratedQuestion], list[GenerationRejection]]:
     """Validate dữ liệu và ép kiểu về model chuẩn. Loại bỏ các câu hỏi không đúng
     cấu trúc bắt buộc của question_structure thay vì lưu dữ liệu hỏng vào ngân hàng câu hỏi."""
     formatted = []
     validation_errors = []
-    for item in questions:
+    for candidate_index, item in enumerate(questions, start=1):
+        if not isinstance(item, dict):
+            validation_errors.append(
+                GenerationRejection(
+                    code="INVALID_CANDIDATE_TYPE",
+                    message="Candidate phải là JSON object.",
+                    candidate_index=candidate_index,
+                    question_excerpt=str(item)[:180],
+                )
+            )
+            continue
+        missing_field = next(
+            (
+                field
+                for field in ("question", "correct_answer", "explanation", "source_context")
+                if not isinstance(item.get(field), str) or not item[field].strip()
+            ),
+            None,
+        )
+        if missing_field:
+            validation_errors.append(
+                GenerationRejection(
+                    code="REQUIRED_FIELD_MISSING",
+                    message=f"Thiếu hoặc rỗng trường bắt buộc '{missing_field}'.",
+                    candidate_index=candidate_index,
+                    question_excerpt=str(item.get("question") or "")[:180],
+                    repairable=True,
+                )
+            )
+            continue
         error = _check_type_format(item, question_type)
         if error:
             logger.warning(f"Bỏ qua câu hỏi sai định dạng ({question_type}): {error} | item={item}")
-            validation_errors.append(error)
+            validation_errors.append(
+                GenerationRejection(
+                    code="INVALID_TYPE_FORMAT",
+                    message=error,
+                    candidate_index=candidate_index,
+                    question_excerpt=str(item.get("question") or "")[:180],
+                    repairable=True,
+                )
+            )
+            continue
+
+        candidate_errors = validate_source_grounding(
+            item,
+            context_text=context_text,
+            question_type=question_type,
+            candidate_index=candidate_index,
+        )
+        if question_type == "dung_sai":
+            candidate_errors.extend(
+                validate_true_false_clarity(item, candidate_index=candidate_index)
+            )
+        if candidate_errors:
+            for candidate_error in candidate_errors:
+                logger.warning(
+                    "Bỏ candidate sau post-processing (%s): %s | item=%s",
+                    candidate_error.code,
+                    candidate_error.message,
+                    item,
+                )
+            validation_errors.extend(candidate_errors)
             continue
 
         raw_difficulty = item.get("difficulty")
@@ -509,6 +619,13 @@ def _validate_and_format(
         except Exception as exc:
             error_message = f"{question_type} không khớp schema GeneratedQuestion: {exc}"
             logger.warning("Bỏ qua câu hỏi lỗi schema: %s | item=%s", error_message, item)
-            validation_errors.append(error_message)
+            validation_errors.append(
+                GenerationRejection(
+                    code="GENERATED_QUESTION_SCHEMA_ERROR",
+                    message=error_message,
+                    candidate_index=candidate_index,
+                    question_excerpt=str(item.get("question") or "")[:180],
+                )
+            )
 
     return formatted, validation_errors
