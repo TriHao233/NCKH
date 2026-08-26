@@ -22,6 +22,7 @@ from modules.generation.mongodb import (
     update_generation_progress,
 )
 from modules.generation.question import generate_questions_rag
+from modules.generation.llm.model_registry import GENERATION_CAPABILITY, resolve_model_snapshot
 from modules.generation.schemas import (
     GenerationJobStatus,
     GenerationJobStatusResponse,
@@ -119,6 +120,8 @@ async def process_generate_background(job_id: str, worker_id: str):
                 req,
                 requested_by_user_id=requested_by_user_id,
                 progress_callback=report_progress,
+                model_snapshot=job.get("model_snapshot"),
+                fallback_model_snapshot=job.get("fallback_model_snapshot"),
             )
             finished_at = utc_now()
             metrics = build_generation_metrics(
@@ -200,11 +203,28 @@ async def api_generate_questions(
             detail="Bạn đã đạt giới hạn generation job đang chờ hoặc đang xử lý.",
             headers={"Retry-After": "15"},
         )
+    try:
+        model_snapshot = await asyncio.to_thread(
+            resolve_model_snapshot,
+            req.model_provider,
+            capability=GENERATION_CAPABILITY,
+        )
+        fallback_snapshot = None
+        if settings.generation_fallback_provider:
+            fallback_snapshot = await asyncio.to_thread(
+                resolve_model_snapshot,
+                settings.generation_fallback_provider,
+                capability=GENERATION_CAPABILITY,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = await asyncio.to_thread(
         create_generation_job,
         req.model_dump(mode="json"),
         current_user.id,
         normalized_key,
+        model_snapshot=model_snapshot,
+        fallback_model_snapshot=fallback_snapshot,
     )
 
     return JobAcceptedResponse(
@@ -253,6 +273,14 @@ def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
         response_kwargs["metrics"] = job["metrics"]
     if job.get("progress"):
         response_kwargs["progress"] = job["progress"]
+    if job.get("model_snapshot"):
+        snapshot = job["model_snapshot"]
+        response_kwargs["model"] = {
+            "code": snapshot.get("model_code"),
+            "name": snapshot.get("display_name") or snapshot.get("model_name"),
+            "version": snapshot.get("model_name"),
+            "runtime": snapshot.get("runtime"),
+        }
 
     if job["status"] == GenerationJobStatus.FAILED.value and job.get("error_message"):
         response_kwargs["error_message"] = job["error_message"]

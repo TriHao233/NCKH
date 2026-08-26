@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faLayerGroup, faUpload } from '@fortawesome/free-solid-svg-icons';
 import { chunkDocument } from '../api/chunk';
-import { listSubjects } from '../api/catalog';
+import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listDocuments } from '../api/documents';
 import { enqueueGenerateQuestions, getGenerateStatus, streamGenerateStatus } from '../api/generate';
 import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
@@ -256,6 +256,10 @@ function GeneratePage() {
   const [presetName, setPresetName] = useState('');
   const [presetError, setPresetError] = useState('');
   const [teacherInstruction, setTeacherInstruction] = useState('');
+  const [availableModels, setAvailableModels] = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState('');
+  const [selectedModelCode, setSelectedModelCode] = useState('');
   const [documentId, setDocumentId] = useState(null);
   const [activeJobId, setActiveJobId] = useState('');
   const [generationInfo, setGenerationInfo] = useState(null);
@@ -287,6 +291,7 @@ function GeneratePage() {
   const selectedDocumentSubjectName = selectedDocument
     ? subjects.find((item) => (item.id || item._id) === selectedDocument.subject_id)?.subject_name
     : null;
+  const selectedModel = availableModels.find((model) => model.code === selectedModelCode);
   const draftPageCount = Math.max(1, Math.ceil(drafts.length / DRAFTS_PER_PAGE));
   const safeDraftPage = Math.min(draftPage, draftPageCount - 1);
   const visibleDrafts = drafts.slice(
@@ -381,6 +386,27 @@ function GeneratePage() {
     }
   };
 
+  const fetchAvailableModels = async () => {
+    setModelsLoading(true);
+    setModelsError('');
+    try {
+      const result = await listAvailableAiModels('QUESTION_GENERATION');
+      const items = result.items || [];
+      setAvailableModels(items);
+      setSelectedModelCode((current) => (
+        items.some((model) => model.code === current)
+          ? current
+          : (result.default_model_code || items[0]?.code || '')
+      ));
+    } catch {
+      setAvailableModels([]);
+      setSelectedModelCode('');
+      setModelsError('Đang dùng mô hình mặc định của hệ thống.');
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
   const syncGenerationPresets = async () => {
     try {
       const result = await listGenerationPresets();
@@ -409,6 +435,7 @@ function GeneratePage() {
   useEffect(() => {
     fetchReusableDocuments();
     fetchSubjects();
+    fetchAvailableModels();
     syncGenerationPresets();
   }, []);
 
@@ -877,6 +904,7 @@ function GeneratePage() {
       questionPlan,
       teacherInstruction,
       sourceMode,
+      modelProvider: selectedModelCode,
       timings: timingRef.current,
       pipelineStartedAt,
       now: nowMs,
@@ -924,6 +952,7 @@ function GeneratePage() {
       createdAt: genResult.created_at,
       updatedAt: genResult.updated_at,
       metrics: genResult.metrics,
+      model: genResult.model || selectedModel || null,
     });
     setPhase('completed');
     setStatusDetail(`Đã sinh ${(genResult.data || []).length}/${totalQuestions} câu hỏi`);
@@ -1088,6 +1117,9 @@ function GeneratePage() {
                       {generationInfo.generatedCount}/{generationInfo.requestedCount} câu
                       {generationInfo.updatedAt ? ` · ${formatDateTime(generationInfo.updatedAt)}` : ''}
                     </span>
+                  )}
+                  {phase === 'completed' && generationInfo?.model?.name && (
+                    <span className="job-badge">AI: {generationInfo.model.name}</span>
                   )}
                   {phase === 'completed' && hasTimings && (
                     <div className="gen-timing-grid">
@@ -1392,6 +1424,29 @@ function GeneratePage() {
               >
                 + Thêm dòng
               </button>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="generation-model">Mô hình AI</label>
+              <select
+                id="generation-model"
+                className="field-select"
+                value={selectedModelCode}
+                disabled={isBusy || modelsLoading || availableModels.length === 0}
+                onChange={(event) => setSelectedModelCode(event.target.value)}
+              >
+                {availableModels.length === 0 && (
+                  <option value="">{modelsLoading ? 'Đang tải...' : 'Mặc định hệ thống'}</option>
+                )}
+                {availableModels.map((model) => (
+                  <option key={model.code} value={model.code}>
+                    {model.name}{model.version ? ` · ${model.version}` : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="source-note">
+                {modelsError || selectedModel?.description || 'Giữ lựa chọn mặc định nếu bạn không chắc.'}
+              </p>
             </div>
 
             <div className="field-group">

@@ -26,7 +26,11 @@ from modules.generation.postprocessing import (
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.rag.search import get_context_snapshot
-from modules.generation.llm.factory import get_llm_service
+from modules.generation.llm.factory import (
+    get_llm_execution_snapshot,
+    get_llm_service,
+    reset_llm_execution_tracking,
+)
 from modules.generation.mongodb import (
     create_generation_run,
     finish_generation_run,
@@ -64,6 +68,8 @@ async def generate_questions_rag(
     req: QuestionGenerateRequest,
     requested_by_user_id=None,
     progress_callback: Callable[[dict], Awaitable[None]] | None = None,
+    model_snapshot: dict | None = None,
+    fallback_model_snapshot: dict | None = None,
 ) -> QuestionGenerateResponse:
     plan = req.effective_plan()
     plan_log = ", ".join(
@@ -84,7 +90,12 @@ async def generate_questions_rag(
         raise ValueError("Không tìm thấy đủ dữ liệu tri thức để sinh câu hỏi.")
 
     prompt_builder = PromptBuilder()
-    llm = get_llm_service(req.model_provider, settings.generation_fallback_provider)
+    llm = get_llm_service(
+        req.model_provider,
+        settings.generation_fallback_provider,
+        model_snapshot=model_snapshot,
+        fallback_model_snapshot=fallback_model_snapshot,
+    )
     generated_questions: List[GeneratedQuestion] = []
     summaries: List[GenerationPlanSummary] = []
     try:
@@ -115,6 +126,7 @@ async def generate_questions_rag(
             context_text=context_text,
             prompt_builder=prompt_builder,
             llm=llm,
+            model_snapshot=model_snapshot,
             requested_by_user_id=requested_by_user_id,
         )
         for question in questions:
@@ -149,8 +161,10 @@ async def _generate_questions_for_plan_item(
     context_text: str,
     prompt_builder: PromptBuilder,
     llm,
+    model_snapshot: dict | None,
     requested_by_user_id=None,
 ) -> tuple[List[GeneratedQuestion], GenerationPlanSummary]:
+    reset_llm_execution_tracking(llm)
     bloom_level = plan_item.bloom_level or req.bloom_level
     # 2. Xây dựng Prompt thông qua hệ thống file-based cho từng dạng câu hỏi
     full_prompt = prompt_builder.build(
@@ -170,7 +184,7 @@ async def _generate_questions_for_plan_item(
         document_id=req.document_id,
         requested_by_user_id=requested_by_user_id,
         request_snapshot=request_snapshot,
-        model_snapshot={"provider": req.model_provider},
+        model_snapshot=model_snapshot or {"provider": req.model_provider},
         rendered_prompt=full_prompt,
         context_text=context_text,
         retrieval_results=context_snapshot["results"],
@@ -188,6 +202,7 @@ async def _generate_questions_for_plan_item(
             status="FAILED",
             latency_ms=int((time.perf_counter() - started_at) * 1000),
             error_message=str(exc),
+            model_execution=get_llm_execution_snapshot(llm),
         )
         raise
 
@@ -327,6 +342,7 @@ async def _generate_questions_for_plan_item(
                 "exact_duplicate_count": duplicate_stats.exact,
                 "near_duplicate_count": duplicate_stats.near,
             },
+            model_execution=get_llm_execution_snapshot(llm),
         )
 
         return [GeneratedQuestion(**question) for question in saved_data], summary
@@ -339,6 +355,7 @@ async def _generate_questions_for_plan_item(
             raw_model_response=raw_response,
             latency_ms=int((time.perf_counter() - started_at) * 1000),
             error_message="Invalid JSON response",
+            model_execution=get_llm_execution_snapshot(llm),
         )
         raise Exception("Định dạng phản hồi từ LLM không hợp lệ.")
     except Exception as exc:
@@ -348,6 +365,7 @@ async def _generate_questions_for_plan_item(
             raw_model_response=raw_response,
             latency_ms=int((time.perf_counter() - started_at) * 1000),
             error_message=str(exc),
+            model_execution=get_llm_execution_snapshot(llm),
         )
         raise
 

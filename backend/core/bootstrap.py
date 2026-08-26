@@ -662,7 +662,9 @@ def _seed_reference_data() -> None:
     for model in (
         {
             "model_code": "qwen",
-            "model_name": "qwen2.5:7b",
+            "model_name": settings.qwen_model_name,
+            "display_name": "Qwen 2.5 (7B)",
+            "description": "Nhanh và phù hợp để sinh câu hỏi.",
             "runtime": "OLLAMA",
             "kind": "CHAT",
             "capabilities": ["QUESTION_GENERATION", "QUESTION_EVALUATION"],
@@ -670,7 +672,9 @@ def _seed_reference_data() -> None:
         },
         {
             "model_code": "deepseek",
-            "model_name": "deepseek-r1",
+            "model_name": settings.deepseek_model_name,
+            "display_name": "DeepSeek R1",
+            "description": "Phù hợp với câu hỏi cần suy luận.",
             "runtime": "OLLAMA",
             "kind": "REASONING",
             "capabilities": ["QUESTION_EVALUATION", "QUESTION_GENERATION"],
@@ -678,7 +682,9 @@ def _seed_reference_data() -> None:
         },
         {
             "model_code": "deepseek-r1",
-            "model_name": "deepseek-r1",
+            "model_name": settings.deepseek_model_name,
+            "display_name": "DeepSeek R1 - Đánh giá",
+            "description": "Dùng để đánh giá chất lượng câu hỏi.",
             "runtime": "OLLAMA",
             "kind": "REASONING",
             "capabilities": ["QUESTION_EVALUATION"],
@@ -692,7 +698,7 @@ def _seed_reference_data() -> None:
                     "schema_version": SCHEMA_VERSION,
                     **model,
                     "revision": "local",
-                    "config": {"endpoint": "http://localhost:11434/api/generate"},
+                    "config": {},
                     "is_local": True,
                     "is_active": True,
                     "created_at": now,
@@ -701,6 +707,23 @@ def _seed_reference_data() -> None:
             },
             upsert=True,
         )
+        db.ai_models.update_one(
+            {"model_code": model["model_code"], "display_name": {"$exists": False}},
+            {
+                "$set": {
+                    "display_name": model["display_name"],
+                    "description": model["description"],
+                    "updated_at": now,
+                }
+            },
+        )
+    db.ai_models.update_many(
+        {
+            "model_code": {"$in": ["qwen", "deepseek", "deepseek-r1"]},
+            "config.endpoint": "http://localhost:11434/api/generate",
+        },
+        {"$unset": {"config.endpoint": ""}},
+    )
     _seed_prompt_templates(db, now)
 
 

@@ -51,7 +51,7 @@ class QuestionGenerateRequest(BaseModel):
     bloom_level: BloomLevel
     question_type: QuestionType = QuestionType.TRAC_NGHIEM
     num_questions: int = Field(default=1, ge=1, le=10)
-    model_provider: str = Field(default_factory=lambda: settings.model_provider)
+    model_provider: str = Field(default_factory=lambda: settings.model_provider, min_length=1, max_length=160)
     question_plan: Optional[List[QuestionPlanItem]] = Field(
         None,
         min_length=1,
@@ -166,6 +166,7 @@ class GenerationJobStatusResponse(BaseModel):
     summary: Optional[List[GenerationPlanSummary]] = None
     metrics: Optional[GenerationJobMetrics] = None
     progress: Optional[dict[str, Any]] = None
+    model: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

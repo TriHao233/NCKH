@@ -23,6 +23,31 @@
   gap: 8px;
 }
 
+.review-actions {
+  align-items: flex-end;
+}
+
+.review-model-picker {
+  display: grid;
+  gap: 4px;
+}
+
+.review-model-picker span {
+  color: #52677d;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.review-model-picker select {
+  min-height: 36px;
+  max-width: 220px;
+  border: 1px solid #d9e6f2;
+  border-radius: 8px;
+  background: #fff;
+  color: #17324d;
+  padding: 7px 28px 7px 10px;
+}
+
 .review-page button,
 .review-page select,
 .review-page input {

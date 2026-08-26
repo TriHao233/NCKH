@@ -15,7 +15,8 @@ from core.config import settings
 from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser, has_permission
 from modules.admin.moodle_service import MoodleTargetService
-from modules.generation.llm.factory import get_llm_service
+from modules.generation.llm.factory import get_llm_execution_snapshot, get_llm_service
+from modules.generation.llm.model_registry import EVALUATION_CAPABILITY, resolve_model_snapshot
 from modules.generation.prompt_builder import PromptBuilder
 from modules.notifications.service import (
     NotificationService,
@@ -462,7 +463,8 @@ class QuestionWorkflowService:
             "question_version": version["version"],
             "question_snapshot_hash": version["content_hash"],
             "generation_run_id": version.get("generation_run_id"),
-            "evaluator_model": self._model_snapshot(payload.evaluator_model_code),
+            "evaluator_model": payload.model_snapshot or self._model_snapshot(payload.evaluator_model_code),
+            "model_execution": payload.model_execution,
             "requested_by_user_id": user_id,
             "policy": {
                 "id": policy.get("_id") or policy.get("id"),
@@ -556,13 +558,20 @@ class QuestionWorkflowService:
         prompt_snapshot: dict = {}
         policy_snapshot: dict = {}
         duration_ms = None
+        model_snapshot: dict = {}
+        llm = None
         if evaluator_code.lower() in {"local-heuristic-evaluator-v1", "heuristic"}:
             scores, feedback, evidence = self._auto_scores(question, version)
             evidence["mode"] = "heuristic"
             evaluator_code = "local-heuristic-evaluator-v1"
         else:
             try:
-                llm = get_llm_service(evaluator_code)
+                model_snapshot = resolve_model_snapshot(
+                    evaluator_code,
+                    capability=EVALUATION_CAPABILITY,
+                    database=self.db,
+                )
+                llm = get_llm_service(evaluator_code, model_snapshot=model_snapshot)
                 policy = self._policy()
                 policy_snapshot = self._policy_snapshot(policy)
                 prompt, prompt_snapshot, _ = self._build_evaluation_prompt(question, version, policy)
@@ -602,6 +611,12 @@ class QuestionWorkflowService:
                 prompt_snapshot=prompt_snapshot,
                 duration_ms=duration_ms,
                 trigger="DIRECT_AUTO_EVALUATION",
+                model_snapshot=model_snapshot,
+                model_execution=(
+                    get_llm_execution_snapshot(llm)
+                    if llm is not None and evaluator_code != "local-heuristic-evaluator-v1"
+                    else {}
+                ),
             ),
             user_id,
         )
@@ -635,12 +650,25 @@ class QuestionWorkflowService:
         requested_by_user_id,
         evaluator_model_code: str = DEFAULT_EVALUATOR_MODEL_CODE,
         trigger: str = "REVIEWER_REQUEST",
+        model_snapshot: dict | None = None,
+        fallback_model_snapshot: dict | None = None,
     ) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != expected_version:
             raise RuntimeError("VERSION_CONFLICT")
 
         evaluator_model_code = evaluator_model_code.strip() or DEFAULT_EVALUATOR_MODEL_CODE
+        model_snapshot = model_snapshot or resolve_model_snapshot(
+            evaluator_model_code,
+            capability=EVALUATION_CAPABILITY,
+            database=self.db,
+        )
+        if settings.evaluation_fallback_provider and fallback_model_snapshot is None:
+            fallback_model_snapshot = resolve_model_snapshot(
+                settings.evaluation_fallback_provider,
+                capability=EVALUATION_CAPABILITY,
+                database=self.db,
+            )
         if question.get("evaluation_status") == "PASSED":
             raise ValueError("Câu hỏi đã có kết quả AI đạt cho phiên bản hiện tại")
 
@@ -675,6 +703,8 @@ class QuestionWorkflowService:
             "trigger": trigger,
             "requested_by_user_id": requested_by_user_id,
             "evaluator_model_code": evaluator_model_code,
+            "model_snapshot": model_snapshot,
+            "fallback_model_snapshot": fallback_model_snapshot,
             "policy_snapshot": self._policy_snapshot(policy),
             "prompt_snapshot": prompt_snapshot,
             "source_snapshot": [
@@ -977,6 +1007,8 @@ class QuestionWorkflowService:
             llm = get_llm_service(
                 job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
                 settings.evaluation_fallback_provider,
+                model_snapshot=job.get("model_snapshot"),
+                fallback_model_snapshot=job.get("fallback_model_snapshot"),
             )
             raw_model_response = await llm.generate_text(prompt)
             duration_ms = int((time.perf_counter() - started) * 1000)
@@ -999,6 +1031,8 @@ class QuestionWorkflowService:
                     duration_ms=duration_ms,
                     evaluation_job_id=str(job["_id"]),
                     trigger=job.get("trigger"),
+                    model_snapshot=job.get("model_snapshot") or {},
+                    model_execution=get_llm_execution_snapshot(llm),
                 )
             evaluation = await asyncio.to_thread(
                 self.evaluate,
@@ -1024,6 +1058,7 @@ class QuestionWorkflowService:
                             "color": evaluation.get("color"),
                         },
                         "duration_ms": duration_ms,
+                        "model_execution": get_llm_execution_snapshot(llm),
                         "finished_at": finished_at,
                         "expires_at": finished_at + timedelta(days=settings.job_retention_days),
                         "updated_at": finished_at,

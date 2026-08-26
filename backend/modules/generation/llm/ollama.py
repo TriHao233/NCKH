@@ -37,8 +37,9 @@ class OllamaProvider(LLMProvider):
         timeout_seconds: float | None = None,
         num_predict: int | None = None,
         temperature: float | None = None,
+        url: str | None = None,
     ):
-        self.url = settings.ollama_generate_url
+        self.url = (url or settings.ollama_generate_url).strip()
         self.model_name = model_name.strip()
         self.provider_label = provider_label
         self.timeout_seconds = timeout_seconds or settings.ollama_timeout_seconds

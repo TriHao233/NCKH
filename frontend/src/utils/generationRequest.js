@@ -3,6 +3,7 @@ export function buildGenerationRequest({
   questionPlan,
   teacherInstruction,
   sourceMode,
+  modelProvider,
   timings,
   pipelineStartedAt,
   now,
@@ -17,6 +18,7 @@ export function buildGenerationRequest({
     num_questions: firstPlanItem.num_questions,
     question_plan: questionPlan,
     instruction,
+    ...(modelProvider ? { model_provider: modelProvider } : {}),
     client_telemetry: {
       source_mode: sourceMode,
       document_reused: timings.documentMs === 'reused',

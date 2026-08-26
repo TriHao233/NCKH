@@ -58,7 +58,7 @@ def create_generation_run(
     document_oid = object_id(document_id, "document_id")
     db = get_database()
     provider = model_snapshot.get("provider") or model_snapshot.get("model_code") or ""
-    if provider:
+    if provider and not model_snapshot.get("source"):
         model_snapshot = _model_snapshot(db, provider, model_snapshot)
     document = db.documents.find_one({"_id": document_oid, "archived_at": None})
     if not document:
@@ -136,6 +136,7 @@ def finish_generation_run(
     error_message: str | None = None,
     validation_errors: list[dict] | None = None,
     post_processing: dict | None = None,
+    model_execution: dict | None = None,
 ) -> None:
     now = utc_now()
     fields = {
@@ -150,6 +151,8 @@ def finish_generation_run(
         fields["validation_errors"] = validation_errors
     if post_processing is not None:
         fields["post_processing"] = post_processing
+    if model_execution is not None:
+        fields["execution.model"] = model_execution
     get_database().generation_runs.update_one(
         {"_id": object_id(generation_run_id, "generation_run_id")},
         {"$set": fields},
@@ -242,12 +245,21 @@ def save_generated_questions(
     return saved_questions
 
 
-def create_generation_job(request: dict, requested_by_user_id=None, idempotency_key: str | None = None) -> str:
+def create_generation_job(
+    request: dict,
+    requested_by_user_id=None,
+    idempotency_key: str | None = None,
+    *,
+    model_snapshot: dict | None = None,
+    fallback_model_snapshot: dict | None = None,
+) -> str:
     """Tạo job sinh câu hỏi với trạng thái queued (dùng cho polling ở FE)."""
     db = get_database()
     now = utc_now()
     doc = {
         "request": request,
+        "model_snapshot": model_snapshot,
+        "fallback_model_snapshot": fallback_model_snapshot,
         "requested_by_user_id": requested_by_user_id,
         "idempotency_key": idempotency_key,
         "status": "queued",

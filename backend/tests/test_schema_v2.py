@@ -62,7 +62,7 @@ from modules.generation.schemas import (
     QuestionGenerateRequest,
     QuestionType,
 )
-from modules.generation.llm.deepseek import DeepseekProvider
+from modules.generation.llm.ollama import OllamaProvider
 from modules.generation.llm.concurrency import ConcurrencyLimitedProvider
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
@@ -1513,7 +1513,7 @@ class SchemaV2Tests(unittest.TestCase):
     def test_llm_factory_accepts_ollama_model_alias(self):
         provider = get_llm_service("ollama:qwen2.5:7b")
         self.assertIsInstance(provider, ConcurrencyLimitedProvider)
-        self.assertIsInstance(provider.wrapped, DeepseekProvider)
+        self.assertIsInstance(provider.wrapped, OllamaProvider)
         self.assertEqual(provider.model_name, "qwen2.5:7b")
 
     def test_moodle_publication_request_has_demo_defaults(self):
@@ -3516,6 +3516,8 @@ class SchemaV2Tests(unittest.TestCase):
         models = service.list_ai_models()
         self.assertTrue(models[0]["factory_status"]["supported"])
         self.assertFalse(models[1]["factory_status"]["supported"])
+        available = service.available_ai_models("QUESTION_GENERATION")
+        self.assertEqual([item["code"] for item in available["items"]], ["qwen"])
 
         model = service.set_ai_model_active(
             AiModelActivationPayload(model_code="qwen", is_active=False)

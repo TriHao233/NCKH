@@ -19,7 +19,7 @@ import {
   releaseQuestionReview,
   reviewQuestion,
 } from '../api/questions';
-import { listSubjects } from '../api/catalog';
+import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
@@ -374,6 +374,8 @@ function ReviewQueuePage() {
   const [total, setTotal] = useState(0);
   const [catalogSubjects, setCatalogSubjects] = useState([]);
   const [catalogFilterError, setCatalogFilterError] = useState('');
+  const [evaluationModels, setEvaluationModels] = useState([]);
+  const [evaluationModelCode, setEvaluationModelCode] = useState('');
   const [teacherOptions, setTeacherOptions] = useState([]);
   const [teacherFilterError, setTeacherFilterError] = useState('');
   const [reviewerOptions, setReviewerOptions] = useState([]);
@@ -460,6 +462,22 @@ function ReviewQueuePage() {
     } catch (err) {
       setCatalogFilterError(err.message || 'Không tải được bộ lọc môn học');
       setCatalogSubjects([]);
+    }
+  };
+
+  const fetchEvaluationModels = async () => {
+    try {
+      const result = await listAvailableAiModels('QUESTION_EVALUATION');
+      const items = result.items || [];
+      setEvaluationModels(items);
+      setEvaluationModelCode((current) => (
+        items.some((item) => item.code === current)
+          ? current
+          : (result.default_model_code || items[0]?.code || '')
+      ));
+    } catch {
+      setEvaluationModels([]);
+      setEvaluationModelCode('');
     }
   };
 
@@ -585,6 +603,7 @@ function ReviewQueuePage() {
 
   useEffect(() => {
     fetchCatalogFilters();
+    fetchEvaluationModels();
     fetchTeacherFilters();
     fetchReviewerOptions();
     fetchDashboard();
@@ -937,6 +956,7 @@ function ReviewQueuePage() {
       await autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
         fallback_to_heuristic: false,
+        ...(evaluationModelCode ? { evaluator_model_code: evaluationModelCode } : {}),
       });
       await refreshAfterAction(question);
     } catch (err) {
@@ -1050,6 +1070,7 @@ function ReviewQueuePage() {
         await autoEvaluateQuestion(question.id, {
           expected_version: question.current_version,
           fallback_to_heuristic: false,
+          ...(evaluationModelCode ? { evaluator_model_code: evaluationModelCode } : {}),
         });
       }
       await Promise.all([fetchQuestions(), fetchDashboard()]);
@@ -1178,6 +1199,23 @@ function ReviewQueuePage() {
           <h1>Kiểm duyệt câu hỏi</h1>
         </div>
         <div className="review-actions">
+          {evaluationModels.length > 0 && (
+            <label className="review-model-picker">
+              <span>Mô hình đánh giá</span>
+              <select
+                aria-label="Mô hình đánh giá"
+                value={evaluationModelCode}
+                onChange={(event) => setEvaluationModelCode(event.target.value)}
+                disabled={bulkBusy || Boolean(busyId)}
+              >
+                {evaluationModels.map((model) => (
+                  <option key={model.code} value={model.code}>
+                    {model.name}{model.version ? ` · ${model.version}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button type="button" className="btn btn--outline" disabled={bulkBusy} onClick={runBulkEvaluate}>
             Xếp hàng AI
           </button>

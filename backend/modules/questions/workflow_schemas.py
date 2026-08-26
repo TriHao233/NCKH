@@ -19,6 +19,8 @@ class EvaluationCreateRequest(BaseModel):
     feedback: dict[str, Any] = Field(default_factory=dict)
     evidence: dict[str, Any] = Field(default_factory=dict)
     evaluator_model_code: str = "manual-or-external-evaluator"
+    model_snapshot: dict[str, Any] = Field(default_factory=dict)
+    model_execution: dict[str, Any] = Field(default_factory=dict)
     raw_model_response: str | None = None
     policy_snapshot: dict[str, Any] = Field(default_factory=dict)
     prompt_snapshot: dict[str, Any] = Field(default_factory=dict)

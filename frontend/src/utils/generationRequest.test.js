@@ -10,12 +10,14 @@ test('buildGenerationRequest uses backend defaults and keeps instruction separat
     questionPlan,
     teacherInstruction: '  Tập trung vào định nghĩa  ',
     sourceMode: 'existing',
+    modelProvider: 'qwen-fast',
     timings: { documentMs: 'reused', uploadMs: 10, ocrMs: 20, chunkMs: 30 },
     pipelineStartedAt: 100,
     now: () => 225.4,
   });
 
   assert.equal(payload.instruction, 'Tập trung vào định nghĩa');
+  assert.equal(payload.model_provider, 'qwen-fast');
   assert.equal(payload.collection_name, undefined);
   assert.equal(payload.target_heading, undefined);
   assert.equal(payload.client_telemetry.document_reused, true);

@@ -561,6 +561,8 @@ class AdminJobService:
         new_job_id = create_generation_job(
             job.get("request") or {},
             requested_by_user_id=job.get("requested_by_user_id"),
+            model_snapshot=job.get("model_snapshot"),
+            fallback_model_snapshot=job.get("fallback_model_snapshot"),
         )
         self._audit(current_user, "admin.job_retry", "generation", job_id, {"new_job_id": new_job_id})
         return {"job": json_safe(get_generation_job(new_job_id))}
@@ -585,6 +587,8 @@ class AdminJobService:
             requested_by_user_id=job.get("requested_by_user_id") or current_user.id,
             evaluator_model_code=job.get("evaluator_model_code") or settings.evaluation_model_provider,
             trigger="ADMIN_RETRY",
+            model_snapshot=job.get("model_snapshot"),
+            fallback_model_snapshot=job.get("fallback_model_snapshot"),
         )
         self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
         return {"job": json_safe(queued)}

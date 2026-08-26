@@ -136,6 +136,26 @@ class GenerationStatusApiTests(unittest.TestCase):
         self.assertEqual(response.headers["Retry-After"], "15")
         create_job.assert_not_called()
 
+    def test_enqueue_freezes_resolved_model_snapshot(self):
+        snapshot = {
+            "model_code": "qwen-fast",
+            "model_name": "qwen2.5:14b",
+            "runtime": "OLLAMA",
+            "source": "catalog",
+        }
+        with (
+            patch("modules.generation.generate.count_active_generation_jobs", return_value=0),
+            patch("modules.generation.generate.resolve_model_snapshot", return_value=snapshot),
+            patch("modules.generation.generate.create_generation_job", return_value=self.job_id) as create_job,
+        ):
+            payload = self.generation_payload()
+            payload["model_provider"] = "qwen-fast"
+            response = self.client.post("/api/v1/generate/questions", json=payload)
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(create_job.call_args.kwargs["model_snapshot"], snapshot)
+        self.assertIsNone(create_job.call_args.kwargs["fallback_model_snapshot"])
+
 
 if __name__ == "__main__":
     unittest.main()

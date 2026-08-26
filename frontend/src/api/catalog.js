@@ -44,6 +44,10 @@ export function listAiModels() {
   return apiRequest('/catalog/ai-models');
 }
 
+export function listAvailableAiModels(capability = 'QUESTION_GENERATION') {
+  return apiRequest(`/catalog/ai-models/available?capability=${encodeURIComponent(capability)}`);
+}
+
 export function saveAiModel(payload) {
   return apiRequest('/catalog/ai-models', { method: 'POST', body: payload });
 }
