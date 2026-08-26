@@ -63,6 +63,7 @@ from modules.generation.schemas import (
     QuestionType,
 )
 from modules.generation.llm.deepseek import DeepseekProvider
+from modules.generation.llm.concurrency import ConcurrencyLimitedProvider
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.question import _build_retry_prompt, _check_type_format, _normalize_difficulty
@@ -1511,7 +1512,8 @@ class SchemaV2Tests(unittest.TestCase):
 
     def test_llm_factory_accepts_ollama_model_alias(self):
         provider = get_llm_service("ollama:qwen2.5:7b")
-        self.assertIsInstance(provider, DeepseekProvider)
+        self.assertIsInstance(provider, ConcurrencyLimitedProvider)
+        self.assertIsInstance(provider.wrapped, DeepseekProvider)
         self.assertEqual(provider.model_name, "qwen2.5:7b")
 
     def test_moodle_publication_request_has_demo_defaults(self):
@@ -3745,11 +3747,14 @@ class SchemaV2Tests(unittest.TestCase):
         )
 
         self.assertEqual(active["summary"]["total"], 2)
+        self.assertEqual(active["total"], 2)
+        self.assertFalse(active["total_is_estimate"])
         self.assertEqual(active["summary"]["long_running"], 2)
         self.assertEqual({item["kind"] for item in active["items"]}, {"generation", "document"})
         self.assertEqual(stale["summary"]["long_running"], 2)
         self.assertEqual(retryable["summary"]["failed"], 3)
         self.assertEqual(recent["summary"]["total"], 3)
+        self.assertEqual(recent["total"], 3)
         self.assertEqual({item["kind"] for item in recent["items"]}, {"generation", "evaluation", "document"})
         with self.assertRaises(ValueError):
             service.list_jobs(

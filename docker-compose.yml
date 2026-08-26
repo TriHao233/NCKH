@@ -15,6 +15,7 @@ services:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
+      OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
@@ -62,6 +63,7 @@ services:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
+      OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

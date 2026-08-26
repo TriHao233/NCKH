@@ -84,6 +84,12 @@ class Settings(BaseModel):
     max_active_generation_jobs_per_user: int = int(os.getenv("MAX_ACTIVE_GENERATION_JOBS_PER_USER", "10"))
     worker_shutdown_grace_seconds: int = int(os.getenv("WORKER_SHUTDOWN_GRACE_SECONDS", "30"))
     job_retention_days: int = int(os.getenv("JOB_RETENTION_DAYS", "90"))
+    llm_slot_lease_seconds: int = int(os.getenv("LLM_SLOT_LEASE_SECONDS", "360"))
+    llm_slot_heartbeat_seconds: int = int(os.getenv("LLM_SLOT_HEARTBEAT_SECONDS", "30"))
+    llm_slot_wait_timeout_seconds: int = int(os.getenv("LLM_SLOT_WAIT_TIMEOUT_SECONDS", "600"))
+    llm_slot_poll_seconds: float = float(os.getenv("LLM_SLOT_POLL_SECONDS", "0.5"))
+    ollama_max_concurrency: int = int(os.getenv("OLLAMA_MAX_CONCURRENCY", "1"))
+    gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
 
     firebase_credentials_path: str = os.getenv(

@@ -30,6 +30,7 @@ RAG_COLLECTIONS = (
     "questions",
     "question_versions",
     "evaluation_jobs",
+    "llm_slots",
     "question_evaluations",
     "question_reviews",
     "audit_logs",
@@ -102,6 +103,19 @@ VALIDATORS = {
                 "metrics": {"bsonType": ["object", "null"]},
                 "error_message": {"bsonType": ["string", "null"]},
                 "created_at": {"bsonType": "date"},
+                "updated_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "llm_slots": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": ["provider", "slot_index", "updated_at"],
+            "properties": {
+                "provider": {"bsonType": "string", "minLength": 1},
+                "slot_index": {"bsonType": "int", "minimum": 0},
+                "holder_id": {"bsonType": ["string", "null"]},
+                "lease_expires_at": {"bsonType": ["date", "null"]},
                 "updated_at": {"bsonType": "date"},
             },
         }
@@ -441,6 +455,19 @@ def _ensure_indexes() -> None:
             ),
             IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_generation_jobs_lease"),
             IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_generation_jobs"),
+        ]
+    )
+    rag_db.llm_slots.create_indexes(
+        [
+            IndexModel(
+                [("provider", ASCENDING), ("slot_index", ASCENDING)],
+                unique=True,
+                name="uq_llm_slots_provider_index",
+            ),
+            IndexModel(
+                [("provider", ASCENDING), ("lease_expires_at", ASCENDING)],
+                name="ix_llm_slots_lease",
+            ),
         ]
     )
     rag_db.generation_runs.create_indexes(

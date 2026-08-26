@@ -55,3 +55,16 @@ export async function pollJob(fetchStatus, jobId, options = {}) {
     currentIntervalMs = Math.min(maxIntervalMs, currentIntervalMs * backoffFactor);
   }
 }
+
+export async function watchJob(fetchStatus, jobId, options = {}) {
+  const { streamStatus, onStreamFallback, ...sharedOptions } = options;
+  if (streamStatus) {
+    try {
+      return await streamStatus(jobId, sharedOptions);
+    } catch (error) {
+      if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw error;
+      onStreamFallback?.(error);
+    }
+  }
+  return pollJob(fetchStatus, jobId, sharedOptions);
+}

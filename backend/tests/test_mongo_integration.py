@@ -7,6 +7,7 @@ from bson import ObjectId
 
 from core.database import get_database, mongo_transaction
 from modules.generation.mongodb import claim_generation_job
+from modules.generation.llm.concurrency import _release_slot, _try_acquire_slot
 
 
 @unittest.skipUnless(os.getenv("RUN_MONGO_INTEGRATION") == "1", "requires Mongo replica set")
@@ -19,6 +20,7 @@ class MongoReplicaSetIntegrationTests(unittest.TestCase):
         if self.job_ids:
             self.db.generation_jobs.delete_many({"_id": {"$in": self.job_ids}})
         self.db.integration_transactions.delete_many({"test_marker": "codex-integration"})
+        self.db.llm_slots.delete_many({"provider": "integration-provider"})
 
     def test_transaction_rolls_back_on_error(self):
         try:
@@ -94,6 +96,21 @@ class MongoReplicaSetIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(claimed)
         self.assertEqual(claimed["locked_by"], "replacement-worker")
         self.assertEqual(claimed["attempt_count"], 2)
+
+    def test_distributed_llm_slot_allows_only_configured_concurrency(self):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda holder: _try_acquire_slot("integration-provider", holder, 1),
+                    ("holder-a", "holder-b"),
+                )
+            )
+
+        acquired = [(holder, slot) for holder, slot in zip(("holder-a", "holder-b"), results) if slot]
+        self.assertEqual(len(acquired), 1)
+        holder, slot_id = acquired[0]
+        _release_slot(slot_id, holder)
+        self.assertIsNotNone(_try_acquire_slot("integration-provider", "holder-c", 1))
 
 
 if __name__ == "__main__":

@@ -255,6 +255,7 @@ def create_generation_job(request: dict, requested_by_user_id=None, idempotency_
         "max_attempts": settings.job_max_attempts,
         "result": None,
         "metrics": None,
+        "progress": {"stage": "queued", "completed": 0, "total": 0},
         "error_message": None,
         "created_at": now,
         "updated_at": now,
@@ -302,6 +303,10 @@ def update_generation_job(
         "status": status,
         "updated_at": utc_now(),
     }
+    if status == "completed":
+        update_data["progress"] = {"stage": "completed", "completed": 1, "total": 1}
+    elif status == "failed":
+        update_data["progress"] = {"stage": "failed", "completed": 0, "total": 1}
     if result is not None:
         update_data["result"] = result
     if metrics is not None:
@@ -322,6 +327,14 @@ def update_generation_job(
             "next_attempt_at": "",
         }
     return db["generation_jobs"].update_one(query, update).modified_count == 1
+
+
+def update_generation_progress(job_id: str, worker_id: str, progress: dict) -> bool:
+    result = get_database().generation_jobs.update_one(
+        {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
+        {"$set": {"progress": progress, "updated_at": utc_now()}},
+    )
+    return result.matched_count == 1
 
 
 def _serialize_generation_job(doc: dict | None) -> dict | None:
@@ -374,6 +387,7 @@ def claim_generation_job(job_id: str, worker_id: str) -> dict | None:
                 "heartbeat_at": now,
                 "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
                 "updated_at": now,
+                "progress": {"stage": "starting", "completed": 0, "total": 0},
             },
             "$inc": {"attempt_count": 1},
             "$unset": {"next_attempt_at": ""},
@@ -441,6 +455,7 @@ def retry_or_dead_letter_generation_job(
             "last_failed_at": now,
             "next_attempt_at": now + timedelta(seconds=delay),
             "updated_at": now,
+            "progress": {"stage": "retry_wait", "completed": 0, "total": 1},
         }
     else:
         status = "failed"
@@ -450,6 +465,7 @@ def retry_or_dead_letter_generation_job(
             "dead_lettered_at": now,
             "expires_at": now + timedelta(days=settings.job_retention_days),
             "updated_at": now,
+            "progress": {"stage": "failed", "completed": 0, "total": 1},
         }
     if metrics is not None:
         fields["metrics"] = metrics

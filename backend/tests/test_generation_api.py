@@ -74,6 +74,25 @@ class GenerationStatusApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         lookup.assert_called_once_with(self.job_id, requested_by_user_id=None)
 
+    def test_status_event_stream_is_scoped_and_finishes_on_terminal_status(self):
+        completed = self.queued_job(self.job_id)
+        completed["status"] = "completed"
+        completed["result"] = {"data": [], "summary": []}
+        completed["progress"] = {"stage": "completed", "completed": 1, "total": 1}
+        with patch("modules.generation.generate.get_generation_job", return_value=completed) as lookup:
+            response = self.client.get(f"/api/v1/generate/status/{self.job_id}/events")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/event-stream")
+        self.assertIn("event: status", response.text)
+        self.assertIn('"status":"completed"', response.text)
+        self.assertTrue(
+            all(
+                call.kwargs.get("requested_by_user_id") == self.current_user.id
+                for call in lookup.call_args_list
+            )
+        )
+
     @staticmethod
     def generation_payload() -> dict:
         return {

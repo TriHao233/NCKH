@@ -4,7 +4,7 @@ import { faChevronDown, faLayerGroup, faUpload } from '@fortawesome/free-solid-s
 import { chunkDocument } from '../api/chunk';
 import { listSubjects } from '../api/catalog';
 import { listDocuments } from '../api/documents';
-import { enqueueGenerateQuestions, getGenerateStatus } from '../api/generate';
+import { enqueueGenerateQuestions, getGenerateStatus, streamGenerateStatus } from '../api/generate';
 import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
 import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
 import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
@@ -17,7 +17,7 @@ import {
   toBackendBloomLevel,
   toBackendQuestionType,
 } from '../constants/generationEnums';
-import { pollJob } from '../hooks/useJobPoll';
+import { pollJob, watchJob } from '../hooks/useJobPoll';
 import { buildGenerationRequest } from '../utils/generationRequest';
 import { formatChoices, mapGeneratedQuestions } from '../utils/mapGeneratedQuestion';
 import {
@@ -888,13 +888,21 @@ function GeneratePage() {
     const genJobId = enqueueResult.job_id;
     setActiveJobId(genJobId);
 
-    const genResult = await pollJob(getGenerateStatus, genJobId, {
+    const genResult = await watchJob(getGenerateStatus, genJobId, {
+      streamStatus: streamGenerateStatus,
       signal,
       timeoutMs: 20 * 60 * 1000,
+      onStreamFallback: () => {
+        setStatusDetail('Mất kết nối tiến độ trực tiếp, đang chuyển sang polling...');
+      },
       onUpdate: (status) => {
         if (status.status === 'queued') setPhase('generate_queued');
         if (status.status === 'processing') setPhase('generate_processing');
-        setStatusDetail(`Generate: ${status.status}`);
+        const progress = status.progress;
+        const progressLabel = progress?.total
+          ? ` (${progress.completed || 0}/${progress.total})`
+          : '';
+        setStatusDetail(`Generate: ${progress?.stage || status.status}${progressLabel}`);
       },
     });
 

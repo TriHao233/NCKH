@@ -1,8 +1,10 @@
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from core.config import settings
 from core.dependencies import CurrentUser, has_permission, require_teacher_or_admin
@@ -17,6 +19,7 @@ from modules.generation.mongodb import (
     heartbeat_generation_job,
     retry_or_dead_letter_generation_job,
     update_generation_job,
+    update_generation_progress,
 )
 from modules.generation.question import generate_questions_rag
 from modules.generation.schemas import (
@@ -108,7 +111,15 @@ async def process_generate_background(job_id: str, worker_id: str):
                 if req.client_telemetry
                 else {}
             )
-            result = await generate_questions_rag(req, requested_by_user_id=requested_by_user_id)
+
+            async def report_progress(progress: dict) -> None:
+                await asyncio.to_thread(update_generation_progress, job_id, worker_id, progress)
+
+            result = await generate_questions_rag(
+                req,
+                requested_by_user_id=requested_by_user_id,
+                progress_callback=report_progress,
+            )
             finished_at = utc_now()
             metrics = build_generation_metrics(
                 job,
@@ -221,6 +232,10 @@ async def get_generation_job_status(
             detail="Không tìm thấy Job ID này trong hệ thống",
         )
 
+    return _build_generation_status_response(job)
+
+
+def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
     response_kwargs = {
         "job_id": job["job_id"],
         "status": job["status"],
@@ -236,8 +251,54 @@ async def get_generation_job_status(
 
     if job.get("metrics"):
         response_kwargs["metrics"] = job["metrics"]
+    if job.get("progress"):
+        response_kwargs["progress"] = job["progress"]
 
     if job["status"] == GenerationJobStatus.FAILED.value and job.get("error_message"):
         response_kwargs["error_message"] = job["error_message"]
 
     return GenerationJobStatusResponse(**response_kwargs)
+
+
+@router.get(
+    "/status/{job_id}/events",
+    summary="Theo dõi tiến độ job sinh câu hỏi qua Server-Sent Events",
+)
+async def stream_generation_job_status(
+    job_id: str,
+    request: Request,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+):
+    can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
+    owner_id = None if can_manage_all else current_user.id
+    initial_job = await asyncio.to_thread(get_generation_job, job_id, requested_by_user_id=owner_id)
+    if not initial_job:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Job ID này trong hệ thống")
+
+    async def event_stream():
+        last_version = None
+        heartbeat_deadline = asyncio.get_running_loop().time() + 15
+        while not await request.is_disconnected():
+            job = await asyncio.to_thread(get_generation_job, job_id, requested_by_user_id=owner_id)
+            if not job:
+                yield 'event: error\ndata: {"detail":"Job không còn tồn tại"}\n\n'
+                return
+            version = (job.get("updated_at"), job.get("status"), json.dumps(job.get("progress"), sort_keys=True))
+            now = asyncio.get_running_loop().time()
+            if version != last_version:
+                payload = _build_generation_status_response(job).model_dump_json()
+                yield f"event: status\ndata: {payload}\n\n"
+                last_version = version
+                heartbeat_deadline = now + 15
+            elif now >= heartbeat_deadline:
+                yield ": keep-alive\n\n"
+                heartbeat_deadline = now + 15
+            if job.get("status") in {"completed", "failed"}:
+                return
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

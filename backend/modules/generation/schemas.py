@@ -165,6 +165,7 @@ class GenerationJobStatusResponse(BaseModel):
     data: Optional[List[GeneratedQuestion]] = None
     summary: Optional[List[GenerationPlanSummary]] = None
     metrics: Optional[GenerationJobMetrics] = None
+    progress: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

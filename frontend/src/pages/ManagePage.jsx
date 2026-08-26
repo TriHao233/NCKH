@@ -594,7 +594,7 @@ function ManagePage() {
 
   const savedFilterStorageKey = useMemo(
     () => questionFilterStorageKey(user),
-    [user?.email, user?.id, user?.uid],
+    [user],
   );
 
   const currentQuestionFilter = useMemo(() => ({
@@ -713,7 +713,7 @@ function ManagePage() {
       }
     };
     if (user) loadTeacherOptions();
-  }, [user?.id]);
+  }, [user]);
 
   const questionListRequest = ({ page, pageSize, search, includeStatusCounts = false }) => ({
     page,
@@ -865,11 +865,12 @@ function ManagePage() {
 
   useEffect(() => {
     fetchDocuments();
+    // fetchDocuments intentionally follows the document-management permission boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManageDocuments]);
 
   useEffect(() => {
     fetchSubjects();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -904,7 +905,6 @@ function ManagePage() {
       }
     };
     openLinkedQuestion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, questions, openedDeepLinkId]);
 
   const counts = useMemo(() => ({

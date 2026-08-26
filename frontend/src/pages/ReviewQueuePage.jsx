@@ -588,7 +588,6 @@ function ReviewQueuePage() {
     fetchTeacherFilters();
     fetchReviewerOptions();
     fetchDashboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -646,7 +645,6 @@ function ReviewQueuePage() {
       }
     };
     openLinkedQuestion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname, location.search, navigate, questions, openedDeepLinkId]);
 
   useEffect(() => () => {
@@ -668,7 +666,7 @@ function ReviewQueuePage() {
       localStorage.getItem(reviewTemplateStorageKey(user)),
     );
     setReviewTemplates([...DEFAULT_REVIEW_COMMENT_TEMPLATES, ...saved]);
-  }, [user?.email, user?.id, user?.uid]);
+  }, [user]);
 
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,

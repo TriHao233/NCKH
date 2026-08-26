@@ -2,6 +2,7 @@ import json
 import re
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from typing import List
 
 from core.config import settings
@@ -62,6 +63,7 @@ QUESTION_TYPE_RETRY_RULES = {
 async def generate_questions_rag(
     req: QuestionGenerateRequest,
     requested_by_user_id=None,
+    progress_callback: Callable[[dict], Awaitable[None]] | None = None,
 ) -> QuestionGenerateResponse:
     plan = req.effective_plan()
     plan_log = ", ".join(
@@ -96,6 +98,9 @@ async def generate_questions_rag(
         if (fingerprint := question_fingerprint(question))
     }
 
+    if progress_callback:
+        await progress_callback({"stage": "generating", "completed": 0, "total": len(plan)})
+
     for plan_index, plan_item in enumerate(plan, start=1):
         questions, summary = await _generate_questions_for_plan_item(
             req,
@@ -116,6 +121,15 @@ async def generate_questions_rag(
             seen_question_fingerprints.add(question_fingerprint(question.question))
         generated_questions.extend(questions)
         summaries.append(summary)
+        if progress_callback:
+            await progress_callback(
+                {
+                    "stage": "generating",
+                    "completed": plan_index,
+                    "total": len(plan),
+                    "generated_questions": len(generated_questions),
+                }
+            )
 
     return QuestionGenerateResponse(
         status="success",

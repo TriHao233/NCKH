@@ -5,6 +5,7 @@ from bson import ObjectId
 
 from core import database
 from core.job_worker import process_available_jobs_once
+from modules.admin.job_metrics import collect_job_metrics
 from modules.generation.mongodb import retry_or_dead_letter_generation_job
 
 
@@ -91,6 +92,26 @@ class GenerationRetryTests(unittest.TestCase):
         self.assertEqual(update["$set"]["status"], "failed")
         self.assertIn("dead_lettered_at", update["$set"])
         self.assertIn("expires_at", update["$set"])
+
+
+class JobMetricsTests(unittest.TestCase):
+    def test_metrics_expose_queue_lease_dead_letter_and_llm_slot_counts(self):
+        database = MagicMock()
+        database.generation_jobs.find_one.return_value = None
+        database.evaluation_jobs.find_one.return_value = None
+        database.document_jobs.find_one.return_value = None
+        database.generation_jobs.count_documents.side_effect = [2, 1, 1, 3, 1]
+        database.evaluation_jobs.count_documents.side_effect = [4, 2, 1, 2, 0]
+        database.document_jobs.count_documents.side_effect = [5, 2]
+        database.llm_slots.count_documents.side_effect = [1, 0]
+
+        metrics = collect_job_metrics(database)
+
+        self.assertEqual(metrics["queues"]["generation"]["queued"], 2)
+        self.assertEqual(metrics["queues"]["generation"]["dead_lettered"], 3)
+        self.assertEqual(metrics["queues"]["evaluation"]["processing"], 2)
+        self.assertEqual(metrics["queues"]["document"]["queued"], 5)
+        self.assertEqual(metrics["llm_slots"], {"in_use": 1, "expired": 0})
 
 
 if __name__ == "__main__":

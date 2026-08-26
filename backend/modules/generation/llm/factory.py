@@ -3,6 +3,7 @@ from collections.abc import Callable
 
 from core.config import settings
 from modules.generation.llm.base import LLMProvider
+from modules.generation.llm.concurrency import ConcurrencyLimitedProvider
 from modules.generation.llm.deepseek import DeepseekProvider
 from modules.generation.llm.fallback import FallbackProvider
 from modules.generation.llm.gemini import GeminiProvider
@@ -49,12 +50,12 @@ def _get_single_provider(provider: str) -> LLMProvider:
 
     factory = PROVIDER_REGISTRY.get(normalized)
     if factory:
-        return factory(provider_code)
+        return ConcurrencyLimitedProvider(provider_code, factory(provider_code))
     if normalized.startswith("ollama:"):
         model_name = provider_code.split(":", 1)[1].strip()
         if not model_name:
             raise ValueError("Provider ollama: phai kem ten model")
-        return DeepseekProvider(model_name=model_name)
+        return ConcurrencyLimitedProvider(provider_code, DeepseekProvider(model_name=model_name))
 
     raise ValueError(f"Provider {provider_code} khong duoc ho tro!")
 
