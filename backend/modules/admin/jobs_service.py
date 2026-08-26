@@ -13,12 +13,8 @@ from core.config import settings
 from core.dependencies import CurrentUser
 from modules.documents.repository import MongoDocumentRepository, RETRYABLE_DOCUMENT_JOB_TYPES
 from modules.documents.service import DocumentService
-from modules.generation.generate import process_generate_background
 from modules.generation.mongodb import create_generation_job, get_generation_job
-from modules.questions.workflow_service import (
-    QuestionWorkflowService,
-    process_evaluation_job_background,
-)
+from modules.questions.workflow_service import QuestionWorkflowService
 
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
 RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "failed"}
@@ -464,11 +460,6 @@ class AdminJobService:
             job.get("request") or {},
             requested_by_user_id=job.get("requested_by_user_id"),
         )
-        background_tasks.add_task(
-            process_generate_background,
-            job_id=new_job_id,
-            requested_by_user_id=job.get("requested_by_user_id"),
-        )
         self._audit(current_user, "admin.job_retry", "generation", job_id, {"new_job_id": new_job_id})
         return {"job": json_safe(get_generation_job(new_job_id))}
 
@@ -493,8 +484,6 @@ class AdminJobService:
             evaluator_model_code=job.get("evaluator_model_code") or settings.evaluation_model_provider,
             trigger="ADMIN_RETRY",
         )
-        if queued.get("status") == "QUEUED":
-            background_tasks.add_task(process_evaluation_job_background, queued["_id"])
         self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
         return {"job": json_safe(queued)}
 

@@ -12,6 +12,7 @@ from core.database import close_database, ping_database
 from core.dependencies import require_teacher_or_admin
 from core.firebase import init_firebase
 from core.job_recovery import recover_stale_jobs
+from core.job_worker import run_job_worker
 from core.logging import setup_logging
 from modules.admin.audit_router import router as admin_audit_router
 from modules.admin.jobs_router import router as admin_jobs_router
@@ -38,9 +39,16 @@ async def lifespan(_app: FastAPI):
     await asyncio.to_thread(ping_database)
     await asyncio.to_thread(bootstrap_database)
     await asyncio.to_thread(recover_stale_jobs)
+    stop_event = asyncio.Event()
+    worker_task = None
+    if settings.job_worker_enabled:
+        worker_task = asyncio.create_task(run_job_worker(stop_event))
     try:
         yield
     finally:
+        stop_event.set()
+        if worker_task:
+            await worker_task
         close_database()
 
 

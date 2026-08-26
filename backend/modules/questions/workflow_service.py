@@ -146,6 +146,14 @@ class QuestionWorkflowService:
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _policy(self) -> dict:
+        if self.db is None:
+            return {
+                "_id": None,
+                "policy_name": "Default fallback",
+                "version": 1,
+                "weights": DEFAULT_WEIGHTS,
+                "thresholds": DEFAULT_THRESHOLDS,
+            }
         return self.db.evaluation_policies.find_one(
             {"is_active": True},
             sort=[("version", -1)],

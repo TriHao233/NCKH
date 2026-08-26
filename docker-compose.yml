@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -13,6 +11,12 @@ services:
       # Ánh xạ thư mục data để không bị mất dữ liệu VectorDB (Chroma) và file tải lên
       - ./backend/data:/app/data
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      REQUIRE_MONGO_TRANSACTIONS: "true"
+      OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     
     # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU BẠN CHẠY BẰNG GPU (NVIDIA) 
     # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
@@ -25,16 +29,24 @@ services:
     #           capabilities: [gpu]
 
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     restart: unless-stopped
 
   mongodb:
-    image: mongo:latest
+    image: mongo:7.0
     container_name: nckh-mongodb
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     restart: unless-stopped
 
   frontend:

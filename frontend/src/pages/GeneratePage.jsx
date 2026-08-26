@@ -18,6 +18,7 @@ import {
   toBackendQuestionType,
 } from '../constants/generationEnums';
 import { pollJob } from '../hooks/useJobPoll';
+import { buildGenerationRequest } from '../utils/generationRequest';
 import { formatChoices, mapGeneratedQuestions } from '../utils/mapGeneratedQuestion';
 import {
   SINGLE_CHOICE_TYPES,
@@ -871,24 +872,15 @@ function GeneratePage() {
     setStatusDetail('Đang đưa yêu cầu sinh câu hỏi vào hàng đợi...');
     const generateStartedAt = nowMs();
 
-    const payload = {
-      document_id: docId,
-      collection_name: 'chunks',
-      bloom_level: questionPlan[0].bloom_level,
-      question_type: questionPlan[0].question_type,
-      num_questions: questionPlan[0].num_questions,
-      question_plan: questionPlan,
-      target_heading: teacherInstruction.trim() || undefined,
-      instruction: teacherInstruction.trim() || undefined,
-      client_telemetry: {
-        source_mode: sourceMode,
-        document_reused: timingRef.current.documentMs === 'reused',
-        upload_ms: timingRef.current.uploadMs,
-        ocr_ms: timingRef.current.ocrMs,
-        chunk_ms: timingRef.current.chunkMs,
-        elapsed_before_generate_ms: Math.round(nowMs() - pipelineStartedAt),
-      },
-    };
+    const payload = buildGenerationRequest({
+      documentId: docId,
+      questionPlan,
+      teacherInstruction,
+      sourceMode,
+      timings: timingRef.current,
+      pipelineStartedAt,
+      now: nowMs,
+    });
 
     const enqueueResult = await enqueueGenerateQuestions(payload);
     const genJobId = enqueueResult.job_id;

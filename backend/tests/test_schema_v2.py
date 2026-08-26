@@ -3823,7 +3823,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual([event["action"] for event in audit_events], ["admin.job_cancel", "admin.job_cancel"])
         self.assertEqual({event["entity_type"] for event in audit_events}, {"generation", "evaluation"})
 
-    def test_admin_job_retry_evaluation_dispatches_background_and_audit(self):
+    def test_admin_job_retry_evaluation_queues_for_worker_and_audit(self):
         admin = _current_user("Admin")
         requester_id = ObjectId()
         job_id = ObjectId()
@@ -3896,7 +3896,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(FakeWorkflowService.calls[0][1]["requested_by_user_id"], requester_id)
         self.assertEqual(FakeWorkflowService.calls[0][1]["evaluator_model_code"], "qwen")
         self.assertEqual(FakeWorkflowService.calls[0][1]["trigger"], "ADMIN_RETRY")
-        self.assertEqual(background_tasks.tasks[0][1], (queued_job_id,))
+        self.assertEqual(background_tasks.tasks, [])
         self.assertEqual(audit_events[0]["action"], "admin.job_retry")
         self.assertEqual(audit_events[0]["entity_type"], "evaluation")
         self.assertEqual(audit_events[0]["metadata"]["new_job_id"], queued_job_id)

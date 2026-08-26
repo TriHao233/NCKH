@@ -2,12 +2,13 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, has_permission, require_teacher_or_admin
 from modules.documents.service import DocumentService, get_document_service
 from modules.generation.mongodb import (
+    claim_generation_job,
     create_generation_job,
     get_generation_job,
     update_generation_job,
@@ -74,12 +75,13 @@ def build_generation_metrics(
     }
 
 
-async def process_generate_background(job_id: str, requested_by_user_id=None):
+async def process_generate_background(job_id: str):
     """Worker xử lý sinh câu hỏi ngầm."""
-    job = get_generation_job(job_id)
+    job = claim_generation_job(job_id)
     if not job:
-        logger.error("Job [%s] không tìm thấy", job_id)
+        logger.info("Job [%s] không còn ở trạng thái queued", job_id)
         return
+    requested_by_user_id = job.get("requested_by_user_id")
     processing_started_at = None
     client_telemetry = (job.get("request") or {}).get("client_telemetry") or {}
 
@@ -88,7 +90,6 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
 
         async with generate_semaphore:
             processing_started_at = utc_now()
-            update_generation_job(job_id, status="processing")
             req = QuestionGenerateRequest(**job["request"])
             client_telemetry = (
                 req.client_telemetry.model_dump(exclude_none=True)
@@ -138,7 +139,6 @@ async def process_generate_background(job_id: str, requested_by_user_id=None):
 )
 async def api_generate_questions(
     req: QuestionGenerateRequest,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(require_teacher_or_admin),
     document_service: DocumentService = Depends(get_document_service),
 ):
@@ -150,11 +150,6 @@ async def api_generate_questions(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = create_generation_job(req.model_dump(mode="json"), requested_by_user_id=current_user.id)
-    background_tasks.add_task(
-        process_generate_background,
-        job_id=job_id,
-        requested_by_user_id=current_user.id,
-    )
 
     return JobAcceptedResponse(
         job_id=job_id,
@@ -168,8 +163,13 @@ async def api_generate_questions(
     response_model=GenerationJobStatusResponse,
     summary="Kiểm tra trạng thái job sinh câu hỏi",
 )
-async def get_generation_job_status(job_id: str):
-    job = get_generation_job(job_id)
+async def get_generation_job_status(
+    job_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+):
+    can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
+    owner_id = None if can_manage_all else current_user.id
+    job = get_generation_job(job_id, requested_by_user_id=owner_id)
     if not job:
         raise HTTPException(
             status_code=404,

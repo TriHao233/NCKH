@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.config import settings
 from core.dependencies import (
@@ -19,7 +19,6 @@ from modules.questions.workflow_schemas import (
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
     get_workflow_service,
-    process_evaluation_job_background,
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Question workflow"])
@@ -65,7 +64,6 @@ def evaluate_question(
 async def auto_evaluate_question(
     question_id: str,
     payload: AutoEvaluationRequest,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
@@ -77,8 +75,6 @@ async def auto_evaluate_question(
             evaluator_model_code=payload.evaluator_model_code,
             trigger="REVIEWER_REQUEST",
         )
-        if job.get("status") == "QUEUED":
-            background_tasks.add_task(process_evaluation_job_background, job["_id"])
         return job
     except Exception as exc:
         _translate_workflow_error(exc)

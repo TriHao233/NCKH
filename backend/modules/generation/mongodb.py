@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
+from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
 from core.database import get_database
@@ -280,16 +281,45 @@ def update_generation_job(
     db["generation_jobs"].update_one({"_id": ObjectId(job_id)}, {"$set": update_data})
 
 
-def get_generation_job(job_id: str) -> dict | None:
+def _serialize_generation_job(doc: dict | None) -> dict | None:
+    if not doc:
+        return None
+    result = dict(doc)
+    result["job_id"] = str(result.pop("_id"))
+    return result
+
+
+def get_generation_job(job_id: str, *, requested_by_user_id=None) -> dict | None:
     """Lấy thông tin job sinh câu hỏi theo job_id."""
     db = get_database()
     try:
-        doc = db["generation_jobs"].find_one({"_id": ObjectId(job_id)})
-    except InvalidId:
+        query = {"_id": ObjectId(job_id)}
+        if requested_by_user_id is not None:
+            query["requested_by_user_id"] = requested_by_user_id
+        doc = db["generation_jobs"].find_one(query)
+    except (InvalidId, TypeError):
         return None
+    return _serialize_generation_job(doc)
 
-    if not doc:
+
+def claim_generation_job(job_id: str) -> dict | None:
+    """Atomically claim one queued job so multiple workers cannot run it twice."""
+    try:
+        object_id = ObjectId(job_id)
+    except (InvalidId, TypeError):
         return None
+    doc = get_database()["generation_jobs"].find_one_and_update(
+        {"_id": object_id, "status": "queued"},
+        {"$set": {"status": "processing", "updated_at": utc_now()}},
+        return_document=ReturnDocument.AFTER,
+    )
+    return _serialize_generation_job(doc)
 
-    doc["job_id"] = str(doc.pop("_id"))
-    return doc
+
+def get_next_queued_generation_job_id() -> str | None:
+    doc = get_database()["generation_jobs"].find_one(
+        {"status": "queued"},
+        sort=[("created_at", 1)],
+        projection={"_id": 1},
+    )
+    return str(doc["_id"]) if doc else None

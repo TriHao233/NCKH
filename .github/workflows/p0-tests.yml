@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - master
+      - dev
 
 jobs:
   backend:
@@ -32,8 +33,17 @@ jobs:
           grep -vE '^(--extra-index-url|torch==|torchvision==|torchaudio==)' requirements.txt > /tmp/backend-requirements-ci.txt
           python -m pip install -r /tmp/backend-requirements-ci.txt
 
-      - name: Run backend P0 tests
-        run: python -m pytest tests/test_schema_v2.py -q
+      - name: Lint backend
+        run: python -m ruff check core modules tests
+
+      - name: Run backend test suite
+        run: >-
+          python -m pytest
+          tests/test_schema_v2.py
+          tests/test_generation_postprocessing.py
+          tests/test_generation_api.py
+          tests/test_infrastructure.py
+          -q
 
   frontend:
     name: Frontend permission and utility tests
@@ -57,6 +67,9 @@ jobs:
 
       - name: Run frontend tests
         run: npm test
+
+      - name: Lint frontend
+        run: npm run lint
 
       - name: Build frontend
         run: npm run build
