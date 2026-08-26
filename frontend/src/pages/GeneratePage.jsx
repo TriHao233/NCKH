@@ -882,7 +882,9 @@ function GeneratePage() {
       now: nowMs,
     });
 
-    const enqueueResult = await enqueueGenerateQuestions(payload);
+    const idempotencyKey = globalThis.crypto?.randomUUID?.()
+      || `generation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const enqueueResult = await enqueueGenerateQuestions(payload, idempotencyKey);
     const genJobId = enqueueResult.job_id;
     setActiveJobId(genJobId);
 

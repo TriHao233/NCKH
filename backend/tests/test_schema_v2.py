@@ -4161,7 +4161,7 @@ class SchemaV2Tests(unittest.TestCase):
             def __init__(self):
                 self.generation_jobs = InMemoryCollection(
                     [
-                        {"_id": ObjectId(), "status": "queued", "updated_at": old},
+                        {"_id": ObjectId(), "status": "processing", "updated_at": old},
                         {"_id": fresh_generation_id, "status": "processing", "updated_at": fresh},
                     ]
                 )

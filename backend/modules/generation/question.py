@@ -4,6 +4,7 @@ import logging
 import time
 from typing import List
 
+from core.config import settings
 from modules.generation.schemas import (
     QuestionPlanItem,
     QuestionGenerateRequest,
@@ -81,7 +82,7 @@ async def generate_questions_rag(
         raise ValueError("Không tìm thấy đủ dữ liệu tri thức để sinh câu hỏi.")
 
     prompt_builder = PromptBuilder()
-    llm = get_llm_service(req.model_provider)
+    llm = get_llm_service(req.model_provider, settings.generation_fallback_provider)
     generated_questions: List[GeneratedQuestion] = []
     summaries: List[GenerationPlanSummary] = []
     try:

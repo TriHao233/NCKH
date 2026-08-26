@@ -688,7 +688,8 @@ class QuestionWorkflowService:
                 for source in source_chunks
             ],
             "attempt_no": attempt_no,
-            "max_attempts": 1,
+            "processing_attempt_count": 0,
+            "max_attempts": settings.job_max_attempts,
             "result": None,
             "error": None,
             "queued_at": now,
@@ -756,6 +757,7 @@ class QuestionWorkflowService:
         status: str = "ERROR",
         raw_model_response: str | None = None,
         duration_ms: int | None = None,
+        dead_lettered: bool = False,
     ) -> dict:
         now = utc_now()
         error = {
@@ -764,16 +766,25 @@ class QuestionWorkflowService:
             "at": now,
         }
         with mongo_transaction() as session:
+            job_fields = {
+                "status": status,
+                "error": error,
+                "finished_at": now,
+                "duration_ms": duration_ms,
+                "updated_at": now,
+            }
+            if dead_lettered:
+                job_fields["dead_lettered_at"] = now
+            if status in {"ERROR", "STALE", "CANCELLED"}:
+                job_fields["expires_at"] = now + timedelta(days=settings.job_retention_days)
+            job_query = {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}}
+            if job.get("locked_by"):
+                job_query["locked_by"] = job["locked_by"]
             self.db.evaluation_jobs.update_one(
-                {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                job_query,
                 {
-                    "$set": {
-                        "status": status,
-                        "error": error,
-                        "finished_at": now,
-                        "duration_ms": duration_ms,
-                        "updated_at": now,
-                    }
+                    "$set": job_fields,
+                    "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": ""},
                 },
                 session=session,
             )
@@ -800,37 +811,146 @@ class QuestionWorkflowService:
                 )
         return json_safe({**job, "status": status, "error": error, "finished_at": now})
 
-    async def process_evaluation_job(self, job_id: str) -> dict | None:
+    def heartbeat_evaluation_job(self, job_id: str, worker_id: str) -> bool:
+        now = utc_now()
+        result = self.db.evaluation_jobs.update_one(
+            {
+                "_id": object_id(job_id, "evaluation_job_id"),
+                "status": "PROCESSING",
+                "locked_by": worker_id,
+            },
+            {
+                "$set": {
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.modified_count == 1
+
+    def _retry_or_dead_letter_evaluation_job(
+        self,
+        job: dict,
+        message: str,
+        *,
+        raw_model_response: str | None,
+        duration_ms: int,
+    ) -> dict:
+        attempts = int(job.get("processing_attempt_count") or 1)
+        max_attempts = int(job.get("max_attempts") or settings.job_max_attempts)
+        if attempts >= max_attempts:
+            return self._mark_evaluation_job_error(
+                job,
+                message,
+                raw_model_response=raw_model_response,
+                duration_ms=duration_ms,
+                dead_lettered=True,
+            )
+        now = utc_now()
+        delay = min(
+            settings.job_retry_base_seconds * (2 ** max(0, attempts - 1)),
+            settings.job_retry_max_seconds,
+        )
+        error = {
+            "message": message,
+            "raw_model_response_excerpt": (raw_model_response or "")[:1200] or None,
+            "at": now,
+        }
+        with mongo_transaction() as session:
+            self.db.evaluation_jobs.update_one(
+                {
+                    "_id": job["_id"],
+                    "status": "PROCESSING",
+                    "locked_by": job.get("locked_by"),
+                },
+                {
+                    "$set": {
+                        "status": "QUEUED",
+                        "error": error,
+                        "next_attempt_at": now + timedelta(seconds=delay),
+                        "updated_at": now,
+                    },
+                    "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": ""},
+                },
+                session=session,
+            )
+            self.db.questions.update_one(
+                {"_id": job["question_id"], "current_version_id": job["question_version_id"]},
+                {
+                    "$set": {
+                        "evaluation_status": "QUEUED",
+                        "quality_summary.last_retry_error": error,
+                        "updated_at": now,
+                    }
+                },
+                session=session,
+            )
+        return json_safe({**job, "status": "QUEUED", "error": error})
+
+    async def process_evaluation_job(self, job_id: str, worker_id: str) -> dict | None:
         job_oid = object_id(job_id, "evaluation_job_id")
         now = utc_now()
-        job = self.db.evaluation_jobs.find_one_and_update(
-            {"_id": job_oid, "status": "QUEUED"},
-            {"$set": {"status": "PROCESSING", "started_at": now, "updated_at": now}},
+        job = await asyncio.to_thread(
+            self.db.evaluation_jobs.find_one_and_update,
+            {
+                "_id": job_oid,
+                "$or": [
+                    {
+                        "status": "QUEUED",
+                        "$or": [
+                            {"next_attempt_at": {"$exists": False}},
+                            {"next_attempt_at": {"$lte": now}},
+                        ],
+                    },
+                    {"status": "PROCESSING", "lease_expires_at": {"$lte": now}},
+                ],
+            },
+            {
+                "$set": {
+                    "status": "PROCESSING",
+                    "locked_by": worker_id,
+                    "started_at": now,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
+                    "updated_at": now,
+                },
+                "$inc": {"processing_attempt_count": 1},
+                "$unset": {"next_attempt_at": ""},
+            },
             return_document=ReturnDocument.AFTER,
         )
         if not job:
             return None
 
-        question = self.db.questions.find_one(
-            {
-                "_id": job["question_id"],
-                "schema_version": SCHEMA_VERSION,
-                "lifecycle_status": "ACTIVE",
-            }
+        question, version = await asyncio.gather(
+            asyncio.to_thread(
+                self.db.questions.find_one,
+                {
+                    "_id": job["question_id"],
+                    "schema_version": SCHEMA_VERSION,
+                    "lifecycle_status": "ACTIVE",
+                },
+            ),
+            asyncio.to_thread(
+                self.db.question_versions.find_one,
+                {"_id": job["question_version_id"]},
+            ),
         )
-        version = self.db.question_versions.find_one({"_id": job["question_version_id"]})
         if not question or not version or question.get("current_version_id") != job["question_version_id"]:
-            return self._mark_evaluation_job_error(
+            return await asyncio.to_thread(
+                self._mark_evaluation_job_error,
                 job,
                 "Phiên bản câu hỏi đã thay đổi trước khi AI đánh giá",
                 status="STALE",
             )
 
-        self.db.questions.update_one(
+        await asyncio.to_thread(
+            self.db.questions.update_one,
             {
                 "_id": question["_id"],
                 "current_version_id": version["_id"],
-                "evaluation_status": "QUEUED",
+                "evaluation_status": {"$in": ["QUEUED", "PROCESSING"]},
             },
             {
                 "$set": {
@@ -845,12 +965,19 @@ class QuestionWorkflowService:
         raw_model_response = None
         started = time.perf_counter()
         try:
-            prompt, prompt_snapshot, _ = self._build_evaluation_prompt(
+            policy_snapshot = job.get("policy_snapshot")
+            if not policy_snapshot:
+                policy_snapshot = await asyncio.to_thread(self._policy)
+            prompt, prompt_snapshot, _ = await asyncio.to_thread(
+                self._build_evaluation_prompt,
                 question,
                 version,
-                job.get("policy_snapshot") or self._policy(),
+                policy_snapshot,
             )
-            llm = get_llm_service(job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE)
+            llm = get_llm_service(
+                job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
+                settings.evaluation_fallback_provider,
+            )
             raw_model_response = await llm.generate_text(prompt)
             duration_ms = int((time.perf_counter() - started) * 1000)
             scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
@@ -860,9 +987,7 @@ class QuestionWorkflowService:
                 "evaluation_job_id": str(job["_id"]),
                 "source_snapshot": json_safe(job.get("source_snapshot") or []),
             }
-            evaluation = self.evaluate(
-                str(question["_id"]),
-                EvaluationCreateRequest(
+            evaluation_payload = EvaluationCreateRequest(
                     expected_version=version["version"],
                     scores=scores,
                     feedback=feedback,
@@ -874,12 +999,21 @@ class QuestionWorkflowService:
                     duration_ms=duration_ms,
                     evaluation_job_id=str(job["_id"]),
                     trigger=job.get("trigger"),
-                ),
+                )
+            evaluation = await asyncio.to_thread(
+                self.evaluate,
+                str(question["_id"]),
+                evaluation_payload,
                 job.get("requested_by_user_id"),
             )
             finished_at = utc_now()
-            self.db.evaluation_jobs.update_one(
-                {"_id": job["_id"], "status": "PROCESSING"},
+            await asyncio.to_thread(
+                self.db.evaluation_jobs.update_one,
+                {
+                    "_id": job["_id"],
+                    "status": "PROCESSING",
+                    "locked_by": worker_id,
+                },
                 {
                     "$set": {
                         "status": "COMPLETED",
@@ -891,22 +1025,31 @@ class QuestionWorkflowService:
                         },
                         "duration_ms": duration_ms,
                         "finished_at": finished_at,
+                        "expires_at": finished_at + timedelta(days=settings.job_retention_days),
                         "updated_at": finished_at,
-                    }
+                    },
+                    "$unset": {
+                        "locked_by": "",
+                        "lease_expires_at": "",
+                        "heartbeat_at": "",
+                        "next_attempt_at": "",
+                    },
                 },
             )
             return evaluation
         except RuntimeError as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             if str(exc) == "VERSION_CONFLICT":
-                return self._mark_evaluation_job_error(
+                return await asyncio.to_thread(
+                    self._mark_evaluation_job_error,
                     job,
                     "Phiên bản câu hỏi đã thay đổi trong lúc AI đánh giá",
                     status="STALE",
                     raw_model_response=raw_model_response,
                     duration_ms=duration_ms,
                 )
-            return self._mark_evaluation_job_error(
+            return await asyncio.to_thread(
+                self._retry_or_dead_letter_evaluation_job,
                 job,
                 str(exc),
                 raw_model_response=raw_model_response,
@@ -914,7 +1057,8 @@ class QuestionWorkflowService:
             )
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
-            return self._mark_evaluation_job_error(
+            return await asyncio.to_thread(
+                self._retry_or_dead_letter_evaluation_job,
                 job,
                 str(exc),
                 raw_model_response=raw_model_response,
@@ -2033,6 +2177,17 @@ def get_workflow_service() -> QuestionWorkflowService:
     return QuestionWorkflowService(get_database())
 
 
-async def process_evaluation_job_background(job_id: str) -> None:
+async def process_evaluation_job_background(job_id: str, worker_id: str) -> None:
+    from core.job_worker import maintain_lease
+
+    service = get_workflow_service()
+    lease_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        maintain_lease(lambda: service.heartbeat_evaluation_job(job_id, worker_id), lease_stop)
+    )
     async with evaluation_semaphore:
-        await get_workflow_service().process_evaluation_job(job_id)
+        try:
+            await service.process_evaluation_job(job_id, worker_id)
+        finally:
+            lease_stop.set()
+            await heartbeat_task

@@ -75,6 +75,19 @@ def _near_duplicate(first: str, second: str) -> bool:
     )
 
 
+def _plausible_near_duplicate(first: str, second: str) -> bool:
+    """Cheap prefilter before the more expensive SequenceMatcher comparison."""
+    first_tokens = set(first.split())
+    second_tokens = set(second.split())
+    if not first_tokens or not second_tokens:
+        return False
+    length_ratio = min(len(first), len(second)) / max(len(first), len(second))
+    if length_ratio < 0.55:
+        return False
+    overlap = len(first_tokens & second_tokens) / min(len(first_tokens), len(second_tokens))
+    return overlap >= 0.5
+
+
 def filter_duplicate_questions(
     questions: list[GeneratedQuestion],
     seen_question_fingerprints: set[str],
@@ -90,7 +103,11 @@ def filter_duplicate_questions(
         if not fingerprint or fingerprint in seen_question_fingerprints:
             exact_count += 1
             continue
-        if any(_near_duplicate(fingerprint, seen) for seen in seen_question_fingerprints):
+        if any(
+            _near_duplicate(fingerprint, seen)
+            for seen in seen_question_fingerprints
+            if _plausible_near_duplicate(fingerprint, seen)
+        ):
             near_count += 1
             continue
         seen_question_fingerprints.add(fingerprint)

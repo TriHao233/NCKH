@@ -7,6 +7,23 @@ from core.config import settings
 from modules.generation.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
+_shared_client: httpx.AsyncClient | None = None
+
+
+def get_ollama_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _shared_client
+
+
+async def close_ollama_client() -> None:
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        await _shared_client.aclose()
+    _shared_client = None
 
 
 class OllamaProvider(LLMProvider):
@@ -40,9 +57,12 @@ class OllamaProvider(LLMProvider):
             },
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(self.url, json=payload)
-                response.raise_for_status()
+            response = await get_ollama_client().post(
+                self.url,
+                json=payload,
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
             text = response.json().get("response", "")
             cleaned = re.sub(r"```json|```", "", text).strip()
             if not cleaned:

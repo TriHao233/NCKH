@@ -2,15 +2,20 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from core.config import settings
 from core.dependencies import CurrentUser, has_permission, require_teacher_or_admin
+from core.job_worker import maintain_lease
 from modules.documents.service import DocumentService, get_document_service
 from modules.generation.mongodb import (
     claim_generation_job,
+    count_active_generation_jobs,
     create_generation_job,
     get_generation_job,
+    get_generation_job_by_idempotency,
+    heartbeat_generation_job,
+    retry_or_dead_letter_generation_job,
     update_generation_job,
 )
 from modules.generation.question import generate_questions_rag
@@ -75,15 +80,22 @@ def build_generation_metrics(
     }
 
 
-async def process_generate_background(job_id: str):
+async def process_generate_background(job_id: str, worker_id: str):
     """Worker xử lý sinh câu hỏi ngầm."""
-    job = claim_generation_job(job_id)
+    job = await asyncio.to_thread(claim_generation_job, job_id, worker_id)
     if not job:
         logger.info("Job [%s] không còn ở trạng thái queued", job_id)
         return
     requested_by_user_id = job.get("requested_by_user_id")
     processing_started_at = None
     client_telemetry = (job.get("request") or {}).get("client_telemetry") or {}
+    lease_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        maintain_lease(
+            lambda: heartbeat_generation_job(job_id, worker_id),
+            lease_stop,
+        )
+    )
 
     try:
         logger.info("Job [%s] đang đợi cấp phát tài nguyên sinh câu hỏi...", job_id)
@@ -104,7 +116,8 @@ async def process_generate_background(job_id: str):
                 finished_at=finished_at,
                 client_telemetry=client_telemetry,
             )
-            update_generation_job(
+            await asyncio.to_thread(
+                update_generation_job,
                 job_id,
                 status="completed",
                 result={
@@ -113,6 +126,7 @@ async def process_generate_background(job_id: str):
                     "summary": [item.model_dump() for item in result.summary],
                 },
                 metrics=metrics,
+                worker_id=worker_id,
             )
             logger.info("Job [%s] hoàn tất thành công", job_id)
     except Exception as ex:
@@ -123,12 +137,17 @@ async def process_generate_background(job_id: str):
             finished_at=utc_now(),
             client_telemetry=client_telemetry,
         )
-        update_generation_job(
-            job_id,
-            status="failed",
-            metrics=metrics,
+        next_status = await asyncio.to_thread(
+            retry_or_dead_letter_generation_job,
+            job,
+            worker_id,
             error_message=str(ex),
+            metrics=metrics,
         )
+        logger.info("Job [%s] moved to %s", job_id, next_status)
+    finally:
+        lease_stop.set()
+        await heartbeat_task
 
 
 @router.post(
@@ -139,17 +158,43 @@ async def process_generate_background(job_id: str):
 )
 async def api_generate_questions(
     req: QuestionGenerateRequest,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=128),
     current_user: CurrentUser = Depends(require_teacher_or_admin),
     document_service: DocumentService = Depends(get_document_service),
 ):
     try:
-        if not document_service.can_use(req.document_id, current_user):
+        if not await asyncio.to_thread(document_service.can_use, req.document_id, current_user):
             raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    job_id = create_generation_job(req.model_dump(mode="json"), requested_by_user_id=current_user.id)
+    normalized_key = idempotency_key.strip() if idempotency_key else None
+    if normalized_key:
+        existing = await asyncio.to_thread(
+            get_generation_job_by_idempotency,
+            current_user.id,
+            normalized_key,
+        )
+        if existing:
+            return JobAcceptedResponse(
+                job_id=existing["job_id"],
+                status=existing["status"],
+                message="Yêu cầu trùng đã được ánh xạ về job hiện có.",
+            )
+    active_count = await asyncio.to_thread(count_active_generation_jobs, current_user.id)
+    if active_count >= settings.max_active_generation_jobs_per_user:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Bạn đã đạt giới hạn generation job đang chờ hoặc đang xử lý.",
+            headers={"Retry-After": "15"},
+        )
+    job_id = await asyncio.to_thread(
+        create_generation_job,
+        req.model_dump(mode="json"),
+        current_user.id,
+        normalized_key,
+    )
 
     return JobAcceptedResponse(
         job_id=job_id,
@@ -169,7 +214,7 @@ async def get_generation_job_status(
 ):
     can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
     owner_id = None if can_manage_all else current_user.id
-    job = get_generation_job(job_id, requested_by_user_id=owner_id)
+    job = await asyncio.to_thread(get_generation_job, job_id, requested_by_user_id=owner_id)
     if not job:
         raise HTTPException(
             status_code=404,

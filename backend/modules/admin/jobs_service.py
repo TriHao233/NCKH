@@ -135,13 +135,23 @@ class AdminJobService:
         date_to_utc = _as_utc_datetime(date_to, "date_to")
         if date_from_utc and date_to_utc and date_from_utc > date_to_utc:
             raise ValueError("Khoảng thời gian job không hợp lệ")
+        scan_limit = max(page * page_size, page_size)
+        if search or stale_only:
+            scan_limit = max(scan_limit, 500)
+        scanned_counts: list[int] = []
 
         if "generation" in requested_kinds:
-            jobs.extend(self._generation_jobs(status, user_oid))
+            batch = self._generation_jobs(status, user_oid, date_from_utc, date_to_utc, scan_limit)
+            scanned_counts.append(len(batch))
+            jobs.extend(batch)
         if "evaluation" in requested_kinds:
-            jobs.extend(self._evaluation_jobs(status, user_oid))
+            batch = self._evaluation_jobs(status, user_oid, date_from_utc, date_to_utc, scan_limit)
+            scanned_counts.append(len(batch))
+            jobs.extend(batch)
         if "document" in requested_kinds:
-            jobs.extend(self._document_jobs(status, user_oid))
+            batch = self._document_jobs(status, user_oid, date_from_utc, date_to_utc, scan_limit)
+            scanned_counts.append(len(batch))
+            jobs.extend(batch)
 
 
         # Enrich user names
@@ -228,6 +238,7 @@ class AdminJobService:
             "page": page,
             "page_size": page_size,
             "summary": self._summary(jobs),
+            "scan_truncated": any(count >= scan_limit for count in scanned_counts),
         }
 
     def retry_job(
@@ -260,31 +271,54 @@ class AdminJobService:
             raise ValueError("Loại job không hợp lệ")
         return result
 
-    def _generation_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
+    def _generation_jobs(
+        self,
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
         query: dict = {}
         status_filter = _generation_status_filter(status)
         if status_filter is not None:
             query["status"] = status_filter
         if user_oid:
             query["requested_by_user_id"] = user_oid
+        self._apply_date_query(query, "updated_at", date_from, date_to)
         return [
             self._normalize_generation(job)
-            for job in self.db.generation_jobs.find(query).sort("updated_at", -1).limit(500)
+            for job in self.db.generation_jobs.find(query).sort("updated_at", -1).limit(limit)
         ]
 
-    def _evaluation_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
+    def _evaluation_jobs(
+        self,
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
         query: dict = {}
         status_filter = _uppercase_status_filter(status)
         if status_filter is not None:
             query["status"] = status_filter
         if user_oid:
             query["requested_by_user_id"] = user_oid
+        self._apply_date_query(query, "updated_at", date_from, date_to)
         return [
             self._normalize_evaluation(job)
-            for job in self.db.evaluation_jobs.find(query).sort("updated_at", -1).limit(500)
+            for job in self.db.evaluation_jobs.find(query).sort("updated_at", -1).limit(limit)
         ]
 
-    def _document_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
+    def _document_jobs(
+        self,
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
         query: dict = {}
         status_filter = _uppercase_status_filter(status)
         if status_filter is not None:
@@ -295,7 +329,8 @@ class AdminJobService:
                 for doc in self.db.documents.find({"uploaded_by_user_id": user_oid}, {"_id": 1})
             ]
             query["document_id"] = {"$in": document_ids}
-        document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1).limit(500))
+        self._apply_date_query(query, "queued_at", date_from, date_to)
+        document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1).limit(limit))
         document_ids = [job["document_id"] for job in document_jobs if job.get("document_id")]
         documents = {
             doc["_id"]: doc
@@ -308,6 +343,21 @@ class AdminJobService:
             self._normalize_document(job, documents.get(job.get("document_id")))
             for job in document_jobs
         ]
+
+    @staticmethod
+    def _apply_date_query(
+        query: dict,
+        field: str,
+        date_from: datetime | None,
+        date_to: datetime | None,
+    ) -> None:
+        bounds = {}
+        if date_from:
+            bounds["$gte"] = date_from
+        if date_to:
+            bounds["$lte"] = date_to
+        if bounds:
+            query[field] = bounds
 
     def _normalize_generation(self, job: dict) -> dict:
         status = job.get("status", "")

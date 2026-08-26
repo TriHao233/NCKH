@@ -433,6 +433,14 @@ def _ensure_indexes() -> None:
         [
             IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
             IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_jobs_requester"),
+            IndexModel(
+                [("requested_by_user_id", ASCENDING), ("idempotency_key", ASCENDING)],
+                unique=True,
+                partialFilterExpression={"idempotency_key": {"$type": "string"}},
+                name="uq_generation_jobs_idempotency",
+            ),
+            IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_generation_jobs_lease"),
+            IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_generation_jobs"),
         ]
     )
     rag_db.generation_runs.create_indexes(
@@ -493,6 +501,8 @@ def _ensure_indexes() -> None:
     rag_db.evaluation_jobs.create_indexes(
         [
             IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_evaluation_jobs_queue"),
+            IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_evaluation_jobs_lease"),
+            IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_evaluation_jobs"),
             IndexModel([("question_version_id", ASCENDING), ("created_at", DESCENDING)], name="ix_evaluation_jobs_version"),
             IndexModel(
                 [("dedupe_key", ASCENDING)],

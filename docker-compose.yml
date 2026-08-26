@@ -49,6 +49,26 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nckh-worker
+    volumes:
+      - ./backend/.env:/app/.env
+      - ./backend/data:/app/data
+    command: ["python", "-m", "workers.run"]
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      REQUIRE_MONGO_TRANSACTIONS: "true"
+      OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

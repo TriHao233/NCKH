@@ -75,8 +75,15 @@ class Settings(BaseModel):
         os.getenv("APP_ENV", "production").strip().lower() in {"production", "staging"},
     )
     job_recovery_timeout_minutes: int = int(os.getenv("JOB_RECOVERY_TIMEOUT_MINUTES", "120"))
-    job_worker_enabled: bool = _env_bool("JOB_WORKER_ENABLED", True)
     job_worker_poll_seconds: float = float(os.getenv("JOB_WORKER_POLL_SECONDS", "1"))
+    job_lease_seconds: int = int(os.getenv("JOB_LEASE_SECONDS", "120"))
+    job_heartbeat_seconds: int = int(os.getenv("JOB_HEARTBEAT_SECONDS", "30"))
+    job_max_attempts: int = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+    job_retry_base_seconds: int = int(os.getenv("JOB_RETRY_BASE_SECONDS", "5"))
+    job_retry_max_seconds: int = int(os.getenv("JOB_RETRY_MAX_SECONDS", "300"))
+    max_active_generation_jobs_per_user: int = int(os.getenv("MAX_ACTIVE_GENERATION_JOBS_PER_USER", "10"))
+    worker_shutdown_grace_seconds: int = int(os.getenv("WORKER_SHUTDOWN_GRACE_SECONDS", "30"))
+    job_retention_days: int = int(os.getenv("JOB_RETENTION_DAYS", "90"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
 
     firebase_credentials_path: str = os.getenv(
@@ -93,6 +100,8 @@ class Settings(BaseModel):
         ("EVALUATION_MODEL_PROVIDER", "EVALUATOR_MODEL_CODE"),
         "deepseek-r1",
     )
+    generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
+    evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
     ollama_generate_url: str = _env_first(
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",

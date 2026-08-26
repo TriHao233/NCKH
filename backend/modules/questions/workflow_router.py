@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.config import settings
@@ -68,7 +70,8 @@ async def auto_evaluate_question(
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        job = service.enqueue_auto_evaluation(
+        job = await asyncio.to_thread(
+            service.enqueue_auto_evaluation,
             question_id,
             expected_version=payload.expected_version,
             requested_by_user_id=current_user.id,
