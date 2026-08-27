@@ -654,7 +654,7 @@ class QuestionService:
             raise ValueError("Kiểu sắp xếp hàng kiểm duyệt không hợp lệ")
         if source_presence not in {None, "WITH_SOURCE", "MISSING_SOURCE"}:
             raise ValueError("Bộ lọc nguồn không hợp lệ")
-        if secondary_status not in {None, "AWAITING_SECONDARY"}:
+        if secondary_status not in {None, "AWAITING_SECONDARY", "COMPLETED"}:
             raise ValueError("Bộ lọc duyệt lần hai không hợp lệ")
         owner_user_id = (
             current_user.id

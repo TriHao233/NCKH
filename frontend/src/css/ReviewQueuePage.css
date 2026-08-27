@@ -1316,6 +1316,16 @@
   grid-template-columns: minmax(390px, 0.82fr) minmax(520px, 1.18fr);
 }
 
+.review-layout--empty {
+  grid-template-columns: minmax(0, 880px);
+  justify-content: center;
+}
+
+.review-list-panel,
+.review-detail-panel {
+  min-width: 0;
+}
+
 .review-filters {
   display: block;
   padding-bottom: 14px;
@@ -1324,8 +1334,12 @@
 
 .review-filter-primary {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 1fr) minmax(145px, 0.8fr) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 8px;
+}
+
+.review-filter-primary > input:first-child {
+  grid-column: 1 / -1;
 }
 
 .review-filter-primary button,
@@ -1338,6 +1352,12 @@
   cursor: pointer;
   font-weight: 800;
   padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.review-filter-primary button {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .review-filter-primary button.is-active {
@@ -1373,7 +1393,7 @@
 
 .review-filter-advanced {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
   padding: 12px;
@@ -1400,6 +1420,39 @@
   font-size: 0.68rem;
   font-weight: 800;
   padding: 3px 7px;
+}
+
+.review-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 46px 20px 38px;
+  text-align: center;
+}
+
+.review-empty-state > span {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #eaf5ff;
+  color: #0875c9;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+
+.review-empty-state strong {
+  color: #173b5e;
+  font-size: 0.95rem;
+}
+
+.review-empty-state p {
+  max-width: 430px;
+  margin: 0;
+  color: #65798e;
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .review-detail-panel {
@@ -1694,7 +1747,6 @@
 }
 
 @media (max-width: 1280px) {
-  .review-filter-primary { grid-template-columns: 1fr 1fr; }
   .review-criterion-row { grid-template-columns: 1fr 70px 150px; }
   .review-criterion-row > input,
   .review-criterion-row > select { grid-column: span 1; }

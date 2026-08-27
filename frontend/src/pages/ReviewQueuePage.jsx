@@ -1388,9 +1388,9 @@ function ReviewQueuePage() {
                 <span>Mô hình đánh giá</span>
                 <select
                   aria-label="Mô hình đánh giá"
-                  value={evaluationModelCode}
-                  onChange={(event) => setEvaluationModelCode(event.target.value)}
-                  disabled={bulkBusy || Boolean(busyId)}
+                value={evaluationModelCode}
+                onChange={(event) => setEvaluationModelCode(event.target.value)}
+                disabled={bulkBusy || Boolean(busyId) || questions.length === 0}
                 >
                   {evaluationModels.map((model) => (
                     <option key={model.code} value={model.code}>
@@ -1400,7 +1400,7 @@ function ReviewQueuePage() {
                 </select>
               </label>
             )}
-            <button type="button" className="btn btn--outline" disabled={bulkBusy} onClick={runBulkEvaluate}>
+            <button type="button" className="btn btn--outline" disabled={bulkBusy || questions.length === 0} onClick={runBulkEvaluate}>
               Đánh giá AI danh sách
             </button>
           </div>
@@ -1558,7 +1558,10 @@ function ReviewQueuePage() {
         </button>
       </section>
 
-      <section className="review-layout" hidden={workspaceView === 'performance'}>
+      <section
+        className={`review-layout ${!loading && questions.length === 0 && !selected ? 'review-layout--empty' : ''}`}
+        hidden={workspaceView === 'performance'}
+      >
         <div className="review-list-panel">
           <div className="review-filters">
             <div className="review-filter-primary">
@@ -1717,33 +1720,41 @@ function ReviewQueuePage() {
                   </div>
                 </article>
               ))}
-              {questions.length === 0 && <p className="review-empty">Không có câu hỏi phù hợp bộ lọc.</p>}
-              <div className="review-pagination">
-                <span>
-                  {pageStart}-{pageEnd} / {total} kết quả
-                </span>
-                <div>
-                  <button
-                    type="button"
-                    disabled={loading || page <= 1}
-                    onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  >
-                    Trước
-                  </button>
-                  <button
-                    type="button"
-                    disabled={loading || page >= totalPages}
-                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                  >
-                    Sau
-                  </button>
+              {questions.length === 0 && (
+                <div className="review-empty-state">
+                  <span aria-hidden="true">✓</span>
+                  <strong>Chưa có câu hỏi cần xử lý</strong>
+                  <p>Thử đổi trạng thái, khoảng thời gian hoặc xóa các bộ lọc đang áp dụng.</p>
                 </div>
-              </div>
+              )}
+              {total > 0 && (
+                <div className="review-pagination">
+                  <span>
+                    {pageStart}-{pageEnd} / {total} kết quả
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      disabled={loading || page <= 1}
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    >
+                      Trước
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading || page >= totalPages}
+                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    >
+                      Sau
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        <aside className="review-detail-panel">
+        <aside className="review-detail-panel" hidden={!loading && questions.length === 0 && !selected}>
           {!selected ? (
             <p className="review-empty">Chọn một câu hỏi để xem minh chứng, tài liệu nguồn và lịch sử.</p>
           ) : (
