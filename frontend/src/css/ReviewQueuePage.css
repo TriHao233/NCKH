@@ -151,8 +151,9 @@
   color: #5c6f89;
   font-size: 0.7rem;
   font-weight: 800;
+  line-height: 1.35;
   margin-top: 5px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .review-dashboard__group--calibration .review-dashboard__metrics,

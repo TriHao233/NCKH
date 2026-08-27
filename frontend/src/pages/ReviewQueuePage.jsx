@@ -61,20 +61,20 @@ const COLOR_LABEL = {
 
 const EVALUATION_STATUS_LABEL = {
   NOT_STARTED: 'Chưa đánh giá',
-  QUEUED: 'Chờ AI đánh giá',
-  PROCESSING: 'Đang đánh giá',
-  RUNNING: 'Đang đánh giá',
-  PASSED: 'Đạt AI',
-  FAILED: 'Chưa đạt AI',
-  ERROR: 'AI lỗi',
+  QUEUED: 'Đang chờ AI đánh giá',
+  PROCESSING: 'Đang được AI đánh giá',
+  RUNNING: 'Đang được AI đánh giá',
+  PASSED: 'AI đề xuất đạt',
+  FAILED: 'AI đề xuất xem lại',
+  ERROR: 'Chưa đánh giá được',
   STALE: 'Cần đánh giá lại',
 };
 
 const PUBLICATION_STATUS_LABEL = {
-  NOT_PUBLISHED: 'Chưa ghi mô phỏng',
-  PENDING: 'Đang chờ',
-  PUBLISHED: 'Đã ghi mô phỏng',
-  FAILED: 'Mô phỏng lỗi',
+  NOT_PUBLISHED: 'Chưa đưa lên Moodle',
+  PENDING: 'Đang đưa lên Moodle',
+  PUBLISHED: 'Đã đưa lên Moodle',
+  FAILED: 'Chưa đưa lên được',
 };
 
 const ASSIGNMENT_STATUS_LABEL = {
@@ -128,6 +128,26 @@ const CRITERION_RATING_LABEL = {
   NO_DATA: 'Không đủ dữ liệu',
 };
 
+const SECONDARY_REVIEW_STATUS_LABEL = {
+  NOT_REQUIRED: 'Không yêu cầu',
+  AWAITING_SECONDARY: 'Đang chờ duyệt lần hai',
+  COMPLETED: 'Đã duyệt lần hai',
+};
+
+const ISSUE_SEVERITY_LABEL = {
+  LOW: 'Nhẹ',
+  MEDIUM: 'Vừa',
+  HIGH: 'Nghiêm trọng',
+};
+
+const USER_ROLE_LABEL = {
+  Admin: 'Quản trị viên',
+  Teacher: 'Giảng viên',
+  Reviewer: 'Người duyệt',
+  Student: 'Sinh viên',
+  User: 'Người dùng',
+};
+
 const REVIEW_RUBRIC = [
   { key: 'source_alignment', label: 'Bám sát nguồn' },
   { key: 'answer_correctness', label: 'Đáp án đúng' },
@@ -139,7 +159,7 @@ const REVIEW_RUBRIC = [
 const QUESTION_TYPE_GUIDANCE = {
   dung_sai: [
     'Mệnh đề phải hoàn chỉnh và chỉ có thể hoàn toàn Đúng hoặc hoàn toàn Sai.',
-    'Keyword neo và dữ kiện bị thay đổi phải truy ra được trong nguồn.',
+    'Từ khóa trọng tâm và dữ kiện bị thay đổi phải truy ra được trong nguồn.',
     'Đáp án chuẩn hóa A = Đúng, B = Sai; giải thích nêu rõ vì sao.',
   ],
   trac_nghiem: ['Chỉ có một đáp án đúng nhất.', 'Phương án nhiễu cùng loại, hợp lý và không làm lộ đáp án.'],
@@ -236,7 +256,7 @@ function percent(value) {
 }
 
 function hours(value) {
-  return typeof value === 'number' ? `${value.toFixed(1)}h` : '--';
+  return typeof value === 'number' ? `${value.toFixed(1)} giờ` : '--';
 }
 
 function formatDate(value) {
@@ -262,18 +282,30 @@ function bloomDisplay(classification = {}) {
 }
 
 function evaluationModeLabel(mode) {
-  if (mode === 'local_llm') return 'AI cục bộ';
-  if (mode === 'heuristic_fallback') return 'Đánh giá dự phòng';
-  if (mode === 'heuristic') return 'Chấm nhanh nội bộ';
-  return mode || '--';
+  if (mode === 'local_llm') return 'AI của hệ thống';
+  if (mode === 'heuristic_fallback') return 'Hệ thống đánh giá dự phòng';
+  if (mode === 'heuristic') return 'Hệ thống chấm nhanh';
+  return mode ? 'Hệ thống hỗ trợ' : '--';
+}
+
+function secondaryReviewStatusLabel(value) {
+  return SECONDARY_REVIEW_STATUS_LABEL[value] || 'Không yêu cầu';
+}
+
+function issueSeverityLabel(value) {
+  return ISSUE_SEVERITY_LABEL[value] || 'Vừa';
+}
+
+function userRoleLabel(value) {
+  return USER_ROLE_LABEL[value] || 'Người dùng';
 }
 
 function qualityColorLabel(value) {
-  return COLOR_LABEL[value] || value || '--';
+  return COLOR_LABEL[value] || 'Chưa xác định';
 }
 
 function evaluationStatusLabel(value) {
-  return EVALUATION_STATUS_LABEL[value] || value || '--';
+  return EVALUATION_STATUS_LABEL[value] || 'Chưa đánh giá';
 }
 
 function isEvaluationBusy(question) {
@@ -285,7 +317,7 @@ function canQueueEvaluation(question) {
 }
 
 function publicationStatusLabel(value) {
-  return PUBLICATION_STATUS_LABEL[value] || value || '--';
+  return PUBLICATION_STATUS_LABEL[value] || 'Chưa xác định';
 }
 
 function assignmentOf(question) {
@@ -321,7 +353,7 @@ function assignmentStatusLabel(question, user) {
   }
   if (assignment.status === 'IN_REVIEW') return mine ? 'Tôi đang xử lý' : 'Đang xử lý';
   if (assignment.status === 'ASSIGNED') return mine ? 'Đã gán cho tôi' : 'Đã gán';
-  return ASSIGNMENT_STATUS_LABEL[assignment.status] || assignment.status || 'Chưa nhận';
+  return ASSIGNMENT_STATUS_LABEL[assignment.status] || 'Chưa nhận';
 }
 
 function evaluatorModelLabel(model = {}) {
@@ -356,12 +388,6 @@ function subjectOptionLabel(subject) {
 
 function userOptionLabel(option) {
   return option?.display_name || option?.email || refId(option);
-}
-
-function shortId(value) {
-  const text = refId(value);
-  if (!text) return '--';
-  return text.length > 12 ? `${text.slice(0, 6)}...${text.slice(-4)}` : text;
 }
 
 function pageRangeLabel(pageRange = {}) {
@@ -406,7 +432,7 @@ function SourceText({ source, page }) {
           <mark>{excerpt}</mark>
         </p>
       )}
-      <p>{pageText || 'Chưa có OCR text cho trang này.'}</p>
+      <p>{pageText || 'Chưa trích xuất được nội dung của trang này.'}</p>
     </div>
   );
 }
@@ -1121,7 +1147,7 @@ function ReviewQueuePage() {
     }
     const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
-      setReviewFormError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
+      setReviewFormError('Cần ghi lý do khi duyệt câu mà AI đề xuất xem lại.');
       return;
     }
     if (reviewDraft.decision === 'REJECTED' && !overallNote && revisionIssues.length === 0) {
@@ -1208,7 +1234,7 @@ function ReviewQueuePage() {
       const content = await exportQuestionMoodle(question.id, format);
       downloadMoodleExport(question, format, content);
     } catch (err) {
-      alert('Export Moodle thất bại: ' + err.message);
+      alert('Tải câu hỏi Moodle thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -1217,7 +1243,7 @@ function ReviewQueuePage() {
   const runBulkEvaluate = async () => {
     const targets = questions.filter((question) => canQueueEvaluation(question)).slice(0, 10);
     if (targets.length === 0) return;
-    if (!window.confirm(`Đưa ${targets.length} câu đang lọc vào hàng đợi AI đánh giá?`)) return;
+    if (!window.confirm(`Gửi ${targets.length} câu đang lọc để AI hỗ trợ đánh giá?`)) return;
     setBulkBusy(true);
     try {
       for (const question of targets) {
@@ -1392,23 +1418,23 @@ function ReviewQueuePage() {
           <div className="review-actions">
             {evaluationModels.length > 0 && (
               <label className="review-model-picker">
-                <span>Mô hình đánh giá</span>
+                <span>AI hỗ trợ đánh giá</span>
                 <select
-                  aria-label="Mô hình đánh giá"
-                value={evaluationModelCode}
-                onChange={(event) => setEvaluationModelCode(event.target.value)}
-                disabled={bulkBusy || Boolean(busyId) || questions.length === 0}
+                  aria-label="AI hỗ trợ đánh giá"
+                  value={evaluationModelCode}
+                  onChange={(event) => setEvaluationModelCode(event.target.value)}
+                  disabled={bulkBusy || Boolean(busyId) || questions.length === 0}
                 >
                   {evaluationModels.map((model) => (
                     <option key={model.code} value={model.code}>
-                      {model.name}{model.version ? ` · ${model.version}` : ''}
+                      {model.name}
                     </option>
                   ))}
                 </select>
               </label>
             )}
             <button type="button" className="btn btn--outline" disabled={bulkBusy || questions.length === 0} onClick={runBulkEvaluate}>
-              Đánh giá AI danh sách
+              Đánh giá danh sách bằng AI
             </button>
           </div>
         )}
@@ -1422,7 +1448,7 @@ function ReviewQueuePage() {
           Đã xử lý
         </button>
         <button type="button" className={workspaceView === 'performance' ? 'is-active' : ''} onClick={() => switchWorkspaceView('performance')}>
-          Hiệu suất & đối chiếu AI
+          Thống kê và so sánh với AI
         </button>
       </nav>
 
@@ -1472,11 +1498,11 @@ function ReviewQueuePage() {
             </div>
             <div>
               <b>{dashboardPerformance.override_count || 0}</b>
-              <span>Override AI</span>
+              <span>Duyệt khác đề xuất AI</span>
             </div>
             <div>
               <b>{hours(dashboardPerformance.average_review_hours)}</b>
-              <span>TB xử lý</span>
+              <span>Xử lý trung bình</span>
             </div>
             <div>
               <b>{dashboardPerformance.revision_issues || 0}</b>
@@ -1487,7 +1513,7 @@ function ReviewQueuePage() {
 
         <div className="review-dashboard__group review-dashboard__group--calibration">
           <div className="review-dashboard__head">
-            <span>Calibration AI</span>
+            <span>Mức thống nhất với AI</span>
             <b>{percent(dashboardCalibration.agreement_rate)}</b>
           </div>
           <div className="review-dashboard__metrics">
@@ -1497,15 +1523,15 @@ function ReviewQueuePage() {
             </div>
             <div>
               <b>{dashboardCalibration.disagreements || 0}</b>
-              <span>Lệch AI-human</span>
+              <span>Không cùng kết quả</span>
             </div>
             <div>
               <b>{dashboardCalibration.ai_failed_but_approved || 0}</b>
-              <span>AI rớt, human duyệt</span>
+              <span>AI đề xuất xem lại, người duyệt vẫn duyệt</span>
             </div>
             <div>
               <b>{dashboardCalibration.ai_passed_but_not_approved || 0}</b>
-              <span>AI đạt, human giữ lại</span>
+              <span>AI đề xuất đạt, người duyệt giữ lại</span>
             </div>
           </div>
           <div className="review-calibration-criteria">
@@ -1553,11 +1579,11 @@ function ReviewQueuePage() {
         </button>
         <button type="button" onClick={() => updateFilter(setColorFilter)('GREEN')}>
           <b>{colorFilter === 'GREEN' ? total : summary.green}</b>
-          <span>AI đánh giá tốt</span>
+          <span>AI đề xuất đạt</span>
         </button>
         <button type="button" onClick={() => updateFilter(setMinScore)('0.8')}>
           <b>{minScore === '0.8' ? total : summary.passed}</b>
-          <span>AI đạt ngưỡng</span>
+          <span>Điểm AI đạt yêu cầu</span>
         </button>
         <button type="button" onClick={() => updateFilter(setStatusFilter)('APPROVED')}>
           <b>{statusFilter === 'APPROVED' ? total : (dashboardDecisions.APPROVED || 0)}</b>
@@ -1640,7 +1666,7 @@ function ReviewQueuePage() {
                 {cloFilterOptions.map((clo) => <option key={childId(clo)} value={childId(clo)}>{clo.clo_code}</option>)}
               </select>
               <select value={evaluationStatusFilter} onChange={(event) => updateFilter(setEvaluationStatusFilter)(event.target.value)}>
-                <option value="all">Mọi trạng thái AI</option>
+                <option value="all">Mọi kết quả do AI đánh giá</option>
                 {Object.entries(EVALUATION_STATUS_LABEL).filter(([value]) => value !== 'RUNNING').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
               <select value={sourcePresenceFilter} onChange={(event) => updateFilter(setSourcePresenceFilter)(event.target.value)}>
@@ -1661,7 +1687,7 @@ function ReviewQueuePage() {
                 <option value="priority">Ưu tiên cần xử lý</option>
                 <option value="oldest">Gửi lâu nhất</option>
                 <option value="newest">Gửi mới nhất</option>
-                <option value="ai_lowest">Điểm AI thấp nhất</option>
+                <option value="ai_lowest">Xếp câu có điểm thấp trước</option>
                 <option value="updated">Cập nhật gần nhất</option>
               </select>
               <button type="button" className="review-filter-reset" onClick={resetAdvancedFilters}>Xóa bộ lọc nâng cao</button>
@@ -1710,7 +1736,7 @@ function ReviewQueuePage() {
                     <p>{question.content}</p>
                     <div className="review-row__warnings">
                       {(!question.sources || question.sources.length === 0) && <span>Thiếu nguồn</span>}
-                      {question.evaluation_status === 'ERROR' && <span>AI lỗi</span>}
+                      {question.evaluation_status === 'ERROR' && <span>Chưa đánh giá được</span>}
                       {question.evaluation_status === 'STALE' && <span>Nguồn/câu hỏi đã đổi</span>}
                       {question.secondary_review?.status === 'AWAITING_SECONDARY' && <span>Cần duyệt lần hai</span>}
                     </div>
@@ -1724,7 +1750,7 @@ function ReviewQueuePage() {
                         ? qualityColorLabel(question.quality_summary.color)
                         : evaluationStatusLabel(question.evaluation_status)}
                     </span>
-                    <small>{REVIEW_STATUS_LABEL[question.review_status] || question.review_status}</small>
+                    <small>{REVIEW_STATUS_LABEL[question.review_status] || 'Chưa xác định'}</small>
                   </div>
                 </article>
               ))}
@@ -1816,13 +1842,13 @@ function ReviewQueuePage() {
                 </div>
                 <div>
                   <span>Duyệt lần 2</span>
-                  <b>{selected.secondary_review?.status || 'NOT_REQUIRED'}</b>
+                  <b>{secondaryReviewStatusLabel(selected.secondary_review?.status)}</b>
                 </div>
               </section>
               <nav className="review-detail-tabs" aria-label="Nội dung kiểm duyệt">
                 <button type="button" className={detailView === 'question' ? 'is-active' : ''} onClick={() => setDetailView('question')}>Câu hỏi & đáp án</button>
                 <button type="button" className={detailView === 'source' ? 'is-active' : ''} onClick={() => setDetailView('source')}>Nguồn tham chiếu</button>
-                <button type="button" className={detailView === 'ai' ? 'is-active' : ''} onClick={() => setDetailView('ai')}>Đánh giá AI</button>
+                <button type="button" className={detailView === 'ai' ? 'is-active' : ''} onClick={() => setDetailView('ai')}>Gợi ý từ AI</button>
                 <button type="button" className={detailView === 'history' ? 'is-active' : ''} onClick={() => setDetailView('history')}>Trao đổi & lịch sử</button>
               </nav>
               <div className="detail-actions">
@@ -1844,8 +1870,8 @@ function ReviewQueuePage() {
                 )}
                 <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
                   {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
-                    ? 'Thử lại AI'
-                    : 'AI đánh giá'}
+                    ? 'Nhờ AI đánh giá lại'
+                    : 'Nhờ AI đánh giá'}
                 </button>
                 <button
                   type="button"
@@ -1866,8 +1892,8 @@ function ReviewQueuePage() {
                   <section className="question-answer-panel" hidden={detailView !== 'question'}>
                     <div className="question-answer-panel__meta">
                       <span>Dạng câu hỏi <b>{questionTypeLabel(assessmentType(selected))}</b></span>
-                      <span>Bloom <b>{bloomDisplay(selected.classification)}</b></span>
-                      <span>Độ khó khai báo <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b></span>
+                      <span>Mức Bloom <b>{bloomDisplay(selected.classification)}</b></span>
+                      <span>Độ khó đã chọn <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b></span>
                       <span>Phiên bản <b>{selected.current_version}</b></span>
                     </div>
                     <h3>Nội dung câu hỏi</h3>
@@ -1927,13 +1953,13 @@ function ReviewQueuePage() {
 
                     <div className="evaluation-meta">
                       <span>
-                        Mô hình: <b>{evaluatorModelLabel(latestModel)}</b>
+                        AI hỗ trợ: <b>{evaluatorModelLabel(latestModel)}</b>
                       </span>
-                      <span>Bộ tiêu chí: <b>{latestEvaluation?.policy?.name || '--'}</b></span>
+                      <span>Bộ tiêu chí: <b>{latestEvaluation ? 'Tiêu chí kiểm duyệt hiện hành' : '--'}</b></span>
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
                       {latestEvidence.assessed_difficulty ? (
                         <span>
-                          Độ khó AI: <b>{difficultyLabel(latestEvidence.assessed_difficulty)}</b>
+                          Độ khó AI đề xuất: <b>{difficultyLabel(latestEvidence.assessed_difficulty)}</b>
                         </span>
                       ) : null}
                     </div>
@@ -1948,8 +1974,8 @@ function ReviewQueuePage() {
                     <h3>Minh chứng đánh giá</h3>
                     <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có minh chứng.'}</p>
                     {latestEvidence.reasoning && <span>{latestEvidence.reasoning}</span>}
-                    {qualitySummary.error?.message && <span>Lỗi đánh giá AI: {qualitySummary.error.message}</span>}
-                    {latestEvidence.fallback_reason && <span>Lý do dùng đánh giá dự phòng: {latestEvidence.fallback_reason}</span>}
+                    {qualitySummary.error?.message && <span>Hệ thống chưa thể hoàn tất đánh giá. Vui lòng thử lại.</span>}
+                    {latestEvidence.fallback_reason && <span>Hệ thống đã dùng phương pháp đánh giá dự phòng.</span>}
                   </section>
 
                   <section className="source-viewer" hidden={detailView !== 'source'}>
@@ -1964,7 +1990,7 @@ function ReviewQueuePage() {
                     {sourceLoading ? (
                       <p className="review-empty">Đang tải nguồn câu hỏi...</p>
                     ) : sourceItems.length === 0 ? (
-                      <p className="review-empty">Không có citation nguồn cho câu hỏi này.</p>
+                      <p className="review-empty">Không có nguồn tham chiếu cho câu hỏi này.</p>
                     ) : (
                       <>
                         <div className="source-list">
@@ -1975,9 +2001,9 @@ function ReviewQueuePage() {
                               className={`source-card ${activeSource === source ? 'source-card--active' : ''}`}
                               onClick={() => openSource(source, index)}
                             >
-                              <span>Citation #{source.citation_order}</span>
+                              <span>Nguồn {source.citation_order}</span>
                               <b>{pageRangeLabel(source.page_range)}</b>
-                              <small>Chunk {shortId(source.chunk_id)} · Hash {shortId(source.chunk_content_hash)}</small>
+                              <small>Đoạn tham chiếu {index + 1}</small>
                               {source.is_current_chunk_set === false && <em>Nguồn cũ</em>}
                             </button>
                           ))}
@@ -1986,10 +2012,9 @@ function ReviewQueuePage() {
                         {activeSource && (
                           <div className="source-detail">
                             <div className="source-meta-grid">
-                              <span>Chunk ID <b>{activeSource.chunk_id || '--'}</b></span>
-                              <span>Chunk set <b>{shortId(activeSource.chunk_set_id)}</b></span>
-                              <span>Hiện hành <b>{activeSource.is_current_chunk_set === false ? 'Không' : 'Có'}</b></span>
-                              <span>Content hash <b>{shortId(activeSource.current_content_hash || activeSource.chunk_content_hash)}</b></span>
+                              <span>Vị trí <b>{pageRangeLabel(activeSource.page_range)}</b></span>
+                              <span>Thứ tự nguồn <b>{activeSource.citation_order || '--'}</b></span>
+                              <span>Trạng thái <b>{activeSource.is_current_chunk_set === false ? 'Nguồn cũ' : 'Đang sử dụng'}</b></span>
                             </div>
                             {(activeSource.warnings || []).map((warning) => (
                               <p className="source-warning" key={warning}>{warning}</p>
@@ -2008,11 +2033,11 @@ function ReviewQueuePage() {
                             </div>
                             <div className="source-pdf">
                               {sourcePdfLoading ? (
-                                <p>Đang mở PDF...</p>
+                                <p>Đang mở tài liệu...</p>
                               ) : sourcePdfUrl ? (
                                 <iframe src={sourcePdfUrl} title={`PDF nguồn ${sourceViewer?.document?.original_filename || ''}`} />
                               ) : (
-                                <p>Không có PDF gốc khả dụng.</p>
+                                <p>Không có tài liệu gốc để hiển thị.</p>
                               )}
                             </div>
                             <SourceText source={activeSource} page={activePageRecord} />
@@ -2030,7 +2055,7 @@ function ReviewQueuePage() {
                     <div className="comment-list">
                       {comments.slice(-6).map((comment) => (
                         <div className="comment-item" key={comment.id || comment._id}>
-                          <b>{comment.author_role || 'User'}</b>
+                          <b>{userRoleLabel(comment.author_role)}</b>
                           {editingCommentId === (comment.id || comment._id) ? (
                             <div className="comment-edit-row">
                               <textarea value={editingCommentBody} onChange={(event) => setEditingCommentBody(event.target.value)} rows={2} />
@@ -2084,12 +2109,12 @@ function ReviewQueuePage() {
                       <h3>Lịch sử kiểm duyệt</h3>
                       {reviews.slice(0, 4).map((review) => (
                         <div className="history-review" key={review.id || review._id}>
-                          <p><b>{REVIEW_STATUS_LABEL[review.decision] || review.decision}</b> {review.note || ''}</p>
+                          <p><b>{REVIEW_STATUS_LABEL[review.decision] || 'Chưa xác định'}</b> {review.note || ''}</p>
                           {reviewIssuesOf(review).length > 0 && (
                             <div className="history-issue-list">
                               {reviewIssuesOf(review).slice(0, 3).map((issue, index) => (
                                 <small className="history-issue" key={`${issue.title || issue.detail}-${index}`}>
-                                  {issue.severity || 'MEDIUM'} · {issue.title || issue.detail}
+                                  {issueSeverityLabel(issue.severity)} · {issue.title || issue.detail}
                                   {issue.page_number ? ` · Trang ${issue.page_number}` : ''}
                                 </small>
                               ))}
@@ -2100,17 +2125,17 @@ function ReviewQueuePage() {
                       {reviews.length === 0 && <p>Chưa có lượt kiểm duyệt.</p>}
                     </div>
                     <div>
-                      <h3>Xuất bản Moodle</h3>
+                      <h3>Đưa câu hỏi lên Moodle</h3>
                       {publications.slice(0, 4).map((publication) => (
                         <p key={publication.id || publication._id}>
-                          <b>{publicationStatusLabel(publication.status)}</b> {publication.moodle_question_ref_id || ''}
+                          <b>{publicationStatusLabel(publication.status)}</b>
                         </p>
                       ))}
                       {publications.length === 0 && <p>Chưa có lần xuất bản.</p>}
                       <div className="history-moodle-actions">
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Ghi Moodle</button>
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải GIFT</button>
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải XML</button>
+                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>
+                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải tệp GIFT</button>
+                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải tệp XML</button>
                       </div>
                     </div>
                   </section>
@@ -2133,7 +2158,7 @@ function ReviewQueuePage() {
             <div className="review-modal__head">
               <div>
                 <span>{reviewDraft.questionCode}</span>
-                <h2>{REVIEW_STATUS_LABEL[reviewDraft.decision] || reviewDraft.decision}</h2>
+                <h2>{REVIEW_STATUS_LABEL[reviewDraft.decision] || 'Kết quả kiểm duyệt'}</h2>
                 {draftSaveState && <small>{draftSaveState}</small>}
               </div>
               <button type="button" onClick={() => setReviewDraft(null)}>Đóng</button>
@@ -2142,8 +2167,8 @@ function ReviewQueuePage() {
             <section className="review-form-section">
               <div className="review-criterion-heading">
                 <div>
-                  <h3>Đối chiếu AI – người duyệt</h3>
-                  <p>Đánh giá độc lập từng tiêu chí; AI chỉ là dữ liệu hỗ trợ.</p>
+                  <h3>So sánh gợi ý AI và quyết định của người duyệt</h3>
+                  <p>Hãy đánh giá từng tiêu chí; AI chỉ đưa ra gợi ý tham khảo.</p>
                 </div>
               </div>
               <div className="review-criterion-list">
@@ -2154,7 +2179,7 @@ function ReviewQueuePage() {
                       <small>{item.description}</small>
                     </div>
                     <div className="review-criterion-ai">
-                      <span>AI</span>
+                      <span>AI gợi ý</span>
                       <b>{score(latestScores[item.key])}</b>
                     </div>
                     <label>
@@ -2176,7 +2201,7 @@ function ReviewQueuePage() {
             </section>
 
             <section className="review-form-section">
-              <h3>Checklist theo dạng {questionTypeLabel(assessmentType(selected))}</h3>
+              <h3>Danh sách kiểm tra cho dạng {questionTypeLabel(assessmentType(selected))}</h3>
               <ul className="review-type-guidance">
                 {(QUESTION_TYPE_GUIDANCE[assessmentType(selected)] || []).map((item) => <li key={item}>{item}</li>)}
               </ul>
@@ -2260,7 +2285,7 @@ function ReviewQueuePage() {
               )}
               {reviewNeedsOverride && (
                 <label className="review-form-field">
-                  <span>Lý do override</span>
+                  <span>Lý do duyệt khác đề xuất AI</span>
                   <textarea
                     value={reviewDraft.overrideReason}
                     onChange={(event) => updateReviewDraft({ overrideReason: event.target.value })}
@@ -2301,7 +2326,7 @@ function ReviewQueuePage() {
                     <option value="">Không gắn nguồn</option>
                     {sourceItems.map((source, index) => (
                       <option key={source.chunk_id || index} value={source.chunk_id || ''}>
-                        Citation #{source.citation_order} · {pageRangeLabel(source.page_range)}
+                        Nguồn {source.citation_order} · {pageRangeLabel(source.page_range)}
                       </option>
                     ))}
                   </select>
@@ -2369,7 +2394,7 @@ function ReviewQueuePage() {
                 {assignmentDraft.reviewerUserId
                   && !reviewerOptions.some((reviewer) => reviewer.id === assignmentDraft.reviewerUserId) && (
                   <option value={assignmentDraft.reviewerUserId}>
-                    ID hiện tại: {assignmentDraft.reviewerUserId}
+                    Người duyệt hiện tại (không còn trong danh sách)
                   </option>
                 )}
               </select>
