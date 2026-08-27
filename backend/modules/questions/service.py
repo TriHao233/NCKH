@@ -633,6 +633,9 @@ class QuestionService:
         submitted_from: datetime | None = None,
         submitted_to: datetime | None = None,
         include_status_counts: bool = False,
+        sort_by: str = "priority",
+        source_presence: str | None = None,
+        secondary_status: str | None = None,
         current_user: CurrentUser | None = None,
     ) -> dict:
         if created_from and created_from.tzinfo is None:
@@ -647,6 +650,12 @@ class QuestionService:
             submitted_to = submitted_to.replace(tzinfo=timezone.utc)
         if submitted_from and submitted_to and submitted_from > submitted_to:
             raise ValueError("submitted_from phải trước hoặc bằng submitted_to")
+        if sort_by not in {"priority", "oldest", "newest", "ai_lowest", "updated"}:
+            raise ValueError("Kiểu sắp xếp hàng kiểm duyệt không hợp lệ")
+        if source_presence not in {None, "WITH_SOURCE", "MISSING_SOURCE"}:
+            raise ValueError("Bộ lọc nguồn không hợp lệ")
+        if secondary_status not in {None, "AWAITING_SECONDARY"}:
+            raise ValueError("Bộ lọc duyệt lần hai không hợp lệ")
         owner_user_id = (
             current_user.id
             if current_user
@@ -698,6 +707,9 @@ class QuestionService:
             submitted_from=submitted_from,
             submitted_to=submitted_to,
             include_status_counts=include_status_counts,
+            sort_by=sort_by,
+            source_presence=source_presence,
+            secondary_status=secondary_status,
         )
         if len(list_result) == 3:
             pairs, total, status_counts = list_result

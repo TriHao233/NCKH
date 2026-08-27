@@ -55,6 +55,9 @@ def list_questions(
     submitted_from: datetime | None = Query(None),
     submitted_to: datetime | None = Query(None),
     include_status_counts: bool = Query(False),
+    sort_by: str = Query("priority"),
+    source_presence: str | None = Query(None),
+    secondary_status: str | None = Query(None),
     current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
     service: QuestionService = Depends(get_question_service),
 ):
@@ -85,6 +88,9 @@ def list_questions(
             submitted_from=submitted_from,
             submitted_to=submitted_to,
             include_status_counts=include_status_counts,
+            sort_by=sort_by,
+            source_presence=source_presence,
+            secondary_status=secondary_status,
             current_user=current_user,
         )
     except ValueError as exc:

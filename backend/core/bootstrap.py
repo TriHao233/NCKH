@@ -33,6 +33,8 @@ RAG_COLLECTIONS = (
     "llm_slots",
     "question_evaluations",
     "question_reviews",
+    "question_review_drafts",
+    "question_comments",
     "audit_logs",
     "notifications",
     "moodle_targets",
@@ -205,6 +207,63 @@ VALIDATORS = {
                     "enum": ["NOT_PUBLISHED", "PUBLISHED", "STALE", "FAILED"]
                 },
                 "review_assignment": {"bsonType": "object"},
+                "created_at": {"bsonType": "date"},
+                "updated_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "question_review_drafts": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "schema_version",
+                "question_id",
+                "question_version_id",
+                "question_version",
+                "reviewer_user_id",
+                "draft",
+                "created_at",
+                "updated_at",
+            ],
+            "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
+                "question_id": {"bsonType": "objectId"},
+                "question_version_id": {"bsonType": "objectId"},
+                "question_version": {"bsonType": "int", "minimum": 1},
+                "reviewer_user_id": {"bsonType": "objectId"},
+                "decision": {"bsonType": ["string", "null"]},
+                "draft": {"bsonType": "object"},
+                "created_at": {"bsonType": "date"},
+                "updated_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "question_comments": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "schema_version",
+                "question_id",
+                "question_version_id",
+                "question_version",
+                "author_user_id",
+                "author_role",
+                "body",
+                "created_at",
+                "updated_at",
+            ],
+            "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
+                "question_id": {"bsonType": "objectId"},
+                "question_version_id": {"bsonType": "objectId"},
+                "question_version": {"bsonType": "int", "minimum": 1},
+                "author_user_id": {"bsonType": "objectId"},
+                "author_role": {"enum": ["Admin", "Teacher", "Reviewer"]},
+                "body": {"bsonType": "string"},
+                "mention_user_ids": {"bsonType": "array"},
+                "edited_at": {"bsonType": ["date", "null"]},
+                "deleted_at": {"bsonType": ["date", "null"]},
+                "deleted_by_user_id": {"bsonType": ["objectId", "null"]},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
             },
@@ -548,6 +607,23 @@ def _ensure_indexes() -> None:
     rag_db.question_reviews.create_index(
         [("question_version_id", ASCENDING), ("reviewed_at", DESCENDING)],
         name="ix_reviews_version",
+    )
+    rag_db.question_review_drafts.create_indexes(
+        [
+            IndexModel(
+                [("question_id", ASCENDING), ("reviewer_user_id", ASCENDING)],
+                unique=True,
+                name="uq_review_draft_question_reviewer",
+            ),
+            IndexModel(
+                [("reviewer_user_id", ASCENDING), ("updated_at", DESCENDING)],
+                name="ix_review_drafts_reviewer_updated",
+            ),
+        ]
+    )
+    rag_db.question_comments.create_index(
+        [("question_id", ASCENDING), ("deleted_at", ASCENDING), ("created_at", ASCENDING)],
+        name="ix_question_comments_thread",
     )
     rag_db.audit_logs.create_index(
         [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],

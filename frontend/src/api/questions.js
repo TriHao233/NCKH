@@ -38,6 +38,9 @@ export function listQuestions({
   submittedFrom,
   submittedTo,
   includeStatusCounts = false,
+  sortBy,
+  sourcePresence,
+  secondaryStatus,
 } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
@@ -65,6 +68,9 @@ export function listQuestions({
   if (submittedFrom) params.set('submitted_from', localDateBoundary(submittedFrom));
   if (submittedTo) params.set('submitted_to', localDateBoundary(submittedTo, true));
   if (includeStatusCounts) params.set('include_status_counts', 'true');
+  if (sortBy) params.set('sort_by', sortBy);
+  if (sourcePresence) params.set('source_presence', sourcePresence);
+  if (secondaryStatus) params.set('secondary_status', secondaryStatus);
   return apiRequest(`/questions?${params.toString()}`);
 }
 
@@ -148,6 +154,18 @@ export function reviewQuestion(id, payload) {
   return apiRequest(`/questions/${id}/reviews`, { method: 'POST', body: payload });
 }
 
+export function getQuestionReviewDraft(id) {
+  return apiRequest(`/questions/${id}/review-draft`);
+}
+
+export function saveQuestionReviewDraft(id, payload) {
+  return apiRequest(`/questions/${id}/review-draft`, { method: 'PUT', body: payload });
+}
+
+export function deleteQuestionReviewDraft(id) {
+  return apiRequest(`/questions/${id}/review-draft`, { method: 'DELETE' });
+}
+
 export function claimQuestionReview(id) {
   return apiRequest(`/questions/${id}/review-assignment/claim`, { method: 'POST' });
 }
@@ -170,6 +188,14 @@ export function listQuestionComments(id) {
 
 export function addQuestionComment(id, payload) {
   return apiRequest(`/questions/${id}/comments`, { method: 'POST', body: payload });
+}
+
+export function updateQuestionComment(id, commentId, payload) {
+  return apiRequest(`/questions/${id}/comments/${commentId}`, { method: 'PATCH', body: payload });
+}
+
+export function deleteQuestionComment(id, commentId) {
+  return apiRequest(`/questions/${id}/comments/${commentId}`, { method: 'DELETE' });
 }
 
 export function setQuestionSecondaryReview(id, payload) {
