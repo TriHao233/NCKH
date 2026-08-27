@@ -802,6 +802,13 @@ function ReviewQueuePage() {
     publishable: questions.filter((item) => item.review_status === 'APPROVED' && item.publication_status !== 'PUBLISHED').length,
   }), [questions, user]);
 
+  const queueErrors = useMemo(() => Array.from(new Set([
+    catalogFilterError,
+    teacherFilterError,
+    reviewerFilterError,
+    error,
+  ].filter(Boolean))), [catalogFilterError, teacherFilterError, reviewerFilterError, error]);
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageEnd = Math.min(page * PAGE_SIZE, total);
@@ -1661,10 +1668,11 @@ function ReviewQueuePage() {
             </div>
           </div>
 
-          {catalogFilterError && <p className="review-error review-error--filters">{catalogFilterError}</p>}
-          {teacherFilterError && <p className="review-error review-error--filters">{teacherFilterError}</p>}
-          {reviewerFilterError && <p className="review-error review-error--filters">{reviewerFilterError}</p>}
-          {error && <p className="review-error">{error}</p>}
+          {queueErrors.length > 0 && (
+            <div className="review-error" role="alert">
+              {queueErrors.map((message) => <div key={message}>{message}</div>)}
+            </div>
+          )}
           {loading ? (
             <p className="review-empty">Đang tải hàng đợi...</p>
           ) : (
