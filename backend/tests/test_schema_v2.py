@@ -83,6 +83,7 @@ from modules.questions.workflow_schemas import (
     QuestionCommentCreateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    ReviewDraftUpsertRequest,
     ReviewOverride,
     SecondaryReviewRequest,
 )
@@ -4707,9 +4708,38 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("Lưu thiếu 2 câu so với yêu cầu.", summary.warnings)
 
     def test_key_validators_require_schema_version(self):
-        for collection in ("users", "documents", "questions", "question_versions", "evaluation_jobs", "moodle_targets"):
+        for collection in ("users", "documents", "questions", "question_versions", "evaluation_jobs", "question_review_drafts", "question_comments", "moodle_targets"):
             required = VALIDATORS[collection]["$jsonSchema"]["required"]
             self.assertIn("schema_version", required)
+
+    def test_reviewer_form_accepts_shared_ai_human_criteria(self):
+        payload = ReviewCreateRequest(
+            expected_version=1,
+            decision="APPROVED",
+            review_form={
+                "criterion_assessments": [
+                    {
+                        "key": "faithfulness",
+                        "label": "Bám sát nguồn",
+                        "rating": "PASS",
+                        "source_chunk_id": "chunk-1",
+                        "page_number": 3,
+                    }
+                ]
+            },
+        )
+        criterion = payload.review_form.criterion_assessments[0]
+        self.assertEqual(criterion.key, "faithfulness")
+        self.assertEqual(criterion.rating, "PASS")
+
+    def test_review_draft_keeps_version_and_structured_payload(self):
+        payload = ReviewDraftUpsertRequest(
+            expected_version=2,
+            decision="NEEDS_REVISION",
+            draft={"overallNote": "Cần bổ sung nguồn"},
+        )
+        self.assertEqual(payload.expected_version, 2)
+        self.assertEqual(payload.draft["overallNote"], "Cần bổ sung nguồn")
 
     def test_user_validator_accepts_reviewer_role(self):
         role_enum = set(VALIDATORS["users"]["$jsonSchema"]["properties"]["role"]["enum"])

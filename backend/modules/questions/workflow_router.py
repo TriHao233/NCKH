@@ -14,8 +14,10 @@ from modules.questions.workflow_schemas import (
     EvaluationCreateRequest,
     MoodlePublicationRequest,
     QuestionCommentCreateRequest,
+    QuestionCommentUpdateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    ReviewDraftUpsertRequest,
     SecondaryReviewRequest,
 )
 from modules.questions.workflow_service import (
@@ -45,6 +47,43 @@ def review_dashboard(
 ):
     try:
         return service.review_dashboard(current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/{question_id}/review-draft")
+def get_review_draft(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"item": service.get_review_draft(question_id, current_user)}
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.put("/{question_id}/review-draft")
+def save_review_draft(
+    question_id: str,
+    payload: ReviewDraftUpsertRequest,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.save_review_draft(question_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.delete("/{question_id}/review-draft")
+def delete_review_draft(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"deleted": service.delete_review_draft(question_id, current_user)}
     except Exception as exc:
         _translate_workflow_error(exc)
 
@@ -178,6 +217,33 @@ def add_question_comment(
 ):
     try:
         return service.add_comment(question_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.patch("/{question_id}/comments/{comment_id}")
+def update_question_comment(
+    question_id: str,
+    comment_id: str,
+    payload: QuestionCommentUpdateRequest,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.update_comment(question_id, comment_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.delete("/{question_id}/comments/{comment_id}")
+def delete_question_comment(
+    question_id: str,
+    comment_id: str,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"deleted": service.delete_comment(question_id, comment_id, current_user)}
     except Exception as exc:
         _translate_workflow_error(exc)
 

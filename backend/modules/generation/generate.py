@@ -144,7 +144,7 @@ async def process_generate_background(job_id: str, worker_id: str):
             )
             logger.info("Job [%s] hoàn tất thành công", job_id)
     except Exception as ex:
-        logger.error("Job [%s] thất bại: %s", job_id, ex)
+        logger.exception("Job [%s] thất bại: %s", job_id, ex)
         metrics = build_generation_metrics(
             job,
             processing_started_at=processing_started_at,

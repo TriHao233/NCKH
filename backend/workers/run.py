@@ -39,7 +39,7 @@ async def run() -> None:
             return
         try:
             await asyncio.wait_for(worker_task, timeout=settings.worker_shutdown_grace_seconds)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             logger.warning("Worker exceeded shutdown grace period; cancelling active work")
             worker_task.cancel()
             await asyncio.gather(worker_task, return_exceptions=True)

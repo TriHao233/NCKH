@@ -30,8 +30,10 @@ from modules.questions.workflow_schemas import (
     EvaluationScores,
     MoodlePublicationRequest,
     QuestionCommentCreateRequest,
+    QuestionCommentUpdateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    ReviewDraftUpsertRequest,
     SecondaryReviewRequest,
 )
 
@@ -64,6 +66,13 @@ MOODLE_MOCK_MESSAGE = (
 )
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
 evaluation_semaphore = asyncio.Semaphore(1)
+
+REVIEW_CRITERION_KEYS = tuple(DEFAULT_WEIGHTS)
+LEGACY_REVIEW_CRITERION_MAP = {
+    "source_alignment": "faithfulness",
+    "answer_correctness": "answer_relevancy",
+    "bloom_clo_alignment": "bloom_alignment",
+}
 
 
 def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
@@ -1312,6 +1321,67 @@ class QuestionWorkflowService:
             )
         return serialize_question(updated, version)
 
+    def get_review_draft(self, question_id: str, current_user: CurrentUser) -> dict | None:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        draft = self.db.question_review_drafts.find_one(
+            {
+                "question_id": question["_id"],
+                "reviewer_user_id": current_user.id,
+            }
+        )
+        if not draft:
+            return None
+        draft["is_stale"] = draft.get("question_version_id") != version["_id"]
+        return json_safe(draft)
+
+    def save_review_draft(
+        self,
+        question_id: str,
+        payload: ReviewDraftUpsertRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        if question["current_version"] != payload.expected_version:
+            raise RuntimeError("VERSION_CONFLICT")
+        now = utc_now()
+        draft = self.db.question_review_drafts.find_one_and_update(
+            {
+                "question_id": question["_id"],
+                "reviewer_user_id": current_user.id,
+            },
+            {
+                "$set": {
+                    "schema_version": SCHEMA_VERSION,
+                    "question_version_id": version["_id"],
+                    "question_version": version["version"],
+                    "decision": payload.decision,
+                    "draft": payload.draft,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "question_id": question["_id"],
+                    "reviewer_user_id": current_user.id,
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return json_safe(draft)
+
+    def delete_review_draft(self, question_id: str, current_user: CurrentUser) -> bool:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        result = self.db.question_review_drafts.delete_one(
+            {
+                "question_id": question["_id"],
+                "reviewer_user_id": current_user.id,
+            }
+        )
+        return bool(result.deleted_count)
+
     def review(self, question_id: str, payload: ReviewCreateRequest, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
@@ -1462,13 +1532,20 @@ class QuestionWorkflowService:
                 review=review,
                 actor_user_id=current_user.id,
             )
+        if hasattr(self.db, "question_review_drafts"):
+            self.db.question_review_drafts.delete_one(
+                {
+                    "question_id": question["_id"],
+                    "reviewer_user_id": current_user.id,
+                }
+            )
         return json_safe(review)
 
     def list_comments(self, question_id: str, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
         comments = list(
-            self.db.question_comments.find({"question_id": question["_id"]})
+            self.db.question_comments.find({"question_id": question["_id"], "deleted_at": None})
             .sort("created_at", 1)
         )
         return {"items": [json_safe(comment) for comment in comments]}
@@ -1555,6 +1632,83 @@ class QuestionWorkflowService:
             ]
         )
         return json_safe(comment)
+
+    def update_comment(
+        self,
+        question_id: str,
+        comment_id: str,
+        payload: QuestionCommentUpdateRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        query = {
+            "_id": object_id(comment_id, "comment_id"),
+            "question_id": question["_id"],
+            "deleted_at": None,
+        }
+        if current_user.role != "Admin":
+            query["author_user_id"] = current_user.id
+        now = utc_now()
+        updated = self.db.question_comments.find_one_and_update(
+            query,
+            {"$set": {"body": payload.body.strip(), "updated_at": now, "edited_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Bạn chỉ có thể sửa bình luận của mình")
+        self.db.audit_logs.insert_one(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "actor": {"type": "USER", "user_id": current_user.id, "model_id": None, "service_name": None},
+                "entity": {"type": "QUESTION", "id": question["_id"], "version_id": version["_id"]},
+                "action": "QUESTION_COMMENT_UPDATED",
+                "changes": [],
+                "before_hash": version["content_hash"],
+                "after_hash": version["content_hash"],
+                "metadata": {"comment_id": updated["_id"]},
+                "created_at": now,
+            }
+        )
+        return json_safe(updated)
+
+    def delete_comment(
+        self,
+        question_id: str,
+        comment_id: str,
+        current_user: CurrentUser,
+    ) -> bool:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        query = {
+            "_id": object_id(comment_id, "comment_id"),
+            "question_id": question["_id"],
+            "deleted_at": None,
+        }
+        if current_user.role != "Admin":
+            query["author_user_id"] = current_user.id
+        now = utc_now()
+        updated = self.db.question_comments.find_one_and_update(
+            query,
+            {"$set": {"body": "", "deleted_at": now, "deleted_by_user_id": current_user.id, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Bạn chỉ có thể xóa bình luận của mình")
+        self.db.audit_logs.insert_one(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "actor": {"type": "USER", "user_id": current_user.id, "model_id": None, "service_name": None},
+                "entity": {"type": "QUESTION", "id": question["_id"], "version_id": version["_id"]},
+                "action": "QUESTION_COMMENT_DELETED",
+                "changes": [],
+                "before_hash": version["content_hash"],
+                "after_hash": version["content_hash"],
+                "metadata": {"comment_id": updated["_id"]},
+                "created_at": now,
+            }
+        )
+        return True
 
     def set_secondary_review(
         self,
@@ -2097,6 +2251,10 @@ class QuestionWorkflowService:
         calibration_disagreements = 0
         ai_failed_but_approved = 0
         ai_passed_but_not_approved = 0
+        criterion_calibration = {
+            key: {"sample_size": 0, "agreements": 0, "disagreements": 0}
+            for key in REVIEW_CRITERION_KEYS
+        }
         for review in reviews:
             evaluation = evaluation_map.get(review.get("question_version_id"))
             if not evaluation:
@@ -2112,6 +2270,30 @@ class QuestionWorkflowService:
                     ai_failed_but_approved += 1
                 else:
                     ai_passed_but_not_approved += 1
+            review_form = review.get("review_form") or {}
+            human_by_key = {
+                item.get("key"): item.get("rating")
+                for item in review_form.get("criterion_assessments") or []
+                if item.get("key") in criterion_calibration
+            }
+            if not human_by_key:
+                for item in review_form.get("checklist") or []:
+                    key = LEGACY_REVIEW_CRITERION_MAP.get(item.get("key"), item.get("key"))
+                    if key in criterion_calibration:
+                        human_by_key[key] = "PASS" if item.get("passed") else "FAIL"
+            evaluation_scores = evaluation.get("scores") or {}
+            for key, human_rating in human_by_key.items():
+                ai_score = evaluation_scores.get(key)
+                if not isinstance(ai_score, (int, float)) or human_rating == "NO_DATA":
+                    continue
+                ai_positive = ai_score >= DEFAULT_THRESHOLDS["pass_min"]
+                human_positive = human_rating == "PASS"
+                item = criterion_calibration[key]
+                item["sample_size"] += 1
+                if ai_positive == human_positive:
+                    item["agreements"] += 1
+                else:
+                    item["disagreements"] += 1
 
         audit_match: dict = {
             "action": {"$in": ["QUESTION_APPROVED", "QUESTION_REJECTED", "QUESTION_NEEDS_REVISION"]},
@@ -2194,6 +2376,17 @@ class QuestionWorkflowService:
             "disagreements": calibration_disagreements,
             "ai_failed_but_approved": ai_failed_but_approved,
             "ai_passed_but_not_approved": ai_passed_but_not_approved,
+            "criteria": {
+                key: {
+                    **value,
+                    "agreement_rate": (
+                        round(value["agreements"] / value["sample_size"], 3)
+                        if value["sample_size"]
+                        else None
+                    ),
+                }
+                for key, value in criterion_calibration.items()
+            },
         }
         return json_safe(
             {

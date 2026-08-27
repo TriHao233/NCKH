@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+ARG VITE_DEMO_MODE=false
+ENV VITE_DEMO_MODE=${VITE_DEMO_MODE}
+
 # Copy package.json và package-lock.json để tận dụng cache
 COPY package.json package-lock.json* ./
 RUN npm install

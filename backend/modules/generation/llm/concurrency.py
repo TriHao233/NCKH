@@ -121,7 +121,7 @@ async def _maintain_slot(slot_id: str, holder_id: str, stop_event: asyncio.Event
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             if not await asyncio.to_thread(_heartbeat_slot, slot_id, holder_id):
                 logger.warning("LLM slot %s is no longer owned by %s", slot_id, holder_id)
                 return

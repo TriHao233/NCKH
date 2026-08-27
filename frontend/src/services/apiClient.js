@@ -52,8 +52,11 @@ export async function apiRequest(
     payload = null;
   }
   if (!response.ok) {
+    const fallbackMessage = [502, 503, 504].includes(response.status)
+      ? "Không thể kết nối máy chủ. Vui lòng thử lại."
+      : "Yêu cầu API thất bại";
     throw new ApiError(
-      payload?.detail || payload?.message || "Yêu cầu API thất bại",
+      payload?.detail || payload?.message || fallbackMessage,
       response.status,
       payload,
     );

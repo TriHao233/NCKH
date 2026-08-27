@@ -36,7 +36,15 @@ def contains_exact_text(container: str, expected: str) -> bool:
         return False
     normalized_container = normalize_exact_text(container)
     pattern = rf"(?<!\w){re.escape(normalized_expected)}(?!\w)"
-    return re.search(pattern, normalized_container, flags=re.UNICODE) is not None
+    if re.search(pattern, normalized_container, flags=re.UNICODE) is not None:
+        return True
+
+    # OCR/PDF extraction can split a Vietnamese word at different positions
+    # (for example ``n ày`` versus ``nà y``). Keep accents and character order
+    # strict while ignoring only separators so grounded quotes still match.
+    compact_expected = re.sub(r"[\W_]+", "", normalized_expected, flags=re.UNICODE)
+    compact_container = re.sub(r"[\W_]+", "", normalized_container, flags=re.UNICODE)
+    return len(compact_expected) >= 12 and compact_expected in compact_container
 
 
 def question_fingerprint(question: str) -> str:
@@ -172,6 +180,17 @@ def validate_source_grounding(
     keywords = raw_keywords if isinstance(raw_keywords, list) else []
     invalid_keyword_types = [keyword for keyword in keywords if not isinstance(keyword, str)]
     keywords = [keyword.strip() for keyword in keywords if isinstance(keyword, str) and keyword.strip()]
+    if question_type != "dung_sai":
+        # Keywords are optional highlighting metadata for non true/false
+        # questions. Keep only grounded values instead of rejecting an
+        # otherwise traceable question because the model returned noisy tags.
+        keywords = [
+            keyword
+            for keyword in keywords
+            if contains_exact_text(source_context, keyword)
+        ][:MAX_SOURCE_KEYWORDS]
+        item["source_keywords"] = keywords
+        invalid_keyword_types = []
     if invalid_keyword_types:
         errors.append(
             _rejection(
@@ -192,7 +211,7 @@ def validate_source_grounding(
                 repairable=True,
             )
         )
-    if len(keywords) > MAX_SOURCE_KEYWORDS:
+    if question_type == "dung_sai" and len(keywords) > MAX_SOURCE_KEYWORDS:
         errors.append(
             _rejection(
                 "TOO_MANY_SOURCE_KEYWORDS",

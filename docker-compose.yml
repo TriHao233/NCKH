@@ -75,6 +75,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_DEMO_MODE: ${VITE_DEMO_MODE:-false}
     container_name: nckh-frontend
     ports:
       - "80:80" # Publish web frontend ra cổng 80 (truy cập bằng http://localhost)
