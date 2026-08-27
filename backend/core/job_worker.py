@@ -18,7 +18,7 @@ async def maintain_lease(heartbeat, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=settings.job_heartbeat_seconds)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             if not await asyncio.to_thread(heartbeat):
                 logger.warning("Worker lost its job lease")
                 return
@@ -79,7 +79,7 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
             if not found_work:
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=settings.job_worker_poll_seconds)
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     pass
     finally:
         logger.info("Mongo job worker stopped")

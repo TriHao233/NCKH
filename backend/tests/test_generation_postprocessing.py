@@ -52,6 +52,13 @@ class GenerationPostProcessingTests(unittest.TestCase):
         self.assertFalse(contains_exact_text("Cay nhi phan", "cây nhị phân"))
         self.assertFalse(contains_exact_text("Heapsort", "heap"))
 
+    def test_exact_matching_tolerates_ocr_spacing_only(self):
+        context = "Giải thuật n ày đạt tính kết thúc trong trường hợp xấu nhất."
+        quote = "Giải thuật nà y đạt tính kết thúc trong trường hợp xấu nhất."
+
+        self.assertTrue(contains_exact_text(context, quote))
+        self.assertFalse(contains_exact_text(context, "Giải thuật đạt tính hiệu quả."))
+
     def test_grounding_accepts_exact_keyword_and_controlled_false_mutation(self):
         errors = validate_source_grounding(
             candidate(),
@@ -78,6 +85,26 @@ class GenerationPostProcessingTests(unittest.TestCase):
             candidate_index=1,
         )
         self.assertIn("SOURCE_KEYWORDS_INVALID", {error.code for error in errors})
+
+    def test_grounding_sanitizes_optional_mcq_keywords(self):
+        item = candidate(
+            question="Ngăn xếp (Stack) tuân theo nguyên tắc nào?",
+            options={"A": "LIFO", "B": "FIFO", "C": "LILO", "D": "FILO"},
+            correct_answer="A",
+            question_type="trac_nghiem",
+            source_keywords=["Ngăn xếp (Stack)", "không có trong nguồn", 123],
+            false_mutation=None,
+        )
+
+        errors = validate_source_grounding(
+            item,
+            context_text=CONTEXT,
+            question_type="trac_nghiem",
+            candidate_index=1,
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(item["source_keywords"], ["Ngăn xếp (Stack)"])
 
     def test_false_statement_requires_traceable_mutation(self):
         errors = validate_source_grounding(

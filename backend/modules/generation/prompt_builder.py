@@ -79,5 +79,11 @@ TASK: Generate exactly {num_questions} questions.
 CONTEXT:
 {context}
 
+EVIDENCE RULES:
+- `source_context` must be copied verbatim only from text after `Nội dung:` in CONTEXT; never use a `Mục lục:` line as evidence.
+- Every `source_keyword` must appear verbatim in both `source_context` and the question text.
+- Use at most 2 short `source_keyword` values; use an empty list when no reliable keyword is needed.
+- Prefer a concise evidence sentence that directly proves the correct answer.
+
 {output}
 """
