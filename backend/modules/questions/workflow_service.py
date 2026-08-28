@@ -261,11 +261,18 @@ class QuestionWorkflowService:
 
     @staticmethod
     def _source_context(version: dict) -> str:
-        return "\n\n".join(
+        model_source_context = QuestionWorkflowService._compact_text(
+            (version.get("question_data") or {}).get("model_source_context") or "",
+            1400,
+        )
+        source_parts = [
             f"[{source['label']}] {source['excerpt']}"
             for source in QuestionWorkflowService._compact_sources(version)
             if source.get("excerpt")
-        )
+        ]
+        if model_source_context:
+            source_parts.insert(0, f"[MODEL_CONTEXT] {model_source_context}")
+        return "\n\n".join(source_parts)
 
     @staticmethod
     def _normalized_question_type(question_type: str | None) -> str:
@@ -333,6 +340,13 @@ class QuestionWorkflowService:
             "options": question_data.get("options"),
             "correct_answer": question_data.get("correct_answer"),
             "explanation": question_data.get("explanation"),
+            # This is the verbatim evidence selected by the generation model
+            # and persisted with the question version.  Keep the immutable
+            # chunk snapshots below as the authoritative source provenance.
+            "generation_source_context": self._compact_text(
+                question_data.get("model_source_context") or "",
+                1400,
+            ),
             "requested_bloom": classification.get("bloom"),
             "current_difficulty": classification.get("difficulty"),
             "clos": clos,
@@ -370,19 +384,96 @@ class QuestionWorkflowService:
     def _parse_llm_evaluation(cls, raw_response: str) -> tuple[EvaluationScores, dict, dict]:
         parsed = json.loads(cls._clean_json(raw_response))
         raw_scores = parsed.get("scores") or {}
+
+        def score_value(key: str, *aliases: str) -> float:
+            for candidate in (key, *aliases):
+                if candidate in raw_scores:
+                    return cls._clamp(float(raw_scores[candidate]))
+            raise ValueError(f"AI evaluation thiếu điểm bắt buộc: {key}")
+
         scores = EvaluationScores(
-            faithfulness=cls._clamp(float(raw_scores.get("faithfulness", 0))),
-            contextual_relevancy=cls._clamp(float(raw_scores.get("contextual_relevancy", 0))),
-            answer_relevancy=cls._clamp(float(raw_scores.get("answer_relevancy", 0))),
-            bloom_alignment=cls._clamp(float(raw_scores.get("bloom_alignment", 0))),
-            clo_alignment=cls._clamp(float(raw_scores.get("clo_alignment", 0))),
+            faithfulness=score_value("faithfulness"),
+            contextual_relevancy=score_value("contextual_relevancy"),
+            # Local models occasionally misspell this field. Accept only the
+            # observed typo; all other missing scores remain a retryable error.
+            answer_relevancy=score_value("answer_relevancy", "answer_relevality"),
+            bloom_alignment=score_value("bloom_alignment"),
+            clo_alignment=score_value("clo_alignment"),
         )
-        feedback = parsed.get("feedback") if isinstance(parsed.get("feedback"), dict) else {}
+        feedback = dict(parsed.get("feedback")) if isinstance(parsed.get("feedback"), dict) else {}
+        action = str(feedback.get("action") or parsed.get("action") or "").strip().upper()
+        severity = str(feedback.get("severity") or parsed.get("severity") or "").strip().upper()
+        if action not in {"APPROVE", "NEEDS_REVISION", "REJECT"}:
+            raise ValueError("AI evaluation thiếu action hợp lệ")
+        if severity not in {"LOW", "MEDIUM", "HIGH"}:
+            raise ValueError("AI evaluation thiếu severity hợp lệ")
+        summary = str(feedback.get("summary") or "").strip()
+        if not summary:
+            raise ValueError("AI evaluation thiếu summary")
+        feedback["action"] = action
+        feedback["severity"] = severity
+        feedback["summary"] = summary
+        missing = feedback.get("missing")
+        feedback["missing"] = missing if isinstance(missing, list) else ([missing] if missing else [])
         evidence = parsed.get("evidence") if isinstance(parsed.get("evidence"), dict) else {}
+        moodle_readiness = str(evidence.get("moodle_readiness") or "").strip().upper()
+        if moodle_readiness not in {"READY", "NEEDS_FIX"}:
+            raise ValueError("AI evaluation thiếu moodle_readiness hợp lệ")
+        if not str(evidence.get("reasoning") or evidence.get("supporting_excerpt") or "").strip():
+            raise ValueError("AI evaluation thiếu minh chứng hoặc lý do chấm điểm")
+        evidence["moodle_readiness"] = moodle_readiness
+        risks = evidence.get("risks")
+        evidence["risks"] = risks if isinstance(risks, list) else ([risks] if risks else [])
         assessed = str(evidence.get("assessed_difficulty") or "").strip().lower().replace("-", "_")
         assessed = assessed.replace(" ", "_")
         evidence["assessed_difficulty"] = assessed if assessed in {"de", "trung_binh", "kho"} else None
         return scores, feedback, evidence
+
+    @staticmethod
+    def _validate_llm_evaluation_consistency(
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        policy: dict,
+    ) -> dict:
+        score_values = scores.model_dump()
+        weights = policy.get("weights") or DEFAULT_WEIGHTS
+        thresholds = policy.get("thresholds") or DEFAULT_THRESHOLDS
+        pass_min = thresholds.get("pass_min", DEFAULT_THRESHOLDS["pass_min"])
+        overall = round(
+            sum(score_values[key] * weights.get(key, DEFAULT_WEIGHTS[key]) for key in DEFAULT_WEIGHTS),
+            4,
+        )
+        action = str(feedback.get("action") or "").strip().upper()
+        severity = str(feedback.get("severity") or "").strip().upper()
+        moodle_readiness = str(evidence.get("moodle_readiness") or "").strip().upper()
+        contradictions = []
+        if action == "APPROVE" and overall < pass_min:
+            contradictions.append("APPROVE nhưng tổng điểm dưới ngưỡng đạt")
+        if action == "APPROVE" and severity == "HIGH":
+            contradictions.append("APPROVE nhưng mức độ lỗi là HIGH")
+        if action == "APPROVE" and moodle_readiness == "NEEDS_FIX":
+            contradictions.append("APPROVE nhưng cấu trúc Moodle vẫn NEEDS_FIX")
+        if action == "REJECT" and severity == "LOW":
+            contradictions.append("REJECT nhưng mức độ lỗi chỉ là LOW")
+        if action == "REJECT" and moodle_readiness == "READY":
+            contradictions.append("REJECT nhưng kết quả lại ghi Moodle READY")
+        if contradictions:
+            raise ValueError("AI evaluation tự mâu thuẫn: " + "; ".join(contradictions))
+
+        values = list(score_values.values())
+        score_spread = round(max(values) - min(values), 4)
+        return {
+            "validated": True,
+            "calculated_overall": overall,
+            "score_spread": score_spread,
+            "uniform_scores": score_spread <= 0.02,
+            "weak_criteria": [
+                key
+                for key, value in score_values.items()
+                if value < pass_min
+            ],
+        }
 
     def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
         question_data = version.get("question_data") or {}
@@ -457,7 +548,28 @@ class QuestionWorkflowService:
             if overall >= thresholds["yellow_min"]
             else "RED"
         )
-        passed = overall >= thresholds["pass_min"]
+        feedback_action = str(payload.feedback.get("action") or "").strip().upper()
+        feedback_severity = str(payload.feedback.get("severity") or "").strip().upper()
+        action_requires_review = feedback_action in {"NEEDS_REVISION", "REJECT"}
+        severe_issue = feedback_severity == "HIGH"
+        passed = (
+            overall >= thresholds["pass_min"]
+            and not action_requires_review
+            and not severe_issue
+        )
+        if feedback_action == "REJECT" or severe_issue:
+            color = "RED"
+        elif action_requires_review and color == "GREEN":
+            color = "YELLOW"
+        evidence = {
+            **payload.evidence,
+            "decision_guardrail": {
+                "score_passed": overall >= thresholds["pass_min"],
+                "feedback_action": feedback_action or None,
+                "feedback_severity": feedback_severity or None,
+                "blocked_pass": action_requires_review or severe_issue,
+            },
+        }
         now = utc_now()
         evaluation_job_id = (
             object_id(payload.evaluation_job_id, "evaluation_job_id")
@@ -486,7 +598,7 @@ class QuestionWorkflowService:
             "color": color,
             "passed": passed,
             "feedback": payload.feedback,
-            "evidence": payload.evidence,
+            "evidence": evidence,
             "raw_model_response": payload.raw_model_response,
             "prompt_snapshot": payload.prompt_snapshot,
             "duration_ms": payload.duration_ms,
@@ -588,7 +700,16 @@ class QuestionWorkflowService:
                 raw_model_response = await llm.generate_text(prompt)
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
-                evidence["mode"] = "local_llm"
+                evidence = {
+                    **evidence,
+                    "mode": "local_llm",
+                    "consistency": self._validate_llm_evaluation_consistency(
+                        scores,
+                        feedback,
+                        evidence,
+                        policy_snapshot,
+                    ),
+                }
             except Exception as exc:
                 if not payload.fallback_to_heuristic:
                     raise ValueError(f"Local evaluator failed: {exc}") from exc
@@ -661,6 +782,7 @@ class QuestionWorkflowService:
         trigger: str = "REVIEWER_REQUEST",
         model_snapshot: dict | None = None,
         fallback_model_snapshot: dict | None = None,
+        fallback_to_heuristic: bool = False,
     ) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != expected_version:
@@ -714,6 +836,7 @@ class QuestionWorkflowService:
             "evaluator_model_code": evaluator_model_code,
             "model_snapshot": model_snapshot,
             "fallback_model_snapshot": fallback_model_snapshot,
+            "fallback_to_heuristic": bool(fallback_to_heuristic),
             "policy_snapshot": self._policy_snapshot(policy),
             "prompt_snapshot": prompt_snapshot,
             "source_snapshot": [
@@ -787,6 +910,38 @@ class QuestionWorkflowService:
                 return json_safe(active_job)
             raise
         return json_safe(job)
+
+    def mark_evaluation_enqueue_error(
+        self,
+        question_id: str,
+        *,
+        expected_version: int,
+        evaluator_model_code: str,
+        message: str,
+    ) -> dict | None:
+        now = utc_now()
+        error = {"message": message, "at": now, "stage": "ENQUEUE"}
+        updated = self.db.questions.find_one_and_update(
+            {
+                "_id": object_id(question_id, "question_id"),
+                "current_version": expected_version,
+                "lifecycle_status": "ACTIVE",
+                "evaluation_status": {"$in": list(EVALUATION_RETRYABLE_STATUSES)},
+            },
+            {
+                "$set": {
+                    "evaluation_status": "ERROR",
+                    "quality_summary": {
+                        "evaluated_version_id": None,
+                        "evaluator_model_code": evaluator_model_code,
+                        "error": error,
+                    },
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return json_safe(updated) if updated else None
 
     def _mark_evaluation_job_error(
         self,
@@ -1019,12 +1174,33 @@ class QuestionWorkflowService:
                 model_snapshot=job.get("model_snapshot"),
                 fallback_model_snapshot=job.get("fallback_model_snapshot"),
             )
-            raw_model_response = await llm.generate_text(prompt)
+            heuristic_fallback = False
+            try:
+                raw_model_response = await llm.generate_text(prompt)
+                scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                evidence = {
+                    **evidence,
+                    "consistency": self._validate_llm_evaluation_consistency(
+                        scores,
+                        feedback,
+                        evidence,
+                        policy_snapshot,
+                    ),
+                }
+            except Exception as exc:
+                if not job.get("fallback_to_heuristic"):
+                    raise
+                heuristic_fallback = True
+                scores, feedback, evidence = self._auto_scores(question, version)
+                feedback = {
+                    **feedback,
+                    "summary": "AI đánh giá lỗi; hệ thống đã dùng heuristic dự phòng.",
+                }
+                evidence = {**evidence, "fallback_reason": str(exc)}
             duration_ms = int((time.perf_counter() - started) * 1000)
-            scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
             evidence = {
                 **evidence,
-                "mode": "local_llm",
+                "mode": "heuristic_fallback" if heuristic_fallback else "local_llm",
                 "evaluation_job_id": str(job["_id"]),
                 "source_snapshot": json_safe(job.get("source_snapshot") or []),
             }
@@ -1035,12 +1211,20 @@ class QuestionWorkflowService:
                     evidence=evidence,
                     evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
                     raw_model_response=raw_model_response,
-                    policy_snapshot=job.get("policy_snapshot") or {},
+                    policy_snapshot=policy_snapshot,
                     prompt_snapshot=prompt_snapshot,
                     duration_ms=duration_ms,
                     evaluation_job_id=str(job["_id"]),
                     trigger=job.get("trigger"),
-                    model_snapshot=job.get("model_snapshot") or {},
+                    model_snapshot=(
+                        {
+                            "model_code": "local-heuristic-evaluator-v1",
+                            "model_name": "Local heuristic evaluator",
+                            "runtime": "INTERNAL",
+                        }
+                        if heuristic_fallback
+                        else job.get("model_snapshot") or {}
+                    ),
                     model_execution=get_llm_execution_snapshot(llm),
                 )
             evaluation = await asyncio.to_thread(
@@ -1386,6 +1570,8 @@ class QuestionWorkflowService:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
+        if question.get("review_status") != "PENDING":
+            raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể được kiểm duyệt")
         if (
             payload.decision == "APPROVED"
             and question["evaluation_status"] != "PASSED"

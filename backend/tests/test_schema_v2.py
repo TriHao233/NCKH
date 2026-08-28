@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import re
 import unittest
 from contextlib import nullcontext
@@ -75,10 +76,13 @@ from modules.questions.schemas import (
     QuestionUpdateRequest,
 )
 from modules.questions import repository as question_repository_module
+from modules.questions import router as question_router_module
 from modules.questions.repository import MongoQuestionRepository
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
+    EvaluationCreateRequest,
+    EvaluationScores,
     MoodlePublicationRequest,
     QuestionCommentCreateRequest,
     ReviewAssignmentRequest,
@@ -720,7 +724,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(restored["content"], version1_data["content"])
         self.assertEqual(restored["question_data"], version1_data["question_data"])
         self.assertEqual(restored["evaluation_status"], "NOT_STARTED")
-        self.assertEqual(restored["review_status"], "PENDING")
+        self.assertEqual(restored["review_status"], "DRAFT")
         self.assertEqual(restored["publication_status"], "STALE")
         self.assertEqual(restored["quality_summary"], {})
         self.assertEqual(restored["review_assignment"]["status"], "UNASSIGNED")
@@ -1023,6 +1027,59 @@ class SchemaV2Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.submit_for_review(str(repository.question["_id"]), teacher)
         self.assertEqual(repository.update_calls, 0)
+
+    def test_submit_route_automatically_queues_ai_evaluation(self):
+        teacher = _current_user("Teacher")
+        question_id = str(ObjectId())
+
+        class Service:
+            def __init__(self):
+                self.get_calls = 0
+
+            def get(self, _question_id, _current_user):
+                self.get_calls += 1
+                return {
+                    "id": question_id,
+                    "review_status": "DRAFT" if self.get_calls == 1 else "PENDING",
+                    "evaluation_status": "QUEUED" if self.get_calls > 1 else "NOT_STARTED",
+                    "current_version": 2,
+                }
+
+            def submit_for_review(self, _question_id, _current_user):
+                return {
+                    "id": question_id,
+                    "review_status": "PENDING",
+                    "evaluation_status": "NOT_STARTED",
+                    "current_version": 2,
+                }
+
+        class Workflow:
+            def __init__(self):
+                self.db = object()
+                self.calls = []
+
+            def enqueue_auto_evaluation(self, question_id_arg, **kwargs):
+                self.calls.append((question_id_arg, kwargs))
+                return {"status": "QUEUED"}
+
+        service = Service()
+        workflow = Workflow()
+        original_notify = question_router_module.safe_notify_question_resubmitted
+        try:
+            question_router_module.safe_notify_question_resubmitted = lambda **_kwargs: None
+            result = question_router_module.submit_question_for_review(
+                question_id,
+                teacher,
+                service,
+                workflow,
+            )
+        finally:
+            question_router_module.safe_notify_question_resubmitted = original_notify
+
+        self.assertEqual(result["evaluation_status"], "QUEUED")
+        self.assertEqual(workflow.calls[0][0], question_id)
+        self.assertEqual(workflow.calls[0][1]["trigger"], "REVIEW_SUBMISSION")
+        self.assertEqual(workflow.calls[0][1]["expected_version"], 2)
 
     def test_duplicate_question_creates_draft_copy_without_review_state(self):
         teacher = _current_user("Teacher")
@@ -1510,6 +1567,273 @@ class SchemaV2Tests(unittest.TestCase):
         payload = AutoEvaluationRequest(expected_version=1)
         self.assertEqual(payload.evaluator_model_code, settings.evaluation_model_provider)
         self.assertFalse(payload.fallback_to_heuristic)
+
+    def test_ai_reject_guardrail_cannot_be_recorded_as_passed(self):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-GUARDRAIL",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PROCESSING",
+            "review_status": "PENDING",
+            "quality_summary": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        version = {
+            "_id": version_id,
+            "question_id": question_id,
+            "version": 1,
+            "content_hash": "guardrail-hash",
+            "generation_run_id": None,
+        }
+        db = FakeCatalogDatabase(questions=[question], question_versions=[version])
+        db.question_evaluations = InMemoryCollection([])
+        db.audit_logs = InMemoryCollection([])
+        original_transaction = question_workflow_module.mongo_transaction
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            evaluation = QuestionWorkflowService(db).evaluate(
+                str(question_id),
+                EvaluationCreateRequest(
+                    expected_version=1,
+                    scores=EvaluationScores(
+                        faithfulness=0.9,
+                        contextual_relevancy=0.9,
+                        answer_relevancy=0.9,
+                        bloom_alignment=0.9,
+                        clo_alignment=0.9,
+                    ),
+                    feedback={"action": "REJECT", "severity": "HIGH"},
+                    model_snapshot={"model_code": "test", "model_name": "Test"},
+                    policy_snapshot={
+                        "version": 1,
+                        "weights": {
+                            "faithfulness": 0.35,
+                            "contextual_relevancy": 0.20,
+                            "answer_relevancy": 0.15,
+                            "bloom_alignment": 0.15,
+                            "clo_alignment": 0.15,
+                        },
+                        "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+                    },
+                ),
+                ObjectId(),
+            )
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+
+        self.assertFalse(evaluation["passed"])
+        self.assertEqual(evaluation["color"], "RED")
+        self.assertTrue(evaluation["evidence"]["decision_guardrail"]["blocked_pass"])
+        self.assertEqual(db.questions.find_one({"_id": question_id})["evaluation_status"], "FAILED")
+
+    def test_ai_parser_normalizes_root_decision_and_known_score_typo(self):
+        raw = json.dumps(
+            {
+                "scores": {
+                    "faithfulness": 0.8,
+                    "contextual_relevancy": 0.7,
+                    "answer_relevality": 0.6,
+                    "bloom_alignment": 0.9,
+                    "clo_alignment": 0.5,
+                },
+                "feedback": {"summary": "Cần chỉnh nhẹ"},
+                "evidence": {
+                    "reasoning": "Đáp án cần được đối chiếu thêm.",
+                    "moodle_readiness": "needs_fix",
+                },
+                "action": "needs_revision",
+                "severity": "medium",
+            }
+        )
+
+        scores, feedback, evidence = QuestionWorkflowService._parse_llm_evaluation(raw)
+
+        self.assertEqual(scores.answer_relevancy, 0.6)
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(feedback["severity"], "MEDIUM")
+        self.assertEqual(evidence["moodle_readiness"], "NEEDS_FIX")
+
+    def test_ai_parser_rejects_missing_required_score(self):
+        raw = json.dumps(
+            {
+                "scores": {
+                    "faithfulness": 0.8,
+                    "contextual_relevancy": 0.7,
+                    "bloom_alignment": 0.9,
+                    "clo_alignment": 0.5,
+                },
+                "feedback": {"action": "APPROVE", "severity": "LOW"},
+                "evidence": {},
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "answer_relevancy"):
+            QuestionWorkflowService._parse_llm_evaluation(raw)
+
+    def test_ai_consistency_rejects_approve_below_pass_threshold(self):
+        scores = EvaluationScores(
+            faithfulness=0.5,
+            contextual_relevancy=0.5,
+            answer_relevancy=0.5,
+            bloom_alignment=0.5,
+            clo_alignment=0.5,
+        )
+
+        with self.assertRaisesRegex(ValueError, "APPROVE.*dưới ngưỡng"):
+            QuestionWorkflowService._validate_llm_evaluation_consistency(
+                scores,
+                {"action": "APPROVE", "severity": "LOW"},
+                {"moodle_readiness": "READY"},
+                {
+                    "weights": {
+                        "faithfulness": 0.35,
+                        "contextual_relevancy": 0.20,
+                        "answer_relevancy": 0.15,
+                        "bloom_alignment": 0.15,
+                        "clo_alignment": 0.15,
+                    },
+                    "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+                },
+            )
+
+    def test_ai_consistency_flags_uniform_scores_without_rejecting(self):
+        scores = EvaluationScores(
+            faithfulness=0.85,
+            contextual_relevancy=0.85,
+            answer_relevancy=0.85,
+            bloom_alignment=0.85,
+            clo_alignment=0.85,
+        )
+
+        result = QuestionWorkflowService._validate_llm_evaluation_consistency(
+            scores,
+            {"action": "APPROVE", "severity": "LOW"},
+            {"moodle_readiness": "READY"},
+            {
+                "weights": {
+                    "faithfulness": 0.35,
+                    "contextual_relevancy": 0.20,
+                    "answer_relevancy": 0.15,
+                    "bloom_alignment": 0.15,
+                    "clo_alignment": 0.15,
+                },
+                "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+            },
+        )
+
+        self.assertTrue(result["uniform_scores"])
+        self.assertEqual(result["score_spread"], 0)
+        self.assertEqual(result["weak_criteria"], [])
+
+    def test_review_rejects_question_outside_pending_state(self):
+        service = QuestionWorkflowService(None)
+        service._pair = lambda _question_id: (
+            {
+                "current_version": 1,
+                "review_status": "DRAFT",
+                "evaluation_status": "PASSED",
+            },
+            {"version": 1},
+        )
+
+        with self.assertRaisesRegex(ValueError, "đang chờ duyệt"):
+            service.review(
+                str(ObjectId()),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                _current_user("Admin"),
+            )
+
+    def test_manual_question_with_document_requires_verified_excerpt_and_starts_draft(self):
+        owner = _current_user("Teacher")
+        document_id = ObjectId()
+
+        class References:
+            def find_document(self, _document_id):
+                return {
+                    "_id": document_id,
+                    "schema_version": SCHEMA_VERSION,
+                    "uploaded_by_user_id": owner.id,
+                    "current_ocr_job_id": None,
+                    "archived_at": None,
+                }
+
+            def find_chunk(self, _chunk_id):
+                return None
+
+            def find_subject(self, _subject_id):
+                return None
+
+            def document_contains_text(self, _document_id, _ocr_job_id, text):
+                return text == "Queue tuân theo nguyên tắc FIFO."
+
+        class Repository:
+            def create(self, aggregate, version):
+                self.aggregate = aggregate
+                self.version = version
+                return aggregate, version
+
+        repository = Repository()
+        created = QuestionService(repository, References()).create(
+            QuestionCreateRequest(
+                content="Queue tuân theo nguyên tắc nào?",
+                document_id=str(document_id),
+                source_context="Queue tuân theo nguyên tắc FIFO.",
+                question_data={"correct_answer": "FIFO"},
+            ),
+            owner.id,
+            current_user=owner,
+        )
+
+        self.assertEqual(created["review_status"], "DRAFT")
+        self.assertEqual(created["sources"][0]["source_type"], "MANUAL_EXCERPT")
+        self.assertEqual(
+            created["question_data"]["model_source_context"],
+            "Queue tuân theo nguyên tắc FIFO.",
+        )
+
+    def test_evaluation_prompt_includes_persisted_generation_context(self):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        generation_context = "Queue xử lý phần tử theo nguyên tắc vào trước ra trước (FIFO)."
+        question = {"_id": question_id, "question_code": "Q-CONTEXT"}
+        version = {
+            "_id": version_id,
+            "question_id": question_id,
+            "document_id": ObjectId(),
+            "classification": {
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 2},
+                "difficulty": "de",
+            },
+            "content": "Queue xử lý phần tử theo nguyên tắc nào?",
+            "question_data": {
+                "options": {"A": "FIFO", "B": "LIFO"},
+                "correct_answer": "A",
+                "explanation": "Queue tuân theo FIFO.",
+                "model_source_context": generation_context,
+            },
+            "clos": [],
+            "sources": [],
+        }
+        service = QuestionWorkflowService(None)
+
+        prompt, _snapshot, _sources = service._build_evaluation_prompt(
+            question,
+            version,
+            service._policy(),
+        )
+        heuristic_context = service._source_context(version)
+
+        self.assertIn(generation_context, prompt)
+        self.assertIn("generation_source_context", prompt)
+        self.assertIn(f"[MODEL_CONTEXT] {generation_context}", heuristic_context)
 
     def test_llm_factory_accepts_ollama_model_alias(self):
         provider = get_llm_service("ollama:qwen2.5:7b")

@@ -115,6 +115,7 @@ async def auto_evaluate_question(
             expected_version=payload.expected_version,
             requested_by_user_id=current_user.id,
             evaluator_model_code=payload.evaluator_model_code,
+            fallback_to_heuristic=payload.fallback_to_heuristic,
             trigger="REVIEWER_REQUEST",
         )
         return job

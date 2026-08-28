@@ -113,6 +113,7 @@ class Settings(BaseModel):
         "http://localhost:11434/api/generate",
     )
     ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+    ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
     ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "900"))
     ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
     qwen_model_name: str = os.getenv("QWEN_MODEL_NAME", "qwen2.5:7b").strip()

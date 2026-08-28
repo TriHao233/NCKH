@@ -285,6 +285,9 @@ class QuestionService:
     def _validate_active_sources(sources: list[dict], document: dict | None) -> None:
         if not sources or not document:
             return
+        chunk_sources = [source for source in sources if source.get("source_type") == "CHUNK"]
+        if not chunk_sources:
+            return
         active_chunk_set_id = (document.get("current_processing") or {}).get(
             "chunk_set_id"
         )
@@ -292,7 +295,7 @@ class QuestionService:
             raise ValueError("Tài liệu chưa có chunk set hiện hành")
         if any(
             source.get("chunk_set_id") != active_chunk_set_id
-            for source in sources
+            for source in chunk_sources
         ):
             raise ValueError("Chunk nguồn không thuộc phiên xử lý hiện hành của tài liệu")
 
@@ -375,7 +378,7 @@ class QuestionService:
         current_user: CurrentUser | None = None,
         origin: str = "MANUAL",
         generation_run_id: ObjectId | None = None,
-        initial_review_status: str = "PENDING",
+        initial_review_status: str = "DRAFT",
     ) -> dict:
         initial_review_status = initial_review_status.upper()
         if initial_review_status not in INITIAL_REVIEW_STATUSES:
@@ -383,17 +386,7 @@ class QuestionService:
         now = utc_now()
         question_id = ObjectId()
         version_id = ObjectId()
-        source_chunk_ids = payload.source_chunk_ids or (
-            [payload.chunk_id] if payload.chunk_id else []
-        )
         document = self._document(payload.document_id)
-        expected_document_id = document["_id"] if document else None
-        sources, resolved_document_id = self._sources(
-            source_chunk_ids,
-            expected_document_id,
-        )
-        if resolved_document_id and document is None:
-            document = self._document(resolved_document_id)
         actor = current_user
         if actor is None and actor_role:
             actor = CurrentUser(
@@ -409,6 +402,41 @@ class QuestionService:
             and not self._can_use_document(document, actor)
         ):
             raise PermissionError("Bạn không có quyền dùng tài liệu này để tạo câu hỏi")
+        source_chunk_ids = payload.source_chunk_ids or (
+            [payload.chunk_id] if payload.chunk_id else []
+        )
+        expected_document_id = document["_id"] if document else None
+        sources, resolved_document_id = self._sources(
+            source_chunk_ids,
+            expected_document_id,
+        )
+        if resolved_document_id and document is None:
+            document = self._document(resolved_document_id)
+        source_context = str(payload.source_context or "").strip()
+        if source_context and not document:
+            raise ValueError("Đoạn minh chứng phải gắn với một tài liệu nguồn")
+        if document and not sources and origin in {"MANUAL", "IMPORT"}:
+            if not source_context:
+                raise ValueError(
+                    "Câu hỏi gắn tài liệu phải có đoạn minh chứng hoặc chunk nguồn"
+                )
+            if not self.references.document_contains_text(
+                document["_id"],
+                document.get("current_ocr_job_id"),
+                source_context,
+            ):
+                raise ValueError("Đoạn minh chứng không xuất hiện trong tài liệu nguồn")
+            excerpt_hash = hashlib.sha256(source_context.encode("utf-8")).hexdigest()
+            sources = [{
+                "source_type": "MANUAL_EXCERPT",
+                "chunk_id": None,
+                "chunk_set_id": document.get("current_chunk_set_id"),
+                "chunk_content_hash": excerpt_hash,
+                "citation_order": 1,
+                "is_primary": True,
+                "scores": {},
+                "context_excerpt": source_context,
+            }]
         self._validate_active_sources(sources, document)
         document_subject_id = document.get("subject_id") if document else None
         document_chapter_id = document.get("chapter_id") if document else None
@@ -440,10 +468,13 @@ class QuestionService:
             payload.clo_ids,
             subject=validated_subject,
         )
+        question_data = deepcopy(payload.question_data)
+        if source_context:
+            question_data["model_source_context"] = source_context
         content_hash = stable_hash(
             {
                 "content": payload.content,
-                "question_data": payload.question_data,
+                "question_data": question_data,
                 "classification": classification,
                 "clos": clos,
                 "sources": sources,
@@ -505,7 +536,7 @@ class QuestionService:
             "classification": classification,
             "clos": clos,
             "content": payload.content,
-            "question_data": payload.question_data,
+            "question_data": question_data,
             "sources": sources,
             "keywords": [],
             "content_hash": content_hash,
@@ -1012,11 +1043,9 @@ class QuestionService:
                 subject=validated_subject,
             )
         content = payload.content or current["content"]
-        question_data = (
-            payload.question_data
-            if payload.question_data is not None
-            else current["question_data"]
-        )
+        question_data = deepcopy(current["question_data"])
+        if payload.question_data is not None:
+            question_data.update(payload.question_data)
         if payload.clo_ids is not None:
             clos = self._clo_snapshots(
                 classification["subject"].get("id"),

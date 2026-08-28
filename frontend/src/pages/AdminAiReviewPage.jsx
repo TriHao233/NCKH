@@ -121,12 +121,30 @@ function AdminAiReviewPage() {
     setLoading(true);
     setError('');
     try {
-      const result = await listQuestions({ page: 1, pageSize: 100, search: searchTerm || undefined });
-      const items = (result.items || []).filter((item) => AI_REVIEW_STATUSES.has(item.evaluation_status));
+      const evaluationStatus = Array.from(AI_REVIEW_STATUSES).join(',');
+      const first = await listQuestions({
+        page: 1,
+        pageSize: 100,
+        search: searchTerm || undefined,
+        evaluationStatus,
+      });
+      const items = [...(first.items || [])];
+      const total = first.total || items.length;
+      for (let page = 2; items.length < total; page += 1) {
+        const next = await listQuestions({
+          page,
+          pageSize: 100,
+          search: searchTerm || undefined,
+          evaluationStatus,
+        });
+        const pageItems = next.items || [];
+        if (!pageItems.length) break;
+        items.push(...pageItems);
+      }
       setQuestions(items);
       return items;
     } catch (err) {
-      setError(err.message || 'Không tải được danh sách duyệt AI');
+      setError(err.message || 'Không tải được danh sách thẩm định AI');
       return [];
     } finally {
       setLoading(false);
@@ -378,8 +396,8 @@ function AdminAiReviewPage() {
       <section className="ai-review-toolbar">
         <div className="ai-review-toolbar__title">
           <span>Quản trị AI</span>
-          <h1>Duyệt AI</h1>
-          <p>Các câu hỏi được đưa vào kiểm tra AI sẽ xuất hiện tại đây để Admin xem điểm, minh chứng và quyết định trạng thái sử dụng.</p>
+          <h1>Thẩm định bằng AI</h1>
+          <p>AI cung cấp điểm và minh chứng tham khảo; Admin hoặc Reviewer vẫn là người quyết định trạng thái sử dụng.</p>
         </div>
         <div className="ai-review-actions">
           <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly')}>
@@ -394,7 +412,7 @@ function AdminAiReviewPage() {
         </div>
       </section>
 
-      <section className="ai-review-summary" aria-label="Tổng quan duyệt AI">
+      <section className="ai-review-summary" aria-label="Tổng quan thẩm định AI">
         <button type="button" className={statusFilter === 'active' ? 'active' : ''} onClick={() => setStatusFilter('active')}>
           <b>{counts.active}</b>
           <span>Cần xử lý</span>
@@ -431,7 +449,7 @@ function AdminAiReviewPage() {
           {message && <p className="ai-review-message">{message}</p>}
 
           {loading ? (
-            <p className="ai-review-empty">Đang tải danh sách duyệt AI...</p>
+            <p className="ai-review-empty">Đang tải danh sách thẩm định AI...</p>
           ) : filtered.length === 0 ? (
             <p className="ai-review-empty">Chưa có câu hỏi nào trong nhóm này.</p>
           ) : (
@@ -486,14 +504,14 @@ function AdminAiReviewPage() {
                 <button
                   type="button"
                   className="primary"
-                  disabled={busyId === selected.id || isEvaluationBusy(selected) || selected.review_status === 'APPROVED'}
+                  disabled={busyId === selected.id || isEvaluationBusy(selected) || selected.review_status !== 'PENDING'}
                   onClick={() => approveQuestion(selected)}
                 >
                   Duyệt
                 </button>
                 <button
                   type="button"
-                  disabled={busyId === selected.id || selected.review_status === 'APPROVED'}
+                  disabled={busyId === selected.id || selected.review_status !== 'PENDING'}
                   onClick={() => requestRevision(selected)}
                 >
                   Cần sửa

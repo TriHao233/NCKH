@@ -7,9 +7,12 @@ from modules.generation.llm.ollama import OllamaProvider, close_ollama_client
 
 
 class FakeOllamaHandler(BaseHTTPRequestHandler):
+    last_payload = None
+
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(content_length) or b"{}")
+        type(self).last_payload = payload
         response = {
             "response": json.dumps(
                 {
@@ -46,10 +49,11 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await close_ollama_client()
 
     async def test_provider_calls_ollama_compatible_http_endpoint(self):
-        provider = OllamaProvider("fake-model", timeout_seconds=2)
+        provider = OllamaProvider("fake-model", timeout_seconds=2, num_ctx=8192)
         provider.url = f"http://127.0.0.1:{self.server.server_port}/api/generate"
 
         result = json.loads(await provider.generate_text("test prompt"))
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["model_received"], "fake-model")
+        self.assertEqual(FakeOllamaHandler.last_payload["options"]["num_ctx"], 8192)

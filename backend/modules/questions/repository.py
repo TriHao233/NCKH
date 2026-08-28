@@ -176,6 +176,13 @@ class QuestionReferenceRepository(Protocol):
 
     def find_document(self, document_id: ObjectId) -> dict | None: ...
 
+    def document_contains_text(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId | None,
+        text: str,
+    ) -> bool: ...
+
     def find_pages(
         self,
         document_id: ObjectId,
@@ -201,6 +208,28 @@ class MongoQuestionReferenceRepository:
                 "archived_at": None,
             }
         )
+
+    def document_contains_text(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId | None,
+        text: str,
+    ) -> bool:
+        normalized_text = " ".join(str(text or "").split()).casefold()
+        if not normalized_text:
+            return False
+        query: dict = {"document_id": document_id}
+        if ocr_job_id is not None:
+            query["ocr_job_id"] = ocr_job_id
+        pages = self.db.document_pages.find(
+            query,
+            {"cleaned_text": 1, "raw_text": 1, "page_number": 1},
+        ).sort("page_number", 1)
+        document_text = " ".join(
+            " ".join(str(page.get("cleaned_text") or page.get("raw_text") or "").split())
+            for page in pages
+        ).casefold()
+        return normalized_text in document_text
 
     def find_pages(
         self,
@@ -282,12 +311,22 @@ class MongoQuestionRepository:
             if review_status == "PROCESSED"
             else review_status
         )
+
         if review_status_condition and not include_status_counts:
             match["review_status"] = review_status_condition
         if publication_status:
             match["publication_status"] = publication_status
         if evaluation_status:
-            match["evaluation_status"] = evaluation_status
+            evaluation_statuses = [
+                item.strip().upper()
+                for item in str(evaluation_status).split(",")
+                if item.strip()
+            ]
+            match["evaluation_status"] = (
+                {"$in": evaluation_statuses}
+                if len(evaluation_statuses) > 1
+                else evaluation_statuses[0]
+            )
         if assignment_status:
             match["review_assignment.status"] = assignment_status
         if assigned_reviewer_user_id is not None:
@@ -493,16 +532,13 @@ class MongoQuestionRepository:
         new_version["question_id"] = question["_id"]
         new_version["version"] = expected_version + 1
         now = utc_now()
-        next_review_status = (
-            question["review_status"]
-            if question["review_status"] in {"DRAFT", "NEEDS_REVISION"}
-            else "PENDING"
-        )
         aggregate_fields = {
             "current_version": expected_version + 1,
             "current_version_id": new_version["_id"],
             "evaluation_status": "NOT_STARTED",
-            "review_status": next_review_status,
+            # Editing always creates a draft version.  A new version must be
+            # submitted explicitly instead of silently re-entering review.
+            "review_status": "DRAFT",
             "publication_status": (
                 "STALE"
                 if question["publication_status"] == "PUBLISHED"
@@ -518,16 +554,14 @@ class MongoQuestionRepository:
                 "last_released_at": None,
                 "release_reason": None,
             },
+            "review_submission": {},
+            "secondary_review": {},
             "quality_summary": {},
             "subject_id": (
                 ((new_version.get("classification") or {}).get("subject") or {}).get("id")
             ),
             "updated_at": now,
         }
-        if next_review_status == "PENDING" and review_submission:
-            normalized_submission = deepcopy(review_submission)
-            normalized_submission["submitted_at"] = now
-            aggregate_fields["review_submission"] = normalized_submission
         with mongo_transaction() as session:
             self.db.question_versions.insert_one(new_version, session=session)
             result = self.db.questions.update_one(

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -26,6 +27,7 @@ from modules.questions.workflow_service import (
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Questions"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=QuestionListResponse)
@@ -270,6 +272,38 @@ def submit_question_for_review(
         previous_review_status = previous_question.get("review_status") if previous_question else None
         question = service.submit_for_review(question_id, current_user)
         if question:
+            if (
+                previous_review_status != "PENDING"
+                and question.get("evaluation_status") != "PASSED"
+            ):
+                try:
+                    workflow_service.enqueue_auto_evaluation(
+                        question_id,
+                        expected_version=question["current_version"],
+                        requested_by_user_id=current_user.id,
+                        evaluator_model_code=settings.evaluation_model_provider,
+                        trigger="REVIEW_SUBMISSION",
+                    )
+                except Exception as evaluation_exc:
+                    logger.exception(
+                        "Could not enqueue evaluation after review submission for %s",
+                        question_id,
+                    )
+                    try:
+                        workflow_service.mark_evaluation_enqueue_error(
+                            question_id,
+                            expected_version=question["current_version"],
+                            evaluator_model_code=settings.evaluation_model_provider,
+                            message=str(evaluation_exc),
+                        )
+                    except Exception:
+                        # Submission already succeeded.  A secondary failure
+                        # while recording AI state must not turn it into a 500.
+                        logger.exception(
+                            "Could not persist evaluation enqueue error for %s",
+                            question_id,
+                        )
+                question = service.get(question_id, current_user)
             safe_notify_question_resubmitted(
                 database=workflow_service.db,
                 question_id=question_id,

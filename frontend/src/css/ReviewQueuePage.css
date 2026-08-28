@@ -1270,6 +1270,133 @@
   .review-issue-row button { grid-column: auto; }
 }
 
+.score-grid div.score-card--weak {
+  border-color: #f3b67a;
+  background: #fff8ef;
+}
+
+.score-grid div.score-card--weak b,
+.score-grid div.score-card--weak em {
+  color: #a54800;
+}
+
+.score-grid div.score-card--weak em {
+  display: block;
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.35;
+  margin-top: 5px;
+}
+
+.ai-review-summary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #cfe2f3;
+  border-radius: 10px;
+  background: #f7fbff;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.ai-review-summary__head,
+.ai-review-summary__action,
+.ai-review-summary__criteria {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.ai-review-summary__head {
+  justify-content: space-between;
+}
+
+.ai-review-summary__head span,
+.ai-review-summary__list > span,
+.ai-review-summary__criteria > span {
+  color: #5c6f89;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.ai-review-summary__head b {
+  display: block;
+  color: #003a75;
+  font-size: 0.86rem;
+  margin-top: 3px;
+}
+
+.ai-review-summary > p,
+.ai-review-summary__list ul {
+  color: #36536d;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.ai-review-summary__list ul {
+  margin-top: 4px;
+  padding-left: 20px;
+}
+
+.ai-review-summary__criteria b,
+.ai-severity {
+  border-radius: 999px;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  padding: 5px 8px;
+}
+
+.ai-review-summary__criteria b {
+  background: #fff0dd;
+  color: #9a4700;
+}
+
+.ai-severity {
+  background: #eaf3fc;
+  color: #36536d;
+}
+
+.ai-severity--medium {
+  background: #fff0dd;
+  color: #9a4700;
+}
+
+.ai-severity--high {
+  background: #fee4e2;
+  color: #b42318;
+}
+
+.ai-review-summary p.ai-review-summary__warning {
+  border-left: 3px solid #e18a27;
+  background: #fff8ef;
+  color: #854300;
+  padding: 7px 9px;
+}
+
+.ai-review-summary__action button {
+  border: 1px solid #0c78d4;
+  border-radius: 8px;
+  background: #0c78d4;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.ai-review-summary__action button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ai-review-summary__action small {
+  color: #5c6f89;
+  font-size: 0.68rem;
+}
+
 /* Reviewer workspace redesign */
 .review-page [hidden] {
   display: none !important;

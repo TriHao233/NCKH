@@ -26,6 +26,7 @@ class QuestionCreateRequest(BaseModel):
     subject_id: str | None = None
     chapter_id: str | None = None
     document_id: str | None = None
+    source_context: str | None = Field(None, min_length=1, max_length=4000)
     chunk_id: str | None = None
     source_chunk_ids: list[str] = Field(default_factory=list)
     clo_ids: list[str] = Field(default_factory=list)

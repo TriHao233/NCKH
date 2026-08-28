@@ -27,6 +27,7 @@ def _provider_from_snapshot(snapshot: dict) -> LLMProvider:
             snapshot["model_name"],
             provider_label=snapshot.get("display_name") or "Ollama",
             timeout_seconds=parameters.get("timeout_seconds"),
+            num_ctx=parameters.get("num_ctx"),
             num_predict=parameters.get("num_predict"),
             temperature=parameters.get("temperature"),
             url=parameters.get("endpoint"),
