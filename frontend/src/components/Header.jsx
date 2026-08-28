@@ -155,7 +155,7 @@ const Header = () => {
       { path: '/tong-quan', label: 'Tổng quan' },
       { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
       { path: '/quan-ly', label: 'Câu hỏi' },
-      { path: '/duyet-ai', label: 'Duyệt AI' },
+      { path: '/duyet-ai', label: 'Thẩm định AI' },
       { path: '/lam-de-thi', label: 'Đề thi' },
       { path: '/nhat-ky-he-thong', label: 'Lịch sử' },
       { path: '/quan-ly-job', label: 'Thống kê' },

@@ -35,6 +35,7 @@ class OllamaProvider(LLMProvider):
         *,
         provider_label: str = "Ollama",
         timeout_seconds: float | None = None,
+        num_ctx: int | None = None,
         num_predict: int | None = None,
         temperature: float | None = None,
         url: str | None = None,
@@ -43,6 +44,7 @@ class OllamaProvider(LLMProvider):
         self.model_name = model_name.strip()
         self.provider_label = provider_label
         self.timeout_seconds = timeout_seconds or settings.ollama_timeout_seconds
+        self.num_ctx = num_ctx if num_ctx is not None else settings.ollama_num_ctx
         self.num_predict = num_predict if num_predict is not None else settings.ollama_num_predict
         self.temperature = temperature if temperature is not None else settings.ollama_temperature
 
@@ -54,6 +56,7 @@ class OllamaProvider(LLMProvider):
             "format": "json",
             "options": {
                 "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
                 "num_predict": self.num_predict,
             },
         }

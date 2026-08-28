@@ -31,6 +31,9 @@ def _runtime_parameters(runtime: str, config: dict) -> dict:
             "temperature": _number(
                 config, "temperature", settings.ollama_temperature, minimum=0.0, maximum=2.0
             ),
+            "num_ctx": _number(
+                config, "num_ctx", settings.ollama_num_ctx, minimum=2048, maximum=262144
+            ),
             "num_predict": _number(
                 config, "num_predict", settings.ollama_num_predict, minimum=1, maximum=32768
             ),
@@ -134,7 +137,10 @@ def resolve_model_snapshot(
     requested_code = (model_code or "").strip()
     if not requested_code:
         raise ValueError("Vui lòng chọn mô hình AI")
-    db = database or get_database()
+    # PyMongo Database deliberately rejects truth-value testing.  Callers pass
+    # the active database into this function, so only fall back when it is
+    # actually absent instead of evaluating it as a boolean.
+    db = database if database is not None else get_database()
     record = db.ai_models.find_one({"model_code": requested_code})
     if record:
         return _snapshot_from_record(record, requested_code, capability)

@@ -35,6 +35,7 @@ import {
   reviewTemplateStorageKey,
   templatesForDecision,
 } from '../utils/reviewCommentTemplates';
+import { evaluationInsights, mergeAiSuggestionsIntoDraft } from '../utils/reviewAiSuggestions';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -138,6 +139,18 @@ const ISSUE_SEVERITY_LABEL = {
   LOW: 'Nhẹ',
   MEDIUM: 'Vừa',
   HIGH: 'Nghiêm trọng',
+};
+
+const AI_ACTION_LABEL = {
+  APPROVE: 'Có thể duyệt',
+  NEEDS_REVISION: 'Nên yêu cầu sửa',
+  REJECT: 'Nên từ chối',
+};
+
+const AI_SEVERITY_LABEL = {
+  LOW: 'Lỗi nhẹ',
+  MEDIUM: 'Lỗi vừa',
+  HIGH: 'Lỗi nghiêm trọng',
 };
 
 const USER_ROLE_LABEL = {
@@ -264,6 +277,11 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '--';
   return date.toLocaleString('vi-VN');
+}
+
+function textList(value) {
+  const values = Array.isArray(value) ? value : (value ? [value] : []);
+  return values.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
 function waitingTime(value) {
@@ -885,7 +903,7 @@ function ReviewQueuePage() {
     );
   };
 
-  const openReviewForm = (question, decision) => {
+  const openReviewForm = (question, decision, { aiEvaluation = null } = {}) => {
     if (!canReviewQuestion(question)) {
       alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
@@ -895,7 +913,8 @@ function ReviewQueuePage() {
     const remoteDraft = serverReviewDraft?.decision === decision && !serverReviewDraft?.is_stale
       ? serverReviewDraft.draft
       : null;
-    setReviewDraft(remoteDraft ? { ...localDraft, ...remoteDraft } : localDraft);
+    const draft = remoteDraft ? { ...localDraft, ...remoteDraft } : localDraft;
+    setReviewDraft(aiEvaluation ? mergeAiSuggestionsIntoDraft(draft, aiEvaluation) : draft);
   };
 
   const updateReviewDraft = (updates) => {
@@ -1311,8 +1330,15 @@ function ReviewQueuePage() {
     return userOptionLabel(reviewerById.get(reviewerId)) || reviewerId || '--';
   };
   const latestEvidence = latestEvaluation?.evidence || {};
+  const latestFeedback = latestEvaluation?.feedback || {};
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
+  const aiInsights = evaluationInsights(latestEvaluation, SCORE_COMPONENTS);
+  const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
+  const aiMissingItems = textList(latestFeedback.missing);
+  const aiRiskItems = textList(latestEvidence.risks);
+  const aiAction = String(latestFeedback.action || '').toUpperCase();
+  const aiSeverity = String(latestFeedback.severity || '').toUpperCase();
   const qualitySummary = selected?.quality_summary || {};
   const overallScore = latestScores.overall ?? qualitySummary.overall_score;
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
@@ -1941,15 +1967,69 @@ function ReviewQueuePage() {
 
                     <div className="score-grid">
                       {SCORE_COMPONENTS.map((component) => (
-                        <div key={component.key}>
+                        <div
+                          key={component.key}
+                          className={aiWeakCriterionKeys.has(component.key) ? 'score-card--weak' : ''}
+                        >
                           <span>{component.label}</span>
                           <b>{score(latestScores[component.key])}</b>
                           <small>
                             Trọng số {percent(latestWeights[component.key])}
                           </small>
+                          {aiWeakCriterionKeys.has(component.key) && (
+                            <em>Dưới ngưỡng đạt {score(aiInsights.passMin)}</em>
+                          )}
                         </div>
                       ))}
                     </div>
+
+                    {latestEvaluation && (
+                      <div className="ai-review-summary">
+                        <div className="ai-review-summary__head">
+                          <div>
+                            <span>Đề xuất của AI</span>
+                            <b>{AI_ACTION_LABEL[aiAction] || (latestEvaluation.passed ? 'Có thể duyệt' : 'Cần người duyệt xem lại')}</b>
+                          </div>
+                          {aiSeverity && <strong className={`ai-severity ai-severity--${aiSeverity.toLowerCase()}`}>{AI_SEVERITY_LABEL[aiSeverity] || aiSeverity}</strong>}
+                        </div>
+                        <p>{latestFeedback.summary || latestEvidence.reasoning || 'AI chưa cung cấp phần giải thích tổng quát.'}</p>
+                        {aiInsights.weakCriteria.length > 0 && (
+                          <div className="ai-review-summary__criteria">
+                            <span>Tiêu chí dưới ngưỡng:</span>
+                            {aiInsights.weakCriteria.map((item) => <b key={item.key}>{item.label} ({score(item.score)})</b>)}
+                          </div>
+                        )}
+                        {aiMissingItems.length > 0 && (
+                          <div className="ai-review-summary__list">
+                            <span>Nội dung còn thiếu</span>
+                            <ul>{aiMissingItems.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul>
+                          </div>
+                        )}
+                        {aiRiskItems.length > 0 && (
+                          <div className="ai-review-summary__list">
+                            <span>Rủi ro cần đối chiếu</span>
+                            <ul>{aiRiskItems.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul>
+                          </div>
+                        )}
+                        {aiInsights.uniformScores && (
+                          <p className="ai-review-summary__warning">
+                            Các tiêu chí có điểm gần như giống nhau. Người duyệt nên đối chiếu từng minh chứng thay vì chỉ dựa vào tổng điểm.
+                          </p>
+                        )}
+                        {!latestEvaluation.passed && selected.review_status === 'PENDING' && (
+                          <div className="ai-review-summary__action">
+                            <button
+                              type="button"
+                              disabled={!canReviewQuestion(selected)}
+                              onClick={() => openReviewForm(selected, 'NEEDS_REVISION', { aiEvaluation: latestEvaluation })}
+                            >
+                              Dùng góp ý AI cho phiếu Cần sửa
+                            </button>
+                            {!canReviewQuestion(selected) && <small>Nhận câu hỏi trước để tạo phiếu kiểm duyệt.</small>}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="evaluation-meta">
                       <span>
@@ -2037,7 +2117,11 @@ function ReviewQueuePage() {
                               ) : sourcePdfUrl ? (
                                 <iframe src={sourcePdfUrl} title={`PDF nguồn ${sourceViewer?.document?.original_filename || ''}`} />
                               ) : (
-                                <p>Không có tài liệu gốc để hiển thị.</p>
+                                <p>
+                                  {sourceViewer?.document?.original_filename?.toLowerCase().endsWith('.pdf')
+                                    ? 'File PDF nguồn hiện không còn khả dụng.'
+                                    : 'Tài liệu nguồn không phải PDF; đối chiếu bằng đoạn trích bên dưới.'}
+                                </p>
                               )}
                             </div>
                             <SourceText source={activeSource} page={activePageRecord} />

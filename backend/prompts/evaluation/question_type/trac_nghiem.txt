@@ -3,3 +3,4 @@ KIỂM TRA LOẠI CÂU: trac_nghiem
 - Stem phải hỏi một ý rõ ràng, không phụ thuộc mẹo chữ.
 - Phương án nhiễu nên hợp lý, cùng loại khái niệm, không quá lộ do độ dài hoặc ngữ pháp.
 - Không trừ nặng nếu nhiễu chưa hoàn hảo nhưng đáp án vẫn rõ và kiến thức đúng.
+- Với câu hỏi phủ định ("không phải", "không đúng"), phải kiểm tra logic phủ định trước khi kết luận. Nếu nguồn liệt kê đầy đủ các đặc trưng A-C và mô tả D là một tiêu chí khác, việc D không nằm trong danh sách chính là căn cứ cho đáp án D; không được gọi đó là mâu thuẫn chỉ vì D không được liệt kê như một đặc trưng.

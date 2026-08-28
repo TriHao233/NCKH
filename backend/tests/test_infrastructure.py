@@ -123,6 +123,27 @@ class JobMetricsTests(unittest.TestCase):
 
 
 class ModelRegistryTests(unittest.TestCase):
+    def test_resolver_does_not_truth_test_pymongo_database(self):
+        database = MagicMock()
+        database.__bool__.side_effect = NotImplementedError(
+            "Database objects do not implement truth value testing"
+        )
+        database.ai_models.find_one.return_value = {
+            "model_code": "qwen-fast",
+            "model_name": "qwen2.5:7b",
+            "runtime": "OLLAMA",
+            "capabilities": [GENERATION_CAPABILITY],
+            "is_active": True,
+        }
+
+        snapshot = resolve_model_snapshot(
+            "qwen-fast",
+            capability=GENERATION_CAPABILITY,
+            database=database,
+        )
+
+        self.assertEqual(snapshot["model_code"], "qwen-fast")
+
     def test_catalog_model_resolves_version_and_safe_runtime_parameters(self):
         database = MagicMock()
         database.ai_models.find_one.return_value = {
@@ -147,6 +168,7 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(snapshot["model_name"], "qwen2.5:14b")
         self.assertEqual(snapshot["display_name"], "Qwen nhanh")
         self.assertEqual(snapshot["parameters"]["temperature"], 0.2)
+        self.assertEqual(snapshot["parameters"]["num_ctx"], 8192)
         self.assertEqual(snapshot["parameters"]["num_predict"], 1200)
         self.assertEqual(snapshot["source"], "catalog")
 

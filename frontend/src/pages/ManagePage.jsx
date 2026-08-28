@@ -575,6 +575,7 @@ function ManagePage() {
   const [newExplanation, setNewExplanation] = useState('');
   const [newSubjectId, setNewSubjectId] = useState('');
   const [newDocumentId, setNewDocumentId] = useState('');
+  const [newSourceContext, setNewSourceContext] = useState('');
   const [newCloIds, setNewCloIds] = useState([]);
   const [creatingSaving, setCreatingSaving] = useState(false);
 
@@ -1444,7 +1445,7 @@ function ManagePage() {
     setWorkflowBusyId(item.id);
     try {
       await submitQuestionForReview(item.id);
-      await refreshAfterWorkflow('Đã gửi duyệt. Nhấn "Kiểm tra AI" để đưa câu hỏi vào hàng đợi thẩm định.', item);
+      await refreshAfterWorkflow('Đã gửi duyệt và tự động đưa câu hỏi vào hàng đợi thẩm định AI.', item);
     } catch (error) {
       alert('Gửi duyệt thất bại: ' + error.message);
     } finally {
@@ -1621,6 +1622,7 @@ function ManagePage() {
     setNewExplanation('');
     setNewSubjectId('');
     setNewDocumentId('');
+    setNewSourceContext('');
     setNewCloIds([]);
     setCreatingQuestion(true);
   };
@@ -1651,6 +1653,10 @@ function ManagePage() {
       alert(answerValidationError);
       return;
     }
+    if (newDocumentId && !newSourceContext.trim()) {
+      alert('Câu hỏi gắn tài liệu cần có đoạn minh chứng trích nguyên văn từ tài liệu.');
+      return;
+    }
     setCreatingSaving(true);
     try {
       await createQuestion({
@@ -1663,6 +1669,7 @@ function ManagePage() {
         },
         subject_id: newSubjectId || null,
         document_id: newDocumentId || null,
+        source_context: newSourceContext.trim() || null,
         clo_ids: newCloIds,
       });
       setCreatingQuestion(false);
@@ -1720,7 +1727,7 @@ function ManagePage() {
         expected_version: item.current_version,
         fallback_to_heuristic: false,
       });
-      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá. Xem kết quả trong tab Duyệt AI.', item);
+      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá. Xem kết quả trong tab Thẩm định AI.', item);
     } catch (error) {
       alert('Kiểm tra AI thất bại: ' + error.message);
     } finally {
@@ -3257,13 +3264,30 @@ function ManagePage() {
                 <select
                   className="field-select"
                   value={newDocumentId}
-                  onChange={(e) => setNewDocumentId(e.target.value)}
+                  onChange={(e) => {
+                    setNewDocumentId(e.target.value);
+                    if (!e.target.value) setNewSourceContext('');
+                  }}
                 >
                   <option value="">Không chọn</option>
                   {documents.map((doc) => (
                     <option key={doc.id} value={doc.id}>{doc.title}</option>
                   ))}
                 </select>
+                {newDocumentId && (
+                  <>
+                    <label className="field-label">Đoạn minh chứng nguồn</label>
+                    <textarea
+                      className="field-input"
+                      rows={4}
+                      value={newSourceContext}
+                      onChange={(e) => setNewSourceContext(e.target.value)}
+                      placeholder="Dán nguyên văn đoạn trong tài liệu làm căn cứ cho câu hỏi"
+                      required
+                    />
+                    <small>Hệ thống kiểm tra đoạn này có trong nội dung tài liệu trước khi lưu.</small>
+                  </>
+                )}
               </div>
             )}
 
