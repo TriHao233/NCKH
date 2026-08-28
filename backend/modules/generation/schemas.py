@@ -51,7 +51,7 @@ class QuestionGenerateRequest(BaseModel):
     bloom_level: BloomLevel
     question_type: QuestionType = QuestionType.TRAC_NGHIEM
     num_questions: int = Field(default=1, ge=1, le=10)
-    model_provider: str = Field(default_factory=lambda: settings.model_provider)
+    model_provider: str = Field(default_factory=lambda: settings.model_provider, min_length=1, max_length=160)
     question_plan: Optional[List[QuestionPlanItem]] = Field(
         None,
         min_length=1,
@@ -96,12 +96,23 @@ class GeneratedQuestion(BaseModel):
     explanation: str
     question_type: str
     bloom_level: str
+    difficulty: Optional[str] = None
     source_context: str
+    source_keywords: List[str] = Field(default_factory=list)
+    false_mutation: Optional[dict[str, Any]] = None
     question_id: Optional[str] = None
     question_code: Optional[str] = None
     current_version: Optional[int] = None
     current_version_id: Optional[str] = None
     review_status: Optional[str] = None
+
+
+class GenerationRejection(BaseModel):
+    code: str
+    message: str
+    candidate_index: Optional[int] = None
+    question_excerpt: str = ""
+    repairable: bool = False
 
 
 class GenerationPlanSummary(BaseModel):
@@ -112,9 +123,15 @@ class GenerationPlanSummary(BaseModel):
     parsed_count: int = 0
     valid_count: int = 0
     duplicate_count: int = 0
+    exact_duplicate_count: int = 0
+    near_duplicate_count: int = 0
+    format_rejected_count: int = 0
+    grounding_rejected_count: int = 0
+    clarity_rejected_count: int = 0
     saved_count: int = 0
     skipped_count: int = 0
     warnings: List[str] = Field(default_factory=list)
+    rejection_reasons: List[GenerationRejection] = Field(default_factory=list)
 
 
 class QuestionGenerateResponse(BaseModel):
@@ -148,6 +165,8 @@ class GenerationJobStatusResponse(BaseModel):
     data: Optional[List[GeneratedQuestion]] = None
     summary: Optional[List[GenerationPlanSummary]] = None
     metrics: Optional[GenerationJobMetrics] = None
+    progress: Optional[dict[str, Any]] = None
+    model: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

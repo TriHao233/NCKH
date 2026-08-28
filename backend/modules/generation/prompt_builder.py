@@ -36,6 +36,7 @@ class PromptBuilder:
         system = self._load_template("system", "system.txt")
         question_rule = self._load_template("question_rule", "question_rule.txt")
         bloom = self._load_template(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
+        difficulty_rule = self._load_template("quy_dinh_do_kho", "quy_dinh_do_kho.txt")
         qtype = self._load_template(f"question_type:{question_type}", f"question_type/{question_type}.txt")
         qstructure = self._load_template(
             f"question_structure:{question_type}",
@@ -68,6 +69,7 @@ Do not repeat or paraphrase the following previously generated questions:
 {system}
 {question_rule}
 {bloom}
+{difficulty_rule}
 {qtype}
 {qstructure}
 
@@ -76,6 +78,12 @@ TASK: Generate exactly {num_questions} questions.
 {duplicate_block}
 CONTEXT:
 {context}
+
+EVIDENCE RULES:
+- `source_context` must be copied verbatim only from text after `Nội dung:` in CONTEXT; never use a `Mục lục:` line as evidence.
+- Every `source_keyword` must appear verbatim in both `source_context` and the question text.
+- Use at most 2 short `source_keyword` values; use an empty list when no reliable keyword is needed.
+- Prefer a concise evidence sentence that directly proves the correct answer.
 
 {output}
 """

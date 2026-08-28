@@ -11,14 +11,11 @@ from pymongo import ReturnDocument
 from core.audit import record_audit_event
 from core.config import settings
 from core.dependencies import CurrentUser
+from modules.admin.job_metrics import collect_job_metrics
 from modules.documents.repository import MongoDocumentRepository, RETRYABLE_DOCUMENT_JOB_TYPES
 from modules.documents.service import DocumentService
-from modules.generation.generate import process_generate_background
 from modules.generation.mongodb import create_generation_job, get_generation_job
-from modules.questions.workflow_service import (
-    QuestionWorkflowService,
-    process_evaluation_job_background,
-)
+from modules.questions.workflow_service import QuestionWorkflowService
 
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
 RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "failed"}
@@ -139,13 +136,32 @@ class AdminJobService:
         date_to_utc = _as_utc_datetime(date_to, "date_to")
         if date_from_utc and date_to_utc and date_from_utc > date_to_utc:
             raise ValueError("Khoảng thời gian job không hợp lệ")
+        scan_limit = max(page * page_size, page_size)
+        if search or stale_only:
+            scan_limit = max(scan_limit, 500)
+        scanned_counts: list[int] = []
+        exact_total = None
+        if not search and not stale_only:
+            exact_total = self._count_jobs(
+                requested_kinds,
+                status,
+                user_oid,
+                date_from_utc,
+                date_to_utc,
+            )
 
         if "generation" in requested_kinds:
-            jobs.extend(self._generation_jobs(status, user_oid))
+            batch = self._generation_jobs(status, user_oid, date_from_utc, date_to_utc, scan_limit)
+            scanned_counts.append(len(batch))
+            jobs.extend(batch)
         if "evaluation" in requested_kinds:
-            jobs.extend(self._evaluation_jobs(status, user_oid))
+            batch = self._evaluation_jobs(status, user_oid, date_from_utc, date_to_utc, scan_limit)
+            scanned_counts.append(len(batch))
+            jobs.extend(batch)
         if "document" in requested_kinds:
-            jobs.extend(self._document_jobs(status, user_oid))
+            batch = self._document_jobs(status, user_oid, date_from_utc, date_to_utc, scan_limit)
+            scanned_counts.append(len(batch))
+            jobs.extend(batch)
 
 
         # Enrich user names
@@ -223,16 +239,47 @@ class AdminJobService:
             ]
 
         jobs.sort(key=lambda item: item.get("sort_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-        total = len(jobs)
+        filtered_total = len(jobs)
+        total = exact_total if exact_total is not None else filtered_total
         start = (page - 1) * page_size
         items = [self._public_item(job) for job in jobs[start:start + page_size]]
+        scan_truncated = any(count >= scan_limit for count in scanned_counts)
         return {
             "items": items,
             "total": total,
             "page": page,
             "page_size": page_size,
             "summary": self._summary(jobs),
+            "scan_truncated": scan_truncated,
+            "total_is_estimate": exact_total is None and scan_truncated,
+            "summary_is_estimate": scan_truncated,
         }
+
+    def operational_metrics(self) -> dict:
+        return collect_job_metrics(self.db)
+
+    def _count_jobs(
+        self,
+        requested_kinds: set[str],
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None,
+        date_to: datetime | None,
+    ) -> int:
+        total = 0
+        if "generation" in requested_kinds:
+            total += self.db.generation_jobs.count_documents(
+                self._generation_query(status, user_oid, date_from, date_to)
+            )
+        if "evaluation" in requested_kinds:
+            total += self.db.evaluation_jobs.count_documents(
+                self._evaluation_query(status, user_oid, date_from, date_to)
+            )
+        if "document" in requested_kinds:
+            total += self.db.document_jobs.count_documents(
+                self._document_query(status, user_oid, date_from, date_to)
+            )
+        return total
 
     def retry_job(
         self,
@@ -264,42 +311,44 @@ class AdminJobService:
             raise ValueError("Loại job không hợp lệ")
         return result
 
-    def _generation_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
-        query: dict = {}
-        status_filter = _generation_status_filter(status)
-        if status_filter is not None:
-            query["status"] = status_filter
-        if user_oid:
-            query["requested_by_user_id"] = user_oid
+    def _generation_jobs(
+        self,
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        query = self._generation_query(status, user_oid, date_from, date_to)
         return [
             self._normalize_generation(job)
-            for job in self.db.generation_jobs.find(query).sort("updated_at", -1).limit(500)
+            for job in self.db.generation_jobs.find(query).sort("updated_at", -1).limit(limit)
         ]
 
-    def _evaluation_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
-        query: dict = {}
-        status_filter = _uppercase_status_filter(status)
-        if status_filter is not None:
-            query["status"] = status_filter
-        if user_oid:
-            query["requested_by_user_id"] = user_oid
+    def _evaluation_jobs(
+        self,
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        query = self._evaluation_query(status, user_oid, date_from, date_to)
         return [
             self._normalize_evaluation(job)
-            for job in self.db.evaluation_jobs.find(query).sort("updated_at", -1).limit(500)
+            for job in self.db.evaluation_jobs.find(query).sort("updated_at", -1).limit(limit)
         ]
 
-    def _document_jobs(self, status: str | None, user_oid: ObjectId | None) -> list[dict]:
-        query: dict = {}
-        status_filter = _uppercase_status_filter(status)
-        if status_filter is not None:
-            query["status"] = status_filter
-        if user_oid:
-            document_ids = [
-                doc["_id"]
-                for doc in self.db.documents.find({"uploaded_by_user_id": user_oid}, {"_id": 1})
-            ]
-            query["document_id"] = {"$in": document_ids}
-        document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1).limit(500))
+    def _document_jobs(
+        self,
+        status: str | None,
+        user_oid: ObjectId | None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        query = self._document_query(status, user_oid, date_from, date_to)
+        document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1).limit(limit))
         document_ids = [job["document_id"] for job in document_jobs if job.get("document_id")]
         documents = {
             doc["_id"]: doc
@@ -312,6 +361,55 @@ class AdminJobService:
             self._normalize_document(job, documents.get(job.get("document_id")))
             for job in document_jobs
         ]
+
+    def _generation_query(self, status, user_oid, date_from, date_to) -> dict:
+        query: dict = {}
+        status_filter = _generation_status_filter(status)
+        if status_filter is not None:
+            query["status"] = status_filter
+        if user_oid:
+            query["requested_by_user_id"] = user_oid
+        self._apply_date_query(query, "updated_at", date_from, date_to)
+        return query
+
+    def _evaluation_query(self, status, user_oid, date_from, date_to) -> dict:
+        query: dict = {}
+        status_filter = _uppercase_status_filter(status)
+        if status_filter is not None:
+            query["status"] = status_filter
+        if user_oid:
+            query["requested_by_user_id"] = user_oid
+        self._apply_date_query(query, "updated_at", date_from, date_to)
+        return query
+
+    def _document_query(self, status, user_oid, date_from, date_to) -> dict:
+        query: dict = {}
+        status_filter = _uppercase_status_filter(status)
+        if status_filter is not None:
+            query["status"] = status_filter
+        if user_oid:
+            document_ids = [
+                doc["_id"]
+                for doc in self.db.documents.find({"uploaded_by_user_id": user_oid}, {"_id": 1})
+            ]
+            query["document_id"] = {"$in": document_ids}
+        self._apply_date_query(query, "queued_at", date_from, date_to)
+        return query
+
+    @staticmethod
+    def _apply_date_query(
+        query: dict,
+        field: str,
+        date_from: datetime | None,
+        date_to: datetime | None,
+    ) -> None:
+        bounds = {}
+        if date_from:
+            bounds["$gte"] = date_from
+        if date_to:
+            bounds["$lte"] = date_to
+        if bounds:
+            query[field] = bounds
 
     def _normalize_generation(self, job: dict) -> dict:
         status = job.get("status", "")
@@ -463,11 +561,9 @@ class AdminJobService:
         new_job_id = create_generation_job(
             job.get("request") or {},
             requested_by_user_id=job.get("requested_by_user_id"),
-        )
-        background_tasks.add_task(
-            process_generate_background,
-            job_id=new_job_id,
-            requested_by_user_id=job.get("requested_by_user_id"),
+            model_snapshot=job.get("model_snapshot"),
+            fallback_model_snapshot=job.get("fallback_model_snapshot"),
+            fallback_to_heuristic=bool(job.get("fallback_to_heuristic")),
         )
         self._audit(current_user, "admin.job_retry", "generation", job_id, {"new_job_id": new_job_id})
         return {"job": json_safe(get_generation_job(new_job_id))}
@@ -492,9 +588,10 @@ class AdminJobService:
             requested_by_user_id=job.get("requested_by_user_id") or current_user.id,
             evaluator_model_code=job.get("evaluator_model_code") or settings.evaluation_model_provider,
             trigger="ADMIN_RETRY",
+            model_snapshot=job.get("model_snapshot"),
+            fallback_model_snapshot=job.get("fallback_model_snapshot"),
+            fallback_to_heuristic=bool(job.get("fallback_to_heuristic")),
         )
-        if queued.get("status") == "QUEUED":
-            background_tasks.add_task(process_evaluation_job_background, queued["_id"])
         self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
         return {"job": json_safe(queued)}
 

@@ -66,7 +66,7 @@ JSON KẾT QUẢ ĐÚNG FORMAT MẪU:
 """
 
     # 3. Thực hiện gọi API trực tiếp tới Gemini 1.5 Flash (Nhanh, rẻ, chuẩn xác cho Task Extraction)
-    api_key = settings.GEMINI_API_KEY.strip() if settings.GEMINI_API_KEY else ""
+    api_key = settings.gemini_api_key.strip() if settings.gemini_api_key else ""
 
     if not api_key:
         logger.error("Thiếu cấu hình GEMINI_API_KEY trong file .env")

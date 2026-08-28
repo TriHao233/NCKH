@@ -19,6 +19,8 @@ class EvaluationCreateRequest(BaseModel):
     feedback: dict[str, Any] = Field(default_factory=dict)
     evidence: dict[str, Any] = Field(default_factory=dict)
     evaluator_model_code: str = "manual-or-external-evaluator"
+    model_snapshot: dict[str, Any] = Field(default_factory=dict)
+    model_execution: dict[str, Any] = Field(default_factory=dict)
     raw_model_response: str | None = None
     policy_snapshot: dict[str, Any] = Field(default_factory=dict)
     prompt_snapshot: dict[str, Any] = Field(default_factory=dict)
@@ -47,6 +49,21 @@ class ReviewRubricItem(BaseModel):
     note: str = Field("", max_length=500)
 
 
+class ReviewCriterionAssessment(BaseModel):
+    key: Literal[
+        "faithfulness",
+        "contextual_relevancy",
+        "answer_relevancy",
+        "bloom_alignment",
+        "clo_alignment",
+    ]
+    label: str = Field(..., min_length=1, max_length=160)
+    rating: Literal["PASS", "REVIEW", "FAIL", "NO_DATA"]
+    note: str = Field("", max_length=1000)
+    source_chunk_id: str | None = Field(None, max_length=120)
+    page_number: int | None = Field(None, ge=1)
+
+
 class ReviewRevisionIssue(BaseModel):
     title: str = Field(..., min_length=1, max_length=160)
     severity: Literal["LOW", "MEDIUM", "HIGH"] = "MEDIUM"
@@ -57,6 +74,7 @@ class ReviewRevisionIssue(BaseModel):
 
 class StructuredReviewForm(BaseModel):
     checklist: list[ReviewRubricItem] = Field(default_factory=list, max_length=12)
+    criterion_assessments: list[ReviewCriterionAssessment] = Field(default_factory=list, max_length=5)
     overall_note: str = Field("", max_length=2000)
     revision_issues: list[ReviewRevisionIssue] = Field(default_factory=list, max_length=20)
 
@@ -67,6 +85,12 @@ class StructuredReviewForm(BaseModel):
             issue.title.strip() or issue.detail.strip()
             for issue in self.revision_issues
         )
+
+
+class ReviewDraftUpsertRequest(BaseModel):
+    expected_version: int = Field(..., ge=1)
+    decision: Literal["APPROVED", "REJECTED", "NEEDS_REVISION"] | None = None
+    draft: dict[str, Any] = Field(default_factory=dict)
 
 
 class AutoEvaluationRequest(BaseModel):
@@ -101,6 +125,10 @@ class ReviewCreateRequest(BaseModel):
 class QuestionCommentCreateRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=2000)
     mention_user_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class QuestionCommentUpdateRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=2000)
 
 
 class SecondaryReviewRequest(BaseModel):

@@ -1,5 +1,10 @@
 OUTPUT
 Chỉ trả về MỘT object JSON thô. Không dùng markdown, không giải thích ngoài JSON.
+Phải giữ action và severity bên trong feedback, không đặt ở cấp ngoài.
+Điểm, summary, action, severity, risks và moodle_readiness phải nhất quán với nhau:
+- APPROVE chỉ khi tổng điểm đạt ngưỡng, severity không phải HIGH và moodle_readiness không phải NEEDS_FIX.
+- REJECT không đi cùng severity LOW hoặc moodle_readiness READY.
+- Nếu còn lỗi sửa được, dùng NEEDS_REVISION và nêu đúng tiêu chí đang bị ảnh hưởng.
 
 {{
   "scores": {{
@@ -21,7 +26,8 @@ Chỉ trả về MỘT object JSON thô. Không dùng markdown, không giải th
     "criteria": ["Tiêu chí đã dùng"],
     "risks": ["Rủi ro thực tế nếu có"],
     "moodle_readiness": "READY | NEEDS_FIX",
-    "answer_diagnostics": "Nhận xét về đáp án, độ mơ hồ, phương án nhiễu và giải thích"
+    "answer_diagnostics": "Nhận xét về đáp án, độ mơ hồ, phương án nhiễu và giải thích",
+    "assessed_difficulty": "de | trung_binh | kho"
   }}
 }}
 

@@ -15,7 +15,8 @@ from core.config import settings
 from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser, has_permission
 from modules.admin.moodle_service import MoodleTargetService
-from modules.generation.llm.factory import get_llm_service
+from modules.generation.llm.factory import get_llm_execution_snapshot, get_llm_service
+from modules.generation.llm.model_registry import EVALUATION_CAPABILITY, resolve_model_snapshot
 from modules.generation.prompt_builder import PromptBuilder
 from modules.notifications.service import (
     NotificationService,
@@ -29,8 +30,10 @@ from modules.questions.workflow_schemas import (
     EvaluationScores,
     MoodlePublicationRequest,
     QuestionCommentCreateRequest,
+    QuestionCommentUpdateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    ReviewDraftUpsertRequest,
     SecondaryReviewRequest,
 )
 
@@ -48,6 +51,8 @@ EVALUATION_SCORING_PROMPT_KEY = "evaluation:scoring_policy"
 EVALUATION_SCORING_PROMPT_PATH = "evaluation/scoring_policy.txt"
 EVALUATION_OUTPUT_PROMPT_KEY = "evaluation:output_contract"
 EVALUATION_OUTPUT_PROMPT_PATH = "evaluation/output_contract.txt"
+DIFFICULTY_RULE_PROMPT_KEY = "quy_dinh_do_kho"
+DIFFICULTY_RULE_PROMPT_PATH = "quy_dinh_do_kho.txt"
 EVALUATION_TYPE_PROMPT_PREFIX = "evaluation:question_type"
 EVALUATION_TYPE_PROMPT_DIR = "evaluation/question_type"
 DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
@@ -61,6 +66,13 @@ MOODLE_MOCK_MESSAGE = (
 )
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
 evaluation_semaphore = asyncio.Semaphore(1)
+
+REVIEW_CRITERION_KEYS = tuple(DEFAULT_WEIGHTS)
+LEGACY_REVIEW_CRITERION_MAP = {
+    "source_alignment": "faithfulness",
+    "answer_correctness": "answer_relevancy",
+    "bloom_clo_alignment": "bloom_alignment",
+}
 
 
 def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
@@ -144,6 +156,14 @@ class QuestionWorkflowService:
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _policy(self) -> dict:
+        if self.db is None:
+            return {
+                "_id": None,
+                "policy_name": "Default fallback",
+                "version": 1,
+                "weights": DEFAULT_WEIGHTS,
+                "thresholds": DEFAULT_THRESHOLDS,
+            }
         return self.db.evaluation_policies.find_one(
             {"is_active": True},
             sort=[("version", -1)],
@@ -241,11 +261,18 @@ class QuestionWorkflowService:
 
     @staticmethod
     def _source_context(version: dict) -> str:
-        return "\n\n".join(
+        model_source_context = QuestionWorkflowService._compact_text(
+            (version.get("question_data") or {}).get("model_source_context") or "",
+            1400,
+        )
+        source_parts = [
             f"[{source['label']}] {source['excerpt']}"
             for source in QuestionWorkflowService._compact_sources(version)
             if source.get("excerpt")
-        )
+        ]
+        if model_source_context:
+            source_parts.insert(0, f"[MODEL_CONTEXT] {model_source_context}")
+        return "\n\n".join(source_parts)
 
     @staticmethod
     def _normalized_question_type(question_type: str | None) -> str:
@@ -257,6 +284,7 @@ class QuestionWorkflowService:
         specs = [
             (EVALUATION_PROMPT_KEY, EVALUATION_PROMPT_PATH),
             (EVALUATION_SCORING_PROMPT_KEY, EVALUATION_SCORING_PROMPT_PATH),
+            (DIFFICULTY_RULE_PROMPT_KEY, DIFFICULTY_RULE_PROMPT_PATH),
             (
                 f"{EVALUATION_TYPE_PROMPT_PREFIX}:{normalized_type}",
                 f"{EVALUATION_TYPE_PROMPT_DIR}/{normalized_type}.txt",
@@ -312,7 +340,15 @@ class QuestionWorkflowService:
             "options": question_data.get("options"),
             "correct_answer": question_data.get("correct_answer"),
             "explanation": question_data.get("explanation"),
+            # This is the verbatim evidence selected by the generation model
+            # and persisted with the question version.  Keep the immutable
+            # chunk snapshots below as the authoritative source provenance.
+            "generation_source_context": self._compact_text(
+                question_data.get("model_source_context") or "",
+                1400,
+            ),
             "requested_bloom": classification.get("bloom"),
+            "current_difficulty": classification.get("difficulty"),
             "clos": clos,
             "source_chunks": source_chunks,
         }
@@ -348,16 +384,96 @@ class QuestionWorkflowService:
     def _parse_llm_evaluation(cls, raw_response: str) -> tuple[EvaluationScores, dict, dict]:
         parsed = json.loads(cls._clean_json(raw_response))
         raw_scores = parsed.get("scores") or {}
+
+        def score_value(key: str, *aliases: str) -> float:
+            for candidate in (key, *aliases):
+                if candidate in raw_scores:
+                    return cls._clamp(float(raw_scores[candidate]))
+            raise ValueError(f"AI evaluation thiếu điểm bắt buộc: {key}")
+
         scores = EvaluationScores(
-            faithfulness=cls._clamp(float(raw_scores.get("faithfulness", 0))),
-            contextual_relevancy=cls._clamp(float(raw_scores.get("contextual_relevancy", 0))),
-            answer_relevancy=cls._clamp(float(raw_scores.get("answer_relevancy", 0))),
-            bloom_alignment=cls._clamp(float(raw_scores.get("bloom_alignment", 0))),
-            clo_alignment=cls._clamp(float(raw_scores.get("clo_alignment", 0))),
+            faithfulness=score_value("faithfulness"),
+            contextual_relevancy=score_value("contextual_relevancy"),
+            # Local models occasionally misspell this field. Accept only the
+            # observed typo; all other missing scores remain a retryable error.
+            answer_relevancy=score_value("answer_relevancy", "answer_relevality"),
+            bloom_alignment=score_value("bloom_alignment"),
+            clo_alignment=score_value("clo_alignment"),
         )
-        feedback = parsed.get("feedback") if isinstance(parsed.get("feedback"), dict) else {}
+        feedback = dict(parsed.get("feedback")) if isinstance(parsed.get("feedback"), dict) else {}
+        action = str(feedback.get("action") or parsed.get("action") or "").strip().upper()
+        severity = str(feedback.get("severity") or parsed.get("severity") or "").strip().upper()
+        if action not in {"APPROVE", "NEEDS_REVISION", "REJECT"}:
+            raise ValueError("AI evaluation thiếu action hợp lệ")
+        if severity not in {"LOW", "MEDIUM", "HIGH"}:
+            raise ValueError("AI evaluation thiếu severity hợp lệ")
+        summary = str(feedback.get("summary") or "").strip()
+        if not summary:
+            raise ValueError("AI evaluation thiếu summary")
+        feedback["action"] = action
+        feedback["severity"] = severity
+        feedback["summary"] = summary
+        missing = feedback.get("missing")
+        feedback["missing"] = missing if isinstance(missing, list) else ([missing] if missing else [])
         evidence = parsed.get("evidence") if isinstance(parsed.get("evidence"), dict) else {}
+        moodle_readiness = str(evidence.get("moodle_readiness") or "").strip().upper()
+        if moodle_readiness not in {"READY", "NEEDS_FIX"}:
+            raise ValueError("AI evaluation thiếu moodle_readiness hợp lệ")
+        if not str(evidence.get("reasoning") or evidence.get("supporting_excerpt") or "").strip():
+            raise ValueError("AI evaluation thiếu minh chứng hoặc lý do chấm điểm")
+        evidence["moodle_readiness"] = moodle_readiness
+        risks = evidence.get("risks")
+        evidence["risks"] = risks if isinstance(risks, list) else ([risks] if risks else [])
+        assessed = str(evidence.get("assessed_difficulty") or "").strip().lower().replace("-", "_")
+        assessed = assessed.replace(" ", "_")
+        evidence["assessed_difficulty"] = assessed if assessed in {"de", "trung_binh", "kho"} else None
         return scores, feedback, evidence
+
+    @staticmethod
+    def _validate_llm_evaluation_consistency(
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        policy: dict,
+    ) -> dict:
+        score_values = scores.model_dump()
+        weights = policy.get("weights") or DEFAULT_WEIGHTS
+        thresholds = policy.get("thresholds") or DEFAULT_THRESHOLDS
+        pass_min = thresholds.get("pass_min", DEFAULT_THRESHOLDS["pass_min"])
+        overall = round(
+            sum(score_values[key] * weights.get(key, DEFAULT_WEIGHTS[key]) for key in DEFAULT_WEIGHTS),
+            4,
+        )
+        action = str(feedback.get("action") or "").strip().upper()
+        severity = str(feedback.get("severity") or "").strip().upper()
+        moodle_readiness = str(evidence.get("moodle_readiness") or "").strip().upper()
+        contradictions = []
+        if action == "APPROVE" and overall < pass_min:
+            contradictions.append("APPROVE nhưng tổng điểm dưới ngưỡng đạt")
+        if action == "APPROVE" and severity == "HIGH":
+            contradictions.append("APPROVE nhưng mức độ lỗi là HIGH")
+        if action == "APPROVE" and moodle_readiness == "NEEDS_FIX":
+            contradictions.append("APPROVE nhưng cấu trúc Moodle vẫn NEEDS_FIX")
+        if action == "REJECT" and severity == "LOW":
+            contradictions.append("REJECT nhưng mức độ lỗi chỉ là LOW")
+        if action == "REJECT" and moodle_readiness == "READY":
+            contradictions.append("REJECT nhưng kết quả lại ghi Moodle READY")
+        if contradictions:
+            raise ValueError("AI evaluation tự mâu thuẫn: " + "; ".join(contradictions))
+
+        values = list(score_values.values())
+        score_spread = round(max(values) - min(values), 4)
+        return {
+            "validated": True,
+            "calculated_overall": overall,
+            "score_spread": score_spread,
+            "uniform_scores": score_spread <= 0.02,
+            "weak_criteria": [
+                key
+                for key, value in score_values.items()
+                if value < pass_min
+            ],
+        }
 
     def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
         question_data = version.get("question_data") or {}
@@ -432,7 +548,28 @@ class QuestionWorkflowService:
             if overall >= thresholds["yellow_min"]
             else "RED"
         )
-        passed = overall >= thresholds["pass_min"]
+        feedback_action = str(payload.feedback.get("action") or "").strip().upper()
+        feedback_severity = str(payload.feedback.get("severity") or "").strip().upper()
+        action_requires_review = feedback_action in {"NEEDS_REVISION", "REJECT"}
+        severe_issue = feedback_severity == "HIGH"
+        passed = (
+            overall >= thresholds["pass_min"]
+            and not action_requires_review
+            and not severe_issue
+        )
+        if feedback_action == "REJECT" or severe_issue:
+            color = "RED"
+        elif action_requires_review and color == "GREEN":
+            color = "YELLOW"
+        evidence = {
+            **payload.evidence,
+            "decision_guardrail": {
+                "score_passed": overall >= thresholds["pass_min"],
+                "feedback_action": feedback_action or None,
+                "feedback_severity": feedback_severity or None,
+                "blocked_pass": action_requires_review or severe_issue,
+            },
+        }
         now = utc_now()
         evaluation_job_id = (
             object_id(payload.evaluation_job_id, "evaluation_job_id")
@@ -447,7 +584,8 @@ class QuestionWorkflowService:
             "question_version": version["version"],
             "question_snapshot_hash": version["content_hash"],
             "generation_run_id": version.get("generation_run_id"),
-            "evaluator_model": self._model_snapshot(payload.evaluator_model_code),
+            "evaluator_model": payload.model_snapshot or self._model_snapshot(payload.evaluator_model_code),
+            "model_execution": payload.model_execution,
             "requested_by_user_id": user_id,
             "policy": {
                 "id": policy.get("_id") or policy.get("id"),
@@ -460,7 +598,7 @@ class QuestionWorkflowService:
             "color": color,
             "passed": passed,
             "feedback": payload.feedback,
-            "evidence": payload.evidence,
+            "evidence": evidence,
             "raw_model_response": payload.raw_model_response,
             "prompt_snapshot": payload.prompt_snapshot,
             "duration_ms": payload.duration_ms,
@@ -541,13 +679,20 @@ class QuestionWorkflowService:
         prompt_snapshot: dict = {}
         policy_snapshot: dict = {}
         duration_ms = None
+        model_snapshot: dict = {}
+        llm = None
         if evaluator_code.lower() in {"local-heuristic-evaluator-v1", "heuristic"}:
             scores, feedback, evidence = self._auto_scores(question, version)
             evidence["mode"] = "heuristic"
             evaluator_code = "local-heuristic-evaluator-v1"
         else:
             try:
-                llm = get_llm_service(evaluator_code)
+                model_snapshot = resolve_model_snapshot(
+                    evaluator_code,
+                    capability=EVALUATION_CAPABILITY,
+                    database=self.db,
+                )
+                llm = get_llm_service(evaluator_code, model_snapshot=model_snapshot)
                 policy = self._policy()
                 policy_snapshot = self._policy_snapshot(policy)
                 prompt, prompt_snapshot, _ = self._build_evaluation_prompt(question, version, policy)
@@ -555,7 +700,16 @@ class QuestionWorkflowService:
                 raw_model_response = await llm.generate_text(prompt)
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
-                evidence["mode"] = "local_llm"
+                evidence = {
+                    **evidence,
+                    "mode": "local_llm",
+                    "consistency": self._validate_llm_evaluation_consistency(
+                        scores,
+                        feedback,
+                        evidence,
+                        policy_snapshot,
+                    ),
+                }
             except Exception as exc:
                 if not payload.fallback_to_heuristic:
                     raise ValueError(f"Local evaluator failed: {exc}") from exc
@@ -587,6 +741,12 @@ class QuestionWorkflowService:
                 prompt_snapshot=prompt_snapshot,
                 duration_ms=duration_ms,
                 trigger="DIRECT_AUTO_EVALUATION",
+                model_snapshot=model_snapshot,
+                model_execution=(
+                    get_llm_execution_snapshot(llm)
+                    if llm is not None and evaluator_code != "local-heuristic-evaluator-v1"
+                    else {}
+                ),
             ),
             user_id,
         )
@@ -620,12 +780,26 @@ class QuestionWorkflowService:
         requested_by_user_id,
         evaluator_model_code: str = DEFAULT_EVALUATOR_MODEL_CODE,
         trigger: str = "REVIEWER_REQUEST",
+        model_snapshot: dict | None = None,
+        fallback_model_snapshot: dict | None = None,
+        fallback_to_heuristic: bool = False,
     ) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != expected_version:
             raise RuntimeError("VERSION_CONFLICT")
 
         evaluator_model_code = evaluator_model_code.strip() or DEFAULT_EVALUATOR_MODEL_CODE
+        model_snapshot = model_snapshot or resolve_model_snapshot(
+            evaluator_model_code,
+            capability=EVALUATION_CAPABILITY,
+            database=self.db,
+        )
+        if settings.evaluation_fallback_provider and fallback_model_snapshot is None:
+            fallback_model_snapshot = resolve_model_snapshot(
+                settings.evaluation_fallback_provider,
+                capability=EVALUATION_CAPABILITY,
+                database=self.db,
+            )
         if question.get("evaluation_status") == "PASSED":
             raise ValueError("Câu hỏi đã có kết quả AI đạt cho phiên bản hiện tại")
 
@@ -660,6 +834,9 @@ class QuestionWorkflowService:
             "trigger": trigger,
             "requested_by_user_id": requested_by_user_id,
             "evaluator_model_code": evaluator_model_code,
+            "model_snapshot": model_snapshot,
+            "fallback_model_snapshot": fallback_model_snapshot,
+            "fallback_to_heuristic": bool(fallback_to_heuristic),
             "policy_snapshot": self._policy_snapshot(policy),
             "prompt_snapshot": prompt_snapshot,
             "source_snapshot": [
@@ -673,7 +850,8 @@ class QuestionWorkflowService:
                 for source in source_chunks
             ],
             "attempt_no": attempt_no,
-            "max_attempts": 1,
+            "processing_attempt_count": 0,
+            "max_attempts": settings.job_max_attempts,
             "result": None,
             "error": None,
             "queued_at": now,
@@ -733,6 +911,38 @@ class QuestionWorkflowService:
             raise
         return json_safe(job)
 
+    def mark_evaluation_enqueue_error(
+        self,
+        question_id: str,
+        *,
+        expected_version: int,
+        evaluator_model_code: str,
+        message: str,
+    ) -> dict | None:
+        now = utc_now()
+        error = {"message": message, "at": now, "stage": "ENQUEUE"}
+        updated = self.db.questions.find_one_and_update(
+            {
+                "_id": object_id(question_id, "question_id"),
+                "current_version": expected_version,
+                "lifecycle_status": "ACTIVE",
+                "evaluation_status": {"$in": list(EVALUATION_RETRYABLE_STATUSES)},
+            },
+            {
+                "$set": {
+                    "evaluation_status": "ERROR",
+                    "quality_summary": {
+                        "evaluated_version_id": None,
+                        "evaluator_model_code": evaluator_model_code,
+                        "error": error,
+                    },
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return json_safe(updated) if updated else None
+
     def _mark_evaluation_job_error(
         self,
         job: dict,
@@ -741,6 +951,7 @@ class QuestionWorkflowService:
         status: str = "ERROR",
         raw_model_response: str | None = None,
         duration_ms: int | None = None,
+        dead_lettered: bool = False,
     ) -> dict:
         now = utc_now()
         error = {
@@ -749,16 +960,25 @@ class QuestionWorkflowService:
             "at": now,
         }
         with mongo_transaction() as session:
+            job_fields = {
+                "status": status,
+                "error": error,
+                "finished_at": now,
+                "duration_ms": duration_ms,
+                "updated_at": now,
+            }
+            if dead_lettered:
+                job_fields["dead_lettered_at"] = now
+            if status in {"ERROR", "STALE", "CANCELLED"}:
+                job_fields["expires_at"] = now + timedelta(days=settings.job_retention_days)
+            job_query = {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}}
+            if job.get("locked_by"):
+                job_query["locked_by"] = job["locked_by"]
             self.db.evaluation_jobs.update_one(
-                {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                job_query,
                 {
-                    "$set": {
-                        "status": status,
-                        "error": error,
-                        "finished_at": now,
-                        "duration_ms": duration_ms,
-                        "updated_at": now,
-                    }
+                    "$set": job_fields,
+                    "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": ""},
                 },
                 session=session,
             )
@@ -785,37 +1005,146 @@ class QuestionWorkflowService:
                 )
         return json_safe({**job, "status": status, "error": error, "finished_at": now})
 
-    async def process_evaluation_job(self, job_id: str) -> dict | None:
+    def heartbeat_evaluation_job(self, job_id: str, worker_id: str) -> bool:
+        now = utc_now()
+        result = self.db.evaluation_jobs.update_one(
+            {
+                "_id": object_id(job_id, "evaluation_job_id"),
+                "status": "PROCESSING",
+                "locked_by": worker_id,
+            },
+            {
+                "$set": {
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.modified_count == 1
+
+    def _retry_or_dead_letter_evaluation_job(
+        self,
+        job: dict,
+        message: str,
+        *,
+        raw_model_response: str | None,
+        duration_ms: int,
+    ) -> dict:
+        attempts = int(job.get("processing_attempt_count") or 1)
+        max_attempts = int(job.get("max_attempts") or settings.job_max_attempts)
+        if attempts >= max_attempts:
+            return self._mark_evaluation_job_error(
+                job,
+                message,
+                raw_model_response=raw_model_response,
+                duration_ms=duration_ms,
+                dead_lettered=True,
+            )
+        now = utc_now()
+        delay = min(
+            settings.job_retry_base_seconds * (2 ** max(0, attempts - 1)),
+            settings.job_retry_max_seconds,
+        )
+        error = {
+            "message": message,
+            "raw_model_response_excerpt": (raw_model_response or "")[:1200] or None,
+            "at": now,
+        }
+        with mongo_transaction() as session:
+            self.db.evaluation_jobs.update_one(
+                {
+                    "_id": job["_id"],
+                    "status": "PROCESSING",
+                    "locked_by": job.get("locked_by"),
+                },
+                {
+                    "$set": {
+                        "status": "QUEUED",
+                        "error": error,
+                        "next_attempt_at": now + timedelta(seconds=delay),
+                        "updated_at": now,
+                    },
+                    "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": ""},
+                },
+                session=session,
+            )
+            self.db.questions.update_one(
+                {"_id": job["question_id"], "current_version_id": job["question_version_id"]},
+                {
+                    "$set": {
+                        "evaluation_status": "QUEUED",
+                        "quality_summary.last_retry_error": error,
+                        "updated_at": now,
+                    }
+                },
+                session=session,
+            )
+        return json_safe({**job, "status": "QUEUED", "error": error})
+
+    async def process_evaluation_job(self, job_id: str, worker_id: str) -> dict | None:
         job_oid = object_id(job_id, "evaluation_job_id")
         now = utc_now()
-        job = self.db.evaluation_jobs.find_one_and_update(
-            {"_id": job_oid, "status": "QUEUED"},
-            {"$set": {"status": "PROCESSING", "started_at": now, "updated_at": now}},
+        job = await asyncio.to_thread(
+            self.db.evaluation_jobs.find_one_and_update,
+            {
+                "_id": job_oid,
+                "$or": [
+                    {
+                        "status": "QUEUED",
+                        "$or": [
+                            {"next_attempt_at": {"$exists": False}},
+                            {"next_attempt_at": {"$lte": now}},
+                        ],
+                    },
+                    {"status": "PROCESSING", "lease_expires_at": {"$lte": now}},
+                ],
+            },
+            {
+                "$set": {
+                    "status": "PROCESSING",
+                    "locked_by": worker_id,
+                    "started_at": now,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
+                    "updated_at": now,
+                },
+                "$inc": {"processing_attempt_count": 1},
+                "$unset": {"next_attempt_at": ""},
+            },
             return_document=ReturnDocument.AFTER,
         )
         if not job:
             return None
 
-        question = self.db.questions.find_one(
-            {
-                "_id": job["question_id"],
-                "schema_version": SCHEMA_VERSION,
-                "lifecycle_status": "ACTIVE",
-            }
+        question, version = await asyncio.gather(
+            asyncio.to_thread(
+                self.db.questions.find_one,
+                {
+                    "_id": job["question_id"],
+                    "schema_version": SCHEMA_VERSION,
+                    "lifecycle_status": "ACTIVE",
+                },
+            ),
+            asyncio.to_thread(
+                self.db.question_versions.find_one,
+                {"_id": job["question_version_id"]},
+            ),
         )
-        version = self.db.question_versions.find_one({"_id": job["question_version_id"]})
         if not question or not version or question.get("current_version_id") != job["question_version_id"]:
-            return self._mark_evaluation_job_error(
+            return await asyncio.to_thread(
+                self._mark_evaluation_job_error,
                 job,
                 "Phiên bản câu hỏi đã thay đổi trước khi AI đánh giá",
                 status="STALE",
             )
 
-        self.db.questions.update_one(
+        await asyncio.to_thread(
+            self.db.questions.update_one,
             {
                 "_id": question["_id"],
                 "current_version_id": version["_id"],
-                "evaluation_status": "QUEUED",
+                "evaluation_status": {"$in": ["QUEUED", "PROCESSING"]},
             },
             {
                 "$set": {
@@ -830,41 +1159,88 @@ class QuestionWorkflowService:
         raw_model_response = None
         started = time.perf_counter()
         try:
-            prompt, prompt_snapshot, _ = self._build_evaluation_prompt(
+            policy_snapshot = job.get("policy_snapshot")
+            if not policy_snapshot:
+                policy_snapshot = await asyncio.to_thread(self._policy)
+            prompt, prompt_snapshot, _ = await asyncio.to_thread(
+                self._build_evaluation_prompt,
                 question,
                 version,
-                job.get("policy_snapshot") or self._policy(),
+                policy_snapshot,
             )
-            llm = get_llm_service(job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE)
-            raw_model_response = await llm.generate_text(prompt)
+            llm = get_llm_service(
+                job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
+                settings.evaluation_fallback_provider,
+                model_snapshot=job.get("model_snapshot"),
+                fallback_model_snapshot=job.get("fallback_model_snapshot"),
+            )
+            heuristic_fallback = False
+            try:
+                raw_model_response = await llm.generate_text(prompt)
+                scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                evidence = {
+                    **evidence,
+                    "consistency": self._validate_llm_evaluation_consistency(
+                        scores,
+                        feedback,
+                        evidence,
+                        policy_snapshot,
+                    ),
+                }
+            except Exception as exc:
+                if not job.get("fallback_to_heuristic"):
+                    raise
+                heuristic_fallback = True
+                scores, feedback, evidence = self._auto_scores(question, version)
+                feedback = {
+                    **feedback,
+                    "summary": "AI đánh giá lỗi; hệ thống đã dùng heuristic dự phòng.",
+                }
+                evidence = {**evidence, "fallback_reason": str(exc)}
             duration_ms = int((time.perf_counter() - started) * 1000)
-            scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
             evidence = {
                 **evidence,
-                "mode": "local_llm",
+                "mode": "heuristic_fallback" if heuristic_fallback else "local_llm",
                 "evaluation_job_id": str(job["_id"]),
                 "source_snapshot": json_safe(job.get("source_snapshot") or []),
             }
-            evaluation = self.evaluate(
-                str(question["_id"]),
-                EvaluationCreateRequest(
+            evaluation_payload = EvaluationCreateRequest(
                     expected_version=version["version"],
                     scores=scores,
                     feedback=feedback,
                     evidence=evidence,
                     evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
                     raw_model_response=raw_model_response,
-                    policy_snapshot=job.get("policy_snapshot") or {},
+                    policy_snapshot=policy_snapshot,
                     prompt_snapshot=prompt_snapshot,
                     duration_ms=duration_ms,
                     evaluation_job_id=str(job["_id"]),
                     trigger=job.get("trigger"),
-                ),
+                    model_snapshot=(
+                        {
+                            "model_code": "local-heuristic-evaluator-v1",
+                            "model_name": "Local heuristic evaluator",
+                            "runtime": "INTERNAL",
+                        }
+                        if heuristic_fallback
+                        else job.get("model_snapshot") or {}
+                    ),
+                    model_execution=get_llm_execution_snapshot(llm),
+                )
+            evaluation = await asyncio.to_thread(
+                self.evaluate,
+                str(question["_id"]),
+                evaluation_payload,
                 job.get("requested_by_user_id"),
             )
             finished_at = utc_now()
-            self.db.evaluation_jobs.update_one(
-                {"_id": job["_id"], "status": "PROCESSING"},
+            await asyncio.to_thread(
+                self.db.evaluation_jobs.update_one,
+                {
+                    "_id": job["_id"],
+                    "status": "PROCESSING",
+                    "locked_by": worker_id,
+                },
                 {
                     "$set": {
                         "status": "COMPLETED",
@@ -875,23 +1251,33 @@ class QuestionWorkflowService:
                             "color": evaluation.get("color"),
                         },
                         "duration_ms": duration_ms,
+                        "model_execution": get_llm_execution_snapshot(llm),
                         "finished_at": finished_at,
+                        "expires_at": finished_at + timedelta(days=settings.job_retention_days),
                         "updated_at": finished_at,
-                    }
+                    },
+                    "$unset": {
+                        "locked_by": "",
+                        "lease_expires_at": "",
+                        "heartbeat_at": "",
+                        "next_attempt_at": "",
+                    },
                 },
             )
             return evaluation
         except RuntimeError as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             if str(exc) == "VERSION_CONFLICT":
-                return self._mark_evaluation_job_error(
+                return await asyncio.to_thread(
+                    self._mark_evaluation_job_error,
                     job,
                     "Phiên bản câu hỏi đã thay đổi trong lúc AI đánh giá",
                     status="STALE",
                     raw_model_response=raw_model_response,
                     duration_ms=duration_ms,
                 )
-            return self._mark_evaluation_job_error(
+            return await asyncio.to_thread(
+                self._retry_or_dead_letter_evaluation_job,
                 job,
                 str(exc),
                 raw_model_response=raw_model_response,
@@ -899,7 +1285,8 @@ class QuestionWorkflowService:
             )
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
-            return self._mark_evaluation_job_error(
+            return await asyncio.to_thread(
+                self._retry_or_dead_letter_evaluation_job,
                 job,
                 str(exc),
                 raw_model_response=raw_model_response,
@@ -1118,10 +1505,73 @@ class QuestionWorkflowService:
             )
         return serialize_question(updated, version)
 
+    def get_review_draft(self, question_id: str, current_user: CurrentUser) -> dict | None:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        draft = self.db.question_review_drafts.find_one(
+            {
+                "question_id": question["_id"],
+                "reviewer_user_id": current_user.id,
+            }
+        )
+        if not draft:
+            return None
+        draft["is_stale"] = draft.get("question_version_id") != version["_id"]
+        return json_safe(draft)
+
+    def save_review_draft(
+        self,
+        question_id: str,
+        payload: ReviewDraftUpsertRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        if question["current_version"] != payload.expected_version:
+            raise RuntimeError("VERSION_CONFLICT")
+        now = utc_now()
+        draft = self.db.question_review_drafts.find_one_and_update(
+            {
+                "question_id": question["_id"],
+                "reviewer_user_id": current_user.id,
+            },
+            {
+                "$set": {
+                    "schema_version": SCHEMA_VERSION,
+                    "question_version_id": version["_id"],
+                    "question_version": version["version"],
+                    "decision": payload.decision,
+                    "draft": payload.draft,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "question_id": question["_id"],
+                    "reviewer_user_id": current_user.id,
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return json_safe(draft)
+
+    def delete_review_draft(self, question_id: str, current_user: CurrentUser) -> bool:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        result = self.db.question_review_drafts.delete_one(
+            {
+                "question_id": question["_id"],
+                "reviewer_user_id": current_user.id,
+            }
+        )
+        return bool(result.deleted_count)
+
     def review(self, question_id: str, payload: ReviewCreateRequest, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
+        if question.get("review_status") != "PENDING":
+            raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể được kiểm duyệt")
         if (
             payload.decision == "APPROVED"
             and question["evaluation_status"] != "PASSED"
@@ -1268,13 +1718,20 @@ class QuestionWorkflowService:
                 review=review,
                 actor_user_id=current_user.id,
             )
+        if hasattr(self.db, "question_review_drafts"):
+            self.db.question_review_drafts.delete_one(
+                {
+                    "question_id": question["_id"],
+                    "reviewer_user_id": current_user.id,
+                }
+            )
         return json_safe(review)
 
     def list_comments(self, question_id: str, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
         comments = list(
-            self.db.question_comments.find({"question_id": question["_id"]})
+            self.db.question_comments.find({"question_id": question["_id"], "deleted_at": None})
             .sort("created_at", 1)
         )
         return {"items": [json_safe(comment) for comment in comments]}
@@ -1361,6 +1818,83 @@ class QuestionWorkflowService:
             ]
         )
         return json_safe(comment)
+
+    def update_comment(
+        self,
+        question_id: str,
+        comment_id: str,
+        payload: QuestionCommentUpdateRequest,
+        current_user: CurrentUser,
+    ) -> dict:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        query = {
+            "_id": object_id(comment_id, "comment_id"),
+            "question_id": question["_id"],
+            "deleted_at": None,
+        }
+        if current_user.role != "Admin":
+            query["author_user_id"] = current_user.id
+        now = utc_now()
+        updated = self.db.question_comments.find_one_and_update(
+            query,
+            {"$set": {"body": payload.body.strip(), "updated_at": now, "edited_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Bạn chỉ có thể sửa bình luận của mình")
+        self.db.audit_logs.insert_one(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "actor": {"type": "USER", "user_id": current_user.id, "model_id": None, "service_name": None},
+                "entity": {"type": "QUESTION", "id": question["_id"], "version_id": version["_id"]},
+                "action": "QUESTION_COMMENT_UPDATED",
+                "changes": [],
+                "before_hash": version["content_hash"],
+                "after_hash": version["content_hash"],
+                "metadata": {"comment_id": updated["_id"]},
+                "created_at": now,
+            }
+        )
+        return json_safe(updated)
+
+    def delete_comment(
+        self,
+        question_id: str,
+        comment_id: str,
+        current_user: CurrentUser,
+    ) -> bool:
+        question, version = self._pair(question_id)
+        self._ensure_read_access(question, version, current_user)
+        query = {
+            "_id": object_id(comment_id, "comment_id"),
+            "question_id": question["_id"],
+            "deleted_at": None,
+        }
+        if current_user.role != "Admin":
+            query["author_user_id"] = current_user.id
+        now = utc_now()
+        updated = self.db.question_comments.find_one_and_update(
+            query,
+            {"$set": {"body": "", "deleted_at": now, "deleted_by_user_id": current_user.id, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Bạn chỉ có thể xóa bình luận của mình")
+        self.db.audit_logs.insert_one(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "actor": {"type": "USER", "user_id": current_user.id, "model_id": None, "service_name": None},
+                "entity": {"type": "QUESTION", "id": question["_id"], "version_id": version["_id"]},
+                "action": "QUESTION_COMMENT_DELETED",
+                "changes": [],
+                "before_hash": version["content_hash"],
+                "after_hash": version["content_hash"],
+                "metadata": {"comment_id": updated["_id"]},
+                "created_at": now,
+            }
+        )
+        return True
 
     def set_secondary_review(
         self,
@@ -1903,6 +2437,10 @@ class QuestionWorkflowService:
         calibration_disagreements = 0
         ai_failed_but_approved = 0
         ai_passed_but_not_approved = 0
+        criterion_calibration = {
+            key: {"sample_size": 0, "agreements": 0, "disagreements": 0}
+            for key in REVIEW_CRITERION_KEYS
+        }
         for review in reviews:
             evaluation = evaluation_map.get(review.get("question_version_id"))
             if not evaluation:
@@ -1918,6 +2456,30 @@ class QuestionWorkflowService:
                     ai_failed_but_approved += 1
                 else:
                     ai_passed_but_not_approved += 1
+            review_form = review.get("review_form") or {}
+            human_by_key = {
+                item.get("key"): item.get("rating")
+                for item in review_form.get("criterion_assessments") or []
+                if item.get("key") in criterion_calibration
+            }
+            if not human_by_key:
+                for item in review_form.get("checklist") or []:
+                    key = LEGACY_REVIEW_CRITERION_MAP.get(item.get("key"), item.get("key"))
+                    if key in criterion_calibration:
+                        human_by_key[key] = "PASS" if item.get("passed") else "FAIL"
+            evaluation_scores = evaluation.get("scores") or {}
+            for key, human_rating in human_by_key.items():
+                ai_score = evaluation_scores.get(key)
+                if not isinstance(ai_score, (int, float)) or human_rating == "NO_DATA":
+                    continue
+                ai_positive = ai_score >= DEFAULT_THRESHOLDS["pass_min"]
+                human_positive = human_rating == "PASS"
+                item = criterion_calibration[key]
+                item["sample_size"] += 1
+                if ai_positive == human_positive:
+                    item["agreements"] += 1
+                else:
+                    item["disagreements"] += 1
 
         audit_match: dict = {
             "action": {"$in": ["QUESTION_APPROVED", "QUESTION_REJECTED", "QUESTION_NEEDS_REVISION"]},
@@ -2000,6 +2562,17 @@ class QuestionWorkflowService:
             "disagreements": calibration_disagreements,
             "ai_failed_but_approved": ai_failed_but_approved,
             "ai_passed_but_not_approved": ai_passed_but_not_approved,
+            "criteria": {
+                key: {
+                    **value,
+                    "agreement_rate": (
+                        round(value["agreements"] / value["sample_size"], 3)
+                        if value["sample_size"]
+                        else None
+                    ),
+                }
+                for key, value in criterion_calibration.items()
+            },
         }
         return json_safe(
             {
@@ -2018,6 +2591,17 @@ def get_workflow_service() -> QuestionWorkflowService:
     return QuestionWorkflowService(get_database())
 
 
-async def process_evaluation_job_background(job_id: str) -> None:
+async def process_evaluation_job_background(job_id: str, worker_id: str) -> None:
+    from core.job_worker import maintain_lease
+
+    service = get_workflow_service()
+    lease_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        maintain_lease(lambda: service.heartbeat_evaluation_job(job_id, worker_id), lease_stop)
+    )
     async with evaluation_semaphore:
-        await get_workflow_service().process_evaluation_job(job_id)
+        try:
+            await service.process_evaluation_job(job_id, worker_id)
+        finally:
+            lease_stop.set()
+            await heartbeat_task

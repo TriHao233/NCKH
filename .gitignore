@@ -46,3 +46,8 @@ Thumbs.db
 # ===========================
 /rag-ocr-pipeline/
 /docs/
+
+# Python
+__pycache__/
+*.pyc
+IMPLEMENTATION_CHANGES.md

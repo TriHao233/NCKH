@@ -139,6 +139,9 @@ class QuestionRepository(Protocol):
         submitted_from: datetime | None = None,
         submitted_to: datetime | None = None,
         include_status_counts: bool = False,
+        sort_by: str = "priority",
+        source_presence: str | None = None,
+        secondary_status: str | None = None,
     ) -> tuple[list[tuple[dict, dict]], int] | tuple[list[tuple[dict, dict]], int, dict[str, int]]: ...
 
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]: ...
@@ -173,6 +176,13 @@ class QuestionReferenceRepository(Protocol):
 
     def find_document(self, document_id: ObjectId) -> dict | None: ...
 
+    def document_contains_text(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId | None,
+        text: str,
+    ) -> bool: ...
+
     def find_pages(
         self,
         document_id: ObjectId,
@@ -198,6 +208,28 @@ class MongoQuestionReferenceRepository:
                 "archived_at": None,
             }
         )
+
+    def document_contains_text(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId | None,
+        text: str,
+    ) -> bool:
+        normalized_text = " ".join(str(text or "").split()).casefold()
+        if not normalized_text:
+            return False
+        query: dict = {"document_id": document_id}
+        if ocr_job_id is not None:
+            query["ocr_job_id"] = ocr_job_id
+        pages = self.db.document_pages.find(
+            query,
+            {"cleaned_text": 1, "raw_text": 1, "page_number": 1},
+        ).sort("page_number", 1)
+        document_text = " ".join(
+            " ".join(str(page.get("cleaned_text") or page.get("raw_text") or "").split())
+            for page in pages
+        ).casefold()
+        return normalized_text in document_text
 
     def find_pages(
         self,
@@ -269,14 +301,32 @@ class MongoQuestionRepository:
         submitted_from: datetime | None = None,
         submitted_to: datetime | None = None,
         include_status_counts: bool = False,
+        sort_by: str = "priority",
+        source_presence: str | None = None,
+        secondary_status: str | None = None,
     ) -> tuple[list[tuple[dict, dict]], int] | tuple[list[tuple[dict, dict]], int, dict[str, int]]:
         match: dict = {"schema_version": SCHEMA_VERSION, "lifecycle_status": "ACTIVE"}
-        if review_status and not include_status_counts:
-            match["review_status"] = review_status
+        review_status_condition = (
+            {"$in": ["APPROVED", "NEEDS_REVISION", "REJECTED"]}
+            if review_status == "PROCESSED"
+            else review_status
+        )
+
+        if review_status_condition and not include_status_counts:
+            match["review_status"] = review_status_condition
         if publication_status:
             match["publication_status"] = publication_status
         if evaluation_status:
-            match["evaluation_status"] = evaluation_status
+            evaluation_statuses = [
+                item.strip().upper()
+                for item in str(evaluation_status).split(",")
+                if item.strip()
+            ]
+            match["evaluation_status"] = (
+                {"$in": evaluation_statuses}
+                if len(evaluation_statuses) > 1
+                else evaluation_statuses[0]
+            )
         if assignment_status:
             match["review_assignment.status"] = assignment_status
         if assigned_reviewer_user_id is not None:
@@ -289,6 +339,8 @@ class MongoQuestionRepository:
             match["updated_at"] = {"$lte": waiting_since}
         if overdue_at is not None:
             match["review_assignment.lock_expires_at"] = {"$lte": overdue_at}
+        if secondary_status:
+            match["secondary_review.status"] = secondary_status
         if created_from is not None or created_to is not None:
             created_at_match: dict = {}
             if created_from is not None:
@@ -375,6 +427,10 @@ class MongoQuestionRepository:
             version_match["version.classification.difficulty"] = difficulty
         if version_match:
             pipeline.append({"$match": version_match})
+        if source_presence == "WITH_SOURCE":
+            pipeline.append({"$match": {"version.sources.0": {"$exists": True}}})
+        elif source_presence == "MISSING_SOURCE":
+            pipeline.append({"$match": {"version.sources.0": {"$exists": False}}})
         if search:
             pipeline.append(
                 {
@@ -387,13 +443,46 @@ class MongoQuestionRepository:
                 }
             )
         status_counts_pipeline = deepcopy(pipeline) if include_status_counts else None
-        if review_status and include_status_counts:
-            pipeline[0]["$match"]["review_status"] = review_status
+        if review_status_condition and include_status_counts:
+            pipeline[0]["$match"]["review_status"] = review_status_condition
+        sort_spec = {
+            "oldest": {"review_submission.submitted_at": 1, "_id": 1},
+            "newest": {"review_submission.submitted_at": -1, "_id": -1},
+            "ai_lowest": {"quality_summary.overall_score": 1, "review_submission.submitted_at": 1},
+            "updated": {"updated_at": -1, "_id": -1},
+        }.get(sort_by)
+        if sort_spec is None:
+            pipeline.append(
+                {
+                    "$addFields": {
+                        "review_priority": {
+                            "$switch": {
+                                "branches": [
+                                    {
+                                        "case": {
+                                            "$and": [
+                                                {"$eq": ["$review_assignment.status", "IN_REVIEW"]},
+                                                {"$lte": ["$review_assignment.lock_expires_at", utc_now()]},
+                                            ]
+                                        },
+                                        "then": 0,
+                                    },
+                                    {"case": {"$eq": ["$secondary_review.status", "AWAITING_SECONDARY"]}, "then": 1},
+                                    {"case": {"$eq": ["$quality_summary.color", "RED"]}, "then": 2},
+                                    {"case": {"$in": ["$evaluation_status", ["NOT_STARTED", "ERROR", "STALE"]]}, "then": 3},
+                                ],
+                                "default": 4,
+                            }
+                        }
+                    }
+                }
+            )
+            sort_spec = {"review_priority": 1, "review_submission.submitted_at": 1, "_id": 1}
         pipeline.append(
             {
                 "$facet": {
                     "items": [
-                        {"$sort": {"updated_at": -1, "_id": -1}},
+                        {"$sort": sort_spec},
                         {"$skip": (page - 1) * page_size},
                         {"$limit": page_size},
                     ],
@@ -443,16 +532,13 @@ class MongoQuestionRepository:
         new_version["question_id"] = question["_id"]
         new_version["version"] = expected_version + 1
         now = utc_now()
-        next_review_status = (
-            question["review_status"]
-            if question["review_status"] in {"DRAFT", "NEEDS_REVISION"}
-            else "PENDING"
-        )
         aggregate_fields = {
             "current_version": expected_version + 1,
             "current_version_id": new_version["_id"],
             "evaluation_status": "NOT_STARTED",
-            "review_status": next_review_status,
+            # Editing always creates a draft version.  A new version must be
+            # submitted explicitly instead of silently re-entering review.
+            "review_status": "DRAFT",
             "publication_status": (
                 "STALE"
                 if question["publication_status"] == "PUBLISHED"
@@ -468,16 +554,14 @@ class MongoQuestionRepository:
                 "last_released_at": None,
                 "release_reason": None,
             },
+            "review_submission": {},
+            "secondary_review": {},
             "quality_summary": {},
             "subject_id": (
                 ((new_version.get("classification") or {}).get("subject") or {}).get("id")
             ),
             "updated_at": now,
         }
-        if next_review_status == "PENDING" and review_submission:
-            normalized_submission = deepcopy(review_submission)
-            normalized_submission["submitted_at"] = now
-            aggregate_fields["review_submission"] = normalized_submission
         with mongo_transaction() as session:
             self.db.question_versions.insert_one(new_version, session=session)
             result = self.db.questions.update_one(

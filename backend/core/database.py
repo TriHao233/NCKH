@@ -82,11 +82,17 @@ def supports_transactions() -> bool:
 def mongo_transaction() -> Iterator[ClientSession | None]:
     """Run an atomic write unit when MongoDB supports transactions.
 
-    Local standalone MongoDB instances cannot start transactions. In that
-    environment callers receive ``None`` and PyMongo executes the same writes
-    without a session, which keeps the OCR -> chunk -> generate flow usable.
+    Local standalone MongoDB instances cannot start transactions. When the
+    requirement is explicitly disabled for development, callers receive
+    ``None`` and PyMongo executes writes without a session.
     """
     if not supports_transactions():
+        if settings.require_mongo_transactions:
+            raise RuntimeError(
+                "MongoDB transactions are required, but the connected server is not "
+                "a replica set or mongos. Configure MONGO_URI with replicaSet or set "
+                "REQUIRE_MONGO_TRANSACTIONS=false only for local development."
+            )
         yield None
         return
 

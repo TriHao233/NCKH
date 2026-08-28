@@ -7,7 +7,10 @@ import {
   exportQuestionMoodle,
   fetchQuestionSourcePdf,
   addQuestionComment,
+  deleteQuestionReviewDraft,
+  deleteQuestionComment,
   getQuestion,
+  getQuestionReviewDraft,
   getReviewDashboard,
   getQuestionSources,
   listQuestionEvaluations,
@@ -18,11 +21,13 @@ import {
   publishQuestionToMoodle,
   releaseQuestionReview,
   reviewQuestion,
+  saveQuestionReviewDraft,
+  updateQuestionComment,
 } from '../api/questions';
-import { listSubjects } from '../api/catalog';
+import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
-import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import {
   DEFAULT_REVIEW_COMMENT_TEMPLATES,
   encodeSavedReviewTemplates,
@@ -30,11 +35,13 @@ import {
   reviewTemplateStorageKey,
   templatesForDecision,
 } from '../utils/reviewCommentTemplates';
+import { evaluationInsights, mergeAiSuggestionsIntoDraft } from '../utils/reviewAiSuggestions';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
   all: 'Tất cả',
   PENDING: 'Chờ duyệt',
+  PROCESSED: 'Đã xử lý',
   APPROVED: 'Đã duyệt',
   NEEDS_REVISION: 'Cần sửa',
   REJECTED: 'Từ chối',
@@ -55,20 +62,20 @@ const COLOR_LABEL = {
 
 const EVALUATION_STATUS_LABEL = {
   NOT_STARTED: 'Chưa đánh giá',
-  QUEUED: 'Chờ AI đánh giá',
-  PROCESSING: 'Đang đánh giá',
-  RUNNING: 'Đang đánh giá',
-  PASSED: 'Đạt AI',
-  FAILED: 'Chưa đạt AI',
-  ERROR: 'AI lỗi',
+  QUEUED: 'Đang chờ AI đánh giá',
+  PROCESSING: 'Đang được AI đánh giá',
+  RUNNING: 'Đang được AI đánh giá',
+  PASSED: 'AI đề xuất đạt',
+  FAILED: 'AI đề xuất xem lại',
+  ERROR: 'Chưa đánh giá được',
   STALE: 'Cần đánh giá lại',
 };
 
 const PUBLICATION_STATUS_LABEL = {
-  NOT_PUBLISHED: 'Chưa ghi mô phỏng',
-  PENDING: 'Đang chờ',
-  PUBLISHED: 'Đã ghi mô phỏng',
-  FAILED: 'Mô phỏng lỗi',
+  NOT_PUBLISHED: 'Chưa đưa lên Moodle',
+  PENDING: 'Đang đưa lên Moodle',
+  PUBLISHED: 'Đã đưa lên Moodle',
+  FAILED: 'Chưa đưa lên được',
 };
 
 const ASSIGNMENT_STATUS_LABEL = {
@@ -104,6 +111,56 @@ const SCORE_COMPONENTS = [
   },
 ];
 
+const REVIEW_CRITERIA = SCORE_COMPONENTS.map((item) => ({
+  ...item,
+  description: {
+    faithfulness: 'Câu hỏi, đáp án và giải thích có căn cứ trong tài liệu nguồn.',
+    contextual_relevancy: 'Câu hỏi tập trung vào nội dung quan trọng của môn học.',
+    answer_relevancy: 'Đáp án đúng, rõ ràng và phù hợp với dạng câu hỏi.',
+    bloom_alignment: 'Thao tác tư duy khớp cấp Bloom đã gắn.',
+    clo_alignment: 'Câu hỏi thực sự đo được CLO đã chọn.',
+  }[item.key],
+}));
+
+const CRITERION_RATING_LABEL = {
+  PASS: 'Đạt',
+  REVIEW: 'Cần xem lại',
+  FAIL: 'Không đạt',
+  NO_DATA: 'Không đủ dữ liệu',
+};
+
+const SECONDARY_REVIEW_STATUS_LABEL = {
+  NOT_REQUIRED: 'Không yêu cầu',
+  AWAITING_SECONDARY: 'Đang chờ duyệt lần hai',
+  COMPLETED: 'Đã duyệt lần hai',
+};
+
+const ISSUE_SEVERITY_LABEL = {
+  LOW: 'Nhẹ',
+  MEDIUM: 'Vừa',
+  HIGH: 'Nghiêm trọng',
+};
+
+const AI_ACTION_LABEL = {
+  APPROVE: 'Có thể duyệt',
+  NEEDS_REVISION: 'Nên yêu cầu sửa',
+  REJECT: 'Nên từ chối',
+};
+
+const AI_SEVERITY_LABEL = {
+  LOW: 'Lỗi nhẹ',
+  MEDIUM: 'Lỗi vừa',
+  HIGH: 'Lỗi nghiêm trọng',
+};
+
+const USER_ROLE_LABEL = {
+  Admin: 'Quản trị viên',
+  Teacher: 'Giảng viên',
+  Reviewer: 'Người duyệt',
+  Student: 'Sinh viên',
+  User: 'Người dùng',
+};
+
 const REVIEW_RUBRIC = [
   { key: 'source_alignment', label: 'Bám sát nguồn' },
   { key: 'answer_correctness', label: 'Đáp án đúng' },
@@ -111,6 +168,20 @@ const REVIEW_RUBRIC = [
   { key: 'language_quality', label: 'Diễn đạt rõ' },
   { key: 'moodle_readiness', label: 'Sẵn sàng Moodle' },
 ];
+
+const QUESTION_TYPE_GUIDANCE = {
+  dung_sai: [
+    'Mệnh đề phải hoàn chỉnh và chỉ có thể hoàn toàn Đúng hoặc hoàn toàn Sai.',
+    'Từ khóa trọng tâm và dữ kiện bị thay đổi phải truy ra được trong nguồn.',
+    'Đáp án chuẩn hóa A = Đúng, B = Sai; giải thích nêu rõ vì sao.',
+  ],
+  trac_nghiem: ['Chỉ có một đáp án đúng nhất.', 'Phương án nhiễu cùng loại, hợp lý và không làm lộ đáp án.'],
+  nhieu_lua_chon: ['Có ít nhất hai đáp án đúng độc lập.', 'Không có lựa chọn bao hàm làm số đáp án đúng bị mơ hồ.'],
+  dien_khuyet: ['Có một đáp án xác định.', 'Không hỏi từ nối hoặc chi tiết vụn vặt.'],
+  ghep_cot: ['Hai cột cùng loại và quan hệ ghép rõ ràng.', 'Không thể ghép chỉ bằng mẹo hình thức.'],
+  sap_xep: ['Nguồn thực sự chứa quy trình hoặc chuỗi phụ thuộc.', 'Chỉ có một thứ tự hợp lý.'],
+  tinh_huong: ['Tình huống đủ dữ kiện để ra quyết định.', 'Đáp án đòi hỏi suy luận, không chỉ nhớ định nghĩa.'],
+};
 
 function defaultReviewDraft(question, decision) {
   return {
@@ -125,6 +196,13 @@ function defaultReviewDraft(question, decision) {
       ...item,
       passed: decision === 'APPROVED',
       note: '',
+    })),
+    criteria: REVIEW_CRITERIA.map((item) => ({
+      ...item,
+      rating: decision === 'APPROVED' ? 'PASS' : 'REVIEW',
+      note: '',
+      source_chunk_id: '',
+      page_number: '',
     })),
     issues: [],
   };
@@ -146,6 +224,12 @@ function loadReviewDraft(question, decision) {
       checklist: REVIEW_RUBRIC.map((item) => {
         const savedItem = (parsed.checklist || []).find((entry) => entry.key === item.key);
         return savedItem ? { ...item, ...savedItem } : { ...item, passed: false, note: '' };
+      }),
+      criteria: REVIEW_CRITERIA.map((item) => {
+        const savedItem = (parsed.criteria || []).find((entry) => entry.key === item.key);
+        return savedItem
+          ? { ...item, ...savedItem }
+          : { ...item, rating: decision === 'APPROVED' ? 'PASS' : 'REVIEW', note: '', source_chunk_id: '', page_number: '' };
       }),
       issues: Array.isArray(parsed.issues)
         ? parsed.issues.map((issue, index) => ({ id: issue.id || `issue-${index}`, ...issue }))
@@ -185,7 +269,7 @@ function percent(value) {
 }
 
 function hours(value) {
-  return typeof value === 'number' ? `${value.toFixed(1)}h` : '--';
+  return typeof value === 'number' ? `${value.toFixed(1)} giờ` : '--';
 }
 
 function formatDate(value) {
@@ -195,19 +279,51 @@ function formatDate(value) {
   return date.toLocaleString('vi-VN');
 }
 
+function textList(value) {
+  const values = Array.isArray(value) ? value : (value ? [value] : []);
+  return values.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function waitingTime(value) {
+  if (!value) return '--';
+  const submitted = new Date(value);
+  if (Number.isNaN(submitted.getTime())) return '--';
+  const hoursWaiting = Math.max(0, (Date.now() - submitted.getTime()) / 3600000);
+  if (hoursWaiting < 24) return `${Math.max(1, Math.floor(hoursWaiting))} giờ`;
+  return `${Math.floor(hoursWaiting / 24)} ngày`;
+}
+
+function bloomDisplay(classification = {}) {
+  const bloom = classification.bloom || {};
+  if (!bloom.level) return 'Bloom chưa gắn';
+  return `${bloom.level}. ${bloom.name || BLOOM_LEVELS.find((item) => item.level === bloom.level)?.label?.replace(/^\d+\.\s*/, '') || 'Bloom'}`;
+}
+
 function evaluationModeLabel(mode) {
-  if (mode === 'local_llm') return 'AI cục bộ';
-  if (mode === 'heuristic_fallback') return 'Đánh giá dự phòng';
-  if (mode === 'heuristic') return 'Chấm nhanh nội bộ';
-  return mode || '--';
+  if (mode === 'local_llm') return 'AI của hệ thống';
+  if (mode === 'heuristic_fallback') return 'Hệ thống đánh giá dự phòng';
+  if (mode === 'heuristic') return 'Hệ thống chấm nhanh';
+  return mode ? 'Hệ thống hỗ trợ' : '--';
+}
+
+function secondaryReviewStatusLabel(value) {
+  return SECONDARY_REVIEW_STATUS_LABEL[value] || 'Không yêu cầu';
+}
+
+function issueSeverityLabel(value) {
+  return ISSUE_SEVERITY_LABEL[value] || 'Vừa';
+}
+
+function userRoleLabel(value) {
+  return USER_ROLE_LABEL[value] || 'Người dùng';
 }
 
 function qualityColorLabel(value) {
-  return COLOR_LABEL[value] || value || '--';
+  return COLOR_LABEL[value] || 'Chưa xác định';
 }
 
 function evaluationStatusLabel(value) {
-  return EVALUATION_STATUS_LABEL[value] || value || '--';
+  return EVALUATION_STATUS_LABEL[value] || 'Chưa đánh giá';
 }
 
 function isEvaluationBusy(question) {
@@ -219,7 +335,7 @@ function canQueueEvaluation(question) {
 }
 
 function publicationStatusLabel(value) {
-  return PUBLICATION_STATUS_LABEL[value] || value || '--';
+  return PUBLICATION_STATUS_LABEL[value] || 'Chưa xác định';
 }
 
 function assignmentOf(question) {
@@ -255,7 +371,7 @@ function assignmentStatusLabel(question, user) {
   }
   if (assignment.status === 'IN_REVIEW') return mine ? 'Tôi đang xử lý' : 'Đang xử lý';
   if (assignment.status === 'ASSIGNED') return mine ? 'Đã gán cho tôi' : 'Đã gán';
-  return ASSIGNMENT_STATUS_LABEL[assignment.status] || assignment.status || 'Chưa nhận';
+  return ASSIGNMENT_STATUS_LABEL[assignment.status] || 'Chưa nhận';
 }
 
 function evaluatorModelLabel(model = {}) {
@@ -290,12 +406,6 @@ function subjectOptionLabel(subject) {
 
 function userOptionLabel(option) {
   return option?.display_name || option?.email || refId(option);
-}
-
-function shortId(value) {
-  const text = refId(value);
-  if (!text) return '--';
-  return text.length > 12 ? `${text.slice(0, 6)}...${text.slice(-4)}` : text;
 }
 
 function pageRangeLabel(pageRange = {}) {
@@ -340,7 +450,7 @@ function SourceText({ source, page }) {
           <mark>{excerpt}</mark>
         </p>
       )}
-      <p>{pageText || 'Chưa có OCR text cho trang này.'}</p>
+      <p>{pageText || 'Chưa trích xuất được nội dung của trang này.'}</p>
     </div>
   );
 }
@@ -368,12 +478,17 @@ function ReviewQueuePage() {
   const [minScore, setMinScore] = useState('');
   const [submittedFromFilter, setSubmittedFromFilter] = useState('');
   const [submittedToFilter, setSubmittedToFilter] = useState('');
+  const [sortMode, setSortMode] = useState('priority');
+  const [sourcePresenceFilter, setSourcePresenceFilter] = useState('all');
+  const [secondaryStatusFilter, setSecondaryStatusFilter] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [catalogSubjects, setCatalogSubjects] = useState([]);
   const [catalogFilterError, setCatalogFilterError] = useState('');
+  const [evaluationModels, setEvaluationModels] = useState([]);
+  const [evaluationModelCode, setEvaluationModelCode] = useState('');
   const [teacherOptions, setTeacherOptions] = useState([]);
   const [teacherFilterError, setTeacherFilterError] = useState('');
   const [reviewerOptions, setReviewerOptions] = useState([]);
@@ -386,6 +501,8 @@ function ReviewQueuePage() {
   const [commentMentionIds, setCommentMentionIds] = useState([]);
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentError, setCommentError] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState('');
+  const [editingCommentBody, setEditingCommentBody] = useState('');
   const [publications, setPublications] = useState([]);
   const [sourceViewer, setSourceViewer] = useState(null);
   const [sourceLoading, setSourceLoading] = useState(false);
@@ -398,6 +515,8 @@ function ReviewQueuePage() {
   const [busyId, setBusyId] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
   const [reviewDraft, setReviewDraft] = useState(null);
+  const [serverReviewDraft, setServerReviewDraft] = useState(null);
+  const [draftSaveState, setDraftSaveState] = useState('');
   const [reviewFormError, setReviewFormError] = useState('');
   const [reviewTemplates, setReviewTemplates] = useState([...DEFAULT_REVIEW_COMMENT_TEMPLATES]);
   const [templateTitle, setTemplateTitle] = useState('');
@@ -407,6 +526,9 @@ function ReviewQueuePage() {
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
+  const [workspaceView, setWorkspaceView] = useState('queue');
+  const [detailView, setDetailView] = useState('question');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -437,6 +559,9 @@ function ReviewQueuePage() {
         overdueOnly,
         submittedFrom: submittedFromFilter || undefined,
         submittedTo: submittedToFilter || undefined,
+        sortBy: sortMode,
+        sourcePresence: sourcePresenceFilter === 'all' ? undefined : sourcePresenceFilter,
+        secondaryStatus: secondaryStatusFilter === 'all' ? undefined : secondaryStatusFilter,
       });
       const items = result.items || [];
       setQuestions(items);
@@ -460,6 +585,22 @@ function ReviewQueuePage() {
     } catch (err) {
       setCatalogFilterError(err.message || 'Không tải được bộ lọc môn học');
       setCatalogSubjects([]);
+    }
+  };
+
+  const fetchEvaluationModels = async () => {
+    try {
+      const result = await listAvailableAiModels('QUESTION_EVALUATION');
+      const items = result.items || [];
+      setEvaluationModels(items);
+      setEvaluationModelCode((current) => (
+        items.some((item) => item.code === current)
+          ? current
+          : (result.default_model_code || items[0]?.code || '')
+      ));
+    } catch {
+      setEvaluationModels([]);
+      setEvaluationModelCode('');
     }
   };
 
@@ -501,6 +642,9 @@ function ReviewQueuePage() {
   const loadHistory = async (question) => {
     setSelected(question);
     setReviewDraft(null);
+    setServerReviewDraft(null);
+    setDraftSaveState('');
+    setDetailView('question');
     setAssignmentDraft(null);
     setReviewFormError('');
     setAssignmentError('');
@@ -508,6 +652,8 @@ function ReviewQueuePage() {
     setCommentBody('');
     setCommentMentionIds([]);
     setCommentError('');
+    setEditingCommentId('');
+    setEditingCommentBody('');
     setHistoryLoading(true);
     setSourceLoading(true);
     setSourceError('');
@@ -517,18 +663,20 @@ function ReviewQueuePage() {
     setActiveSourceIndex(0);
     setActiveSourcePage(1);
     try {
-      const [evaluationResult, reviewResult, publicationResult, commentResult, sourceResult] = await Promise.all([
+      const [evaluationResult, reviewResult, publicationResult, commentResult, sourceResult, draftResult] = await Promise.all([
         listQuestionEvaluations(question.id),
         listQuestionReviews(question.id),
         listQuestionMoodlePublications(question.id),
         listQuestionComments(question.id),
         getQuestionSources(question.id),
+        getQuestionReviewDraft(question.id),
       ]);
       setEvaluations(evaluationResult.items || []);
       setReviews(reviewResult.items || []);
       setPublications(publicationResult.items || []);
       setComments(commentResult.items || []);
       setSourceViewer(sourceResult);
+      setServerReviewDraft(draftResult.item || null);
       const firstSource = sourceResult.items?.[0];
       setActiveSourcePage(firstSourcePage(firstSource));
       setSourceLoading(false);
@@ -580,15 +728,18 @@ function ReviewQueuePage() {
     minScore,
     submittedFromFilter,
     submittedToFilter,
+    sortMode,
+    sourcePresenceFilter,
+    secondaryStatusFilter,
     searchTerm,
   ]);
 
   useEffect(() => {
     fetchCatalogFilters();
+    fetchEvaluationModels();
     fetchTeacherFilters();
     fetchReviewerOptions();
     fetchDashboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -646,7 +797,6 @@ function ReviewQueuePage() {
       }
     };
     openLinkedQuestion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname, location.search, navigate, questions, openedDeepLinkId]);
 
   useEffect(() => () => {
@@ -664,11 +814,29 @@ function ReviewQueuePage() {
   }, [reviewDraft]);
 
   useEffect(() => {
+    if (!reviewDraft?.questionId || !selected || reviewDraft.questionId !== selected.id) return undefined;
+    setDraftSaveState('Đang lưu bản nháp...');
+    const handle = setTimeout(async () => {
+      try {
+        await saveQuestionReviewDraft(selected.id, {
+          expected_version: selected.current_version,
+          decision: reviewDraft.decision,
+          draft: reviewDraft,
+        });
+        setDraftSaveState('Đã lưu bản nháp');
+      } catch (err) {
+        setDraftSaveState(err.message || 'Chưa lưu được bản nháp');
+      }
+    }, 900);
+    return () => clearTimeout(handle);
+  }, [reviewDraft, selected]);
+
+  useEffect(() => {
     const saved = parseSavedReviewTemplates(
       localStorage.getItem(reviewTemplateStorageKey(user)),
     );
     setReviewTemplates([...DEFAULT_REVIEW_COMMENT_TEMPLATES, ...saved]);
-  }, [user?.email, user?.id, user?.uid]);
+  }, [user]);
 
   const summary = useMemo(() => ({
     pending: questions.filter((item) => item.review_status === 'PENDING').length,
@@ -677,6 +845,13 @@ function ReviewQueuePage() {
     green: questions.filter((item) => item.quality_summary?.color === 'GREEN').length,
     publishable: questions.filter((item) => item.review_status === 'APPROVED' && item.publication_status !== 'PUBLISHED').length,
   }), [questions, user]);
+
+  const queueErrors = useMemo(() => Array.from(new Set([
+    catalogFilterError,
+    teacherFilterError,
+    reviewerFilterError,
+    error,
+  ].filter(Boolean))), [catalogFilterError, teacherFilterError, reviewerFilterError, error]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -728,13 +903,18 @@ function ReviewQueuePage() {
     );
   };
 
-  const openReviewForm = (question, decision) => {
+  const openReviewForm = (question, decision, { aiEvaluation = null } = {}) => {
     if (!canReviewQuestion(question)) {
       alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
     }
     setReviewFormError('');
-    setReviewDraft(loadReviewDraft(question, decision));
+    const localDraft = loadReviewDraft(question, decision);
+    const remoteDraft = serverReviewDraft?.decision === decision && !serverReviewDraft?.is_stale
+      ? serverReviewDraft.draft
+      : null;
+    const draft = remoteDraft ? { ...localDraft, ...remoteDraft } : localDraft;
+    setReviewDraft(aiEvaluation ? mergeAiSuggestionsIntoDraft(draft, aiEvaluation) : draft);
   };
 
   const updateReviewDraft = (updates) => {
@@ -787,6 +967,24 @@ function ReviewQueuePage() {
         item.key === key ? { ...item, ...updates } : item
       )),
     }));
+  };
+
+  const updateCriterion = (key, updates) => {
+    setReviewDraft((current) => ({
+      ...current,
+      criteria: current.criteria.map((item) => (
+        item.key === key ? { ...item, ...updates } : item
+      )),
+    }));
+  };
+
+  const discardReviewDraft = async () => {
+    if (!selected || !reviewDraft) return;
+    await deleteQuestionReviewDraft(selected.id).catch(() => null);
+    localStorage.removeItem(reviewDraftKey(selected.id, reviewDraft.decision));
+    setServerReviewDraft(null);
+    setReviewDraft(null);
+    setDraftSaveState('');
   };
 
   const addReviewIssue = () => {
@@ -939,6 +1137,7 @@ function ReviewQueuePage() {
       await autoEvaluateQuestion(question.id, {
         expected_version: question.current_version,
         fallback_to_heuristic: false,
+        ...(evaluationModelCode ? { evaluator_model_code: evaluationModelCode } : {}),
       });
       await refreshAfterAction(question);
     } catch (err) {
@@ -956,9 +1155,18 @@ function ReviewQueuePage() {
     }
     const revisionIssues = compactIssues(reviewDraft.issues);
     const overallNote = reviewDraft.overallNote.trim();
+    const criterionAssessments = reviewDraft.criteria || [];
+    if (criterionAssessments.length !== REVIEW_CRITERIA.length) {
+      setReviewFormError('Vui lòng đánh giá đủ 5 tiêu chí AI–người duyệt.');
+      return;
+    }
+    if (reviewDraft.decision === 'APPROVED' && criterionAssessments.some((item) => item.rating === 'FAIL')) {
+      setReviewFormError('Không thể duyệt khi còn tiêu chí “Không đạt”. Hãy chọn Cần sửa hoặc ghi nhận lại tiêu chí.');
+      return;
+    }
     const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
-      setReviewFormError('Cần ghi lý do override khi duyệt câu chưa đạt AI.');
+      setReviewFormError('Cần ghi lý do khi duyệt câu mà AI đề xuất xem lại.');
       return;
     }
     if (reviewDraft.decision === 'REJECTED' && !overallNote && revisionIssues.length === 0) {
@@ -979,6 +1187,14 @@ function ReviewQueuePage() {
           label: item.label,
           passed: Boolean(item.passed),
           note: item.note || '',
+        })),
+        criterion_assessments: criterionAssessments.map((item) => ({
+          key: item.key,
+          label: item.label,
+          rating: item.rating,
+          note: item.note || '',
+          source_chunk_id: item.source_chunk_id || null,
+          page_number: item.page_number ? Number(item.page_number) : null,
         })),
         overall_note: overallNote,
         revision_issues: revisionIssues,
@@ -1004,6 +1220,7 @@ function ReviewQueuePage() {
     setReviewFormError('');
     try {
       await reviewQuestion(selected.id, payload);
+      await deleteQuestionReviewDraft(selected.id).catch(() => null);
       localStorage.removeItem(reviewDraftKey(selected.id, reviewDraft.decision));
       setReviewDraft(null);
       await refreshAfterAction(selected);
@@ -1036,7 +1253,7 @@ function ReviewQueuePage() {
       const content = await exportQuestionMoodle(question.id, format);
       downloadMoodleExport(question, format, content);
     } catch (err) {
-      alert('Export Moodle thất bại: ' + err.message);
+      alert('Tải câu hỏi Moodle thất bại: ' + err.message);
     } finally {
       setBusyId('');
     }
@@ -1045,55 +1262,19 @@ function ReviewQueuePage() {
   const runBulkEvaluate = async () => {
     const targets = questions.filter((question) => canQueueEvaluation(question)).slice(0, 10);
     if (targets.length === 0) return;
-    if (!window.confirm(`Đưa ${targets.length} câu đang lọc vào hàng đợi AI đánh giá?`)) return;
+    if (!window.confirm(`Gửi ${targets.length} câu đang lọc để AI hỗ trợ đánh giá?`)) return;
     setBulkBusy(true);
     try {
       for (const question of targets) {
         await autoEvaluateQuestion(question.id, {
           expected_version: question.current_version,
           fallback_to_heuristic: false,
+          ...(evaluationModelCode ? { evaluator_model_code: evaluationModelCode } : {}),
         });
       }
       await Promise.all([fetchQuestions(), fetchDashboard()]);
     } catch (err) {
       alert('Đánh giá hàng loạt dừng lại: ' + err.message);
-    } finally {
-      setBulkBusy(false);
-    }
-  };
-
-  const runBulkApproveGreen = async () => {
-    const targets = questions
-      .filter((question) => (
-        canReviewQuestion(question)
-        && question.evaluation_status === 'PASSED'
-        && question.quality_summary?.color === 'GREEN'
-      ))
-      .slice(0, 10);
-    if (targets.length === 0) return;
-    const note = 'Duyệt hàng loạt các câu đạt tốt';
-    if (!window.confirm(`Duyệt ${targets.length} câu đạt tốt đang lọc?`)) return;
-    setBulkBusy(true);
-    try {
-      for (const question of targets) {
-        await reviewQuestion(question.id, {
-          expected_version: question.current_version,
-          decision: 'APPROVED',
-          note,
-          review_form: {
-            checklist: REVIEW_RUBRIC.map((item) => ({
-              ...item,
-              passed: true,
-              note: '',
-            })),
-            overall_note: note,
-            revision_issues: [],
-          },
-        });
-      }
-      await Promise.all([fetchQuestions(), fetchDashboard()]);
-    } catch (err) {
-      alert('Duyệt hàng loạt dừng lại: ' + err.message);
     } finally {
       setBulkBusy(false);
     }
@@ -1149,8 +1330,15 @@ function ReviewQueuePage() {
     return userOptionLabel(reviewerById.get(reviewerId)) || reviewerId || '--';
   };
   const latestEvidence = latestEvaluation?.evidence || {};
+  const latestFeedback = latestEvaluation?.feedback || {};
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
+  const aiInsights = evaluationInsights(latestEvaluation, SCORE_COMPONENTS);
+  const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
+  const aiMissingItems = textList(latestFeedback.missing);
+  const aiRiskItems = textList(latestEvidence.risks);
+  const aiAction = String(latestFeedback.action || '').toUpperCase();
+  const aiSeverity = String(latestFeedback.severity || '').toUpperCase();
   const qualitySummary = selected?.quality_summary || {};
   const overallScore = latestScores.overall ?? qualitySummary.overall_score;
   const evaluationColor = latestEvaluation?.color || qualitySummary.color;
@@ -1171,6 +1359,79 @@ function ReviewQueuePage() {
   const availableReviewTemplates = reviewDraft
     ? templatesForDecision(reviewTemplates, reviewDraft.decision)
     : [];
+  const activeAdvancedFilterCount = [
+    assignmentFilter !== 'all',
+    waitingFilter !== 'all',
+    overdueOnly,
+    typeFilter !== 'all',
+    bloomFilter !== 'all',
+    colorFilter !== 'all',
+    chapterFilter !== 'all',
+    cloFilter !== 'all',
+    evaluationStatusFilter !== 'all',
+    creatorFilter !== 'all',
+    sourcePresenceFilter !== 'all',
+    secondaryStatusFilter !== 'all',
+    sortMode !== 'priority',
+  ].filter(Boolean).length;
+  const switchWorkspaceView = (view) => {
+    setWorkspaceView(view);
+    setSelected(null);
+    setPage(1);
+    if (view === 'queue') setStatusFilter('PENDING');
+    if (view === 'history') setStatusFilter('PROCESSED');
+  };
+
+  const saveEditedComment = async (comment) => {
+    const body = editingCommentBody.trim();
+    if (!body || !selected) return;
+    setCommentBusy(true);
+    setCommentError('');
+    try {
+      await updateQuestionComment(selected.id, comment.id || comment._id, { body });
+      const result = await listQuestionComments(selected.id);
+      setComments(result.items || []);
+      setEditingCommentId('');
+      setEditingCommentBody('');
+    } catch (err) {
+      setCommentError(err.message || 'Không sửa được bình luận');
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+
+  const removeComment = async (comment) => {
+    if (!selected || !window.confirm('Xóa bình luận này?')) return;
+    setCommentBusy(true);
+    setCommentError('');
+    try {
+      await deleteQuestionComment(selected.id, comment.id || comment._id);
+      const result = await listQuestionComments(selected.id);
+      setComments(result.items || []);
+    } catch (err) {
+      setCommentError(err.message || 'Không xóa được bình luận');
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+  const resetAdvancedFilters = () => {
+    setAssignmentFilter('all');
+    setWaitingFilter('all');
+    setOverdueOnly(false);
+    setTypeFilter('all');
+    setBloomFilter('all');
+    setColorFilter('all');
+    setChapterFilter('all');
+    setCloFilter('all');
+    setEvaluationStatusFilter('all');
+    setPublicationStatusFilter('all');
+    setCreatorFilter('all');
+    setMinScore('');
+    setSourcePresenceFilter('all');
+    setSecondaryStatusFilter('all');
+    setSortMode('priority');
+    setPage(1);
+  };
 
   return (
     <main className="review-page">
@@ -1179,17 +1440,45 @@ function ReviewQueuePage() {
           <span>Hàng đợi kiểm duyệt</span>
           <h1>Kiểm duyệt câu hỏi</h1>
         </div>
-        <div className="review-actions">
-          <button type="button" className="btn btn--outline" disabled={bulkBusy} onClick={runBulkEvaluate}>
-            Xếp hàng AI
-          </button>
-          <button type="button" className="btn btn--primary" disabled={bulkBusy} onClick={runBulkApproveGreen}>
-            Duyệt câu đạt tốt
-          </button>
-        </div>
+        {workspaceView !== 'performance' && (
+          <div className="review-actions">
+            {evaluationModels.length > 0 && (
+              <label className="review-model-picker">
+                <span>AI hỗ trợ đánh giá</span>
+                <select
+                  aria-label="AI hỗ trợ đánh giá"
+                  value={evaluationModelCode}
+                  onChange={(event) => setEvaluationModelCode(event.target.value)}
+                  disabled={bulkBusy || Boolean(busyId) || questions.length === 0}
+                >
+                  {evaluationModels.map((model) => (
+                    <option key={model.code} value={model.code}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button type="button" className="btn btn--outline" disabled={bulkBusy || questions.length === 0} onClick={runBulkEvaluate}>
+              Đánh giá danh sách bằng AI
+            </button>
+          </div>
+        )}
       </section>
 
-      <section className="review-dashboard" aria-label="Tổng quan công việc kiểm duyệt">
+      <nav className="review-workspace-tabs" aria-label="Khu vực người duyệt">
+        <button type="button" className={workspaceView === 'queue' ? 'is-active' : ''} onClick={() => switchWorkspaceView('queue')}>
+          Hàng cần duyệt
+        </button>
+        <button type="button" className={workspaceView === 'history' ? 'is-active' : ''} onClick={() => switchWorkspaceView('history')}>
+          Đã xử lý
+        </button>
+        <button type="button" className={workspaceView === 'performance' ? 'is-active' : ''} onClick={() => switchWorkspaceView('performance')}>
+          Thống kê và so sánh với AI
+        </button>
+      </nav>
+
+      <section className="review-dashboard" aria-label="Tổng quan công việc kiểm duyệt" hidden={workspaceView !== 'performance'}>
         <div className="review-dashboard__group">
           <div className="review-dashboard__head">
             <span>Khối lượng xử lý</span>
@@ -1235,11 +1524,11 @@ function ReviewQueuePage() {
             </div>
             <div>
               <b>{dashboardPerformance.override_count || 0}</b>
-              <span>Override AI</span>
+              <span>Duyệt khác đề xuất AI</span>
             </div>
             <div>
               <b>{hours(dashboardPerformance.average_review_hours)}</b>
-              <span>TB xử lý</span>
+              <span>Xử lý trung bình</span>
             </div>
             <div>
               <b>{dashboardPerformance.revision_issues || 0}</b>
@@ -1250,7 +1539,7 @@ function ReviewQueuePage() {
 
         <div className="review-dashboard__group review-dashboard__group--calibration">
           <div className="review-dashboard__head">
-            <span>Calibration AI</span>
+            <span>Mức thống nhất với AI</span>
             <b>{percent(dashboardCalibration.agreement_rate)}</b>
           </div>
           <div className="review-dashboard__metrics">
@@ -1260,16 +1549,28 @@ function ReviewQueuePage() {
             </div>
             <div>
               <b>{dashboardCalibration.disagreements || 0}</b>
-              <span>Lệch AI-human</span>
+              <span>Không cùng kết quả</span>
             </div>
             <div>
               <b>{dashboardCalibration.ai_failed_but_approved || 0}</b>
-              <span>AI rớt, human duyệt</span>
+              <span>AI đề xuất xem lại, người duyệt vẫn duyệt</span>
             </div>
             <div>
               <b>{dashboardCalibration.ai_passed_but_not_approved || 0}</b>
-              <span>AI đạt, human giữ lại</span>
+              <span>AI đề xuất đạt, người duyệt giữ lại</span>
             </div>
+          </div>
+          <div className="review-calibration-criteria">
+            {REVIEW_CRITERIA.map((criterion) => {
+              const item = dashboardCalibration.criteria?.[criterion.key] || {};
+              return (
+                <div key={criterion.key}>
+                  <span>{criterion.label}</span>
+                  <b>{percent(item.agreement_rate)}</b>
+                  <small>{item.sample_size || 0} mẫu · {item.disagreements || 0} lệch</small>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -1291,165 +1592,139 @@ function ReviewQueuePage() {
           </div>
         </div>
       </section>
-      {dashboardError && <p className="review-error review-error--dashboard">{dashboardError}</p>}
+      {workspaceView === 'performance' && dashboardError && <p className="review-error review-error--dashboard">{dashboardError}</p>}
 
-      <section className="review-summary">
+      <section className="review-summary" hidden={workspaceView === 'performance'}>
         <button type="button" onClick={() => updateFilter(setStatusFilter)('PENDING')}>
-          <b>{statusFilter === 'PENDING' ? total : summary.pending}</b>
+          <b>{statusFilter === 'PENDING' ? total : (dashboardWorkload.pending || 0)}</b>
           <span>Chờ duyệt</span>
         </button>
         <button type="button" onClick={() => updateFilter(setAssignmentFilter)('mine')}>
-          <b>{assignmentFilter === 'mine' ? total : summary.mine}</b>
+          <b>{assignmentFilter === 'mine' ? total : (dashboardWorkload.mine || 0)}</b>
           <span>Của tôi</span>
         </button>
         <button type="button" onClick={() => updateFilter(setColorFilter)('GREEN')}>
           <b>{colorFilter === 'GREEN' ? total : summary.green}</b>
-          <span>Đạt tốt</span>
+          <span>AI đề xuất đạt</span>
         </button>
         <button type="button" onClick={() => updateFilter(setMinScore)('0.8')}>
           <b>{minScore === '0.8' ? total : summary.passed}</b>
-          <span>AI đạt</span>
+          <span>Điểm AI đạt yêu cầu</span>
         </button>
         <button type="button" onClick={() => updateFilter(setStatusFilter)('APPROVED')}>
-          <b>{statusFilter === 'APPROVED' ? total : summary.publishable}</b>
+          <b>{statusFilter === 'APPROVED' ? total : (dashboardDecisions.APPROVED || 0)}</b>
           <span>Đã duyệt</span>
         </button>
       </section>
 
-      <section className="review-layout">
+      <section
+        className={`review-layout ${!loading && questions.length === 0 && !selected ? 'review-layout--empty' : ''}`}
+        hidden={workspaceView === 'performance'}
+      >
         <div className="review-list-panel">
           <div className="review-filters">
-            <select value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
-              {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <select value={assignmentFilter} onChange={(event) => updateFilter(setAssignmentFilter)(event.target.value)}>
-              {Object.entries(ASSIGNMENT_STATUS_LABEL).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <select value={waitingFilter} onChange={(event) => updateFilter(setWaitingFilter)(event.target.value)}>
-              <option value="all">Mọi thời gian chờ</option>
-              <option value="24">Chờ từ 24h</option>
-              <option value="72">Chờ từ 72h</option>
-              <option value="168">Chờ từ 7 ngày</option>
-            </select>
-            <label className="review-filter-toggle">
+            <div className="review-filter-primary">
               <input
-                type="checkbox"
-                checked={overdueOnly}
-                onChange={(event) => updateFilter(setOverdueOnly)(event.target.checked)}
+                aria-label="Tìm câu hỏi"
+                placeholder="Tìm mã hoặc nội dung câu hỏi..."
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
               />
-              Quá hạn giữ câu
-            </label>
-            <select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
-              <option value="all">Mọi dạng câu hỏi</option>
-              {QUESTION_TYPES.map((type) => (
-                <option key={type.backend} value={type.backend}>{type.label}</option>
-              ))}
-            </select>
-            <select value={bloomFilter} onChange={(event) => updateFilter(setBloomFilter)(event.target.value)}>
-              <option value="all">Mọi Bloom</option>
-              {BLOOM_LEVELS.map((level) => (
-                <option key={level.level} value={level.level}>{level.label}</option>
-              ))}
-            </select>
-            <select value={colorFilter} onChange={(event) => updateFilter(setColorFilter)(event.target.value)}>
-              {Object.entries(COLOR_LABEL).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <select value={subjectFilter} onChange={(event) => updateSubjectFilter(event.target.value)}>
-              <option value="all">Mọi môn học</option>
-              {catalogSubjects.map((subject) => (
-                <option key={subject.id} value={subject.id}>
-                  {subject.subject_code} - {subject.subject_name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={chapterFilter}
-              onChange={(event) => updateFilter(setChapterFilter)(event.target.value)}
-              disabled={subjectFilter === 'all'}
-            >
-              <option value="all">Mọi chương</option>
-              {chapterFilterOptions.map((chapter) => (
-                <option key={childId(chapter)} value={childId(chapter)}>
-                  {chapter.chapter_code} - {chapter.chapter_name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={cloFilter}
-              onChange={(event) => updateFilter(setCloFilter)(event.target.value)}
-              disabled={subjectFilter === 'all'}
-            >
-              <option value="all">Mọi CLO</option>
-              {cloFilterOptions.map((clo) => (
-                <option key={childId(clo)} value={childId(clo)}>
-                  {clo.clo_code}
-                </option>
-              ))}
-            </select>
-            <select value={evaluationStatusFilter} onChange={(event) => updateFilter(setEvaluationStatusFilter)(event.target.value)}>
-              <option value="all">Mọi trạng thái AI</option>
-              {Object.entries(EVALUATION_STATUS_LABEL).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <select value={publicationStatusFilter} onChange={(event) => updateFilter(setPublicationStatusFilter)(event.target.value)}>
-              <option value="all">Mọi trạng thái Moodle</option>
-              {Object.entries(PUBLICATION_STATUS_LABEL).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-            <select value={creatorFilter} onChange={(event) => updateFilter(setCreatorFilter)(event.target.value)}>
-              <option value="all">Mọi giảng viên</option>
-              {teacherOptions.map((teacher) => (
-                <option key={teacher.id} value={teacher.id}>
-                  {teacher.display_name || teacher.email}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min="0"
-              max="1"
-              step="0.05"
-              placeholder="Điểm tối thiểu"
-              value={minScore}
-              onChange={(event) => updateFilter(setMinScore)(event.target.value)}
-            />
-            <label className="review-date-filter">
-              <span>Gửi từ ngày</span>
-              <input
-                type="date"
-                value={submittedFromFilter}
-                max={submittedToFilter || undefined}
-                onChange={(event) => updateFilter(setSubmittedFromFilter)(event.target.value)}
-              />
-            </label>
-            <label className="review-date-filter">
-              <span>Gửi đến ngày</span>
-              <input
-                type="date"
-                value={submittedToFilter}
-                min={submittedFromFilter || undefined}
-                onChange={(event) => updateFilter(setSubmittedToFilter)(event.target.value)}
-              />
-            </label>
-            <input
-              placeholder="Tìm mã hoặc nội dung..."
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-            />
+              <select aria-label="Môn học" value={subjectFilter} onChange={(event) => updateSubjectFilter(event.target.value)}>
+                <option value="all">Tất cả môn học</option>
+                {catalogSubjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.subject_code} - {subject.subject_name}
+                  </option>
+                ))}
+              </select>
+              <select aria-label="Trạng thái kiểm duyệt" value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
+                {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+              <button type="button" className={showAdvancedFilters ? 'is-active' : ''} onClick={() => setShowAdvancedFilters((value) => !value)}>
+                Bộ lọc nâng cao{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ''}
+              </button>
+            </div>
+            <div className="review-date-range">
+              <span>Ngày gửi duyệt</span>
+              <label>
+                Từ
+                <input type="date" value={submittedFromFilter} max={submittedToFilter || undefined} onChange={(event) => updateFilter(setSubmittedFromFilter)(event.target.value)} />
+              </label>
+              <label>
+                Đến
+                <input type="date" value={submittedToFilter} min={submittedFromFilter || undefined} onChange={(event) => updateFilter(setSubmittedToFilter)(event.target.value)} />
+              </label>
+            </div>
+            <div className="review-filter-advanced" hidden={!showAdvancedFilters}>
+              <select value={assignmentFilter} onChange={(event) => updateFilter(setAssignmentFilter)(event.target.value)}>
+                {Object.entries(ASSIGNMENT_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <select value={waitingFilter} onChange={(event) => updateFilter(setWaitingFilter)(event.target.value)}>
+                <option value="all">Mọi mức ưu tiên</option>
+                <option value="24">Chờ từ 24 giờ</option>
+                <option value="72">Chờ từ 3 ngày</option>
+                <option value="168">Chờ từ 7 ngày</option>
+              </select>
+              <label className="review-filter-toggle">
+                <input type="checkbox" checked={overdueOnly} onChange={(event) => updateFilter(setOverdueOnly)(event.target.checked)} />
+                Quá hạn giữ câu
+              </label>
+              <select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
+                <option value="all">Mọi dạng câu hỏi</option>
+                {QUESTION_TYPES.map((type) => <option key={type.backend} value={type.backend}>{type.label}</option>)}
+              </select>
+              <select value={bloomFilter} onChange={(event) => updateFilter(setBloomFilter)(event.target.value)}>
+                <option value="all">Mọi cấp Bloom</option>
+                {BLOOM_LEVELS.map((level) => <option key={level.level} value={level.level}>{level.label}</option>)}
+              </select>
+              <select value={colorFilter} onChange={(event) => updateFilter(setColorFilter)(event.target.value)}>
+                {Object.entries(COLOR_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <select value={chapterFilter} onChange={(event) => updateFilter(setChapterFilter)(event.target.value)} disabled={subjectFilter === 'all'}>
+                <option value="all">Mọi chương</option>
+                {chapterFilterOptions.map((chapter) => <option key={childId(chapter)} value={childId(chapter)}>{chapter.chapter_code} - {chapter.chapter_name}</option>)}
+              </select>
+              <select value={cloFilter} onChange={(event) => updateFilter(setCloFilter)(event.target.value)} disabled={subjectFilter === 'all'}>
+                <option value="all">Mọi CLO</option>
+                {cloFilterOptions.map((clo) => <option key={childId(clo)} value={childId(clo)}>{clo.clo_code}</option>)}
+              </select>
+              <select value={evaluationStatusFilter} onChange={(event) => updateFilter(setEvaluationStatusFilter)(event.target.value)}>
+                <option value="all">Mọi kết quả do AI đánh giá</option>
+                {Object.entries(EVALUATION_STATUS_LABEL).filter(([value]) => value !== 'RUNNING').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <select value={sourcePresenceFilter} onChange={(event) => updateFilter(setSourcePresenceFilter)(event.target.value)}>
+                <option value="all">Mọi tình trạng nguồn</option>
+                <option value="WITH_SOURCE">Có nguồn tham chiếu</option>
+                <option value="MISSING_SOURCE">Thiếu nguồn tham chiếu</option>
+              </select>
+              <select value={secondaryStatusFilter} onChange={(event) => updateFilter(setSecondaryStatusFilter)(event.target.value)}>
+                <option value="all">Mọi vòng kiểm duyệt</option>
+                <option value="AWAITING_SECONDARY">Cần duyệt lần hai</option>
+                <option value="COMPLETED">Đã duyệt lần hai</option>
+              </select>
+              <select value={creatorFilter} onChange={(event) => updateFilter(setCreatorFilter)(event.target.value)}>
+                <option value="all">Mọi người gửi duyệt</option>
+                {teacherOptions.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.display_name || teacher.email}</option>)}
+              </select>
+              <select value={sortMode} onChange={(event) => updateFilter(setSortMode)(event.target.value)}>
+                <option value="priority">Ưu tiên cần xử lý</option>
+                <option value="oldest">Gửi lâu nhất</option>
+                <option value="newest">Gửi mới nhất</option>
+                <option value="ai_lowest">Xếp câu có điểm thấp trước</option>
+                <option value="updated">Cập nhật gần nhất</option>
+              </select>
+              <button type="button" className="review-filter-reset" onClick={resetAdvancedFilters}>Xóa bộ lọc nâng cao</button>
+            </div>
           </div>
 
-          {catalogFilterError && <p className="review-error review-error--filters">{catalogFilterError}</p>}
-          {teacherFilterError && <p className="review-error review-error--filters">{teacherFilterError}</p>}
-          {reviewerFilterError && <p className="review-error review-error--filters">{reviewerFilterError}</p>}
-          {error && <p className="review-error">{error}</p>}
+          {queueErrors.length > 0 && (
+            <div className="review-error" role="alert">
+              {queueErrors.map((message) => <div key={message}>{message}</div>)}
+            </div>
+          )}
           {loading ? (
             <p className="review-empty">Đang tải hàng đợi...</p>
           ) : (
@@ -1464,11 +1739,17 @@ function ReviewQueuePage() {
                     <div className="review-row__meta">
                       <span>{question.question_code}</span>
                       <span>{questionTypeLabel(assessmentType(question))}</span>
-                      <span>{question.classification?.bloom?.name || 'Bloom --'}</span>
+                      <span>{bloomDisplay(question.classification)}</span>
+                      <span className={`difficulty-tag ${question.classification?.difficulty ? `difficulty-tag--${question.classification.difficulty}` : 'difficulty-tag--empty'}`}>
+                        {difficultyLabel(question.classification?.difficulty) || 'Chưa gán độ khó'}
+                      </span>
                       <span>{subjectLabelForQuestion(question)}</span>
                       {question.submitted_by_user_id && (
                         <span>Gửi: {submitterLabelForQuestion(question)}</span>
                       )}
+                      <span title={formatDate(question.submitted_at)}>
+                        Chờ {waitingTime(question.submitted_at)}
+                      </span>
                       <span className={`assignment-chip assignment-chip--${assignmentOf(question).status.toLowerCase()}`}>
                         {assignmentStatusLabel(question, user)}
                       </span>
@@ -1479,6 +1760,12 @@ function ReviewQueuePage() {
                       ))}
                     </div>
                     <p>{question.content}</p>
+                    <div className="review-row__warnings">
+                      {(!question.sources || question.sources.length === 0) && <span>Thiếu nguồn</span>}
+                      {question.evaluation_status === 'ERROR' && <span>Chưa đánh giá được</span>}
+                      {question.evaluation_status === 'STALE' && <span>Nguồn/câu hỏi đã đổi</span>}
+                      {question.secondary_review?.status === 'AWAITING_SECONDARY' && <span>Cần duyệt lần hai</span>}
+                    </div>
                   </div>
                   <div className="review-row__status">
                     <b className={`quality-${question.quality_summary?.color || 'NONE'}`}>
@@ -1489,37 +1776,45 @@ function ReviewQueuePage() {
                         ? qualityColorLabel(question.quality_summary.color)
                         : evaluationStatusLabel(question.evaluation_status)}
                     </span>
-                    <small>{REVIEW_STATUS_LABEL[question.review_status] || question.review_status}</small>
+                    <small>{REVIEW_STATUS_LABEL[question.review_status] || 'Chưa xác định'}</small>
                   </div>
                 </article>
               ))}
-              {questions.length === 0 && <p className="review-empty">Không có câu hỏi phù hợp bộ lọc.</p>}
-              <div className="review-pagination">
-                <span>
-                  {pageStart}-{pageEnd} / {total} kết quả
-                </span>
-                <div>
-                  <button
-                    type="button"
-                    disabled={loading || page <= 1}
-                    onClick={() => setPage((current) => Math.max(1, current - 1))}
-                  >
-                    Trước
-                  </button>
-                  <button
-                    type="button"
-                    disabled={loading || page >= totalPages}
-                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                  >
-                    Sau
-                  </button>
+              {questions.length === 0 && (
+                <div className="review-empty-state">
+                  <span aria-hidden="true">✓</span>
+                  <strong>Chưa có câu hỏi cần xử lý</strong>
+                  <p>Thử đổi trạng thái, khoảng thời gian hoặc xóa các bộ lọc đang áp dụng.</p>
                 </div>
-              </div>
+              )}
+              {total > 0 && (
+                <div className="review-pagination">
+                  <span>
+                    {pageStart}-{pageEnd} / {total} kết quả
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      disabled={loading || page <= 1}
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    >
+                      Trước
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading || page >= totalPages}
+                      onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    >
+                      Sau
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        <aside className="review-detail-panel">
+        <aside className="review-detail-panel" hidden={!loading && questions.length === 0 && !selected}>
           {!selected ? (
             <p className="review-empty">Chọn một câu hỏi để xem minh chứng, tài liệu nguồn và lịch sử.</p>
           ) : (
@@ -1552,6 +1847,10 @@ function ReviewQueuePage() {
                   <b>{subjectLabelForQuestion(selected)}</b>
                 </div>
                 <div>
+                  <span>Độ khó</span>
+                  <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b>
+                </div>
+                <div>
                   <span>Gửi duyệt lúc</span>
                   <b>{formatDate(selected.submitted_at)}</b>
                 </div>
@@ -1569,9 +1868,15 @@ function ReviewQueuePage() {
                 </div>
                 <div>
                   <span>Duyệt lần 2</span>
-                  <b>{selected.secondary_review?.status || 'NOT_REQUIRED'}</b>
+                  <b>{secondaryReviewStatusLabel(selected.secondary_review?.status)}</b>
                 </div>
               </section>
+              <nav className="review-detail-tabs" aria-label="Nội dung kiểm duyệt">
+                <button type="button" className={detailView === 'question' ? 'is-active' : ''} onClick={() => setDetailView('question')}>Câu hỏi & đáp án</button>
+                <button type="button" className={detailView === 'source' ? 'is-active' : ''} onClick={() => setDetailView('source')}>Nguồn tham chiếu</button>
+                <button type="button" className={detailView === 'ai' ? 'is-active' : ''} onClick={() => setDetailView('ai')}>Gợi ý từ AI</button>
+                <button type="button" className={detailView === 'history' ? 'is-active' : ''} onClick={() => setDetailView('history')}>Trao đổi & lịch sử</button>
+              </nav>
               <div className="detail-actions">
                 <button type="button" disabled={busyId === selected.id || !canClaimQuestion(selected)} onClick={() => claimReview(selected)}>
                   {selectedAssignment.status === 'IN_REVIEW' && isAssignmentMine(selected, user) ? 'Gia hạn giữ câu' : 'Nhận câu'}
@@ -1591,8 +1896,8 @@ function ReviewQueuePage() {
                 )}
                 <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
                   {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
-                    ? 'Thử lại AI'
-                    : 'AI đánh giá'}
+                    ? 'Nhờ AI đánh giá lại'
+                    : 'Nhờ AI đánh giá'}
                 </button>
                 <button
                   type="button"
@@ -1604,34 +1909,39 @@ function ReviewQueuePage() {
                 </button>
                 <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'NEEDS_REVISION')}>Cần sửa</button>
                 <button type="button" disabled={busyId === selected.id || !canReviewQuestion(selected)} onClick={() => openReviewForm(selected, 'REJECTED')}>Từ chối</button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'}
-                  onClick={() => publish(selected)}
-                >
-                  Mô phỏng Moodle
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED'}
-                  onClick={() => exportMoodle(selected, 'gift')}
-                >
-                  GIFT
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'APPROVED'}
-                  onClick={() => exportMoodle(selected, 'xml')}
-                >
-                  XML
-                </button>
               </div>
 
               {historyLoading ? (
                 <p className="review-empty">Đang tải minh chứng...</p>
               ) : (
                 <>
-                  <section className="evaluation-panel">
+                  <section className="question-answer-panel" hidden={detailView !== 'question'}>
+                    <div className="question-answer-panel__meta">
+                      <span>Dạng câu hỏi <b>{questionTypeLabel(assessmentType(selected))}</b></span>
+                      <span>Mức Bloom <b>{bloomDisplay(selected.classification)}</b></span>
+                      <span>Độ khó đã chọn <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b></span>
+                      <span>Phiên bản <b>{selected.current_version}</b></span>
+                    </div>
+                    <h3>Nội dung câu hỏi</h3>
+                    <p>{selected.content}</p>
+                    <div className="question-option-list">
+                      {Object.entries(selected.question_data?.options || {}).map(([key, value]) => (
+                        <div key={key} className={String(selected.question_data?.correct_answer || '').split(',').map((item) => item.trim()).includes(key) ? 'is-correct' : ''}>
+                          <b>{key}</b><span>{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="question-answer-key">
+                      <span>Đáp án</span>
+                      <b>{selected.question_data?.correct_answer || 'Chưa có đáp án'}</b>
+                    </div>
+                    <div className="question-explanation">
+                      <span>Giải thích</span>
+                      <p>{selected.question_data?.explanation || 'Chưa có giải thích đáp án.'}</p>
+                    </div>
+                  </section>
+
+                  <section className="evaluation-panel" hidden={detailView !== 'ai'}>
                     <div className="evaluation-total">
                       <div>
                         <span>Tổng điểm</span>
@@ -1657,22 +1967,81 @@ function ReviewQueuePage() {
 
                     <div className="score-grid">
                       {SCORE_COMPONENTS.map((component) => (
-                        <div key={component.key}>
+                        <div
+                          key={component.key}
+                          className={aiWeakCriterionKeys.has(component.key) ? 'score-card--weak' : ''}
+                        >
                           <span>{component.label}</span>
                           <b>{score(latestScores[component.key])}</b>
                           <small>
                             Trọng số {percent(latestWeights[component.key])}
                           </small>
+                          {aiWeakCriterionKeys.has(component.key) && (
+                            <em>Dưới ngưỡng đạt {score(aiInsights.passMin)}</em>
+                          )}
                         </div>
                       ))}
                     </div>
 
+                    {latestEvaluation && (
+                      <div className="ai-review-summary">
+                        <div className="ai-review-summary__head">
+                          <div>
+                            <span>Đề xuất của AI</span>
+                            <b>{AI_ACTION_LABEL[aiAction] || (latestEvaluation.passed ? 'Có thể duyệt' : 'Cần người duyệt xem lại')}</b>
+                          </div>
+                          {aiSeverity && <strong className={`ai-severity ai-severity--${aiSeverity.toLowerCase()}`}>{AI_SEVERITY_LABEL[aiSeverity] || aiSeverity}</strong>}
+                        </div>
+                        <p>{latestFeedback.summary || latestEvidence.reasoning || 'AI chưa cung cấp phần giải thích tổng quát.'}</p>
+                        {aiInsights.weakCriteria.length > 0 && (
+                          <div className="ai-review-summary__criteria">
+                            <span>Tiêu chí dưới ngưỡng:</span>
+                            {aiInsights.weakCriteria.map((item) => <b key={item.key}>{item.label} ({score(item.score)})</b>)}
+                          </div>
+                        )}
+                        {aiMissingItems.length > 0 && (
+                          <div className="ai-review-summary__list">
+                            <span>Nội dung còn thiếu</span>
+                            <ul>{aiMissingItems.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul>
+                          </div>
+                        )}
+                        {aiRiskItems.length > 0 && (
+                          <div className="ai-review-summary__list">
+                            <span>Rủi ro cần đối chiếu</span>
+                            <ul>{aiRiskItems.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul>
+                          </div>
+                        )}
+                        {aiInsights.uniformScores && (
+                          <p className="ai-review-summary__warning">
+                            Các tiêu chí có điểm gần như giống nhau. Người duyệt nên đối chiếu từng minh chứng thay vì chỉ dựa vào tổng điểm.
+                          </p>
+                        )}
+                        {!latestEvaluation.passed && selected.review_status === 'PENDING' && (
+                          <div className="ai-review-summary__action">
+                            <button
+                              type="button"
+                              disabled={!canReviewQuestion(selected)}
+                              onClick={() => openReviewForm(selected, 'NEEDS_REVISION', { aiEvaluation: latestEvaluation })}
+                            >
+                              Dùng góp ý AI cho phiếu Cần sửa
+                            </button>
+                            {!canReviewQuestion(selected) && <small>Nhận câu hỏi trước để tạo phiếu kiểm duyệt.</small>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="evaluation-meta">
                       <span>
-                        Mô hình: <b>{evaluatorModelLabel(latestModel)}</b>
+                        AI hỗ trợ: <b>{evaluatorModelLabel(latestModel)}</b>
                       </span>
-                      <span>Bộ tiêu chí: <b>{latestEvaluation?.policy?.name || '--'}</b></span>
+                      <span>Bộ tiêu chí: <b>{latestEvaluation ? 'Tiêu chí kiểm duyệt hiện hành' : '--'}</b></span>
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
+                      {latestEvidence.assessed_difficulty ? (
+                        <span>
+                          Độ khó AI đề xuất: <b>{difficultyLabel(latestEvidence.assessed_difficulty)}</b>
+                        </span>
+                      ) : null}
                     </div>
                     {!latestEvaluation && (
                       <p className="evaluation-note">
@@ -1681,15 +2050,15 @@ function ReviewQueuePage() {
                     )}
                   </section>
 
-                  <section className="evidence-block">
+                  <section className="evidence-block" hidden={detailView !== 'ai'}>
                     <h3>Minh chứng đánh giá</h3>
                     <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có minh chứng.'}</p>
                     {latestEvidence.reasoning && <span>{latestEvidence.reasoning}</span>}
-                    {qualitySummary.error?.message && <span>Lỗi đánh giá AI: {qualitySummary.error.message}</span>}
-                    {latestEvidence.fallback_reason && <span>Lý do dùng đánh giá dự phòng: {latestEvidence.fallback_reason}</span>}
+                    {qualitySummary.error?.message && <span>Hệ thống chưa thể hoàn tất đánh giá. Vui lòng thử lại.</span>}
+                    {latestEvidence.fallback_reason && <span>Hệ thống đã dùng phương pháp đánh giá dự phòng.</span>}
                   </section>
 
-                  <section className="source-viewer">
+                  <section className="source-viewer" hidden={detailView !== 'source'}>
                     <div className="source-viewer__head">
                       <h3>Nguồn câu hỏi</h3>
                       <span>{sourceViewer?.document?.title || 'Không có tài liệu nguồn'}</span>
@@ -1701,7 +2070,7 @@ function ReviewQueuePage() {
                     {sourceLoading ? (
                       <p className="review-empty">Đang tải nguồn câu hỏi...</p>
                     ) : sourceItems.length === 0 ? (
-                      <p className="review-empty">Không có citation nguồn cho câu hỏi này.</p>
+                      <p className="review-empty">Không có nguồn tham chiếu cho câu hỏi này.</p>
                     ) : (
                       <>
                         <div className="source-list">
@@ -1712,9 +2081,9 @@ function ReviewQueuePage() {
                               className={`source-card ${activeSource === source ? 'source-card--active' : ''}`}
                               onClick={() => openSource(source, index)}
                             >
-                              <span>Citation #{source.citation_order}</span>
+                              <span>Nguồn {source.citation_order}</span>
                               <b>{pageRangeLabel(source.page_range)}</b>
-                              <small>Chunk {shortId(source.chunk_id)} · Hash {shortId(source.chunk_content_hash)}</small>
+                              <small>Đoạn tham chiếu {index + 1}</small>
                               {source.is_current_chunk_set === false && <em>Nguồn cũ</em>}
                             </button>
                           ))}
@@ -1723,10 +2092,9 @@ function ReviewQueuePage() {
                         {activeSource && (
                           <div className="source-detail">
                             <div className="source-meta-grid">
-                              <span>Chunk ID <b>{activeSource.chunk_id || '--'}</b></span>
-                              <span>Chunk set <b>{shortId(activeSource.chunk_set_id)}</b></span>
-                              <span>Hiện hành <b>{activeSource.is_current_chunk_set === false ? 'Không' : 'Có'}</b></span>
-                              <span>Content hash <b>{shortId(activeSource.current_content_hash || activeSource.chunk_content_hash)}</b></span>
+                              <span>Vị trí <b>{pageRangeLabel(activeSource.page_range)}</b></span>
+                              <span>Thứ tự nguồn <b>{activeSource.citation_order || '--'}</b></span>
+                              <span>Trạng thái <b>{activeSource.is_current_chunk_set === false ? 'Nguồn cũ' : 'Đang sử dụng'}</b></span>
                             </div>
                             {(activeSource.warnings || []).map((warning) => (
                               <p className="source-warning" key={warning}>{warning}</p>
@@ -1745,11 +2113,15 @@ function ReviewQueuePage() {
                             </div>
                             <div className="source-pdf">
                               {sourcePdfLoading ? (
-                                <p>Đang mở PDF...</p>
+                                <p>Đang mở tài liệu...</p>
                               ) : sourcePdfUrl ? (
                                 <iframe src={sourcePdfUrl} title={`PDF nguồn ${sourceViewer?.document?.original_filename || ''}`} />
                               ) : (
-                                <p>Không có PDF gốc khả dụng.</p>
+                                <p>
+                                  {sourceViewer?.document?.original_filename?.toLowerCase().endsWith('.pdf')
+                                    ? 'File PDF nguồn hiện không còn khả dụng.'
+                                    : 'Tài liệu nguồn không phải PDF; đối chiếu bằng đoạn trích bên dưới.'}
+                                </p>
                               )}
                             </div>
                             <SourceText source={activeSource} page={activePageRecord} />
@@ -1759,7 +2131,7 @@ function ReviewQueuePage() {
                     )}
                   </section>
 
-                  <section className="comment-thread">
+                  <section className="comment-thread" hidden={detailView !== 'history'}>
                     <div className="comment-thread__head">
                       <h3>Trao đổi</h3>
                       <span>{comments.length} bình luận</span>
@@ -1767,9 +2139,25 @@ function ReviewQueuePage() {
                     <div className="comment-list">
                       {comments.slice(-6).map((comment) => (
                         <div className="comment-item" key={comment.id || comment._id}>
-                          <b>{comment.author_role || 'User'}</b>
-                          <p>{comment.body}</p>
-                          <small>{formatDate(comment.created_at)}</small>
+                          <b>{userRoleLabel(comment.author_role)}</b>
+                          {editingCommentId === (comment.id || comment._id) ? (
+                            <div className="comment-edit-row">
+                              <textarea value={editingCommentBody} onChange={(event) => setEditingCommentBody(event.target.value)} rows={2} />
+                              <button type="button" disabled={commentBusy || !editingCommentBody.trim()} onClick={() => saveEditedComment(comment)}>Lưu</button>
+                              <button type="button" onClick={() => setEditingCommentId('')}>Hủy</button>
+                            </div>
+                          ) : (
+                            <p>{comment.body}</p>
+                          )}
+                          <div className="comment-item__meta">
+                            <small>{formatDate(comment.created_at)}{comment.edited_at ? ' · đã sửa' : ''}</small>
+                            {(user?.role === 'Admin' || refId(comment.author_user_id) === refId(user?.id)) && editingCommentId !== (comment.id || comment._id) && (
+                              <span>
+                                <button type="button" onClick={() => { setEditingCommentId(comment.id || comment._id); setEditingCommentBody(comment.body); }}>Sửa</button>
+                                <button type="button" onClick={() => removeComment(comment)}>Xóa</button>
+                              </span>
+                            )}
+                          </div>
                         </div>
                       ))}
                       {comments.length === 0 && <p className="review-empty">Chưa có trao đổi.</p>}
@@ -1800,17 +2188,17 @@ function ReviewQueuePage() {
                     </form>
                   </section>
 
-                  <section className="history-grid">
+                  <section className="history-grid" hidden={detailView !== 'history'}>
                     <div>
                       <h3>Lịch sử kiểm duyệt</h3>
                       {reviews.slice(0, 4).map((review) => (
                         <div className="history-review" key={review.id || review._id}>
-                          <p><b>{REVIEW_STATUS_LABEL[review.decision] || review.decision}</b> {review.note || ''}</p>
+                          <p><b>{REVIEW_STATUS_LABEL[review.decision] || 'Chưa xác định'}</b> {review.note || ''}</p>
                           {reviewIssuesOf(review).length > 0 && (
                             <div className="history-issue-list">
                               {reviewIssuesOf(review).slice(0, 3).map((issue, index) => (
                                 <small className="history-issue" key={`${issue.title || issue.detail}-${index}`}>
-                                  {issue.severity || 'MEDIUM'} · {issue.title || issue.detail}
+                                  {issueSeverityLabel(issue.severity)} · {issue.title || issue.detail}
                                   {issue.page_number ? ` · Trang ${issue.page_number}` : ''}
                                 </small>
                               ))}
@@ -1821,13 +2209,18 @@ function ReviewQueuePage() {
                       {reviews.length === 0 && <p>Chưa có lượt kiểm duyệt.</p>}
                     </div>
                     <div>
-                      <h3>Mô phỏng Moodle</h3>
+                      <h3>Đưa câu hỏi lên Moodle</h3>
                       {publications.slice(0, 4).map((publication) => (
                         <p key={publication.id || publication._id}>
-                          <b>{publicationStatusLabel(publication.status)}</b> {publication.moodle_question_ref_id || ''}
+                          <b>{publicationStatusLabel(publication.status)}</b>
                         </p>
                       ))}
-                      {publications.length === 0 && <p>Chưa ghi mô phỏng.</p>}
+                      {publications.length === 0 && <p>Chưa có lần xuất bản.</p>}
+                      <div className="history-moodle-actions">
+                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>
+                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải tệp GIFT</button>
+                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải tệp XML</button>
+                      </div>
                     </div>
                   </section>
                 </>
@@ -1849,13 +2242,54 @@ function ReviewQueuePage() {
             <div className="review-modal__head">
               <div>
                 <span>{reviewDraft.questionCode}</span>
-                <h2>{REVIEW_STATUS_LABEL[reviewDraft.decision] || reviewDraft.decision}</h2>
+                <h2>{REVIEW_STATUS_LABEL[reviewDraft.decision] || 'Kết quả kiểm duyệt'}</h2>
+                {draftSaveState && <small>{draftSaveState}</small>}
               </div>
               <button type="button" onClick={() => setReviewDraft(null)}>Đóng</button>
             </div>
 
             <section className="review-form-section">
-              <h3>Checklist</h3>
+              <div className="review-criterion-heading">
+                <div>
+                  <h3>So sánh gợi ý AI và quyết định của người duyệt</h3>
+                  <p>Hãy đánh giá từng tiêu chí; AI chỉ đưa ra gợi ý tham khảo.</p>
+                </div>
+              </div>
+              <div className="review-criterion-list">
+                {(reviewDraft.criteria || []).map((item) => (
+                  <div className="review-criterion-row" key={item.key}>
+                    <div>
+                      <b>{item.label}</b>
+                      <small>{item.description}</small>
+                    </div>
+                    <div className="review-criterion-ai">
+                      <span>AI gợi ý</span>
+                      <b>{score(latestScores[item.key])}</b>
+                    </div>
+                    <label>
+                      <span>Người duyệt</span>
+                      <select value={item.rating} onChange={(event) => updateCriterion(item.key, { rating: event.target.value })}>
+                        {Object.entries(CRITERION_RATING_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </label>
+                    <input value={item.note} onChange={(event) => updateCriterion(item.key, { note: event.target.value })} placeholder="Lý do hoặc ghi chú" />
+                    <select value={item.source_chunk_id} onChange={(event) => updateCriterion(item.key, { source_chunk_id: event.target.value })}>
+                      <option value="">Không gắn nguồn</option>
+                      {sourceItems.map((source, index) => (
+                        <option key={source.chunk_id || index} value={source.chunk_id || ''}>Nguồn #{source.citation_order} · {pageRangeLabel(source.page_range)}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="review-form-section">
+              <h3>Danh sách kiểm tra cho dạng {questionTypeLabel(assessmentType(selected))}</h3>
+              <ul className="review-type-guidance">
+                {(QUESTION_TYPE_GUIDANCE[assessmentType(selected)] || []).map((item) => <li key={item}>{item}</li>)}
+              </ul>
+              <h4>Kiểm tra trước khi chốt</h4>
               <div className="review-rubric-grid">
                 {reviewDraft.checklist.map((item) => (
                   <div className="review-rubric-item" key={item.key}>
@@ -1935,7 +2369,7 @@ function ReviewQueuePage() {
               )}
               {reviewNeedsOverride && (
                 <label className="review-form-field">
-                  <span>Lý do override</span>
+                  <span>Lý do duyệt khác đề xuất AI</span>
                   <textarea
                     value={reviewDraft.overrideReason}
                     onChange={(event) => updateReviewDraft({ overrideReason: event.target.value })}
@@ -1976,7 +2410,7 @@ function ReviewQueuePage() {
                     <option value="">Không gắn nguồn</option>
                     {sourceItems.map((source, index) => (
                       <option key={source.chunk_id || index} value={source.chunk_id || ''}>
-                        Citation #{source.citation_order} · {pageRangeLabel(source.page_range)}
+                        Nguồn {source.citation_order} · {pageRangeLabel(source.page_range)}
                       </option>
                     ))}
                   </select>
@@ -2000,7 +2434,8 @@ function ReviewQueuePage() {
 
             {reviewFormError && <p className="review-form-error">{reviewFormError}</p>}
             <div className="review-modal__foot">
-              <button type="button" onClick={() => setReviewDraft(null)}>Hủy</button>
+              <button type="button" className="review-draft-delete" onClick={discardReviewDraft}>Xóa bản nháp</button>
+              <button type="button" onClick={() => setReviewDraft(null)}>Đóng, tiếp tục sau</button>
               <button type="submit" className="detail-action-primary" disabled={busyId === selected?.id}>
                 Lưu kết quả kiểm duyệt
               </button>
@@ -2043,7 +2478,7 @@ function ReviewQueuePage() {
                 {assignmentDraft.reviewerUserId
                   && !reviewerOptions.some((reviewer) => reviewer.id === assignmentDraft.reviewerUserId) && (
                   <option value={assignmentDraft.reviewerUserId}>
-                    ID hiện tại: {assignmentDraft.reviewerUserId}
+                    Người duyệt hiện tại (không còn trong danh sách)
                   </option>
                 )}
               </select>

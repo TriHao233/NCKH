@@ -1,4 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.config import settings
 from core.dependencies import (
@@ -12,14 +14,15 @@ from modules.questions.workflow_schemas import (
     EvaluationCreateRequest,
     MoodlePublicationRequest,
     QuestionCommentCreateRequest,
+    QuestionCommentUpdateRequest,
     ReviewAssignmentRequest,
     ReviewCreateRequest,
+    ReviewDraftUpsertRequest,
     SecondaryReviewRequest,
 )
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
     get_workflow_service,
-    process_evaluation_job_background,
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Question workflow"])
@@ -48,6 +51,43 @@ def review_dashboard(
         _translate_workflow_error(exc)
 
 
+@router.get("/{question_id}/review-draft")
+def get_review_draft(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"item": service.get_review_draft(question_id, current_user)}
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.put("/{question_id}/review-draft")
+def save_review_draft(
+    question_id: str,
+    payload: ReviewDraftUpsertRequest,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.save_review_draft(question_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.delete("/{question_id}/review-draft")
+def delete_review_draft(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"deleted": service.delete_review_draft(question_id, current_user)}
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
 @router.post("/{question_id}/evaluations", status_code=201)
 def evaluate_question(
     question_id: str,
@@ -65,20 +105,19 @@ def evaluate_question(
 async def auto_evaluate_question(
     question_id: str,
     payload: AutoEvaluationRequest,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        job = service.enqueue_auto_evaluation(
+        job = await asyncio.to_thread(
+            service.enqueue_auto_evaluation,
             question_id,
             expected_version=payload.expected_version,
             requested_by_user_id=current_user.id,
             evaluator_model_code=payload.evaluator_model_code,
+            fallback_to_heuristic=payload.fallback_to_heuristic,
             trigger="REVIEWER_REQUEST",
         )
-        if job.get("status") == "QUEUED":
-            background_tasks.add_task(process_evaluation_job_background, job["_id"])
         return job
     except Exception as exc:
         _translate_workflow_error(exc)
@@ -179,6 +218,33 @@ def add_question_comment(
 ):
     try:
         return service.add_comment(question_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.patch("/{question_id}/comments/{comment_id}")
+def update_question_comment(
+    question_id: str,
+    comment_id: str,
+    payload: QuestionCommentUpdateRequest,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.update_comment(question_id, comment_id, payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.delete("/{question_id}/comments/{comment_id}")
+def delete_question_comment(
+    question_id: str,
+    comment_id: str,
+    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return {"deleted": service.delete_comment(question_id, comment_id, current_user)}
     except Exception as exc:
         _translate_workflow_error(exc)
 

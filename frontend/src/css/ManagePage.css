@@ -494,6 +494,11 @@
 .manage-page .q-id { font-size: 0.75rem; font-weight: 700; color: var(--navy, #003a75); }
 .manage-page .q-tag { font-size: 0.68rem; font-weight: 700; color: #fff; background: var(--primary, #0c78d4); border-radius: 5px; padding: 2px 8px; }
 .manage-page .bloom-tag { font-size: 0.7rem; font-weight: 600; border-radius: 6px; padding: 2px 9px; background: #FFF4E0; color: #B36500; }
+.manage-page .difficulty-tag { font-size: 0.7rem; font-weight: 700; border-radius: 6px; padding: 2px 9px; }
+.manage-page .difficulty-tag--de { background: #E8FFF0; color: #15803D; }
+.manage-page .difficulty-tag--trung_binh { background: #FFF4E0; color: #B36500; }
+.manage-page .difficulty-tag--kho { background: #FEECEC; color: #B42318; }
+.manage-page .difficulty-tag--empty { background: #F3F6FA; color: #5c6f89; }
 .manage-page .clo-tag { font-size: 0.7rem; font-weight: 700; border-radius: 6px; padding: 2px 8px; background: #E8FFF0; color: #15803D; }
 .manage-page .source-tag { font-size: 0.7rem; font-weight: 500; color: var(--text-muted, #5c6f89); }
 .manage-page .question-main p { font-size: 0.9rem; color: var(--text, #13253f); line-height: 1.5; }

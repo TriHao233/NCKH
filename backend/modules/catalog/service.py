@@ -27,6 +27,12 @@ from modules.catalog.schemas import (
     SubjectUpdatePayload,
 )
 from modules.generation.llm.factory import get_llm_service
+from modules.generation.llm.model_registry import (
+    EVALUATION_CAPABILITY,
+    GENERATION_CAPABILITY,
+    available_model_options,
+    resolve_model_snapshot,
+)
 from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import json_safe, object_id
 
@@ -459,14 +465,15 @@ class CatalogService:
             for item in self.db.ai_models.find().sort("priority", 1)
         ]
 
-    @staticmethod
-    def _model_factory_status(model_code: str) -> dict:
+    def _model_factory_status(self, model_code: str) -> dict:
         try:
-            provider = get_llm_service(model_code)
+            snapshot = resolve_model_snapshot(model_code, database=self.db)
+            provider = get_llm_service(model_code, model_snapshot=snapshot)
             runtime = {
                 "provider_class": provider.__class__.__name__,
                 "model_name": getattr(provider, "model_name", None),
                 "url": getattr(provider, "url", None),
+                "resolved": snapshot,
             }
             return {"supported": True, "runtime": runtime}
         except Exception as exc:
@@ -474,6 +481,21 @@ class CatalogService:
 
     def _catalog_model(self, model_code: str) -> dict | None:
         return self.db.ai_models.find_one({"model_code": model_code})
+
+    def available_ai_models(self, capability: str) -> dict:
+        normalized = capability.strip().upper()
+        if normalized not in {GENERATION_CAPABILITY, EVALUATION_CAPABILITY}:
+            raise ValueError("Tác vụ model không hợp lệ")
+        default_code = (
+            settings.model_provider
+            if normalized == GENERATION_CAPABILITY
+            else settings.evaluation_model_provider
+        )
+        return available_model_options(
+            self.db,
+            capability=normalized,
+            default_code=default_code,
+        )
 
     def runtime_config(self) -> dict:
         generation_code = settings.model_provider
@@ -509,10 +531,14 @@ class CatalogService:
                 "generation_model_provider": generation_code,
                 "evaluation_model_provider": evaluation_code,
                 "ollama_generate_url": settings.ollama_generate_url,
+                "ollama_timeout_seconds": settings.ollama_timeout_seconds,
+                "ollama_num_predict": settings.ollama_num_predict,
+                "ollama_temperature": settings.ollama_temperature,
+                "qwen_model_name": settings.qwen_model_name,
                 "deepseek_model_name": settings.deepseek_model_name,
                 "deepseek_timeout_seconds": settings.deepseek_timeout_seconds,
-                "gemini_default_model": settings.DEFAULT_MODEL,
-                "gemini_api_key_configured": bool(settings.GEMINI_API_KEY),
+                "gemini_default_model": settings.gemini_model_name,
+                "gemini_api_key_configured": bool(settings.gemini_api_key),
                 "generation_factory": self._model_factory_status(generation_code),
                 "evaluation_factory": self._model_factory_status(evaluation_code),
                 "generation_catalog_model": generation_catalog_model,
@@ -526,6 +552,7 @@ class CatalogService:
                     "deepseek",
                     "deepseek-r1",
                     "ollama:<model-name>",
+                    "gemini:<model-name>",
                 ],
             }
         )
@@ -581,7 +608,8 @@ class CatalogService:
                 **snapshot,
             })
         try:
-            provider = get_llm_service(payload.model_code)
+            snapshot = resolve_model_snapshot(payload.model_code, database=self.db)
+            provider = get_llm_service(payload.model_code, model_snapshot=snapshot)
             response_text = await asyncio.wait_for(
                 provider.generate_text(payload.prompt),
                 timeout=payload.timeout_seconds,

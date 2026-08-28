@@ -1,13 +1,16 @@
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson.errors import InvalidId
 from bson.objectid import ObjectId
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database
 from modules.documents.repository import object_id
-from modules.questions.schemas import QuestionCreateRequest
+from modules.questions.schemas import QuestionCreateRequest, QuestionDifficulty
 from modules.questions.service import get_question_service
 
 BLOOM_TO_LEVEL = {
@@ -55,7 +58,7 @@ def create_generation_run(
     document_oid = object_id(document_id, "document_id")
     db = get_database()
     provider = model_snapshot.get("provider") or model_snapshot.get("model_code") or ""
-    if provider:
+    if provider and not model_snapshot.get("source"):
         model_snapshot = _model_snapshot(db, provider, model_snapshot)
     document = db.documents.find_one({"_id": document_oid, "archived_at": None})
     if not document:
@@ -108,7 +111,7 @@ def create_generation_run(
         "execution": {
             "attempt_no": 1,
             "latency_ms": None,
-            "parser_version": "question-json-v1",
+            "parser_version": "question-json-v2",
         },
         "raw_model_response": None,
         "status": "GENERATING",
@@ -131,21 +134,60 @@ def finish_generation_run(
     generated_count: int = 0,
     latency_ms: int | None = None,
     error_message: str | None = None,
+    validation_errors: list[dict] | None = None,
+    post_processing: dict | None = None,
+    model_execution: dict | None = None,
 ) -> None:
     now = utc_now()
+    fields = {
+        "status": status.upper(),
+        "raw_model_response": raw_model_response,
+        "generated_count": generated_count,
+        "execution.latency_ms": latency_ms,
+        "error": {"message": error_message, "at": now} if error_message else None,
+        "finished_at": now,
+    }
+    if validation_errors is not None:
+        fields["validation_errors"] = validation_errors
+    if post_processing is not None:
+        fields["post_processing"] = post_processing
+    if model_execution is not None:
+        fields["execution.model"] = model_execution
     get_database().generation_runs.update_one(
         {"_id": object_id(generation_run_id, "generation_run_id")},
+        {"$set": fields},
+    )
+
+
+def get_existing_question_texts(document_id: str, *, limit: int = 2000) -> list[str]:
+    """Load current active question text for post-generation deduplication only."""
+    document_oid = object_id(document_id, "document_id")
+    pipeline = [
         {
-            "$set": {
-                "status": status.upper(),
-                "raw_model_response": raw_model_response,
-                "generated_count": generated_count,
-                "execution.latency_ms": latency_ms,
-                "error": {"message": error_message, "at": now} if error_message else None,
-                "finished_at": now,
+            "$match": {
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+                "current_version_id": {"$exists": True},
             }
         },
-    )
+        {
+            "$lookup": {
+                "from": "question_versions",
+                "localField": "current_version_id",
+                "foreignField": "_id",
+                "as": "current_version",
+            }
+        },
+        {"$unwind": "$current_version"},
+        {"$match": {"current_version.document_id": document_oid}},
+        {"$project": {"_id": 0, "content": "$current_version.content"}},
+        {"$limit": max(1, limit)},
+    ]
+    return [
+        str(item.get("content") or "").strip()
+        for item in get_database().questions.aggregate(pipeline)
+        if str(item.get("content") or "").strip()
+    ]
 
 
 def save_generated_questions(
@@ -159,17 +201,28 @@ def save_generated_questions(
     service = get_question_service()
     run_oid = object_id(generation_run_id, "generation_run_id")
     saved_questions = []
+    allowed_difficulties = {item.value for item in QuestionDifficulty}
     for question in questions:
+        difficulty = question.get("difficulty")
+        if difficulty not in allowed_difficulties:
+            difficulty = None
         saved_question = service.create(
             QuestionCreateRequest(
                 content=question["question"],
                 question_type=question["question_type"],
                 bloom_level=BLOOM_TO_LEVEL.get(question["bloom_level"]),
+                difficulty=difficulty,
                 question_data={
                     "options": question.get("options"),
                     "correct_answer": question.get("correct_answer"),
                     "explanation": question.get("explanation"),
                     "model_source_context": question.get("source_context"),
+                    "source_keywords": question.get("source_keywords") or [],
+                    "false_mutation": question.get("false_mutation"),
+                    "post_processing": {
+                        "status": "ACCEPTED",
+                        "validator_version": "question-post-v2",
+                    },
                 },
                 document_id=document_id,
                 source_chunk_ids=source_chunk_ids,
@@ -192,22 +245,60 @@ def save_generated_questions(
     return saved_questions
 
 
-def create_generation_job(request: dict, requested_by_user_id=None) -> str:
+def create_generation_job(
+    request: dict,
+    requested_by_user_id=None,
+    idempotency_key: str | None = None,
+    *,
+    model_snapshot: dict | None = None,
+    fallback_model_snapshot: dict | None = None,
+) -> str:
     """Tạo job sinh câu hỏi với trạng thái queued (dùng cho polling ở FE)."""
     db = get_database()
     now = utc_now()
     doc = {
         "request": request,
+        "model_snapshot": model_snapshot,
+        "fallback_model_snapshot": fallback_model_snapshot,
         "requested_by_user_id": requested_by_user_id,
+        "idempotency_key": idempotency_key,
         "status": "queued",
+        "attempt_count": 0,
+        "max_attempts": settings.job_max_attempts,
         "result": None,
         "metrics": None,
+        "progress": {"stage": "queued", "completed": 0, "total": 0},
         "error_message": None,
         "created_at": now,
         "updated_at": now,
     }
-    result = db["generation_jobs"].insert_one(doc)
+    try:
+        result = db["generation_jobs"].insert_one(doc)
+    except DuplicateKeyError:
+        existing = db.generation_jobs.find_one(
+            {
+                "requested_by_user_id": requested_by_user_id,
+                "idempotency_key": idempotency_key,
+            },
+            {"_id": 1},
+        )
+        if not existing:
+            raise
+        return str(existing["_id"])
     return str(result.inserted_id)
+
+
+def get_generation_job_by_idempotency(requested_by_user_id, idempotency_key: str) -> dict | None:
+    doc = get_database().generation_jobs.find_one(
+        {"requested_by_user_id": requested_by_user_id, "idempotency_key": idempotency_key}
+    )
+    return _serialize_generation_job(doc)
+
+
+def count_active_generation_jobs(requested_by_user_id) -> int:
+    return get_database().generation_jobs.count_documents(
+        {"requested_by_user_id": requested_by_user_id, "status": {"$in": ["queued", "processing"]}}
+    )
 
 
 def update_generation_job(
@@ -216,6 +307,7 @@ def update_generation_job(
     result: dict | None = None,
     metrics: dict | None = None,
     error_message: str | None = None,
+    worker_id: str | None = None,
 ):
     """Cập nhật trạng thái job sinh câu hỏi."""
     db = get_database()
@@ -223,6 +315,10 @@ def update_generation_job(
         "status": status,
         "updated_at": utc_now(),
     }
+    if status == "completed":
+        update_data["progress"] = {"stage": "completed", "completed": 1, "total": 1}
+    elif status == "failed":
+        update_data["progress"] = {"stage": "failed", "completed": 0, "total": 1}
     if result is not None:
         update_data["result"] = result
     if metrics is not None:
@@ -230,19 +326,166 @@ def update_generation_job(
     if error_message is not None:
         update_data["error_message"] = error_message
 
-    db["generation_jobs"].update_one({"_id": ObjectId(job_id)}, {"$set": update_data})
+    query = {"_id": ObjectId(job_id)}
+    if worker_id:
+        query["locked_by"] = worker_id
+    update: dict = {"$set": update_data}
+    if status in {"completed", "failed", "cancelled"}:
+        update_data["expires_at"] = utc_now() + timedelta(days=settings.job_retention_days)
+        update["$unset"] = {
+            "locked_by": "",
+            "lease_expires_at": "",
+            "heartbeat_at": "",
+            "next_attempt_at": "",
+        }
+    return db["generation_jobs"].update_one(query, update).modified_count == 1
 
 
-def get_generation_job(job_id: str) -> dict | None:
+def update_generation_progress(job_id: str, worker_id: str, progress: dict) -> bool:
+    result = get_database().generation_jobs.update_one(
+        {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
+        {"$set": {"progress": progress, "updated_at": utc_now()}},
+    )
+    return result.matched_count == 1
+
+
+def _serialize_generation_job(doc: dict | None) -> dict | None:
+    if not doc:
+        return None
+    result = dict(doc)
+    result["job_id"] = str(result.pop("_id"))
+    return result
+
+
+def get_generation_job(job_id: str, *, requested_by_user_id=None) -> dict | None:
     """Lấy thông tin job sinh câu hỏi theo job_id."""
     db = get_database()
     try:
-        doc = db["generation_jobs"].find_one({"_id": ObjectId(job_id)})
-    except InvalidId:
+        query = {"_id": ObjectId(job_id)}
+        if requested_by_user_id is not None:
+            query["requested_by_user_id"] = requested_by_user_id
+        doc = db["generation_jobs"].find_one(query)
+    except (InvalidId, TypeError):
         return None
+    return _serialize_generation_job(doc)
 
-    if not doc:
+
+def claim_generation_job(job_id: str, worker_id: str) -> dict | None:
+    """Atomically claim one queued job so multiple workers cannot run it twice."""
+    try:
+        object_id = ObjectId(job_id)
+    except (InvalidId, TypeError):
         return None
+    now = utc_now()
+    doc = get_database()["generation_jobs"].find_one_and_update(
+        {
+            "_id": object_id,
+            "$or": [
+                {
+                    "status": "queued",
+                    "$or": [
+                        {"next_attempt_at": {"$exists": False}},
+                        {"next_attempt_at": {"$lte": now}},
+                    ],
+                },
+                {"status": "processing", "lease_expires_at": {"$lte": now}},
+            ],
+        },
+        {
+            "$set": {
+                "status": "processing",
+                "locked_by": worker_id,
+                "started_at": now,
+                "heartbeat_at": now,
+                "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
+                "updated_at": now,
+                "progress": {"stage": "starting", "completed": 0, "total": 0},
+            },
+            "$inc": {"attempt_count": 1},
+            "$unset": {"next_attempt_at": ""},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    return _serialize_generation_job(doc)
 
-    doc["job_id"] = str(doc.pop("_id"))
-    return doc
+
+def get_next_queued_generation_job_id() -> str | None:
+    now = utc_now()
+    doc = get_database()["generation_jobs"].find_one(
+        {
+            "$or": [
+                {
+                    "status": "queued",
+                    "$or": [
+                        {"next_attempt_at": {"$exists": False}},
+                        {"next_attempt_at": {"$lte": now}},
+                    ],
+                },
+                {"status": "processing", "lease_expires_at": {"$lte": now}},
+            ]
+        },
+        sort=[("created_at", 1)],
+        projection={"_id": 1},
+    )
+    return str(doc["_id"]) if doc else None
+
+
+def heartbeat_generation_job(job_id: str, worker_id: str) -> bool:
+    now = utc_now()
+    result = get_database().generation_jobs.update_one(
+        {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
+        {
+            "$set": {
+                "heartbeat_at": now,
+                "lease_expires_at": now + timedelta(seconds=settings.job_lease_seconds),
+                "updated_at": now,
+            }
+        },
+    )
+    return result.modified_count == 1
+
+
+def retry_or_dead_letter_generation_job(
+    job: dict,
+    worker_id: str,
+    *,
+    error_message: str,
+    metrics: dict | None = None,
+) -> str:
+    now = utc_now()
+    attempts = int(job.get("attempt_count") or 1)
+    max_attempts = int(job.get("max_attempts") or settings.job_max_attempts)
+    if attempts < max_attempts:
+        delay = min(
+            settings.job_retry_base_seconds * (2 ** max(0, attempts - 1)),
+            settings.job_retry_max_seconds,
+        )
+        status = "queued"
+        fields = {
+            "status": status,
+            "error_message": error_message,
+            "last_failed_at": now,
+            "next_attempt_at": now + timedelta(seconds=delay),
+            "updated_at": now,
+            "progress": {"stage": "retry_wait", "completed": 0, "total": 1},
+        }
+    else:
+        status = "failed"
+        fields = {
+            "status": status,
+            "error_message": error_message,
+            "dead_lettered_at": now,
+            "expires_at": now + timedelta(days=settings.job_retention_days),
+            "updated_at": now,
+            "progress": {"stage": "failed", "completed": 0, "total": 1},
+        }
+    if metrics is not None:
+        fields["metrics"] = metrics
+    get_database().generation_jobs.update_one(
+        {"_id": ObjectId(job["job_id"]), "status": "processing", "locked_by": worker_id},
+        {
+            "$set": fields,
+            "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": ""},
+        },
+    )
+    return status

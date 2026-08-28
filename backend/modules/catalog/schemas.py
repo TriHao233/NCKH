@@ -1,6 +1,7 @@
+import math
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ChapterPayload(BaseModel):
@@ -62,6 +63,8 @@ class SubjectResponse(BaseModel):
 class AiModelPayload(BaseModel):
     model_code: str = Field(..., min_length=1, max_length=80)
     model_name: str = Field(..., min_length=1, max_length=160)
+    display_name: str = Field("", max_length=160)
+    description: str = Field("", max_length=300)
     runtime: str = Field("OLLAMA", min_length=1, max_length=80)
     kind: str = Field("CHAT", min_length=1, max_length=80)
     revision: str = "local"
@@ -70,6 +73,39 @@ class AiModelPayload(BaseModel):
     is_local: bool = True
     is_active: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_runtime_config(self):
+        self.model_code = self.model_code.strip().lower()
+        self.model_name = self.model_name.strip()
+        self.display_name = self.display_name.strip()
+        self.description = self.description.strip()
+        self.runtime = self.runtime.strip().upper()
+        if self.runtime not in {"OLLAMA", "GEMINI"}:
+            raise ValueError("Nền tảng model phải là Ollama hoặc Gemini")
+        allowed_capabilities = {"QUESTION_GENERATION", "QUESTION_EVALUATION"}
+        self.capabilities = list(dict.fromkeys(item.strip().upper() for item in self.capabilities if item.strip()))
+        if not self.capabilities or any(item not in allowed_capabilities for item in self.capabilities):
+            raise ValueError("Hãy chọn ít nhất một mục sử dụng model")
+        numeric_rules = {
+            "timeout_seconds": (1, 1800),
+            "temperature": (0, 2),
+            "num_predict": (1, 32768),
+            "max_output_tokens": (1, 65536),
+        }
+        for key, (minimum, maximum) in numeric_rules.items():
+            if key not in self.config:
+                continue
+            try:
+                value = float(self.config[key])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Giá trị {key} không hợp lệ") from exc
+            if not math.isfinite(value) or value < minimum or value > maximum:
+                raise ValueError(f"Giá trị {key} phải từ {minimum} đến {maximum}")
+        endpoint = str(self.config.get("endpoint") or "").strip()
+        if endpoint and not endpoint.startswith(("http://", "https://")):
+            raise ValueError("Địa chỉ Ollama phải bắt đầu bằng http:// hoặc https://")
+        return self
 
 
 class AiModelActivationPayload(BaseModel):

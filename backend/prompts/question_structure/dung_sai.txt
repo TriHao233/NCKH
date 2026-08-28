@@ -4,3 +4,12 @@ CẤU TRÚC: dung_sai
 3. Mệnh đề phải hoàn toàn đúng hoặc hoàn toàn sai.
 4. `options` bắt buộc là {"A": "Đúng", "B": "Sai"}.
 5. `correct_answer` chỉ là "A" hoặc "B".
+6. `source_context` là một câu hoặc đoạn trích nguyên văn, liên tục trong CONTEXT và đủ để xác định đáp án.
+7. `source_keywords` chứa từ 1 đến 6 thuật ngữ/cụm từ neo; từng phần tử phải xuất hiện nguyên dạng trong cả `source_context` và `question`.
+8. Nếu `correct_answer` là "A", `false_mutation` phải là null.
+9. Nếu `correct_answer` là "B", `false_mutation` phải là object có ba trường:
+   - `field`: loại dữ kiện bị đổi, ví dụ `term`, `numeric_value`, `relation`, `condition`, `operator`;
+   - `original`: giá trị đúng xuất hiện nguyên dạng trong `source_context`;
+   - `replacement`: giá trị sai xuất hiện nguyên dạng trong `question`.
+10. Chỉ biến đổi một dữ kiện. Không dùng phủ định kép, dấu chấm phẩy, "đồng thời", "trong khi", "tuy nhiên" hoặc "nhưng" để ghép nhiều nhận định.
+11. Không dùng "theo tài liệu", "nội dung trên", "điều này", "như đã nêu" hoặc tham chiếu mơ hồ tương tự.

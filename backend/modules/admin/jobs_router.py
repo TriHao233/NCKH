@@ -52,6 +52,14 @@ def list_jobs(
         _translate(exc)
 
 
+@router.get("/metrics")
+def get_job_metrics(
+    _admin: CurrentUser = Depends(require_permissions("admin.jobs")),
+    service: AdminJobService = Depends(get_admin_job_service),
+):
+    return service.operational_metrics()
+
+
 @router.post("/{kind}/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
 def retry_job(
     kind: str,

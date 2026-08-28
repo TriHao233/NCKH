@@ -170,6 +170,18 @@ def list_ai_models(
     return {"items": service.list_ai_models()}
 
 
+@router.get("/ai-models/available")
+def list_available_ai_models(
+    capability: str = "QUESTION_GENERATION",
+    _user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.available_ai_models(capability)
+    except Exception as exc:
+        _translate(exc)
+
+
 @router.post("/ai-models", status_code=status.HTTP_201_CREATED)
 def upsert_ai_model(
     payload: AiModelPayload,

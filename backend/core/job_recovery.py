@@ -50,7 +50,7 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
 def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) -> int:
     result = db.generation_jobs.update_many(
         {
-            "status": {"$in": ["queued", "processing"]},
+            "status": "processing",
             **_stale_time_filter(cutoff),
         },
         {

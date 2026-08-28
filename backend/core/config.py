@@ -70,7 +70,26 @@ class Settings(BaseModel):
         os.getenv("DB_NAME", "rag_database"),
     )
     mongo_connect_timeout_ms: int = int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "10000"))
+    require_mongo_transactions: bool = _env_bool(
+        "REQUIRE_MONGO_TRANSACTIONS",
+        os.getenv("APP_ENV", "production").strip().lower() in {"production", "staging"},
+    )
     job_recovery_timeout_minutes: int = int(os.getenv("JOB_RECOVERY_TIMEOUT_MINUTES", "120"))
+    job_worker_poll_seconds: float = float(os.getenv("JOB_WORKER_POLL_SECONDS", "1"))
+    job_lease_seconds: int = int(os.getenv("JOB_LEASE_SECONDS", "120"))
+    job_heartbeat_seconds: int = int(os.getenv("JOB_HEARTBEAT_SECONDS", "30"))
+    job_max_attempts: int = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+    job_retry_base_seconds: int = int(os.getenv("JOB_RETRY_BASE_SECONDS", "5"))
+    job_retry_max_seconds: int = int(os.getenv("JOB_RETRY_MAX_SECONDS", "300"))
+    max_active_generation_jobs_per_user: int = int(os.getenv("MAX_ACTIVE_GENERATION_JOBS_PER_USER", "10"))
+    worker_shutdown_grace_seconds: int = int(os.getenv("WORKER_SHUTDOWN_GRACE_SECONDS", "30"))
+    job_retention_days: int = int(os.getenv("JOB_RETENTION_DAYS", "90"))
+    llm_slot_lease_seconds: int = int(os.getenv("LLM_SLOT_LEASE_SECONDS", "360"))
+    llm_slot_heartbeat_seconds: int = int(os.getenv("LLM_SLOT_HEARTBEAT_SECONDS", "30"))
+    llm_slot_wait_timeout_seconds: int = int(os.getenv("LLM_SLOT_WAIT_TIMEOUT_SECONDS", "600"))
+    llm_slot_poll_seconds: float = float(os.getenv("LLM_SLOT_POLL_SECONDS", "0.5"))
+    ollama_max_concurrency: int = int(os.getenv("OLLAMA_MAX_CONCURRENCY", "1"))
+    gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
 
     firebase_credentials_path: str = os.getenv(
@@ -87,7 +106,17 @@ class Settings(BaseModel):
         ("EVALUATION_MODEL_PROVIDER", "EVALUATOR_MODEL_CODE"),
         "deepseek-r1",
     )
-    ollama_generate_url: str = os.getenv("OLLAMA_GENERATE_URL", "http://localhost:11434/api/generate")
+    generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
+    evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
+    ollama_generate_url: str = _env_first(
+        ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
+        "http://localhost:11434/api/generate",
+    )
+    ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+    ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+    ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "900"))
+    ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
+    qwen_model_name: str = os.getenv("QWEN_MODEL_NAME", "qwen2.5:7b").strip()
     deepseek_model_name: str = _env_first(("DEEPSEEK_MODEL_NAME",), "deepseek-r1")
     deepseek_timeout_seconds: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "180"))
     deepseek_num_predict: int = int(os.getenv("DEEPSEEK_NUM_PREDICT", "900"))
@@ -123,8 +152,11 @@ class Settings(BaseModel):
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
     prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()
 
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini-2.0-flash")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    gemini_model_name: str = _env_first(
+        ("GEMINI_MODEL_NAME", "DEFAULT_MODEL"),
+        "gemini-2.0-flash",
+    )
 
 
 @lru_cache

@@ -47,7 +47,7 @@ import {
 } from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
-import { BLOOM_LEVELS, QUESTION_TYPES, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
   SINGLE_CHOICE_TYPES,
@@ -361,6 +361,11 @@ function versionDiffRows(left, right) {
       after: rightClassification.bloom?.name || rightClassification.bloom?.level,
     },
     {
+      label: 'Độ khó',
+      before: leftClassification.difficulty,
+      after: rightClassification.difficulty,
+    },
+    {
       label: 'CLO',
       before: versionCloLabel(left),
       after: versionCloLabel(right),
@@ -570,6 +575,7 @@ function ManagePage() {
   const [newExplanation, setNewExplanation] = useState('');
   const [newSubjectId, setNewSubjectId] = useState('');
   const [newDocumentId, setNewDocumentId] = useState('');
+  const [newSourceContext, setNewSourceContext] = useState('');
   const [newCloIds, setNewCloIds] = useState([]);
   const [creatingSaving, setCreatingSaving] = useState(false);
 
@@ -589,7 +595,7 @@ function ManagePage() {
 
   const savedFilterStorageKey = useMemo(
     () => questionFilterStorageKey(user),
-    [user?.email, user?.id, user?.uid],
+    [user],
   );
 
   const currentQuestionFilter = useMemo(() => ({
@@ -708,7 +714,7 @@ function ManagePage() {
       }
     };
     if (user) loadTeacherOptions();
-  }, [user?.id]);
+  }, [user]);
 
   const questionListRequest = ({ page, pageSize, search, includeStatusCounts = false }) => ({
     page,
@@ -860,11 +866,12 @@ function ManagePage() {
 
   useEffect(() => {
     fetchDocuments();
+    // fetchDocuments intentionally follows the document-management permission boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canManageDocuments]);
 
   useEffect(() => {
     fetchSubjects();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -899,7 +906,6 @@ function ManagePage() {
       }
     };
     openLinkedQuestion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, questions, openedDeepLinkId]);
 
   const counts = useMemo(() => ({
@@ -1439,7 +1445,7 @@ function ManagePage() {
     setWorkflowBusyId(item.id);
     try {
       await submitQuestionForReview(item.id);
-      await refreshAfterWorkflow('Đã gửi duyệt. Nhấn "Kiểm tra AI" để đưa câu hỏi vào hàng đợi thẩm định.', item);
+      await refreshAfterWorkflow('Đã gửi duyệt và tự động đưa câu hỏi vào hàng đợi thẩm định AI.', item);
     } catch (error) {
       alert('Gửi duyệt thất bại: ' + error.message);
     } finally {
@@ -1616,6 +1622,7 @@ function ManagePage() {
     setNewExplanation('');
     setNewSubjectId('');
     setNewDocumentId('');
+    setNewSourceContext('');
     setNewCloIds([]);
     setCreatingQuestion(true);
   };
@@ -1646,6 +1653,10 @@ function ManagePage() {
       alert(answerValidationError);
       return;
     }
+    if (newDocumentId && !newSourceContext.trim()) {
+      alert('Câu hỏi gắn tài liệu cần có đoạn minh chứng trích nguyên văn từ tài liệu.');
+      return;
+    }
     setCreatingSaving(true);
     try {
       await createQuestion({
@@ -1658,6 +1669,7 @@ function ManagePage() {
         },
         subject_id: newSubjectId || null,
         document_id: newDocumentId || null,
+        source_context: newSourceContext.trim() || null,
         clo_ids: newCloIds,
       });
       setCreatingQuestion(false);
@@ -1715,7 +1727,7 @@ function ManagePage() {
         expected_version: item.current_version,
         fallback_to_heuristic: false,
       });
-      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá. Xem kết quả trong tab Duyệt AI.', item);
+      await refreshAfterWorkflow('Đã đưa câu hỏi vào hàng đợi AI đánh giá. Xem kết quả trong tab Thẩm định AI.', item);
     } catch (error) {
       alert('Kiểm tra AI thất bại: ' + error.message);
     } finally {
@@ -2250,6 +2262,9 @@ function ManagePage() {
                           <span className="q-id">{item.question_code}</span>
                           <span className="q-tag">{questionTypeLabel((item.classification?.assessment_type || '').toLowerCase())}</span>
                           <span className="bloom-tag">{item.classification?.bloom?.name || '—'}</span>
+                          <span className={`difficulty-tag ${item.classification?.difficulty ? `difficulty-tag--${item.classification.difficulty}` : 'difficulty-tag--empty'}`}>
+                            {difficultyLabel(item.classification?.difficulty) || 'Chưa gán độ khó'}
+                          </span>
                           {(item.clos || []).slice(0, 2).map((clo) => (
                             <span className="clo-tag" key={refId(clo.id || clo)}>
                               {clo.code || clo.clo_code || 'CLO'}
@@ -2909,6 +2924,9 @@ function ManagePage() {
               <span className="q-id">{viewingQuestion.question_code}</span>
               <span className="q-tag">{questionTypeLabel((viewingQuestion.classification?.assessment_type || '').toLowerCase())}</span>
               <span className="bloom-tag">{viewingQuestion.classification?.bloom?.name || '—'}</span>
+              <span className={`difficulty-tag ${viewingQuestion.classification?.difficulty ? `difficulty-tag--${viewingQuestion.classification.difficulty}` : 'difficulty-tag--empty'}`}>
+                {difficultyLabel(viewingQuestion.classification?.difficulty) || 'Chưa gán độ khó'}
+              </span>
               <span className={`status-badge ${REVIEW_STATUS_CLASS[viewingQuestion.review_status] || ''}`}>
                 {REVIEW_STATUS_LABEL[viewingQuestion.review_status] || viewingQuestion.review_status}
               </span>
@@ -3246,13 +3264,30 @@ function ManagePage() {
                 <select
                   className="field-select"
                   value={newDocumentId}
-                  onChange={(e) => setNewDocumentId(e.target.value)}
+                  onChange={(e) => {
+                    setNewDocumentId(e.target.value);
+                    if (!e.target.value) setNewSourceContext('');
+                  }}
                 >
                   <option value="">Không chọn</option>
                   {documents.map((doc) => (
                     <option key={doc.id} value={doc.id}>{doc.title}</option>
                   ))}
                 </select>
+                {newDocumentId && (
+                  <>
+                    <label className="field-label">Đoạn minh chứng nguồn</label>
+                    <textarea
+                      className="field-input"
+                      rows={4}
+                      value={newSourceContext}
+                      onChange={(e) => setNewSourceContext(e.target.value)}
+                      placeholder="Dán nguyên văn đoạn trong tài liệu làm căn cứ cho câu hỏi"
+                      required
+                    />
+                    <small>Hệ thống kiểm tra đoạn này có trong nội dung tài liệu trước khi lưu.</small>
+                  </>
+                )}
               </div>
             )}
 

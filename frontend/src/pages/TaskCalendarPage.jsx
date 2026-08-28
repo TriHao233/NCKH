@@ -233,7 +233,7 @@ function TaskCalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, priorityFilter]);
 
-  const items = data?.items || [];
+  const items = useMemo(() => data?.items || [], [data?.items]);
   const summary = data?.summary;
 
   const upcoming = useMemo(

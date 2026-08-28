@@ -111,12 +111,21 @@ function CatalogAdminPage() {
   const [modelForm, setModelForm] = useState({
     model_code: 'qwen',
     model_name: 'qwen2.5:7b',
+    display_name: 'Qwen 2.5 (7B)',
+    description: 'Nhanh và phù hợp để sinh câu hỏi.',
     runtime: 'OLLAMA',
     kind: 'CHAT',
     revision: 'local',
     capabilities: 'QUESTION_GENERATION,QUESTION_EVALUATION',
     priority: 10,
     is_active: true,
+    config: {
+      endpoint: '',
+      timeout_seconds: 300,
+      temperature: 0,
+      num_predict: 900,
+      max_output_tokens: 2048,
+    },
   });
   const [selectedPromptKey, setSelectedPromptKey] = useState('');
   const [promptForm, setPromptForm] = useState({ template_key: '', kind: 'QUESTION_TYPE', name: '', prompt_body: '' });
@@ -276,12 +285,22 @@ function CatalogAdminPage() {
 
   const handleSaveModel = (event) => {
     event.preventDefault();
+    const config = {
+      timeout_seconds: Number(modelForm.config.timeout_seconds) || 300,
+      temperature: Number(modelForm.config.temperature) || 0,
+      ...(modelForm.runtime === 'GEMINI'
+        ? { max_output_tokens: Number(modelForm.config.max_output_tokens) || 2048 }
+        : { num_predict: Number(modelForm.config.num_predict) || 900 }),
+      ...(modelForm.runtime === 'OLLAMA' && modelForm.config.endpoint.trim()
+        ? { endpoint: modelForm.config.endpoint.trim() }
+        : {}),
+    };
     runSave(async () => saveAiModel({
       ...modelForm,
       capabilities: modelForm.capabilities.split(',').map((item) => item.trim()).filter(Boolean),
       priority: Number(modelForm.priority) || 0,
-      config: { endpoint: 'http://localhost:11434/api/generate' },
-      is_local: true,
+      config,
+      is_local: modelForm.runtime === 'OLLAMA',
       is_active: modelForm.is_active,
     }));
   };
@@ -290,13 +309,30 @@ function CatalogAdminPage() {
     setModelForm({
       model_code: model.model_code || '',
       model_name: model.model_name || '',
+      display_name: model.display_name || model.model_name || '',
+      description: model.description || '',
       runtime: model.runtime || 'OLLAMA',
       kind: model.kind || 'CHAT',
       revision: model.revision || 'local',
       capabilities: (model.capabilities || []).join(','),
       priority: model.priority ?? 10,
       is_active: model.is_active !== false,
+      config: {
+        endpoint: model.config?.endpoint || '',
+        timeout_seconds: model.config?.timeout_seconds ?? 300,
+        temperature: model.config?.temperature ?? 0,
+        num_predict: model.config?.num_predict ?? 900,
+        max_output_tokens: model.config?.max_output_tokens ?? 2048,
+      },
     });
+  };
+
+  const toggleModelCapability = (capability) => {
+    const values = modelForm.capabilities.split(',').map((item) => item.trim()).filter(Boolean);
+    const next = values.includes(capability)
+      ? values.filter((item) => item !== capability)
+      : [...values, capability];
+    setModelForm({ ...modelForm, capabilities: next.join(',') });
   };
 
   const toggleModelActive = (model) => {
@@ -573,11 +609,74 @@ function CatalogAdminPage() {
 
           <div className="catalog-card">
             <h2>Mô hình AI</h2>
+            <p className="catalog-card-note">Thêm phiên bản mới hoặc đổi model đang dùng mà không cần sửa code.</p>
             <form className="catalog-form" onSubmit={handleSaveModel}>
-              <input placeholder="Mã mô hình" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
-              <input placeholder="Tên mô hình" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
-              <input placeholder="Năng lực mô hình" value={modelForm.capabilities} onChange={(e) => setModelForm({ ...modelForm, capabilities: e.target.value })} />
-              <input type="number" min="0" value={modelForm.priority} onChange={(e) => setModelForm({ ...modelForm, priority: e.target.value })} />
+              <label className="catalog-model-field">
+                <span>Tên hiển thị</span>
+                <input placeholder="Ví dụ: Qwen 2.5 (7B)" value={modelForm.display_name} onChange={(e) => setModelForm({ ...modelForm, display_name: e.target.value })} />
+              </label>
+              <label className="catalog-model-field">
+                <span>Mã cấu hình</span>
+                <input placeholder="Ví dụ: qwen-7b" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
+              </label>
+              <label className="catalog-model-field">
+                <span>Tên model và phiên bản</span>
+                <input placeholder="Ví dụ: qwen2.5:7b" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
+              </label>
+              <label className="catalog-model-field">
+                <span>Nền tảng</span>
+                <select value={modelForm.runtime} onChange={(e) => setModelForm({ ...modelForm, runtime: e.target.value })}>
+                  <option value="OLLAMA">Ollama</option>
+                  <option value="GEMINI">Gemini</option>
+                </select>
+              </label>
+              <label className="catalog-model-field">
+                <span>Mô tả ngắn</span>
+                <input placeholder="Người dùng nên chọn model này khi nào?" value={modelForm.description} onChange={(e) => setModelForm({ ...modelForm, description: e.target.value })} />
+              </label>
+              <div className="catalog-model-capabilities">
+                <span>Dùng cho</span>
+                <label className="catalog-check">
+                  <input type="checkbox" checked={modelForm.capabilities.includes('QUESTION_GENERATION')} onChange={() => toggleModelCapability('QUESTION_GENERATION')} />
+                  Sinh câu hỏi
+                </label>
+                <label className="catalog-check">
+                  <input type="checkbox" checked={modelForm.capabilities.includes('QUESTION_EVALUATION')} onChange={() => toggleModelCapability('QUESTION_EVALUATION')} />
+                  Đánh giá câu hỏi
+                </label>
+              </div>
+              <details className="catalog-model-advanced">
+                <summary>Cài đặt nâng cao</summary>
+                <label className="catalog-model-field">
+                  <span>Thời gian chờ (giây)</span>
+                  <input type="number" min="1" max="1800" value={modelForm.config.timeout_seconds} onChange={(e) => setModelForm({ ...modelForm, config: { ...modelForm.config, timeout_seconds: e.target.value } })} />
+                </label>
+                <label className="catalog-model-field">
+                  <span>Độ sáng tạo</span>
+                  <input type="number" min="0" max="2" step="0.1" value={modelForm.config.temperature} onChange={(e) => setModelForm({ ...modelForm, config: { ...modelForm.config, temperature: e.target.value } })} />
+                </label>
+                {modelForm.runtime === 'OLLAMA' ? (
+                  <>
+                    <label className="catalog-model-field">
+                      <span>Số token tối đa</span>
+                      <input type="number" min="1" max="32768" value={modelForm.config.num_predict} onChange={(e) => setModelForm({ ...modelForm, config: { ...modelForm.config, num_predict: e.target.value } })} />
+                    </label>
+                    <label className="catalog-model-field">
+                      <span>Địa chỉ Ollama (để trống để dùng mặc định)</span>
+                      <input placeholder="http://.../api/generate" value={modelForm.config.endpoint} onChange={(e) => setModelForm({ ...modelForm, config: { ...modelForm.config, endpoint: e.target.value } })} />
+                    </label>
+                  </>
+                ) : (
+                  <label className="catalog-model-field">
+                    <span>Số token tối đa</span>
+                    <input type="number" min="1" max="65536" value={modelForm.config.max_output_tokens} onChange={(e) => setModelForm({ ...modelForm, config: { ...modelForm.config, max_output_tokens: e.target.value } })} />
+                  </label>
+                )}
+              </details>
+              <label className="catalog-model-field">
+                <span>Thứ tự hiển thị</span>
+                <input type="number" min="0" value={modelForm.priority} onChange={(e) => setModelForm({ ...modelForm, priority: e.target.value })} />
+              </label>
               <label className="catalog-check">
                 <input type="checkbox" checked={modelForm.is_active} onChange={(e) => setModelForm({ ...modelForm, is_active: e.target.checked })} />
                 Đang dùng
@@ -588,7 +687,8 @@ function CatalogAdminPage() {
               {catalog.ai_models.map((model) => (
                 <article className={`catalog-list-item ${model.is_active === false ? 'inactive' : ''}`} key={model._id || model.model_code}>
                   <div>
-                    <b>{model.model_code} - {model.model_name}</b>
+                    <b>{model.display_name || model.model_name}</b>
+                    <span>{model.model_name} · {model.runtime}</span>
                     <span>{factoryText(model)}</span>
                     <span>{healthText(model)}</span>
                   </div>
@@ -600,7 +700,7 @@ function CatalogAdminPage() {
                       {model.is_active === false ? 'Kích hoạt' : 'Tạm khóa'}
                     </button>
                     <button type="button" onClick={() => handleCheckModelHealth(model)} disabled={saving || healthCheckingCode === model.model_code}>
-                      {healthCheckingCode === model.model_code ? 'Đang kiểm tra...' : 'Health-check'}
+                      {healthCheckingCode === model.model_code ? 'Đang kiểm tra...' : 'Kiểm tra'}
                     </button>
                   </div>
                 </article>
@@ -608,7 +708,8 @@ function CatalogAdminPage() {
             </div>
             {modelHealth && (
               <p className={`catalog-result ${modelHealth.status === 'OK' ? 'ok' : 'warn'}`}>
-                {modelHealth.model_code}: {modelHealth.status} · {modelHealth.latency_ms || 0}ms
+                {modelHealth.status === 'OK' ? 'Model hoạt động tốt' : 'Model chưa sẵn sàng'}
+                {' · '}{modelHealth.latency_ms || 0} ms
               </p>
             )}
           </div>

@@ -1,29 +1,30 @@
-import { useContext } from 'react';
+import { lazy, Suspense, useContext } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
-import AboutPage from './pages/AboutPage';
-import GeneratePage from './pages/GeneratePage';
-import ManagePage from './pages/ManagePage';
-import ReviewQueuePage from './pages/ReviewQueuePage';
-import AdminAiReviewPage from './pages/AdminAiReviewPage';
-import AdminOverviewPage from './pages/AdminOverviewPage';
-import CatalogAdminPage from './pages/CatalogAdminPage';
-import AdminAuditPage from './pages/AdminAuditPage';
-import AdminJobsPage from './pages/AdminJobsPage';
-import AdminMoodlePage from './pages/AdminMoodlePage';
-import UsersAdminPage from './pages/UsersAdminPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import GuidePage from './pages/GuidePage';
-import ContactPage from './pages/ContactPage';
-import UserProfile from './pages/UserProfile';
-import TaskCalendarPage from './pages/TaskCalendarPage';
-import ExamListPage from './pages/ExamListPage';
-import SubjectManage from './pages/SubjectManage';
-import ExamBuilderPage from './pages/ExamBuilderPage';
 import { AuthContext } from './context/AuthContext';
 import { canAccessPath } from './auth/permissions';
+
+const AboutPage = lazy(() => import('./pages/AboutPage'));
+const GeneratePage = lazy(() => import('./pages/GeneratePage'));
+const ManagePage = lazy(() => import('./pages/ManagePage'));
+const ReviewQueuePage = lazy(() => import('./pages/ReviewQueuePage'));
+const AdminAiReviewPage = lazy(() => import('./pages/AdminAiReviewPage'));
+const AdminOverviewPage = lazy(() => import('./pages/AdminOverviewPage'));
+const CatalogAdminPage = lazy(() => import('./pages/CatalogAdminPage'));
+const AdminAuditPage = lazy(() => import('./pages/AdminAuditPage'));
+const AdminJobsPage = lazy(() => import('./pages/AdminJobsPage'));
+const AdminMoodlePage = lazy(() => import('./pages/AdminMoodlePage'));
+const UsersAdminPage = lazy(() => import('./pages/UsersAdminPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const GuidePage = lazy(() => import('./pages/GuidePage'));
+const ContactPage = lazy(() => import('./pages/ContactPage'));
+const UserProfile = lazy(() => import('./pages/UserProfile'));
+const TaskCalendarPage = lazy(() => import('./pages/TaskCalendarPage'));
+const ExamListPage = lazy(() => import('./pages/ExamListPage'));
+const SubjectManage = lazy(() => import('./pages/SubjectManage'));
+const ExamBuilderPage = lazy(() => import('./pages/ExamBuilderPage'));
 
 function RequireAccess({ path, children }) {
     const { user, loading } = useContext(AuthContext);
@@ -44,6 +45,7 @@ function ProtectedPage({ path, children }) {
 
 function App() {
     return (
+      <Suspense fallback={<div className="route-loading">Đang tải trang...</div>}>
         <Routes>
             <Route element={<Layout />}>
                 <Route path="/" element={<Navigate to="/trang-chu" replace />} />
@@ -177,6 +179,7 @@ function App() {
             <Route path="/dang-ky" element={<RegisterPage />} />
             <Route path="*" element={<Navigate to="/trang-chu" replace />} />
         </Routes>
+      </Suspense>
     );
 }
 
