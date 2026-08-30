@@ -23,6 +23,15 @@ Phải giữ action và severity bên trong feedback, không đặt ở cấp ng
   "evidence": {{
     "supporting_excerpt": "Trích ngắn hoặc diễn giải sát từ source_chunks",
     "reasoning": "Lý do chấm điểm chính, viết tiếng Việt",
+    "question_polarity": "POSITIVE | NEGATIVE",
+    "option_checks": [
+      {{
+        "key": "A",
+        "verdict": "SUPPORTED | CONTRADICTED | NOT_IN_SOURCE | AMBIGUOUS",
+        "source_label": "S1/S2/S3 có thật; bắt buộc với SUPPORTED",
+        "supporting_excerpt": "Trích tối đa 18 từ từ đúng source_label; không lấy từ correct_answer/explanation"
+      }}
+    ],
     "criteria": ["Tiêu chí đã dùng"],
     "risks": ["Rủi ro thực tế nếu có"],
     "moodle_readiness": "READY | NEEDS_FIX",

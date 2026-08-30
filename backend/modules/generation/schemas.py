@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.config import settings
@@ -27,6 +27,7 @@ class QuestionPlanItem(BaseModel):
     question_type: QuestionType
     bloom_level: Optional[BloomLevel] = None
     num_questions: int = Field(default=1, ge=1, le=10)
+    content_mode: Literal["auto", "code", "general"] = "auto"
 
 
 class GenerationClientTelemetry(BaseModel):
@@ -52,6 +53,11 @@ class QuestionGenerateRequest(BaseModel):
     question_type: QuestionType = QuestionType.TRAC_NGHIEM
     num_questions: int = Field(default=1, ge=1, le=10)
     model_provider: str = Field(default_factory=lambda: settings.model_provider, min_length=1, max_length=160)
+    code_model_provider: str = Field(
+        default_factory=lambda: settings.code_generation_model_provider,
+        min_length=1,
+        max_length=160,
+    )
     question_plan: Optional[List[QuestionPlanItem]] = Field(
         None,
         min_length=1,
@@ -99,6 +105,7 @@ class GeneratedQuestion(BaseModel):
     difficulty: Optional[str] = None
     source_context: str
     source_keywords: List[str] = Field(default_factory=list)
+    clo_codes: List[str] = Field(default_factory=list)
     false_mutation: Optional[dict[str, Any]] = None
     question_id: Optional[str] = None
     question_code: Optional[str] = None
@@ -119,6 +126,8 @@ class GenerationPlanSummary(BaseModel):
     plan_index: int
     question_type: str
     bloom_level: str
+    model_provider: str = ""
+    content_mode: str = "general"
     requested_count: int
     parsed_count: int = 0
     valid_count: int = 0

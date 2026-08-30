@@ -15,6 +15,7 @@ SCHEMA:
       "difficulty": "de | trung_binh | kho",
       "source_context": "string (exact verbatim quote)",
       "source_keywords": ["exact keyword or phrase from source_context"],
+      "clo_codes": ["CLO code selected only from LEARNING OUTCOMES; empty when none fit"],
       "false_mutation": "object for a false dung_sai statement; otherwise null"
     }
   ]

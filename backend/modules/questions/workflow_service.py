@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -59,13 +60,30 @@ DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
 EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
 EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
 EVALUATION_SOURCE_LIMIT = 3
+OPTION_CHECK_VERDICTS = {"SUPPORTED", "CONTRADICTED", "NOT_IN_SOURCE", "AMBIGUOUS"}
+SINGLE_ANSWER_TYPES = {"TRAC_NGHIEM", "DUNG_SAI"}
+MULTIPLE_ANSWER_TYPES = {"NHIEU_LUA_CHON"}
+NON_OPTION_ANSWER_TYPES = {"DIEN_KHUYET", "GHEP_COT", "SAP_XEP", "TINH_HUONG"}
+NEGATIVE_QUESTION_PATTERN = re.compile(
+    r"\b(không\s+(?:phải|đúng|chính\s+xác|phù\s+hợp)|chưa\s+đúng|ngoại\s+trừ|sai)\b"
+    r"|\b(?:nào|đâu)\b[^?.]{0,80}\bkhông\b",
+    flags=re.IGNORECASE,
+)
 MOODLE_MOCK_STATUS_DETAIL = "SIMULATED_LOCAL_RECORD"
 MOODLE_MOCK_MESSAGE = (
     "Mô phỏng Moodle: hệ thống chỉ ghi nhận publication cục bộ kèm payload "
     "export GIFT/XML, chưa gửi dữ liệu sang Moodle thật."
 )
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
+EVALUATION_RETRY_INSTRUCTION = """
+LẦN THỬ LẠI: Phản hồi trước không phải JSON hoàn chỉnh.
+- Chỉ trả về đúng một object JSON và phải đóng đủ mọi dấu ngoặc.
+- summary, reasoning và answer_diagnostics: tối đa 120 ký tự mỗi trường.
+- supporting_excerpt của từng option: tối đa 18 từ, không lặp lại đoạn nguồn dài.
+- Không thêm trường ngoài schema OUTPUT.
+""".strip()
 evaluation_semaphore = asyncio.Semaphore(1)
+logger = logging.getLogger(__name__)
 
 REVIEW_CRITERION_KEYS = tuple(DEFAULT_WEIGHTS)
 LEGACY_REVIEW_CRITERION_MAP = {
@@ -73,6 +91,46 @@ LEGACY_REVIEW_CRITERION_MAP = {
     "answer_correctness": "answer_relevancy",
     "bloom_clo_alignment": "bloom_alignment",
 }
+
+
+def _limit_evaluation_output(snapshot: dict | None) -> dict | None:
+    if not snapshot or str(snapshot.get("runtime") or "").upper() != "OLLAMA":
+        return snapshot
+    model_code = str(snapshot.get("model_code") or "").strip().lower()
+    if model_code != "qwen":
+        return snapshot
+    parameters = dict(snapshot.get("parameters") or {})
+    configured = int(parameters.get("num_predict") or settings.evaluation_num_predict)
+    parameters["num_predict"] = min(configured, settings.evaluation_num_predict)
+    return {**snapshot, "parameters": parameters}
+
+
+def _prepare_evaluation_attempt(
+    prompt: str,
+    prompt_snapshot: dict,
+    model_snapshot: dict | None,
+    attempt: int,
+) -> tuple[str, dict, dict | None]:
+    if attempt <= 1:
+        return prompt, prompt_snapshot, model_snapshot
+
+    retry_prompt = f"{prompt}\n\n{EVALUATION_RETRY_INSTRUCTION}"
+    retry_prompt_snapshot = {
+        **prompt_snapshot,
+        "rendered_prompt_hash": hashlib.sha256(retry_prompt.encode("utf-8")).hexdigest(),
+        "rendered_prompt_chars": len(retry_prompt),
+        "retry_attempt": attempt,
+        "retry_instruction_applied": True,
+    }
+    if not model_snapshot or str(model_snapshot.get("runtime") or "").upper() != "OLLAMA":
+        return retry_prompt, retry_prompt_snapshot, model_snapshot
+
+    effective_model_snapshot = {**model_snapshot}
+    parameters = dict(model_snapshot.get("parameters") or {})
+    configured = int(parameters.get("num_predict") or 0)
+    parameters["num_predict"] = max(configured, settings.evaluation_num_predict)
+    effective_model_snapshot["parameters"] = parameters
+    return retry_prompt, retry_prompt_snapshot, effective_model_snapshot
 
 
 def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
@@ -212,6 +270,12 @@ class QuestionWorkflowService:
         if not context_tokens:
             return 0.0
         return len(text_tokens & context_tokens) / len(text_tokens)
+
+    @staticmethod
+    def _is_negative_selection_question(question_type: str, question: str) -> bool:
+        if question_type == "DUNG_SAI":
+            return False
+        return bool(NEGATIVE_QUESTION_PATTERN.search(question or ""))
 
     @staticmethod
     def _clamp(score: float) -> float:
@@ -427,7 +491,363 @@ class QuestionWorkflowService:
         assessed = str(evidence.get("assessed_difficulty") or "").strip().lower().replace("-", "_")
         assessed = assessed.replace(" ", "_")
         evidence["assessed_difficulty"] = assessed if assessed in {"de", "trung_binh", "kho"} else None
+        polarity = str(evidence.get("question_polarity") or "").strip().upper()
+        evidence["question_polarity"] = polarity if polarity in {"POSITIVE", "NEGATIVE"} else None
+        option_checks = evidence.get("option_checks")
+        normalized_checks = []
+        if isinstance(option_checks, list):
+            for check in option_checks:
+                if not isinstance(check, dict):
+                    continue
+                normalized_checks.append(
+                    {
+                        "key": str(check.get("key") or "").strip().upper(),
+                        "verdict": str(check.get("verdict") or "").strip().upper(),
+                        "source_label": str(check.get("source_label") or "").strip().upper(),
+                        "supporting_excerpt": cls._compact_text(
+                            check.get("supporting_excerpt") or "",
+                            300,
+                        ),
+                    }
+                )
+        evidence["option_checks"] = normalized_checks
         return scores, feedback, evidence
+
+    @staticmethod
+    def _question_options(version: dict) -> dict[str, str]:
+        options = (version.get("question_data") or {}).get("options")
+        if isinstance(options, dict):
+            return {
+                str(key).strip().upper(): str(value or "").strip()
+                for key, value in options.items()
+                if str(key).strip() and str(value or "").strip()
+            }
+        if isinstance(options, list):
+            return {
+                chr(65 + index): str(value or "").strip()
+                for index, value in enumerate(options)
+                if index < 26 and str(value or "").strip()
+            }
+        return {}
+
+    @classmethod
+    def _declared_answer_keys(cls, version: dict, options: dict[str, str]) -> set[str]:
+        raw_answer = (version.get("question_data") or {}).get("correct_answer")
+        values = raw_answer if isinstance(raw_answer, list) else re.split(r"[;,|]", str(raw_answer or ""))
+        normalized_options = {
+            cls._compact_text(value, 500).casefold(): key
+            for key, value in options.items()
+        }
+        answer_keys = set()
+        for value in values:
+            normalized = str(value or "").strip()
+            key = normalized.upper()
+            if key in options:
+                answer_keys.add(key)
+                continue
+            option_key = normalized_options.get(cls._compact_text(normalized, 500).casefold())
+            if option_key:
+                answer_keys.add(option_key)
+        return answer_keys
+
+    @classmethod
+    def _apply_answer_guardrail(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        version: dict,
+    ) -> tuple[EvaluationScores, dict, dict]:
+        options = cls._question_options(version)
+        question_type = str(
+            (version.get("classification") or {}).get("assessment_type") or ""
+        ).strip().upper()
+        if question_type in NON_OPTION_ANSWER_TYPES:
+            return scores, feedback, {
+                **evidence,
+                "answer_guardrail": {
+                    "applied": False,
+                    "reason": "QUESTION_TYPE_NOT_OPTION_BASED",
+                    "question_type": question_type,
+                },
+            }
+        if len(options) < 2:
+            return scores, feedback, {
+                **evidence,
+                "answer_guardrail": {"applied": False, "reason": "NO_OPTION_SET"},
+            }
+
+        question = str(version.get("content") or "")
+        # With true/false items the stem is a proposition; words such as "không"
+        # belong to that proposition and do not turn the answer format into a
+        # negative-selection MCQ.
+        negative = cls._is_negative_selection_question(question_type, question)
+        declared_keys = cls._declared_answer_keys(version, options)
+        checks = evidence.get("option_checks") if isinstance(evidence.get("option_checks"), list) else []
+        checks_by_key = {
+            str(check.get("key") or "").strip().upper(): check
+            for check in checks
+            if isinstance(check, dict) and str(check.get("key") or "").strip()
+        }
+        if question_type == "DUNG_SAI" and len(options) == 2 and len(checks_by_key) == 1:
+            normalized_values = {
+                key: re.sub(r"\s+", " ", value).strip().casefold()
+                for key, value in options.items()
+            }
+            truth_key = next(
+                (key for key, value in normalized_values.items() if value in {"đúng", "dung", "true"}),
+                None,
+            )
+            false_key = next(
+                (key for key, value in normalized_values.items() if value in {"sai", "false"}),
+                None,
+            )
+            checked_key, checked = next(iter(checks_by_key.items()))
+            if (
+                truth_key
+                and false_key
+                and checked_key in {truth_key, false_key}
+                and checked.get("verdict") in {"SUPPORTED", "CONTRADICTED"}
+            ):
+                inferred_key = false_key if checked_key == truth_key else truth_key
+                inferred = {
+                    "key": inferred_key,
+                    "verdict": (
+                        "CONTRADICTED"
+                        if checked.get("verdict") == "SUPPORTED"
+                        else "SUPPORTED"
+                    ),
+                    "source_label": checked.get("source_label") or "",
+                    "supporting_excerpt": checked.get("supporting_excerpt") or "",
+                    "inferred_from_complement": checked_key,
+                }
+                checks.append(inferred)
+                checks_by_key[inferred_key] = inferred
+                evidence = {**evidence, "option_checks": checks}
+        issues = []
+        reported_polarity = str(evidence.get("question_polarity") or "").strip().upper()
+        detected_polarity = "NEGATIVE" if negative else "POSITIVE"
+        if reported_polarity and reported_polarity != detected_polarity:
+            issues.append(
+                f"AI nhận diện sai dạng câu: báo {reported_polarity}, thực tế {detected_polarity}"
+            )
+        missing_keys = [key for key in options if key not in checks_by_key]
+        if missing_keys:
+            issues.append(f"AI chưa kiểm tra phương án: {', '.join(missing_keys)}")
+
+        invalid_keys = [
+            key
+            for key, check in checks_by_key.items()
+            if key not in options or check.get("verdict") not in OPTION_CHECK_VERDICTS
+        ]
+        if invalid_keys:
+            issues.append(f"option_checks không hợp lệ: {', '.join(sorted(invalid_keys))}")
+
+        supported = {
+            key
+            for key, check in checks_by_key.items()
+            if key in options and check.get("verdict") == "SUPPORTED"
+        }
+        unsupported = {
+            key
+            for key, check in checks_by_key.items()
+            if key in options and check.get("verdict") in {"CONTRADICTED", "NOT_IN_SOURCE"}
+        }
+        ambiguous = {
+            key
+            for key, check in checks_by_key.items()
+            if key in options and check.get("verdict") == "AMBIGUOUS"
+        }
+        if not declared_keys:
+            issues.append("Không xác định được đáp án đã khai báo")
+
+        source_context = cls._source_context(version)
+        lexical_support = {
+            key: round(cls._overlap_score(text, source_context), 4)
+            for key, text in options.items()
+        }
+        answer_mode = (
+            "SINGLE"
+            if question_type in SINGLE_ANSWER_TYPES
+            else "MULTIPLE"
+            if question_type in MULTIPLE_ANSWER_TYPES
+            else "SINGLE"
+            if len(declared_keys) <= 1
+            else "MULTIPLE"
+        )
+        if negative:
+            if len(unsupported) != 1:
+                issues.append(
+                    "Câu phủ định phải có đúng một phương án không được nguồn hỗ trợ"
+                )
+            elif declared_keys != unsupported:
+                issues.append("Đáp án khai báo không khớp phương án phủ định duy nhất")
+            if options and all(score >= 0.8 for score in lexical_support.values()):
+                issues.append(
+                    "Tất cả phương án đều xuất hiện rõ trong nguồn; không được tự động duyệt câu phủ định"
+                )
+        else:
+            if answer_mode == "SINGLE":
+                if not declared_keys.issubset(supported):
+                    issues.append("Đáp án khai báo không được option_checks xác nhận")
+                if len(supported) != 1:
+                    issues.append("Câu một đáp án không có đúng một phương án được xác nhận")
+            elif declared_keys and supported != declared_keys:
+                issues.append("Tập đáp án khai báo không khớp các phương án được xác nhận")
+
+        if ambiguous:
+            issues.append(f"Phương án còn mơ hồ: {', '.join(sorted(ambiguous))}")
+        compact_sources = cls._compact_sources(version)
+        source_by_label = {
+            str(source.get("label") or "").upper(): str(source.get("excerpt") or "")
+            for source in compact_sources
+        }
+        for key in supported:
+            check = checks_by_key[key]
+            excerpt = str(check.get("supporting_excerpt") or "").strip()
+            source_label = str(check.get("source_label") or "").strip().upper()
+            if not excerpt:
+                issues.append(f"Phương án {key} thiếu trích dẫn nguồn")
+            if not source_label or source_label not in source_by_label:
+                issues.append(f"Phương án {key} không trỏ tới nguồn S hợp lệ")
+            elif excerpt and cls._overlap_score(excerpt, source_by_label[source_label]) < 0.5:
+                issues.append(f"Trích dẫn của phương án {key} không khớp nguồn {source_label}")
+
+        guardrail = {
+            "applied": bool(issues),
+            "question_type": question_type or "UNKNOWN",
+            "answer_mode": answer_mode,
+            "question_polarity": detected_polarity,
+            "reported_question_polarity": reported_polarity or None,
+            "declared_answer_keys": sorted(declared_keys),
+            "supported_option_keys": sorted(supported),
+            "unsupported_option_keys": sorted(unsupported),
+            "ambiguous_option_keys": sorted(ambiguous),
+            "option_source_overlap": lexical_support,
+            "issues": list(dict.fromkeys(issues)),
+        }
+        if not issues:
+            return scores, feedback, {**evidence, "answer_guardrail": guardrail}
+
+        guarded_scores = EvaluationScores(
+            **{
+                **scores.model_dump(),
+                "faithfulness": min(scores.faithfulness, 0.35),
+                "answer_relevancy": min(scores.answer_relevancy, 0.30),
+            }
+        )
+        guarded_feedback = {
+            **feedback,
+            "action": "NEEDS_REVISION",
+            "severity": "HIGH",
+            "summary": "Guardrail đáp án chặn tự động duyệt: " + guardrail["issues"][0],
+            "missing": list(
+                dict.fromkeys([*(feedback.get("missing") or []), *guardrail["issues"]])
+            ),
+        }
+        guarded_evidence = {
+            **evidence,
+            "moodle_readiness": "NEEDS_FIX",
+            "risks": list(
+                dict.fromkeys(
+                    [
+                        *(evidence.get("risks") or []),
+                        "Đáp án chưa vượt qua kiểm chứng từng phương án",
+                    ]
+                )
+            ),
+            "answer_guardrail": guardrail,
+        }
+        return guarded_scores, guarded_feedback, guarded_evidence
+
+    @classmethod
+    def _apply_metadata_guardrail(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        version: dict,
+    ) -> tuple[EvaluationScores, dict, dict]:
+        classification = version.get("classification") or {}
+        bloom = classification.get("bloom") or {}
+        clos = version.get("clos") if isinstance(version.get("clos"), list) else []
+        missing_fields = []
+        issues = []
+        score_values = scores.model_dump()
+
+        if not bloom.get("level"):
+            missing_fields.append("bloom")
+            issues.append("Câu hỏi chưa được gắn mức Bloom")
+            score_values["bloom_alignment"] = min(scores.bloom_alignment, 0.35)
+        valid_clos = [
+            clo
+            for clo in clos
+            if isinstance(clo, dict)
+            and str(clo.get("code") or clo.get("clo_code") or "").strip()
+            and str(clo.get("description") or "").strip()
+        ]
+        if not valid_clos:
+            missing_fields.append("clo")
+            issues.append("Câu hỏi chưa được gắn chuẩn đầu ra CLO hợp lệ")
+            score_values["clo_alignment"] = min(scores.clo_alignment, 0.35)
+
+        guardrail = {
+            "applied": bool(issues),
+            "missing_fields": missing_fields,
+            "issues": issues,
+        }
+        if not issues:
+            return scores, feedback, {**evidence, "metadata_guardrail": guardrail}
+
+        current_action = str(feedback.get("action") or "").strip().upper()
+        current_severity = str(feedback.get("severity") or "").strip().upper()
+        guarded_feedback = {
+            **feedback,
+            "action": "REJECT" if current_action == "REJECT" else "NEEDS_REVISION",
+            "severity": "HIGH" if current_severity == "HIGH" else "MEDIUM",
+            "summary": (
+                feedback.get("summary")
+                if current_action in {"NEEDS_REVISION", "REJECT"}
+                else "Guardrail metadata yêu cầu bổ sung Bloom/CLO trước khi duyệt."
+            ),
+            "missing": list(
+                dict.fromkeys([*(feedback.get("missing") or []), *issues])
+            ),
+        }
+        guarded_evidence = {
+            **evidence,
+            "risks": list(
+                dict.fromkeys(
+                    [
+                        *(evidence.get("risks") or []),
+                        "Thiếu metadata sư phạm bắt buộc để kiểm duyệt nhất quán",
+                    ]
+                )
+            ),
+            "metadata_guardrail": guardrail,
+        }
+        return EvaluationScores(**score_values), guarded_feedback, guarded_evidence
+
+    @classmethod
+    def _apply_evaluation_guardrails(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        version: dict,
+    ) -> tuple[EvaluationScores, dict, dict]:
+        scores, feedback, evidence = cls._apply_answer_guardrail(
+            scores,
+            feedback,
+            evidence,
+            version,
+        )
+        return cls._apply_metadata_guardrail(
+            scores,
+            feedback,
+            evidence,
+            version,
+        )
 
     @staticmethod
     def _validate_llm_evaluation_consistency(
@@ -683,6 +1103,12 @@ class QuestionWorkflowService:
         llm = None
         if evaluator_code.lower() in {"local-heuristic-evaluator-v1", "heuristic"}:
             scores, feedback, evidence = self._auto_scores(question, version)
+            scores, feedback, evidence = self._apply_evaluation_guardrails(
+                scores,
+                feedback,
+                evidence,
+                version,
+            )
             evidence["mode"] = "heuristic"
             evaluator_code = "local-heuristic-evaluator-v1"
         else:
@@ -692,6 +1118,7 @@ class QuestionWorkflowService:
                     capability=EVALUATION_CAPABILITY,
                     database=self.db,
                 )
+                model_snapshot = _limit_evaluation_output(model_snapshot)
                 llm = get_llm_service(evaluator_code, model_snapshot=model_snapshot)
                 policy = self._policy()
                 policy_snapshot = self._policy_snapshot(policy)
@@ -700,6 +1127,12 @@ class QuestionWorkflowService:
                 raw_model_response = await llm.generate_text(prompt)
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                scores, feedback, evidence = self._apply_evaluation_guardrails(
+                    scores,
+                    feedback,
+                    evidence,
+                    version,
+                )
                 evidence = {
                     **evidence,
                     "mode": "local_llm",
@@ -714,6 +1147,12 @@ class QuestionWorkflowService:
                 if not payload.fallback_to_heuristic:
                     raise ValueError(f"Local evaluator failed: {exc}") from exc
                 scores, feedback, evidence = self._auto_scores(question, version)
+                scores, feedback, evidence = self._apply_evaluation_guardrails(
+                    scores,
+                    feedback,
+                    evidence,
+                    version,
+                )
                 evaluator_code = "local-heuristic-evaluator-v1"
                 feedback = {
                     **feedback,
@@ -772,6 +1211,46 @@ class QuestionWorkflowService:
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
+    def _supersede_previous_evaluation_jobs(
+        self,
+        question_id: ObjectId,
+        current_version_id: ObjectId,
+        superseding_job_id: ObjectId,
+        now,
+        *,
+        session=None,
+    ) -> int:
+        error = {
+            "message": "Evaluation được thay thế bởi phiên bản câu hỏi mới hơn",
+            "stage": "SUPERSEDED",
+            "at": now,
+        }
+        result = self.db.evaluation_jobs.update_many(
+            {
+                "question_id": question_id,
+                "question_version_id": {"$ne": current_version_id},
+                "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
+            },
+            {
+                "$set": {
+                    "status": "STALE",
+                    "error": error,
+                    "superseded_by_job_id": superseding_job_id,
+                    "finished_at": now,
+                    "expires_at": now + timedelta(days=settings.job_retention_days),
+                    "updated_at": now,
+                },
+                "$unset": {
+                    "locked_by": "",
+                    "lease_expires_at": "",
+                    "heartbeat_at": "",
+                    "next_attempt_at": "",
+                },
+            },
+            session=session,
+        )
+        return result.modified_count
+
     def enqueue_auto_evaluation(
         self,
         question_id: str,
@@ -794,12 +1273,14 @@ class QuestionWorkflowService:
             capability=EVALUATION_CAPABILITY,
             database=self.db,
         )
+        model_snapshot = _limit_evaluation_output(model_snapshot)
         if settings.evaluation_fallback_provider and fallback_model_snapshot is None:
             fallback_model_snapshot = resolve_model_snapshot(
                 settings.evaluation_fallback_provider,
                 capability=EVALUATION_CAPABILITY,
                 database=self.db,
             )
+        fallback_model_snapshot = _limit_evaluation_output(fallback_model_snapshot)
         if question.get("evaluation_status") == "PASSED":
             raise ValueError("Câu hỏi đã có kết quả AI đạt cho phiên bản hiện tại")
 
@@ -902,6 +1383,13 @@ class QuestionWorkflowService:
                         session=session,
                     )
                     raise RuntimeError("VERSION_CONFLICT")
+                self._supersede_previous_evaluation_jobs(
+                    question["_id"],
+                    version["_id"],
+                    job["_id"],
+                    now,
+                    session=session,
+                )
         except DuplicateKeyError:
             active_job = self.db.evaluation_jobs.find_one(
                 {"dedupe_key": dedupe_key, "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)}}
@@ -1168,16 +1656,28 @@ class QuestionWorkflowService:
                 version,
                 policy_snapshot,
             )
+            prompt, prompt_snapshot, effective_model_snapshot = _prepare_evaluation_attempt(
+                prompt,
+                prompt_snapshot,
+                job.get("model_snapshot"),
+                int(job.get("processing_attempt_count") or 1),
+            )
             llm = get_llm_service(
                 job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
                 settings.evaluation_fallback_provider,
-                model_snapshot=job.get("model_snapshot"),
+                model_snapshot=effective_model_snapshot,
                 fallback_model_snapshot=job.get("fallback_model_snapshot"),
             )
             heuristic_fallback = False
             try:
                 raw_model_response = await llm.generate_text(prompt)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                scores, feedback, evidence = self._apply_evaluation_guardrails(
+                    scores,
+                    feedback,
+                    evidence,
+                    version,
+                )
                 evidence = {
                     **evidence,
                     "consistency": self._validate_llm_evaluation_consistency(
@@ -1192,6 +1692,12 @@ class QuestionWorkflowService:
                     raise
                 heuristic_fallback = True
                 scores, feedback, evidence = self._auto_scores(question, version)
+                scores, feedback, evidence = self._apply_evaluation_guardrails(
+                    scores,
+                    feedback,
+                    evidence,
+                    version,
+                )
                 feedback = {
                     **feedback,
                     "summary": "AI đánh giá lỗi; hệ thống đã dùng heuristic dự phòng.",
@@ -1223,7 +1729,7 @@ class QuestionWorkflowService:
                             "runtime": "INTERNAL",
                         }
                         if heuristic_fallback
-                        else job.get("model_snapshot") or {}
+                        else effective_model_snapshot or {}
                     ),
                     model_execution=get_llm_execution_snapshot(llm),
                 )
@@ -2591,6 +3097,33 @@ def get_workflow_service() -> QuestionWorkflowService:
     return QuestionWorkflowService(get_database())
 
 
+async def _wait_for_evaluation_job_superseded(
+    service: QuestionWorkflowService,
+    job_id: str,
+    worker_id: str,
+    stop_event: asyncio.Event,
+) -> bool:
+    """Return True as soon as this worker's evaluation job is no longer active."""
+    job_oid = object_id(job_id, "evaluation_job_id")
+    poll_seconds = max(0.1, min(float(settings.job_worker_poll_seconds), 1.0))
+    while not stop_event.is_set():
+        job = await asyncio.to_thread(
+            service.db.evaluation_jobs.find_one,
+            {"_id": job_oid},
+            {"status": 1, "locked_by": 1},
+        )
+        if not job:
+            return True
+        status = job.get("status")
+        if status not in EVALUATION_ACTIVE_STATUSES:
+            return True
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
+        except asyncio.TimeoutError:
+            continue
+    return False
+
+
 async def process_evaluation_job_background(job_id: str, worker_id: str) -> None:
     from core.job_worker import maintain_lease
 
@@ -2600,8 +3133,48 @@ async def process_evaluation_job_background(job_id: str, worker_id: str) -> None
         maintain_lease(lambda: service.heartbeat_evaluation_job(job_id, worker_id), lease_stop)
     )
     async with evaluation_semaphore:
+        processing_task = asyncio.create_task(service.process_evaluation_job(job_id, worker_id))
+        superseded_task = asyncio.create_task(
+            _wait_for_evaluation_job_superseded(
+                service,
+                job_id,
+                worker_id,
+                lease_stop,
+            )
+        )
         try:
-            await service.process_evaluation_job(job_id, worker_id)
+            done, _ = await asyncio.wait(
+                {processing_task, superseded_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            superseded = (
+                superseded_task in done
+                and superseded_task.result()
+                and not processing_task.done()
+            )
+            if superseded:
+                processing_task.cancel()
+                try:
+                    await processing_task
+                except asyncio.CancelledError:
+                    logger.info(
+                        "Evaluation job %s stopped because a newer question version superseded it",
+                        job_id,
+                    )
+            else:
+                await processing_task
         finally:
             lease_stop.set()
+            if not processing_task.done():
+                processing_task.cancel()
+                try:
+                    await processing_task
+                except asyncio.CancelledError:
+                    pass
+            if not superseded_task.done():
+                superseded_task.cancel()
+                try:
+                    await superseded_task
+                except asyncio.CancelledError:
+                    pass
             await heartbeat_task

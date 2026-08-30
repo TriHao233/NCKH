@@ -33,6 +33,37 @@ export function evaluationInsights(evaluation, components) {
   };
 }
 
+export function answerGuardrailInsights(evaluation) {
+  const evidence = evaluation?.evidence || {};
+  const guardrail = evidence.answer_guardrail || {};
+  const optionChecks = Array.isArray(evidence.option_checks) ? evidence.option_checks : [];
+  return {
+    applied: guardrail.applied === true,
+    issues: uniqueTexts(guardrail.issues),
+    questionPolarity: guardrail.question_polarity || evidence.question_polarity || '',
+    answerMode: guardrail.answer_mode || '',
+    declaredAnswerKeys: uniqueTexts(guardrail.declared_answer_keys),
+    optionChecks: optionChecks
+      .filter((item) => item && item.key)
+      .map((item) => ({
+        key: String(item.key).toUpperCase(),
+        verdict: String(item.verdict || '').toUpperCase(),
+        sourceLabel: String(item.source_label || '').toUpperCase(),
+        excerpt: String(item.supporting_excerpt || '').trim(),
+        inferredFromComplement: String(item.inferred_from_complement || '').toUpperCase(),
+      })),
+  };
+}
+
+export function metadataGuardrailInsights(evaluation) {
+  const guardrail = evaluation?.evidence?.metadata_guardrail || {};
+  return {
+    applied: guardrail.applied === true,
+    missingFields: uniqueTexts(guardrail.missing_fields),
+    issues: uniqueTexts(guardrail.issues),
+  };
+}
+
 export function mergeAiSuggestionsIntoDraft(draft, evaluation, timestamp = Date.now()) {
   if (!draft || !evaluation) return draft;
   const feedback = evaluation.feedback || {};
@@ -44,6 +75,7 @@ export function mergeAiSuggestionsIntoDraft(draft, evaluation, timestamp = Date.
   const suggestions = [
     ...uniqueTexts(feedback.missing),
     ...uniqueTexts(evidence.risks),
+    ...uniqueTexts(evidence.answer_guardrail?.issues),
   ];
   const existingTexts = new Set(
     (draft.issues || []).map((issue) => String(issue.detail || issue.title || '').trim().toLocaleLowerCase('vi')),

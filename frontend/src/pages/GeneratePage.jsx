@@ -100,6 +100,7 @@ function createPlanItem(overrides = {}) {
     questionTypeId: 'mcq',
     bloomId: 'remember',
     count: 1,
+    contentMode: 'auto',
     ...overrides,
   };
 }
@@ -123,19 +124,17 @@ function storePresets(presets) {
 }
 
 function presetInstructionValue(preset) {
-  const parts = [preset.targetHeading, preset.instruction]
-    .map((item) => String(item || '').trim())
-    .filter(Boolean);
-  return [...new Set(parts)].join('\n');
+  return String(preset.instruction || '').trim();
 }
 
 function presetApiPayload(preset) {
   return {
     name: String(preset.name || '').trim(),
-    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, count }) => ({
+    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, count, contentMode }) => ({
       questionTypeId,
       bloomId,
       count: normalizeCount(count),
+      contentMode: contentMode || 'auto',
     })),
     instruction: String(preset.instruction || '').trim(),
     targetHeading: preset.targetHeading || null,
@@ -256,6 +255,7 @@ function GeneratePage() {
   const [presetName, setPresetName] = useState('');
   const [presetError, setPresetError] = useState('');
   const [teacherInstruction, setTeacherInstruction] = useState('');
+  const [targetHeading, setTargetHeading] = useState('');
   const [availableModels, setAvailableModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState('');
@@ -282,6 +282,7 @@ function GeneratePage() {
       question_type: toBackendQuestionType(item.questionTypeId),
       bloom_level: toBackendBloomLevel(item.bloomId),
       num_questions: normalizeCount(item.count),
+      content_mode: item.contentMode || 'auto',
     }))
     .filter((item) => item.question_type && item.bloom_level && item.num_questions > 0);
   const totalQuestions = questionPlan.reduce((total, item) => total + item.num_questions, 0);
@@ -479,6 +480,7 @@ function GeneratePage() {
     setSelectedPresetId(presetId);
     setPlanItems((preset.planItems || []).map((item) => createPlanItem(item)));
     setTeacherInstruction(presetInstructionValue(preset));
+    setTargetHeading(String(preset.targetHeading || ''));
     setError('');
     setStatusDetail(`Đã áp dụng mẫu "${preset.name}"`);
   };
@@ -504,12 +506,14 @@ function GeneratePage() {
     }
     const presetPayload = {
       name,
-      planItems: planItems.map(({ questionTypeId, bloomId, count }) => ({
+      planItems: planItems.map(({ questionTypeId, bloomId, count, contentMode }) => ({
         questionTypeId,
         bloomId,
         count: normalizeCount(count),
+        contentMode: contentMode || 'auto',
       })),
       instruction: teacherInstruction.trim(),
+      targetHeading: targetHeading.trim() || null,
     };
     try {
       const nextPreset = await saveGenerationPreset(presetPayload);
@@ -903,6 +907,7 @@ function GeneratePage() {
       documentId: docId,
       questionPlan,
       teacherInstruction,
+      targetHeading,
       sourceMode,
       modelProvider: selectedModelCode,
       timings: timingRef.current,
@@ -1045,6 +1050,7 @@ function GeneratePage() {
     setPlanItems(createInitialPlan());
     setSelectedPresetId('');
     setTeacherInstruction('');
+    setTargetHeading('');
     setDocumentId(null);
     setActiveJobId('');
     setGenerationInfo(null);
@@ -1411,6 +1417,19 @@ function GeneratePage() {
                             onChange={(e) => updatePlanItem(item.id, { count: normalizeCount(e.target.value) })}
                           />
                         </label>
+                        <label className="plan-field">
+                          <span>Nội dung</span>
+                          <select
+                            className="field-select plan-select"
+                            value={item.contentMode || 'auto'}
+                            disabled={isBusy}
+                            onChange={(e) => updatePlanItem(item.id, { contentMode: e.target.value })}
+                          >
+                            <option value="auto">Tự nhận diện</option>
+                            <option value="code">Có mã nguồn</option>
+                            <option value="general">Lý thuyết</option>
+                          </select>
+                        </label>
                       </div>
                     </div>
                   );
@@ -1447,6 +1466,18 @@ function GeneratePage() {
               <p className="source-note">
                 {modelsError || selectedModel?.description || 'Giữ lựa chọn mặc định nếu bạn không chắc.'}
               </p>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Chương hoặc mục cần tập trung</label>
+              <input
+                className="field-input"
+                value={targetHeading}
+                disabled={isBusy}
+                maxLength="300"
+                placeholder="Ví dụ: Cây nhị phân tìm kiếm"
+                onChange={(e) => setTargetHeading(e.target.value)}
+              />
             </div>
 
             <div className="field-group">
@@ -1775,6 +1806,7 @@ function GeneratePage() {
             </div>
 
             <div className="preset-dialog-context">
+              <span><b>Chương/mục:</b> {targetHeading.trim() || 'Toàn bộ tài liệu'}</span>
               <span><b>Yêu cầu sinh câu hỏi:</b> {teacherInstruction.trim() || 'Chưa nhập'}</span>
             </div>
 

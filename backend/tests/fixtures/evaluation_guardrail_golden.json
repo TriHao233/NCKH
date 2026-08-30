@@ -1,0 +1,147 @@
+[
+  {
+    "name": "invalid_negative_all_options_supported",
+    "version": {
+      "content": "Tính chất nào sau đây không phải là đặc trưng của giải thuật?",
+      "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}},
+      "clos": [{"code": "CLO1", "description": "Giải thích các đặc trưng của giải thuật."}],
+      "question_data": {
+        "options": {"A": "Tính kết thúc", "B": "Tính xác định", "C": "Tính phổ dụng", "D": "Tính hiệu quả"},
+        "correct_answer": "D"
+      },
+      "sources": [{"citation_order": 1, "context_excerpt": "Các đặc trưng gồm tính kết thúc, tính xác định, tính phổ dụng và tính hiệu quả."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "NEGATIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "đặc trưng gồm tính kết thúc"},
+        {"key": "B", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "tính xác định"},
+        {"key": "C", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "tính phổ dụng"},
+        {"key": "D", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "tính hiệu quả"}
+      ]
+    },
+    "expect_answer_block": true,
+    "expect_metadata_block": false
+  },
+  {
+    "name": "valid_single_relation",
+    "version": {
+      "content": "Đặc trưng nào yêu cầu giải thuật dừng sau hữu hạn bước?",
+      "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}},
+      "clos": [{"code": "CLO1", "description": "Giải thích các đặc trưng của giải thuật."}],
+      "question_data": {"options": {"A": "Tính kết thúc", "B": "Tính hiệu quả"}, "correct_answer": "A"},
+      "sources": [{"citation_order": 1, "context_excerpt": "Tính kết thúc yêu cầu giải thuật dừng sau hữu hạn bước. Tính hiệu quả yêu cầu ít tài nguyên."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "POSITIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Tính kết thúc yêu cầu giải thuật dừng sau hữu hạn bước"},
+        {"key": "B", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Tính hiệu quả yêu cầu ít tài nguyên"}
+      ]
+    },
+    "expect_answer_block": false,
+    "expect_metadata_block": false
+  },
+  {
+    "name": "valid_multiple_answers",
+    "version": {
+      "content": "Những tiêu chuẩn nào dùng để đánh giá giải thuật tốt?",
+      "classification": {"assessment_type": "NHIEU_LUA_CHON", "bloom": {"level": 2}},
+      "clos": [{"code": "CLO1", "description": "Đánh giá hiệu quả giải thuật."}],
+      "question_data": {"options": {"A": "Nhanh", "B": "Ít tài nguyên", "C": "Vô hạn bước"}, "correct_answer": "A,B"},
+      "sources": [{"citation_order": 1, "context_excerpt": "Giải thuật tốt thực hiện nhanh và tiêu phí ít tài nguyên."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "POSITIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Giải thuật tốt thực hiện nhanh"},
+        {"key": "B", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "tiêu phí ít tài nguyên"},
+        {"key": "C", "verdict": "NOT_IN_SOURCE", "source_label": "", "supporting_excerpt": ""}
+      ]
+    },
+    "expect_answer_block": false,
+    "expect_metadata_block": false
+  },
+  {
+    "name": "valid_true_false_with_one_model_check",
+    "version": {
+      "content": "Giải thuật tốt thực hiện nhanh và dùng ít tài nguyên.",
+      "classification": {"assessment_type": "DUNG_SAI", "bloom": {"level": 2}},
+      "clos": [{"code": "CLO1", "description": "Đánh giá hiệu quả giải thuật."}],
+      "question_data": {"options": {"A": "Đúng", "B": "Sai"}, "correct_answer": "A"},
+      "sources": [{"citation_order": 1, "context_excerpt": "Giải thuật tốt thực hiện nhanh và dùng ít tài nguyên."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "POSITIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Giải thuật tốt thực hiện nhanh và dùng ít tài nguyên"}
+      ]
+    },
+    "expect_answer_block": false,
+    "expect_metadata_block": false
+  },
+  {
+    "name": "missing_clo",
+    "version": {
+      "content": "Stack hoạt động theo nguyên tắc nào?",
+      "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}},
+      "clos": [],
+      "question_data": {"options": {"A": "LIFO", "B": "FIFO"}, "correct_answer": "A"},
+      "sources": [{"citation_order": 1, "context_excerpt": "Stack hoạt động theo nguyên tắc LIFO."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "POSITIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack hoạt động theo nguyên tắc LIFO"},
+        {"key": "B", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Stack hoạt động theo nguyên tắc LIFO"}
+      ]
+    },
+    "expect_answer_block": false,
+    "expect_metadata_block": true
+  },
+  {
+    "name": "missing_bloom",
+    "version": {
+      "content": "Stack hoạt động theo nguyên tắc nào?",
+      "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {}},
+      "clos": [{"code": "CLO1", "description": "Giải thích nguyên tắc của stack."}],
+      "question_data": {"options": {"A": "LIFO", "B": "FIFO"}, "correct_answer": "A"},
+      "sources": [{"citation_order": 1, "context_excerpt": "Stack hoạt động theo nguyên tắc LIFO."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "POSITIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack hoạt động theo nguyên tắc LIFO"},
+        {"key": "B", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Stack hoạt động theo nguyên tắc LIFO"}
+      ]
+    },
+    "expect_answer_block": false,
+    "expect_metadata_block": true
+  },
+  {
+    "name": "invalid_supported_source_label",
+    "version": {
+      "content": "Stack hoạt động theo nguyên tắc nào?",
+      "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}},
+      "clos": [{"code": "CLO1", "description": "Giải thích nguyên tắc của stack."}],
+      "question_data": {"options": {"A": "LIFO", "B": "FIFO"}, "correct_answer": "A"},
+      "sources": [{"citation_order": 1, "context_excerpt": "Stack hoạt động theo nguyên tắc LIFO."}]
+    },
+    "evidence": {
+      "moodle_readiness": "READY",
+      "question_polarity": "POSITIVE",
+      "option_checks": [
+        {"key": "A", "verdict": "SUPPORTED", "source_label": "S9", "supporting_excerpt": "Stack hoạt động theo nguyên tắc LIFO"},
+        {"key": "B", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Stack hoạt động theo nguyên tắc LIFO"}
+      ]
+    },
+    "expect_answer_block": true,
+    "expect_metadata_block": false
+  }
+]

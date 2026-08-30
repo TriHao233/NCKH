@@ -77,6 +77,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_DEMO_MODE: ${VITE_DEMO_MODE:-false}
+        VITE_PIPELINE_3D: ${VITE_PIPELINE_3D:-false}
     container_name: nckh-frontend
     ports:
       - "80:80" # Publish web frontend ra cổng 80 (truy cập bằng http://localhost)

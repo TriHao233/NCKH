@@ -15,7 +15,10 @@
 import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import PipelineDiagram2D from './PipelineDiagram2D';
 
-const KnowledgePipeline3D = lazy(() => import('./KnowledgePipeline3D'));
+const PIPELINE_3D_ENABLED = import.meta.env.VITE_PIPELINE_3D === 'true';
+const KnowledgePipeline3D = PIPELINE_3D_ENABLED
+  ? lazy(() => import('./KnowledgePipeline3D'))
+  : null;
 
 export const PIPELINE_STAGES = [
   {
@@ -76,7 +79,12 @@ export default function KnowledgePipelineSection() {
     const widthQuery = window.matchMedia('(min-width: 768px)');
 
     const evaluate = () => {
-      setCanRender3D(!motionQuery.matches && widthQuery.matches && detectWebGL());
+      setCanRender3D(
+        PIPELINE_3D_ENABLED
+        && !motionQuery.matches
+        && widthQuery.matches
+        && detectWebGL(),
+      );
     };
 
     evaluate();

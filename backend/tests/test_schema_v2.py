@@ -92,7 +92,7 @@ from modules.questions.workflow_schemas import (
     SecondaryReviewRequest,
 )
 from modules.questions import workflow_service as question_workflow_module
-from modules.questions.workflow_service import QuestionWorkflowService
+from modules.questions.workflow_service import QuestionWorkflowService, _prepare_evaluation_attempt
 from modules.rag.search import _heading_matches_target, _normalize_heading_text
 from modules.users.schemas import (
     GenerationPresetPayload,
@@ -372,6 +372,9 @@ def _matches_query(record, query):
             for operator, operand in expected.items():
                 if operator == "$in":
                     if not any(value in operand for value in values):
+                        return False
+                elif operator == "$ne":
+                    if any(value == operand for value in values):
                         return False
                 elif operator == "$lt":
                     if not any(value is not None and value < operand for value in values):
@@ -1081,6 +1084,107 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(workflow.calls[0][1]["trigger"], "REVIEW_SUBMISSION")
         self.assertEqual(workflow.calls[0][1]["expected_version"], 2)
 
+    def test_new_evaluation_job_supersedes_active_jobs_for_older_versions(self):
+        question_id = ObjectId()
+        old_version_id = ObjectId()
+        current_version_id = ObjectId()
+        old_queued_id = ObjectId()
+        old_processing_id = ObjectId()
+        current_job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class Database:
+            def __init__(self):
+                self.evaluation_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": old_queued_id,
+                            "question_id": question_id,
+                            "question_version_id": old_version_id,
+                            "status": "QUEUED",
+                        },
+                        {
+                            "_id": old_processing_id,
+                            "question_id": question_id,
+                            "question_version_id": old_version_id,
+                            "status": "PROCESSING",
+                            "locked_by": "worker-old",
+                        },
+                        {
+                            "_id": current_job_id,
+                            "question_id": question_id,
+                            "question_version_id": current_version_id,
+                            "status": "QUEUED",
+                        },
+                    ]
+                )
+
+        db = Database()
+        modified = QuestionWorkflowService(db)._supersede_previous_evaluation_jobs(
+            question_id,
+            current_version_id,
+            current_job_id,
+            now,
+        )
+
+        self.assertEqual(modified, 2)
+        for job_id in (old_queued_id, old_processing_id):
+            job = db.evaluation_jobs.find_one({"_id": job_id})
+            self.assertEqual(job["status"], "STALE")
+            self.assertEqual(job["superseded_by_job_id"], current_job_id)
+            self.assertEqual(job["error"]["stage"], "SUPERSEDED")
+        self.assertEqual(
+            db.evaluation_jobs.find_one({"_id": current_job_id})["status"],
+            "QUEUED",
+        )
+
+    def test_qwen_evaluation_snapshot_limits_output_without_changing_deepseek(self):
+        qwen = question_workflow_module._limit_evaluation_output(
+            {
+                "model_code": "qwen",
+                "runtime": "OLLAMA",
+                "parameters": {"num_predict": 900, "num_ctx": 8192},
+            }
+        )
+        deepseek = question_workflow_module._limit_evaluation_output(
+            {
+                "model_code": "deepseek",
+                "runtime": "OLLAMA",
+                "parameters": {"num_predict": 900},
+            }
+        )
+
+        self.assertEqual(qwen["parameters"]["num_predict"], settings.evaluation_num_predict)
+        self.assertEqual(qwen["parameters"]["num_ctx"], 8192)
+        self.assertEqual(deepseek["parameters"]["num_predict"], 900)
+
+    def test_evaluation_retry_uses_compact_prompt_and_restores_output_budget(self):
+        prompt = "Evaluate this question"
+        prompt_snapshot = {
+            "rendered_prompt_hash": "initial",
+            "rendered_prompt_chars": len(prompt),
+        }
+        model_snapshot = {
+            "model_code": "qwen",
+            "runtime": "OLLAMA",
+            "parameters": {"num_predict": 720, "num_ctx": 8192},
+        }
+
+        retry_prompt, retry_snapshot, retry_model = _prepare_evaluation_attempt(
+            prompt,
+            prompt_snapshot,
+            model_snapshot,
+            2,
+        )
+
+        self.assertIn("LẦN THỬ LẠI", retry_prompt)
+        self.assertTrue(retry_snapshot["retry_instruction_applied"])
+        self.assertEqual(retry_snapshot["retry_attempt"], 2)
+        self.assertNotEqual(retry_snapshot["rendered_prompt_hash"], "initial")
+        self.assertEqual(retry_model["parameters"]["num_predict"], settings.evaluation_num_predict)
+        self.assertEqual(retry_model["parameters"]["num_ctx"], 8192)
+        self.assertEqual(model_snapshot["parameters"]["num_predict"], 720)
+
     def test_duplicate_question_creates_draft_copy_without_review_state(self):
         teacher = _current_user("Teacher")
         question_id = ObjectId()
@@ -1659,6 +1763,490 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(feedback["action"], "NEEDS_REVISION")
         self.assertEqual(feedback["severity"], "MEDIUM")
         self.assertEqual(evidence["moodle_readiness"], "NEEDS_FIX")
+
+    def test_ai_parser_normalizes_option_level_evidence(self):
+        raw = json.dumps(
+            {
+                "scores": {
+                    "faithfulness": 0.8,
+                    "contextual_relevancy": 0.8,
+                    "answer_relevancy": 0.8,
+                    "bloom_alignment": 0.8,
+                    "clo_alignment": 0.8,
+                },
+                "feedback": {
+                    "summary": "Đã kiểm tra từng phương án",
+                    "action": "APPROVE",
+                    "severity": "LOW",
+                },
+                "evidence": {
+                    "reasoning": "Đáp án có căn cứ.",
+                    "moodle_readiness": "READY",
+                    "question_polarity": "negative",
+                    "option_checks": [
+                        {
+                            "key": "a",
+                            "verdict": "supported",
+                            "source_label": "s1",
+                            "supporting_excerpt": "Nguồn xác nhận A",
+                        }
+                    ],
+                },
+            }
+        )
+
+        _, _, evidence = QuestionWorkflowService._parse_llm_evaluation(raw)
+
+        self.assertEqual(evidence["question_polarity"], "NEGATIVE")
+        self.assertEqual(evidence["option_checks"][0]["key"], "A")
+        self.assertEqual(evidence["option_checks"][0]["verdict"], "SUPPORTED")
+        self.assertEqual(evidence["option_checks"][0]["source_label"], "S1")
+
+    def test_answer_guardrail_blocks_negative_question_when_all_options_are_supported(self):
+        scores = EvaluationScores(
+            faithfulness=0.85,
+            contextual_relevancy=0.90,
+            answer_relevancy=0.95,
+            bloom_alignment=0.85,
+            clo_alignment=0.85,
+        )
+        feedback = {
+            "summary": "Câu hỏi rõ ràng.",
+            "missing": [],
+            "action": "APPROVE",
+            "severity": "LOW",
+        }
+        evidence = {
+            "moodle_readiness": "READY",
+            "risks": [],
+            "option_checks": [
+                {
+                    "key": key,
+                    "verdict": "SUPPORTED",
+                    "source_label": "S1",
+                    "supporting_excerpt": text,
+                }
+                for key, text in {
+                    "A": "Tính kết thúc",
+                    "B": "Tính xác định",
+                    "C": "Tính phổ dụng",
+                    "D": "Tính hiệu quả",
+                }.items()
+            ],
+        }
+        version = {
+            "content": "Tính chất nào sau đây không phải là đặc trưng của giải thuật?",
+            "classification": {"assessment_type": "TRAC_NGHIEM"},
+            "question_data": {
+                "options": {
+                    "A": "Tính kết thúc",
+                    "B": "Tính xác định",
+                    "C": "Tính phổ dụng",
+                    "D": "Tính hiệu quả",
+                },
+                "correct_answer": "D",
+            },
+            "sources": [
+                {
+                    "citation_order": 1,
+                    "context_excerpt": (
+                        "Các đặc trưng của giải thuật gồm tính kết thúc, tính xác định, "
+                        "tính phổ dụng và tính hiệu quả."
+                    ),
+                }
+            ],
+        }
+
+        guarded_scores, guarded_feedback, guarded_evidence = (
+            QuestionWorkflowService._apply_answer_guardrail(
+                scores,
+                feedback,
+                evidence,
+                version,
+            )
+        )
+
+        self.assertEqual(guarded_feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(guarded_feedback["severity"], "HIGH")
+        self.assertLessEqual(guarded_scores.faithfulness, 0.35)
+        self.assertLessEqual(guarded_scores.answer_relevancy, 0.30)
+        self.assertEqual(guarded_evidence["moodle_readiness"], "NEEDS_FIX")
+        self.assertTrue(guarded_evidence["answer_guardrail"]["applied"])
+        self.assertIn(
+            "Câu phủ định phải có đúng một phương án",
+            " ".join(guarded_evidence["answer_guardrail"]["issues"]),
+        )
+
+    def test_negative_question_detection_does_not_misread_domain_terms(self):
+        self.assertFalse(
+            QuestionWorkflowService._is_negative_selection_question(
+                "TRAC_NGHIEM",
+                "Lặp xác định và lặp không xác định được phân biệt dựa trên điều kiện nào?",
+            )
+        )
+        self.assertTrue(
+            QuestionWorkflowService._is_negative_selection_question(
+                "TRAC_NGHIEM",
+                "Tính chất nào sau đây không phải là đặc trưng của giải thuật?",
+            )
+        )
+        self.assertTrue(
+            QuestionWorkflowService._is_negative_selection_question(
+                "TRAC_NGHIEM",
+                "Phương án nào không thuộc nhóm thao tác của stack?",
+            )
+        )
+        self.assertFalse(
+            QuestionWorkflowService._is_negative_selection_question(
+                "DUNG_SAI",
+                "Stack không tuân theo nguyên tắc FIFO.",
+            )
+        )
+
+    def test_answer_guardrail_allows_one_grounded_positive_answer(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        evidence = {
+            "moodle_readiness": "READY",
+            "option_checks": [
+                {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack là LIFO"},
+                {"key": "B", "verdict": "CONTRADICTED", "supporting_excerpt": "Stack không FIFO"},
+            ],
+        }
+        version = {
+            "content": "Stack tuân theo nguyên tắc nào?",
+            "classification": {"assessment_type": "TRAC_NGHIEM"},
+            "question_data": {
+                "options": {"A": "LIFO", "B": "FIFO"},
+                "correct_answer": "A",
+            },
+            "sources": [{"citation_order": 1, "context_excerpt": "Stack tuân theo LIFO."}],
+        }
+
+        guarded_scores, guarded_feedback, guarded_evidence = (
+            QuestionWorkflowService._apply_answer_guardrail(
+                scores,
+                feedback,
+                evidence,
+                version,
+            )
+        )
+
+        self.assertEqual(guarded_scores, scores)
+        self.assertEqual(guarded_feedback["action"], "APPROVE")
+        self.assertFalse(guarded_evidence["answer_guardrail"]["applied"])
+
+    def test_answer_guardrail_allows_relation_distractors_that_are_named_in_source(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        source = (
+            "Tính kết thúc yêu cầu giải thuật dừng sau hữu hạn bước. "
+            "Tính xác định yêu cầu các thao tác cho cùng kết quả. "
+            "Tính phổ dụng áp dụng cho một loạt bài toán. "
+            "Tính hiệu quả yêu cầu ít thời gian và tài nguyên."
+        )
+        evidence = {
+            "moodle_readiness": "READY",
+            "question_polarity": "POSITIVE",
+            "option_checks": [
+                {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Tính kết thúc yêu cầu giải thuật dừng sau hữu hạn bước"},
+                {"key": "B", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Tính xác định yêu cầu các thao tác cho cùng kết quả"},
+                {"key": "C", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Tính phổ dụng áp dụng cho một loạt bài toán"},
+                {"key": "D", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": "Tính hiệu quả yêu cầu ít thời gian và tài nguyên"},
+            ],
+        }
+        version = {
+            "content": "Đặc trưng nào yêu cầu giải thuật dừng sau hữu hạn bước?",
+            "classification": {"assessment_type": "TRAC_NGHIEM"},
+            "question_data": {
+                "options": {
+                    "A": "Tính kết thúc",
+                    "B": "Tính xác định",
+                    "C": "Tính phổ dụng",
+                    "D": "Tính hiệu quả",
+                },
+                "correct_answer": "A",
+            },
+            "sources": [{"citation_order": 1, "context_excerpt": source}],
+        }
+
+        guarded_scores, guarded_feedback, guarded_evidence = (
+            QuestionWorkflowService._apply_answer_guardrail(scores, feedback, evidence, version)
+        )
+
+        self.assertEqual(guarded_scores, scores)
+        self.assertEqual(guarded_feedback["action"], "APPROVE")
+        self.assertFalse(guarded_evidence["answer_guardrail"]["applied"])
+
+    def test_answer_guardrail_allows_grounded_multiple_answers(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        evidence = {
+            "moodle_readiness": "READY",
+            "question_polarity": "POSITIVE",
+            "option_checks": [
+                {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack hỗ trợ push"},
+                {"key": "B", "verdict": "NOT_IN_SOURCE", "supporting_excerpt": ""},
+                {"key": "C", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack hỗ trợ pop"},
+            ],
+        }
+        version = {
+            "content": "Stack hỗ trợ những thao tác nào?",
+            "classification": {"assessment_type": "NHIEU_LUA_CHON"},
+            "question_data": {
+                "options": {"A": "push", "B": "enqueue", "C": "pop"},
+                "correct_answer": "A,C",
+            },
+            "sources": [{"citation_order": 1, "context_excerpt": "Stack hỗ trợ push và pop."}],
+        }
+
+        _, guarded_feedback, guarded_evidence = QuestionWorkflowService._apply_answer_guardrail(
+            scores, feedback, evidence, version
+        )
+
+        self.assertEqual(guarded_feedback["action"], "APPROVE")
+        self.assertEqual(guarded_evidence["answer_guardrail"]["answer_mode"], "MULTIPLE")
+        self.assertFalse(guarded_evidence["answer_guardrail"]["applied"])
+
+    def test_answer_guardrail_blocks_multiple_answer_mismatch(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        evidence = {
+            "moodle_readiness": "READY",
+            "option_checks": [
+                {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack hỗ trợ push"},
+                {"key": "B", "verdict": "NOT_IN_SOURCE", "supporting_excerpt": ""},
+                {"key": "C", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack hỗ trợ pop"},
+            ],
+        }
+        version = {
+            "content": "Stack hỗ trợ những thao tác nào?",
+            "classification": {"assessment_type": "NHIEU_LUA_CHON"},
+            "question_data": {
+                "options": {"A": "push", "B": "enqueue", "C": "pop"},
+                "correct_answer": "A",
+            },
+            "sources": [{"citation_order": 1, "context_excerpt": "Stack hỗ trợ push và pop."}],
+        }
+
+        _, guarded_feedback, guarded_evidence = QuestionWorkflowService._apply_answer_guardrail(
+            scores, feedback, evidence, version
+        )
+
+        self.assertEqual(guarded_feedback["action"], "NEEDS_REVISION")
+        self.assertIn(
+            "Tập đáp án khai báo không khớp",
+            " ".join(guarded_evidence["answer_guardrail"]["issues"]),
+        )
+
+    def test_answer_guardrail_allows_grounded_true_false_answer(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        evidence = {
+            "moodle_readiness": "READY",
+            "option_checks": [
+                {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "Stack tuân theo LIFO"},
+                {"key": "B", "verdict": "CONTRADICTED", "supporting_excerpt": "Stack không phải FIFO"},
+            ],
+        }
+        version = {
+            "content": "Stack tuân theo LIFO là đúng hay sai?",
+            "classification": {"assessment_type": "DUNG_SAI"},
+            "question_data": {
+                "options": {"A": "Đúng", "B": "Sai"},
+                "correct_answer": "Đúng",
+            },
+            "sources": [{"citation_order": 1, "context_excerpt": "Stack tuân theo LIFO."}],
+        }
+
+        _, guarded_feedback, guarded_evidence = QuestionWorkflowService._apply_answer_guardrail(
+            scores, feedback, evidence, version
+        )
+
+        self.assertEqual(guarded_feedback["action"], "APPROVE")
+        self.assertFalse(guarded_evidence["answer_guardrail"]["applied"])
+
+    def test_answer_guardrail_infers_missing_complementary_true_false_check(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        evidence = {
+            "moodle_readiness": "READY",
+            "question_polarity": "POSITIVE",
+            "option_checks": [
+                {
+                    "key": "A",
+                    "verdict": "SUPPORTED",
+                    "source_label": "S1",
+                    "supporting_excerpt": "Giải thuật tốt thực hiện nhanh và ít tài nguyên",
+                }
+            ],
+        }
+        version = {
+            "content": "Giải thuật tốt thực hiện nhanh và dùng ít tài nguyên.",
+            "classification": {"assessment_type": "DUNG_SAI"},
+            "question_data": {
+                "options": {"A": "Đúng", "B": "Sai"},
+                "correct_answer": "A",
+            },
+            "sources": [
+                {
+                    "citation_order": 1,
+                    "context_excerpt": "Giải thuật tốt thực hiện nhanh và ít tài nguyên.",
+                }
+            ],
+        }
+
+        _, guarded_feedback, guarded_evidence = QuestionWorkflowService._apply_answer_guardrail(
+            scores, feedback, evidence, version
+        )
+
+        self.assertEqual(guarded_feedback["action"], "APPROVE")
+        self.assertFalse(guarded_evidence["answer_guardrail"]["applied"])
+        inferred = guarded_evidence["option_checks"][1]
+        self.assertEqual(inferred["key"], "B")
+        self.assertEqual(inferred["verdict"], "CONTRADICTED")
+        self.assertEqual(inferred["inferred_from_complement"], "A")
+
+    def test_answer_guardrail_skips_non_option_question_types(self):
+        scores = EvaluationScores(
+            faithfulness=0.9,
+            contextual_relevancy=0.9,
+            answer_relevancy=0.9,
+            bloom_alignment=0.8,
+            clo_alignment=0.8,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        version = {
+            "content": "Sắp xếp các thao tác.",
+            "classification": {"assessment_type": "SAP_XEP"},
+            "question_data": {
+                "options": ["Bước một", "Bước hai"],
+                "correct_answer": "Bước một, Bước hai",
+            },
+        }
+
+        guarded_scores, guarded_feedback, guarded_evidence = QuestionWorkflowService._apply_answer_guardrail(
+            scores, feedback, {"moodle_readiness": "READY"}, version
+        )
+
+        self.assertEqual(guarded_scores, scores)
+        self.assertEqual(guarded_feedback["action"], "APPROVE")
+        self.assertFalse(guarded_evidence["answer_guardrail"]["applied"])
+        self.assertEqual(
+            guarded_evidence["answer_guardrail"]["reason"],
+            "QUESTION_TYPE_NOT_OPTION_BASED",
+        )
+
+    def test_evaluation_guardrail_golden_cases(self):
+        cases = json.loads(
+            (Path(__file__).parent / "fixtures" / "evaluation_guardrail_golden.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                scores = EvaluationScores(
+                    faithfulness=0.9,
+                    contextual_relevancy=0.9,
+                    answer_relevancy=0.9,
+                    bloom_alignment=0.9,
+                    clo_alignment=0.9,
+                )
+                feedback = {
+                    "summary": "Đạt",
+                    "missing": [],
+                    "action": "APPROVE",
+                    "severity": "LOW",
+                }
+                answer_scores, answer_feedback, answer_evidence = (
+                    QuestionWorkflowService._apply_answer_guardrail(
+                        scores,
+                        feedback,
+                        case["evidence"],
+                        case["version"],
+                    )
+                )
+                _, _, final_evidence = QuestionWorkflowService._apply_metadata_guardrail(
+                    answer_scores,
+                    answer_feedback,
+                    answer_evidence,
+                    case["version"],
+                )
+
+                self.assertEqual(
+                    final_evidence["answer_guardrail"]["applied"],
+                    case["expect_answer_block"],
+                )
+                self.assertEqual(
+                    final_evidence["metadata_guardrail"]["applied"],
+                    case["expect_metadata_block"],
+                )
+
+    def test_answer_guardrail_blocks_mcq_when_fallback_has_no_option_checks(self):
+        service = QuestionWorkflowService(None)
+        version = {
+            "content": "Stack tuân theo nguyên tắc nào?",
+            "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}},
+            "question_data": {
+                "options": {"A": "LIFO", "B": "FIFO"},
+                "correct_answer": "A",
+                "explanation": "Stack theo LIFO.",
+            },
+            "clos": [],
+            "sources": [{"citation_order": 1, "context_excerpt": "Stack tuân theo LIFO."}],
+        }
+        scores, feedback, evidence = service._auto_scores({}, version)
+
+        guarded_scores, guarded_feedback, guarded_evidence = service._apply_answer_guardrail(
+            scores,
+            feedback,
+            evidence,
+            version,
+        )
+
+        self.assertEqual(guarded_feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(guarded_feedback["severity"], "HIGH")
+        self.assertLessEqual(guarded_scores.answer_relevancy, 0.30)
+        self.assertIn(
+            "AI chưa kiểm tra phương án",
+            guarded_evidence["answer_guardrail"]["issues"][0],
+        )
 
     def test_ai_parser_rejects_missing_required_score(self):
         raw = json.dumps(
@@ -5207,6 +5795,9 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
         self.assertIn("current_difficulty", prompt)
         self.assertIn('"de"', prompt)
+        self.assertIn("correct_answer và explanation là khẳng định CHƯA ĐƯỢC TIN CẬY", prompt)
+        self.assertIn('"option_checks"', prompt)
+        self.assertIn("SUPPORTED | CONTRADICTED | NOT_IN_SOURCE | AMBIGUOUS", prompt)
         self.assertTrue(
             any(part.get("template_key") == "quy_dinh_do_kho" for part in snapshot["template_parts"])
         )
