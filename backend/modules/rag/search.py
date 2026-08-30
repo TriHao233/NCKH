@@ -102,10 +102,34 @@ def _heading_matches_target(meta: dict, normalized_target: str) -> bool:
     return any(normalized_target in candidate for candidate in heading_candidates if candidate)
 
 
+_KEYWORD_STOP_WORDS = {
+    "cau", "hoi", "tao", "sinh", "theo", "trong", "ngoai", "cho", "voi",
+    "mot", "nhung", "cac", "noi", "dung", "kien", "thuc", "phan", "trinh",
+}
+
+
+def _keyword_tokens(text: str) -> set[str]:
+    normalized = _strip_accents(text).lower()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]{3,}", normalized)
+        if token not in _KEYWORD_STOP_WORDS
+    }
+
+
+def _hybrid_score(doc: str, meta: dict, query_tokens: set[str], vector_rank: int) -> float:
+    doc_tokens = _keyword_tokens(f"{_build_heading_label(meta)} {doc}")
+    lexical = len(query_tokens & doc_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
+    density = min(1.0, max(0.0, float(meta.get("information_density", 0) or 0)))
+    reciprocal_rank = 1.0 / (vector_rank + 1)
+    return (0.55 * reciprocal_rank) + (0.40 * lexical) + (0.05 * density)
+
+
 def get_context_snapshot(
     document_id: str,
     collection_name: str,
     target_heading: str = None,
+    query_text: str = None,
     min_density: float = 0.0,
     limit: int = 5,
 ) -> dict:
@@ -123,19 +147,24 @@ def get_context_snapshot(
         ]
     }
     normalized_target = _normalize_heading_text(target_heading) if target_heading else ""
+    semantic_query = " ".join(
+        part.strip() for part in (target_heading, query_text) if part and part.strip()
+    )
+    query_tokens = _keyword_tokens(semantic_query)
 
     try:
-        if target_heading:
+        candidate_limit = max(1, min(max(limit * 4, limit, 1), collection.count()))
+        if semantic_query:
             results = collection.query(
-                query_texts=[target_heading],
+                query_texts=[semantic_query],
                 where=where_filter,
-                n_results=max(limit, 1),
+                n_results=candidate_limit,
                 include=["documents", "metadatas"],
             )
             raw_docs = (results.get("documents") or [[]])[0] or []
             raw_metas = (results.get("metadatas") or [[]])[0] or []
         else:
-            initial_limit = max(limit * 4, limit, 1)
+            initial_limit = candidate_limit
             results = collection.get(
                 where=where_filter,
                 limit=initial_limit,
@@ -171,16 +200,20 @@ def get_context_snapshot(
         chunks_with_meta = list(zip(raw_docs, raw_metas))
         candidate_chunks: list[tuple[str, dict]] = []
         heading_matched_chunks: list[tuple[str, dict]] = []
-        for doc, meta in chunks_with_meta:
+        for vector_rank, (doc, meta) in enumerate(chunks_with_meta):
             if not doc:
                 continue
             density = float(meta.get("information_density", 0) or 0)
             if density < min_density:
                 continue
 
-            candidate_chunks.append((doc, meta))
-            if _heading_matches_target(meta, normalized_target):
-                heading_matched_chunks.append((doc, meta))
+            ranked_meta = {
+                **meta,
+                "_hybrid_score": _hybrid_score(doc, meta, query_tokens, vector_rank),
+            }
+            candidate_chunks.append((doc, ranked_meta))
+            if _heading_matches_target(ranked_meta, normalized_target):
+                heading_matched_chunks.append((doc, ranked_meta))
 
         filtered_chunks = heading_matched_chunks or candidate_chunks
         if not filtered_chunks:
@@ -191,7 +224,7 @@ def get_context_snapshot(
             )
 
         filtered_chunks.sort(
-            key=lambda x: (-(x[1].get("information_density") or 0.0), x[1].get("page_start") or 0)
+            key=lambda x: (-(x[1].get("_hybrid_score") or 0.0), x[1].get("page_start") or 0)
         )
         selected_chunks = filtered_chunks[:limit]
 
@@ -209,6 +242,7 @@ def get_context_snapshot(
                     "page_start": meta.get("page_start"),
                     "page_end": meta.get("page_end"),
                     "information_density": meta.get("information_density", 0),
+                    "hybrid_score": round(float(meta.get("_hybrid_score", 0) or 0), 4),
                     "heading": heading_label,
                 }
             )
@@ -229,6 +263,7 @@ def get_context_for_generation(
     document_id: str,
     collection_name: str,
     target_heading: str = None,
+    query_text: str = None,
     min_density: float = 0.0,
     limit: int = 5,
 ) -> str:
@@ -237,6 +272,7 @@ def get_context_for_generation(
         document_id=document_id,
         collection_name=collection_name,
         target_heading=target_heading,
+        query_text=query_text,
         min_density=min_density,
         limit=limit,
     )["context_text"]

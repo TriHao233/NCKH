@@ -5,6 +5,8 @@ WORKDIR /app
 
 ARG VITE_DEMO_MODE=false
 ENV VITE_DEMO_MODE=${VITE_DEMO_MODE}
+ARG VITE_PIPELINE_3D=false
+ENV VITE_PIPELINE_3D=${VITE_PIPELINE_3D}
 
 # Copy package.json và package-lock.json để tận dụng cache
 COPY package.json package-lock.json* ./

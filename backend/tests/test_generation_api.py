@@ -9,6 +9,11 @@ from fastapi.testclient import TestClient
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.service import get_document_service
 from modules.generation.generate import router
+from modules.generation.mongodb import _resolve_clo_ids
+from modules.generation.prompt_builder import PromptBuilder
+from modules.generation.question import _content_mode
+from modules.generation.schemas import QuestionPlanItem
+from modules.rag.search import _hybrid_score, _keyword_tokens, get_context_snapshot
 
 
 def user(role: str = "Teacher") -> CurrentUser:
@@ -154,7 +159,100 @@ class GenerationStatusApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(create_job.call_args.kwargs["model_snapshot"], snapshot)
+        self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], snapshot)
         self.assertIsNone(create_job.call_args.kwargs["fallback_model_snapshot"])
+
+    def test_enqueue_freezes_separate_code_model_snapshot(self):
+        general_snapshot = {"model_code": "qwen", "runtime": "OLLAMA"}
+        code_snapshot = {"model_code": "deepseek", "runtime": "OLLAMA"}
+        with (
+            patch("modules.generation.generate.count_active_generation_jobs", return_value=0),
+            patch(
+                "modules.generation.generate.resolve_model_snapshot",
+                side_effect=[general_snapshot, code_snapshot],
+            ) as resolve,
+            patch("modules.generation.generate.create_generation_job", return_value=self.job_id) as create_job,
+        ):
+            payload = self.generation_payload()
+            payload.update({"model_provider": "qwen", "code_model_provider": "deepseek"})
+            response = self.client.post("/api/v1/generate/questions", json=payload)
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual([call.args[0] for call in resolve.call_args_list], ["qwen", "deepseek"])
+        self.assertEqual(create_job.call_args.kwargs["model_snapshot"], general_snapshot)
+        self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], code_snapshot)
+
+    def test_content_mode_detects_code_and_honors_override(self):
+        auto = QuestionPlanItem(question_type="trac_nghiem", content_mode="auto")
+        forced_general = QuestionPlanItem(question_type="trac_nghiem", content_mode="general")
+        context = "```cpp\nint push(int value) { return value; }\n```"
+
+        self.assertEqual(_content_mode(auto, context, None), "code")
+        self.assertEqual(_content_mode(forced_general, context, None), "general")
+
+    def test_prompt_contains_content_mode_and_valid_clo_catalog(self):
+        prompt = PromptBuilder().build(
+            context="Stack dùng nguyên tắc LIFO.",
+            bloom_level="3_van_dung",
+            question_type="trac_nghiem",
+            num_questions=1,
+            content_mode="code",
+            learning_outcomes=[{"clo_code": "CLO2", "description": "Cài đặt cấu trúc dữ liệu"}],
+        )
+
+        self.assertIn("CONTENT MODE: CODE", prompt)
+        self.assertIn("CLO2: Cài đặt cấu trúc dữ liệu", prompt)
+        self.assertIn("Do not invent codes", prompt)
+
+    def test_hybrid_score_rewards_keyword_overlap(self):
+        query_tokens = _keyword_tokens("cây nhị phân tìm kiếm")
+        matching = _hybrid_score("Duyệt cây nhị phân tìm kiếm", {}, query_tokens, vector_rank=1)
+        unrelated = _hybrid_score("Ngăn xếp hoạt động theo LIFO", {}, query_tokens, vector_rank=1)
+
+        self.assertGreater(matching, unrelated)
+
+    def test_context_snapshot_combines_semantic_and_keyword_ranking(self):
+        class CollectionStub:
+            def count(self):
+                return 2
+
+            def query(self, **kwargs):
+                self.query_kwargs = kwargs
+                return {
+                    "documents": [["Stack dùng LIFO.", "Cây nhị phân tìm kiếm hỗ trợ tra cứu."]],
+                    "metadatas": [[
+                        {"chunk_id": "stack", "chunk_set_id": "set-1", "information_density": 0},
+                        {"chunk_id": "tree", "chunk_set_id": "set-1", "information_density": 0},
+                    ]],
+                }
+
+        collection = CollectionStub()
+        with (
+            patch("modules.rag.search._active_vector_snapshot", return_value=("set-1", "vector-1")),
+            patch("modules.rag.search.get_collection", return_value=collection),
+        ):
+            snapshot = get_context_snapshot(
+                document_id=str(ObjectId()),
+                collection_name="chunks",
+                query_text="cây nhị phân tìm kiếm",
+                limit=2,
+            )
+
+        self.assertEqual(collection.query_kwargs["query_texts"], ["cây nhị phân tìm kiếm"])
+        self.assertEqual(snapshot["results"][0]["chunk_id"], "tree")
+
+    def test_clo_resolution_prefers_model_code_from_catalog(self):
+        outcomes = [
+            {"id": str(ObjectId()), "clo_code": "CLO1", "description": "Giải thích cấu trúc dữ liệu"},
+            {"id": str(ObjectId()), "clo_code": "CLO2", "description": "Cài đặt cấu trúc dữ liệu"},
+        ]
+        with patch("modules.generation.mongodb.get_document_learning_outcomes", return_value=outcomes):
+            result = _resolve_clo_ids(
+                str(ObjectId()),
+                {"question": "Viết mã cài đặt stack", "clo_codes": ["clo2", "không-tồn-tại"]},
+            )
+
+        self.assertEqual(result, [outcomes[1]["id"]])
 
 
 if __name__ == "__main__":

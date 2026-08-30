@@ -35,7 +35,12 @@ import {
   reviewTemplateStorageKey,
   templatesForDecision,
 } from '../utils/reviewCommentTemplates';
-import { evaluationInsights, mergeAiSuggestionsIntoDraft } from '../utils/reviewAiSuggestions';
+import {
+  answerGuardrailInsights,
+  evaluationInsights,
+  metadataGuardrailInsights,
+  mergeAiSuggestionsIntoDraft,
+} from '../utils/reviewAiSuggestions';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -151,6 +156,13 @@ const AI_SEVERITY_LABEL = {
   LOW: 'Lỗi nhẹ',
   MEDIUM: 'Lỗi vừa',
   HIGH: 'Lỗi nghiêm trọng',
+};
+
+const OPTION_VERDICT_LABEL = {
+  SUPPORTED: 'Được nguồn hỗ trợ',
+  CONTRADICTED: 'Mâu thuẫn với nguồn',
+  NOT_IN_SOURCE: 'Không có trong nguồn',
+  AMBIGUOUS: 'Chưa đủ rõ',
 };
 
 const USER_ROLE_LABEL = {
@@ -1334,6 +1346,8 @@ function ReviewQueuePage() {
   const latestScores = latestEvaluation?.scores || {};
   const latestWeights = latestEvaluation?.policy?.weights || {};
   const aiInsights = evaluationInsights(latestEvaluation, SCORE_COMPONENTS);
+  const answerGuardrail = answerGuardrailInsights(latestEvaluation);
+  const metadataGuardrail = metadataGuardrailInsights(latestEvaluation);
   const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
   const aiMissingItems = textList(latestFeedback.missing);
   const aiRiskItems = textList(latestEvidence.risks);
@@ -1993,6 +2007,45 @@ function ReviewQueuePage() {
                           {aiSeverity && <strong className={`ai-severity ai-severity--${aiSeverity.toLowerCase()}`}>{AI_SEVERITY_LABEL[aiSeverity] || aiSeverity}</strong>}
                         </div>
                         <p>{latestFeedback.summary || latestEvidence.reasoning || 'AI chưa cung cấp phần giải thích tổng quát.'}</p>
+                        {answerGuardrail.applied && (
+                          <div className="answer-guardrail-warning" role="alert">
+                            <strong>Đã chặn tự động duyệt đáp án</strong>
+                            <span>Hệ thống phát hiện kết quả AI chưa đủ tin cậy; người duyệt cần đối chiếu từng phương án với nguồn.</span>
+                            <ul>
+                              {answerGuardrail.issues.map((item) => <li key={item}>{item}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        {metadataGuardrail.applied && (
+                          <div className="metadata-guardrail-warning" role="alert">
+                            <strong>Thiếu metadata sư phạm bắt buộc</strong>
+                            <ul>
+                              {metadataGuardrail.issues.map((item) => <li key={item}>{item}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        {answerGuardrail.optionChecks.length > 0 && (
+                          <div className="option-checks">
+                            <span>Kiểm chứng từng phương án</span>
+                            <div className="option-checks__grid">
+                              {answerGuardrail.optionChecks.map((item) => (
+                                <div className={`option-check option-check--${item.verdict.toLowerCase()}`} key={item.key}>
+                                  <div>
+                                    <b>{item.key}</b>
+                                    <strong>{OPTION_VERDICT_LABEL[item.verdict] || item.verdict || 'Chưa kết luận'}</strong>
+                                    {item.sourceLabel && <em>{item.sourceLabel}</em>}
+                                  </div>
+                                  <p>{item.excerpt || 'AI chưa cung cấp trích dẫn.'}</p>
+                                  {item.inferredFromComplement && (
+                                    <small className="option-check__inferred">
+                                      Hệ thống suy ra từ phương án {item.inferredFromComplement}
+                                    </small>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {aiInsights.weakCriteria.length > 0 && (
                           <div className="ai-review-summary__criteria">
                             <span>Tiêu chí dưới ngưỡng:</span>

@@ -32,6 +32,8 @@ class PromptBuilder:
         num_questions: int,
         instruction: str | None = None,
         avoid_questions: list[str] | None = None,
+        learning_outcomes: list[dict] | None = None,
+        content_mode: str = "general",
     ):
         system = self._load_template("system", "system.txt")
         question_rule = self._load_template("question_rule", "question_rule.txt")
@@ -63,6 +65,25 @@ AVOID DUPLICATES:
 Do not repeat or paraphrase the following previously generated questions:
 {avoid_list}
 """
+        clo_block = ""
+        if learning_outcomes:
+            clo_lines = "\n".join(
+                f"- {item['clo_code']}: {item['description']}"
+                for item in learning_outcomes
+                if item.get("clo_code") and item.get("description")
+            )
+            if clo_lines:
+                clo_block = f"""
+LEARNING OUTCOMES:
+{clo_lines}
+Set `clo_codes` to the best matching codes from this list. Do not invent codes.
+"""
+        mode_block = (
+            "CONTENT MODE: CODE\nCreate questions that require reading, tracing, debugging, or reasoning about code "
+            "grounded in CONTEXT. Include a code snippet only when CONTEXT supports it."
+            if content_mode == "code"
+            else "CONTENT MODE: GENERAL\nPrioritize conceptual and non-code knowledge grounded in CONTEXT."
+        )
 
         # Ráp lại với cấu trúc tối ưu hóa
         return f"""
@@ -76,6 +97,8 @@ Do not repeat or paraphrase the following previously generated questions:
 TASK: Generate exactly {num_questions} questions.
 {instruction_block}
 {duplicate_block}
+{clo_block}
+{mode_block}
 CONTEXT:
 {context}
 

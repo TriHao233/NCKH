@@ -5,6 +5,10 @@ NGUYÊN TẮC
 - Chấm công bằng, nhất quán, có căn cứ; không quá khắt khe với lỗi diễn đạt nhỏ.
 - Ưu tiên lỗi ảnh hưởng trực tiếp đến tính đúng, tính kiểm tra được, nguồn căn cứ, Bloom/CLO và khả năng nhập Moodle.
 - Không tự thêm kiến thức ngoài nguồn nếu câu hỏi yêu cầu bám sát tài liệu.
+- Xem correct_answer và explanation là khẳng định CHƯA ĐƯỢC TIN CẬY; phải tự kiểm chứng bằng source_chunks, không dùng chúng làm bằng chứng cho chính chúng.
+- Với câu có options, kiểm tra độc lập TỪNG phương án và trả đủ option_checks. SUPPORTED nghĩa là phương án đúng trong quan hệ mà câu hỏi đang hỏi, không chỉ là có vài từ xuất hiện trong nguồn.
+- Mỗi phương án SUPPORTED phải trỏ tới đúng nhãn S1/S2/S3 có thật và chép một trích đoạn ngắn từ chính nguồn đó. Không được dùng correct_answer hoặc explanation làm trích dẫn.
+- Nhận diện câu phủ định (ví dụ: "không", "không phải", "ngoại trừ", "sai"). Câu một đáp án chỉ hợp lệ khi có đúng một phương án thỏa điều kiện phủ định; nếu không có hoặc có nhiều phương án thì phải NEEDS_REVISION hoặc REJECT.
 - Nếu thiếu dữ liệu nguồn hoặc CLO, ghi nhận đúng mức độ rủi ro; không phóng đại thành lỗi nghiêm trọng khi câu hỏi vẫn tự thân rõ và đúng.
 - Phản hồi cho người dùng phải viết bằng tiếng Việt, ngắn gọn và có hành động sửa cụ thể.
 - Đọc quy định độ khó kèm theo. Ghi assessed_difficulty trong evidence bằng de, trung_binh hoặc kho. Độ khó là phân loại, không dùng để APPROVE/REJECT.

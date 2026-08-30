@@ -31,16 +31,28 @@ from modules.generation.llm.factory import (
     get_llm_service,
     reset_llm_execution_tracking,
 )
+from modules.generation.llm.model_registry import (
+    GENERATION_CAPABILITY,
+    resolve_model_snapshot,
+)
 from modules.generation.mongodb import (
     create_generation_run,
     finish_generation_run,
     get_existing_question_texts,
+    get_document_learning_outcomes,
     save_generated_questions,
 )
 
 logger = logging.getLogger(__name__)
 MAX_FORMAT_RETRY_ATTEMPTS = 1
 VALID_DIFFICULTIES = {"de", "trung_binh", "kho"}
+CODE_SIGNAL_PATTERNS = (
+    r"```",
+    r"\b(?:def|class|function|struct|typedef|return|while|for|if)\b",
+    r"#include\s*[<\"]",
+    r"\b(?:int|float|double|char|bool|void)\s+[A-Za-z_]\w*\s*[\(;=]",
+    r"(?:->|::|\{\s*$|;\s*$)",
+)
 DIFFICULTY_ALIASES = {
     "de": "de",
     "dễ": "de",
@@ -64,11 +76,20 @@ QUESTION_TYPE_RETRY_RULES = {
     "sap_xep": "options must contain ordered step keys; correct_answer must list every key in the correct order.",
 }
 
+
+def _content_mode(plan_item: QuestionPlanItem, context_text: str, instruction: str | None) -> str:
+    if plan_item.content_mode != "auto":
+        return plan_item.content_mode
+    sample = f"{instruction or ''}\n{context_text}"
+    signal_count = sum(bool(re.search(pattern, sample, flags=re.IGNORECASE | re.MULTILINE)) for pattern in CODE_SIGNAL_PATTERNS)
+    return "code" if signal_count >= 2 else "general"
+
 async def generate_questions_rag(
     req: QuestionGenerateRequest,
     requested_by_user_id=None,
     progress_callback: Callable[[dict], Awaitable[None]] | None = None,
     model_snapshot: dict | None = None,
+    code_model_snapshot: dict | None = None,
     fallback_model_snapshot: dict | None = None,
 ) -> QuestionGenerateResponse:
     plan = req.effective_plan()
@@ -82,7 +103,8 @@ async def generate_questions_rag(
     context_snapshot = get_context_snapshot(
         document_id=req.document_id,
         collection_name=req.collection_name,
-        target_heading=req.target_heading
+        target_heading=req.target_heading,
+        query_text=req.instruction,
     )
     context_text = context_snapshot["context_text"]
 
@@ -90,12 +112,7 @@ async def generate_questions_rag(
         raise ValueError("Không tìm thấy đủ dữ liệu tri thức để sinh câu hỏi.")
 
     prompt_builder = PromptBuilder()
-    llm = get_llm_service(
-        req.model_provider,
-        settings.generation_fallback_provider,
-        model_snapshot=model_snapshot,
-        fallback_model_snapshot=fallback_model_snapshot,
-    )
+    learning_outcomes = get_document_learning_outcomes(req.document_id)
     generated_questions: List[GeneratedQuestion] = []
     summaries: List[GenerationPlanSummary] = []
     try:
@@ -113,6 +130,23 @@ async def generate_questions_rag(
         await progress_callback({"stage": "generating", "completed": 0, "total": len(plan)})
 
     for plan_index, plan_item in enumerate(plan, start=1):
+        content_mode = _content_mode(plan_item, context_text, req.instruction)
+        selected_provider = (
+            req.code_model_provider if content_mode == "code" else req.model_provider
+        )
+        selected_snapshot = (
+            model_snapshot
+            if selected_provider == req.model_provider and model_snapshot
+            else code_model_snapshot
+            if selected_provider == req.code_model_provider and code_model_snapshot
+            else resolve_model_snapshot(selected_provider, capability=GENERATION_CAPABILITY)
+        )
+        llm = get_llm_service(
+            selected_provider,
+            settings.generation_fallback_provider,
+            model_snapshot=selected_snapshot,
+            fallback_model_snapshot=fallback_model_snapshot,
+        )
         questions, summary = await _generate_questions_for_plan_item(
             req,
             plan_item,
@@ -126,7 +160,10 @@ async def generate_questions_rag(
             context_text=context_text,
             prompt_builder=prompt_builder,
             llm=llm,
-            model_snapshot=model_snapshot,
+            model_snapshot=selected_snapshot,
+            model_provider=selected_provider,
+            content_mode=content_mode,
+            learning_outcomes=learning_outcomes,
             requested_by_user_id=requested_by_user_id,
         )
         for question in questions:
@@ -162,6 +199,9 @@ async def _generate_questions_for_plan_item(
     prompt_builder: PromptBuilder,
     llm,
     model_snapshot: dict | None,
+    model_provider: str,
+    content_mode: str,
+    learning_outcomes: list[dict],
     requested_by_user_id=None,
 ) -> tuple[List[GeneratedQuestion], GenerationPlanSummary]:
     reset_llm_execution_tracking(llm)
@@ -174,6 +214,8 @@ async def _generate_questions_for_plan_item(
         num_questions=plan_item.num_questions,
         instruction=req.instruction,
         avoid_questions=avoid_questions,
+        learning_outcomes=learning_outcomes,
+        content_mode=content_mode,
     )
     request_snapshot = req.model_dump(mode="json")
     request_snapshot["active_plan_item"] = {
@@ -313,6 +355,7 @@ async def _generate_questions_for_plan_item(
                 for result in context_snapshot["results"]
                 if result.get("chunk_id")
             ],
+            learning_outcomes=learning_outcomes,
         )
         summary = _build_plan_summary(
             plan_index=plan_index,
@@ -324,6 +367,8 @@ async def _generate_questions_for_plan_item(
             duplicate_stats=duplicate_stats,
             saved_count=len(saved_data),
             validation_errors=validation_errors,
+            model_provider=model_provider,
+            content_mode=content_mode,
         )
         finish_generation_run(
             generation_run_id,
@@ -449,6 +494,8 @@ def _build_plan_summary(
     duplicate_stats: DuplicateStats,
     saved_count: int,
     validation_errors: list[GenerationRejection],
+    model_provider: str,
+    content_mode: str,
 ) -> GenerationPlanSummary:
     skipped_count = max(0, requested_count - saved_count)
     warnings = []
@@ -471,6 +518,8 @@ def _build_plan_summary(
         plan_index=plan_index,
         question_type=question_type,
         bloom_level=bloom_level,
+        model_provider=model_provider,
+        content_mode=content_mode,
         requested_count=requested_count,
         parsed_count=parsed_count,
         valid_count=valid_count,
