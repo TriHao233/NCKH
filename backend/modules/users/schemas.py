@@ -150,6 +150,7 @@ class GenerationPresetPlanItem(BaseModel):
     questionTypeId: str = Field(..., min_length=1, max_length=50)
     bloomId: str = Field(..., min_length=1, max_length=50)
     count: int = Field(..., ge=1, le=10)
+    contentMode: Literal["auto", "code", "general"] = "auto"
 
 
 class GenerationPresetPayload(BaseModel):

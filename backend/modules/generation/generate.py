@@ -121,6 +121,7 @@ async def process_generate_background(job_id: str, worker_id: str):
                 requested_by_user_id=requested_by_user_id,
                 progress_callback=report_progress,
                 model_snapshot=job.get("model_snapshot"),
+                code_model_snapshot=job.get("code_model_snapshot"),
                 fallback_model_snapshot=job.get("fallback_model_snapshot"),
             )
             finished_at = utc_now()
@@ -209,6 +210,15 @@ async def api_generate_questions(
             req.model_provider,
             capability=GENERATION_CAPABILITY,
         )
+        code_model_snapshot = (
+            model_snapshot
+            if req.code_model_provider == req.model_provider
+            else await asyncio.to_thread(
+                resolve_model_snapshot,
+                req.code_model_provider,
+                capability=GENERATION_CAPABILITY,
+            )
+        )
         fallback_snapshot = None
         if settings.generation_fallback_provider:
             fallback_snapshot = await asyncio.to_thread(
@@ -224,6 +234,7 @@ async def api_generate_questions(
         current_user.id,
         normalized_key,
         model_snapshot=model_snapshot,
+        code_model_snapshot=code_model_snapshot,
         fallback_model_snapshot=fallback_snapshot,
     )
 

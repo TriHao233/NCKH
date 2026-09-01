@@ -1,4 +1,6 @@
 import hashlib
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from bson.errors import InvalidId
@@ -25,6 +27,66 @@ BLOOM_TO_LEVEL = {
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+def get_document_learning_outcomes(document_id: str) -> list[dict]:
+    db = get_database()
+    try:
+        document = db.documents.find_one({"_id": object_id(document_id, "document_id")})
+    except ValueError:
+        return []
+    if not document or not document.get("subject_id"):
+        return []
+    subject = db.subjects.find_one({"_id": document["subject_id"], "is_active": {"$ne": False}})
+    if not subject:
+        return []
+    return [
+        {
+            "id": str(item["_id"]),
+            "clo_code": str(item.get("clo_code") or "").strip(),
+            "description": str(item.get("description") or "").strip(),
+        }
+        for item in (subject.get("learning_outcomes") or [])
+        if item.get("_id") and item.get("is_active", True)
+    ]
+
+
+def _fold_tokens(text: str) -> set[str]:
+    folded = unicodedata.normalize("NFKD", (text or "").replace("đ", "d").lower())
+    ascii_text = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return {token for token in re.findall(r"[a-z0-9_]{3,}", ascii_text)}
+
+
+def _resolve_clo_ids(
+    document_id: str,
+    question: dict,
+    outcomes: list[dict] | None = None,
+) -> list[str]:
+    outcomes = outcomes if outcomes is not None else get_document_learning_outcomes(document_id)
+    if not outcomes:
+        return []
+    by_code = {item["clo_code"].upper(): item for item in outcomes if item["clo_code"]}
+    selected = []
+    for code in question.get("clo_codes") or []:
+        item = by_code.get(str(code).strip().upper())
+        if item and item["id"] not in selected:
+            selected.append(item["id"])
+    if selected:
+        return selected[:2]
+
+    question_text = " ".join(
+        str(question.get(field) or "")
+        for field in ("question", "explanation", "source_context")
+    )
+    question_tokens = _fold_tokens(question_text)
+    ranked = []
+    for item in outcomes:
+        outcome_tokens = _fold_tokens(f"{item['clo_code']} {item['description']}")
+        overlap = len(question_tokens & outcome_tokens)
+        if overlap:
+            ranked.append((overlap / max(1, len(outcome_tokens)), overlap, item["id"]))
+    ranked.sort(reverse=True)
+    return [item_id for _ratio, _overlap, item_id in ranked[:2]]
 
 
 def _model_snapshot(database, provider: str, fallback: dict | None = None) -> dict:
@@ -197,6 +259,7 @@ def save_generated_questions(
     generation_run_id: str,
     requested_by_user_id,
     source_chunk_ids: list[str],
+    learning_outcomes: list[dict] | None = None,
 ) -> list[dict]:
     service = get_question_service()
     run_oid = object_id(generation_run_id, "generation_run_id")
@@ -226,6 +289,7 @@ def save_generated_questions(
                 },
                 document_id=document_id,
                 source_chunk_ids=source_chunk_ids,
+                clo_ids=_resolve_clo_ids(document_id, question, learning_outcomes),
             ),
             requested_by_user_id,
             origin="AI",
@@ -251,6 +315,7 @@ def create_generation_job(
     idempotency_key: str | None = None,
     *,
     model_snapshot: dict | None = None,
+    code_model_snapshot: dict | None = None,
     fallback_model_snapshot: dict | None = None,
 ) -> str:
     """Tạo job sinh câu hỏi với trạng thái queued (dùng cho polling ở FE)."""
@@ -259,6 +324,7 @@ def create_generation_job(
     doc = {
         "request": request,
         "model_snapshot": model_snapshot,
+        "code_model_snapshot": code_model_snapshot,
         "fallback_model_snapshot": fallback_model_snapshot,
         "requested_by_user_id": requested_by_user_id,
         "idempotency_key": idempotency_key,

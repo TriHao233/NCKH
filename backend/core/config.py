@@ -84,8 +84,8 @@ class Settings(BaseModel):
     max_active_generation_jobs_per_user: int = int(os.getenv("MAX_ACTIVE_GENERATION_JOBS_PER_USER", "10"))
     worker_shutdown_grace_seconds: int = int(os.getenv("WORKER_SHUTDOWN_GRACE_SECONDS", "30"))
     job_retention_days: int = int(os.getenv("JOB_RETENTION_DAYS", "90"))
-    llm_slot_lease_seconds: int = int(os.getenv("LLM_SLOT_LEASE_SECONDS", "360"))
-    llm_slot_heartbeat_seconds: int = int(os.getenv("LLM_SLOT_HEARTBEAT_SECONDS", "30"))
+    llm_slot_lease_seconds: int = int(os.getenv("LLM_SLOT_LEASE_SECONDS", "90"))
+    llm_slot_heartbeat_seconds: int = int(os.getenv("LLM_SLOT_HEARTBEAT_SECONDS", "15"))
     llm_slot_wait_timeout_seconds: int = int(os.getenv("LLM_SLOT_WAIT_TIMEOUT_SECONDS", "600"))
     llm_slot_poll_seconds: float = float(os.getenv("LLM_SLOT_POLL_SECONDS", "0.5"))
     ollama_max_concurrency: int = int(os.getenv("OLLAMA_MAX_CONCURRENCY", "1"))
@@ -102,12 +102,16 @@ class Settings(BaseModel):
 
     # Provider LLM mặc định (qwen chạy local qua Ollama)
     model_provider: str = os.getenv("MODEL_PROVIDER", "qwen")
+    code_generation_model_provider: str = os.getenv(
+        "CODE_GENERATION_MODEL_PROVIDER", "deepseek"
+    ).strip()
     evaluation_model_provider: str = _env_first(
         ("EVALUATION_MODEL_PROVIDER", "EVALUATOR_MODEL_CODE"),
-        "deepseek-r1",
+        "qwen",
     )
     generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
     evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
+    evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "900"))
     ollama_generate_url: str = _env_first(
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",

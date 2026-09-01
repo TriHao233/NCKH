@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +16,7 @@ from modules.generation.llm.model_registry import (
 from modules.generation.llm.base import LLMProvider
 from modules.generation.llm.factory import get_llm_execution_snapshot
 from modules.generation.llm.fallback import FallbackProvider
+from modules.questions import workflow_service as workflow_service_module
 
 
 class MongoTransactionTests(unittest.TestCase):
@@ -66,6 +68,46 @@ class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generation_processor.await_args.args[0], "generation-job")
         self.assertEqual(evaluation_processor.await_args.args[0], "evaluation-job")
         self.assertEqual(generation_processor.await_args.args[1], evaluation_processor.await_args.args[1])
+
+    async def test_superseded_evaluation_cancels_in_flight_model_call(self):
+        job_id = str(ObjectId())
+        process_started = asyncio.Event()
+        process_cancelled = asyncio.Event()
+
+        class EvaluationJobs:
+            def __init__(self):
+                self.reads = 0
+
+            def find_one(self, *_args, **_kwargs):
+                self.reads += 1
+                if self.reads == 1:
+                    return {"status": "PROCESSING", "locked_by": "worker-1"}
+                return {"status": "STALE", "locked_by": None}
+
+        class Service:
+            def __init__(self):
+                self.db = type("Database", (), {"evaluation_jobs": EvaluationJobs()})()
+
+            def heartbeat_evaluation_job(self, *_args):
+                return True
+
+            async def process_evaluation_job(self, *_args):
+                process_started.set()
+                try:
+                    await asyncio.sleep(10)
+                finally:
+                    process_cancelled.set()
+
+        service = Service()
+        with (
+            patch.object(workflow_service_module, "get_workflow_service", return_value=service),
+            patch.object(workflow_service_module.settings, "job_worker_poll_seconds", 0.1),
+        ):
+            await workflow_service_module.process_evaluation_job_background(job_id, "worker-1")
+
+        self.assertTrue(process_started.is_set())
+        self.assertTrue(process_cancelled.is_set())
+        self.assertGreaterEqual(service.db.evaluation_jobs.reads, 2)
 
 
 class GenerationRetryTests(unittest.TestCase):
