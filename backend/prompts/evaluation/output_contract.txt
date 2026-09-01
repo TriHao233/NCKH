@@ -32,6 +32,16 @@ Phải giữ action và severity bên trong feedback, không đặt ở cấp ng
         "supporting_excerpt": "Trích tối đa 18 từ từ đúng source_label; không lấy từ correct_answer/explanation"
       }}
     ],
+    "citations": [
+      {{
+        "claim": "Nhận định đang được kiểm chứng",
+        "claim_type": "QUESTION | ANSWER | EXPLANATION",
+        "chunk_id": "chunk_id phải lấy nguyên văn từ source_chunks",
+        "exact_quote": "Trích dẫn nguyên văn xuất hiện trong excerpt của chunk",
+        "entailment": "SUPPORTED | CONTRADICTED | NOT_FOUND"
+      }}
+    ],
+    "unsupported_claims": ["Nhận định trọng yếu chưa được nguồn hỗ trợ"],
     "criteria": ["Tiêu chí đã dùng"],
     "risks": ["Rủi ro thực tế nếu có"],
     "moodle_readiness": "READY | NEEDS_FIX",
@@ -43,5 +53,16 @@ Phải giữ action và severity bên trong feedback, không đặt ở cấp ng
 EVALUATION_POLICY:
 {evaluation_policy}
 
+RÀNG BUỘC BẮT BUỘC:
+- citations không được rỗng.
+- Không được tự tạo chunk_id hoặc exact_quote.
+- Mỗi exact_quote phải xuất hiện nguyên văn trong excerpt của đúng chunk_id.
+- Phải có ít nhất một citation claim_type = ANSWER và entailment = SUPPORTED.
+- Với câu có options, option_checks phải có đủ từng phương án và phương án SUPPORTED phải trỏ đúng source_label.
+- Chỉ APPROVE khi không có unsupported_claims trọng yếu và có ít nhất một citation SUPPORTED cho đáp án/giải thích.
+
 QUESTION_PAYLOAD:
 {question_payload}
+
+FINAL REMINDER:
+Chỉ trả về object JSON theo đúng schema OUTPUT ở trên. Bắt buộc có scores, feedback, evidence.citations và evidence.option_checks với câu có lựa chọn; không tạo query mới, không tóm tắt source_chunks và không viết nội dung ngoài JSON.

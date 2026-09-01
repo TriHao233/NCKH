@@ -55,6 +55,7 @@ const STATUS_LABEL = {
   FAILED: 'Thất bại',
   ERROR: 'Lỗi',
   STALE: 'Cần chạy lại',
+  BLOCKED: 'Bị chặn do thiếu bằng chứng',
   CANCELLED: 'Đã hủy',
 };
 
@@ -70,6 +71,7 @@ const STATUS_OPTIONS = [
   { value: 'FAILED', label: 'Tác vụ: thất bại' },
   { value: 'ERROR', label: 'Tác vụ: lỗi' },
   { value: 'STALE', label: 'Tác vụ: cần chạy lại' },
+  { value: 'BLOCKED', label: 'Tác vụ: thiếu bằng chứng' },
   { value: 'COMPLETED', label: 'Tác vụ: hoàn tất' },
   { value: 'CANCELLED', label: 'Tác vụ: đã hủy' },
 ];

@@ -139,6 +139,8 @@ const EVALUATION_STATUS_LABEL = {
   FAILED: 'Không đạt',
   ERROR: 'AI lỗi',
   STALE: 'Cần đánh giá lại',
+  INSUFFICIENT_EVIDENCE: 'Không đủ bằng chứng',
+  EVIDENCE_VALIDATION_FAILED: 'Minh chứng AI không hợp lệ',
 };
 
 const PUBLICATION_STATUS_LABEL = {
@@ -2339,7 +2341,7 @@ function ManagePage() {
                                 disabled={workflowBusyId === item.id || !canQueueEvaluation(item)}
                                 onClick={() => handleAutoEvaluate(item)}
                               >
-                                {item.evaluation_status === 'ERROR' || item.evaluation_status === 'FAILED' || item.evaluation_status === 'STALE'
+                                {['ERROR', 'FAILED', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(item.evaluation_status)
                                   ? 'Kiểm tra lại AI'
                                   : 'Kiểm tra AI'}
                               </button>

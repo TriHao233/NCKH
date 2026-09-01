@@ -25,6 +25,7 @@ from modules.notifications.service import (
     safe_notify_review_decision,
 )
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
+from modules.rag.search import get_evaluation_evidence
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     EvaluationCreateRequest,
@@ -58,8 +59,18 @@ EVALUATION_TYPE_PROMPT_PREFIX = "evaluation:question_type"
 EVALUATION_TYPE_PROMPT_DIR = "evaluation/question_type"
 DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
 EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
-EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
+EVALUATION_RETRYABLE_STATUSES = {
+    "NOT_STARTED",
+    "FAILED",
+    "ERROR",
+    "STALE",
+    "INSUFFICIENT_EVIDENCE",
+    "EVIDENCE_VALIDATION_FAILED",
+}
 EVALUATION_SOURCE_LIMIT = 3
+EVALUATION_RETRIEVAL_LIMIT = 5
+EVALUATION_MIN_SIMILARITY = 0.20
+EVALUATION_PROMPT_SOURCE_LIMIT = 3
 OPTION_CHECK_VERDICTS = {"SUPPORTED", "CONTRADICTED", "NOT_IN_SOURCE", "AMBIGUOUS"}
 SINGLE_ANSWER_TYPES = {"TRAC_NGHIEM", "DUNG_SAI"}
 MULTIPLE_ANSWER_TYPES = {"NHIEU_LUA_CHON"}
@@ -131,6 +142,13 @@ def _prepare_evaluation_attempt(
     parameters["num_predict"] = max(configured, settings.evaluation_num_predict)
     effective_model_snapshot["parameters"] = parameters
     return retry_prompt, retry_prompt_snapshot, effective_model_snapshot
+
+
+class EvidenceGateError(ValueError):
+    def __init__(self, message: str, *, code: str = "INSUFFICIENT_EVIDENCE", evidence: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.evidence = evidence or {}
 
 
 def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
@@ -323,6 +341,202 @@ class QuestionWorkflowService:
             )
         return compacted
 
+    @classmethod
+    def _evaluation_query(cls, version: dict) -> str:
+        question_data = version.get("question_data") or {}
+        classification = version.get("classification") or {}
+        parts = [
+            version.get("content") or "",
+            json.dumps(question_data.get("options") or {}, ensure_ascii=False, default=str),
+            str(question_data.get("correct_answer") or ""),
+            str(question_data.get("explanation") or ""),
+            json.dumps(classification.get("bloom") or {}, ensure_ascii=False, default=str),
+            " ".join(
+                str(clo.get("description") or clo.get("code") or "")
+                for clo in (version.get("clos") or [])
+            ),
+        ]
+        return cls._compact_text(" ".join(part for part in parts if part), 3000)
+
+    def _retrieve_evaluation_sources(self, version: dict) -> tuple[list[dict], dict]:
+        document_id = version.get("document_id")
+        if not document_id:
+            raise EvidenceGateError(
+                "Câu hỏi chưa gắn tài liệu nguồn nên AI không được phép chấm",
+                evidence={"retrieval": {"status": "BLOCKED", "result_count": 0}},
+            )
+
+        query = self._evaluation_query(version)
+        try:
+            retrieval = get_evaluation_evidence(
+                str(document_id),
+                query,
+                settings.chromadb_collection_name,
+                limit=EVALUATION_RETRIEVAL_LIMIT,
+                preferred_chunk_ids=[
+                    str(source.get("chunk_id"))
+                    for source in (version.get("sources") or [])
+                    if source.get("chunk_id")
+                ],
+            )
+        except Exception as exc:
+            raise EvidenceGateError(
+                f"Không truy xuất được nguồn dữ liệu hiện hành: {exc}",
+                evidence={
+                    "retrieval": {
+                        "status": "FAILED",
+                        "query": query,
+                        "result_count": 0,
+                    }
+                },
+            ) from exc
+
+        retrieved = retrieval.get("results") or []
+        eligible = [
+            source
+            for source in retrieved
+            if source.get("excerpt")
+            and (
+                source.get("similarity") is None
+                or float(source.get("similarity")) >= EVALUATION_MIN_SIMILARITY
+            )
+        ]
+        retrieval_snapshot = {
+            **retrieval,
+            "status": "SUFFICIENT" if eligible else "INSUFFICIENT",
+            "result_count": len(retrieved),
+            "eligible_count": len(eligible),
+            "min_similarity": EVALUATION_MIN_SIMILARITY,
+            "results": [
+                {key: value for key, value in source.items() if key != "excerpt"}
+                for source in retrieved
+            ],
+        }
+        if not eligible:
+            raise EvidenceGateError(
+                "Không tìm thấy chunk hiện hành đủ liên quan để AI chấm điểm",
+                evidence={"retrieval": retrieval_snapshot},
+            )
+
+        sources = []
+        for index, source in enumerate(eligible, start=1):
+            sources.append(
+                {
+                    **source,
+                    "label": f"S{index}",
+                    "citation_order": index,
+                    "is_primary": index == 1,
+                    "excerpt_hash": hashlib.sha256(
+                        source["excerpt"].encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
+        return sources, retrieval_snapshot
+
+    @staticmethod
+    def _normalize_quote(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+
+    @classmethod
+    def _validate_model_evidence(cls, evidence: dict, sources: list[dict]) -> dict:
+        citations = evidence.get("citations")
+        if not isinstance(citations, list) or not citations:
+            raise EvidenceGateError(
+                "AI không trả về citation có cấu trúc nên kết quả không được ghi nhận",
+                code="EVIDENCE_VALIDATION_FAILED",
+            )
+
+        source_by_id = {str(source.get("chunk_id")): source for source in sources}
+        verified = []
+        for citation in citations:
+            if not isinstance(citation, dict):
+                continue
+            chunk_id = str(citation.get("chunk_id") or "")
+            source = source_by_id.get(chunk_id)
+            quote = cls._normalize_quote(citation.get("exact_quote"))
+            if not source or len(quote) < 8:
+                continue
+            source_text = cls._normalize_quote(source.get("excerpt"))
+            quote_tokens = cls._tokens(quote)
+            source_tokens = cls._tokens(source_text)
+            token_coverage = (
+                len(quote_tokens & source_tokens) / len(quote_tokens)
+                if quote_tokens
+                else 0.0
+            )
+            exact_match = quote in source_text
+            fuzzy_ocr_match = len(quote_tokens) >= 6 and token_coverage >= 0.75
+            if not exact_match and not fuzzy_ocr_match:
+                continue
+            verdict = str(citation.get("entailment") or "SUPPORTED").upper()
+            verified.append(
+                {
+                    **citation,
+                    "chunk_id": chunk_id,
+                    "content_hash": source.get("content_hash"),
+                    "page_start": source.get("page_start"),
+                    "page_end": source.get("page_end"),
+                    "entailment": verdict,
+                    "verified": True,
+                    "match_mode": "EXACT" if exact_match else "FUZZY_OCR",
+                    "match_score": round(1.0 if exact_match else token_coverage, 4),
+                }
+            )
+
+        if not verified or not any(item.get("entailment") == "SUPPORTED" for item in verified):
+            raise EvidenceGateError(
+                "Không xác minh được trích dẫn của AI trong các chunk vừa truy xuất",
+                code="EVIDENCE_VALIDATION_FAILED",
+                evidence={"citation_validation": {"submitted": len(citations), "verified": 0}},
+            )
+        supported_answer = any(
+            item.get("entailment") == "SUPPORTED"
+            and str(item.get("claim_type") or "").upper() == "ANSWER"
+            for item in verified
+        )
+        unsupported_claims = list(evidence.get("unsupported_claims") or [])
+        if not supported_answer:
+            unsupported_claims.append(
+                "Đáp án đúng chưa có citation SUPPORTED từ nguồn dữ liệu"
+            )
+        return {
+            **evidence,
+            "citations": verified,
+            "unsupported_claims": list(dict.fromkeys(unsupported_claims)),
+            "citation_validation": {
+                "status": "VERIFIED",
+                "submitted": len(citations),
+                "verified": len(verified),
+                "answer_supported": supported_answer,
+            },
+        }
+
+    @classmethod
+    def _enforce_grounding_policy(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+    ) -> tuple[EvaluationScores, dict]:
+        unsupported = evidence.get("unsupported_claims") or []
+        citations = evidence.get("citations") or []
+        contradicted = any(
+            str(item.get("entailment") or "").upper() == "CONTRADICTED"
+            for item in citations
+            if isinstance(item, dict)
+        )
+        updated_feedback = dict(feedback or {})
+        if contradicted:
+            scores.faithfulness = min(scores.faithfulness, 0.20)
+            updated_feedback["action"] = "REJECT"
+            updated_feedback["severity"] = "HIGH"
+        elif unsupported:
+            scores.faithfulness = min(scores.faithfulness, 0.40)
+            if str(updated_feedback.get("action") or "").upper() == "APPROVE":
+                updated_feedback["action"] = "NEEDS_REVISION"
+            updated_feedback["severity"] = "HIGH"
+        return scores, updated_feedback
+
     @staticmethod
     def _source_context(version: dict) -> str:
         model_source_context = QuestionWorkflowService._compact_text(
@@ -382,10 +596,30 @@ class QuestionWorkflowService:
         question: dict,
         version: dict,
         policy: dict | None = None,
+        *,
+        source_chunks: list[dict] | None = None,
     ) -> tuple[str, dict, list[dict]]:
         question_data = version.get("question_data") or {}
         classification = version.get("classification") or {}
-        source_chunks = self._compact_sources(version)
+        if source_chunks is None:
+            source_chunks = self._compact_sources(version)
+        else:
+            prompt_sources = []
+            for source in source_chunks[:EVALUATION_PROMPT_SOURCE_LIMIT]:
+                excerpt = self._compact_text(
+                    source.get("excerpt") or "",
+                    EVALUATION_SOURCE_EXCERPT_CHARS,
+                )
+                prompt_sources.append(
+                    {
+                        **source,
+                        "excerpt": excerpt,
+                        "excerpt_hash": hashlib.sha256(
+                            excerpt.encode("utf-8")
+                        ).hexdigest(),
+                    }
+                )
+            source_chunks = prompt_sources
         policy = policy or self._policy()
         clos = [
             {
@@ -435,7 +669,7 @@ class QuestionWorkflowService:
             "question_type_prompt": self._normalized_question_type(payload["question_type"]),
             "rendered_prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "rendered_prompt_chars": len(prompt),
-            "source_limit": EVALUATION_SOURCE_LIMIT,
+            "source_limit": len(source_chunks),
             "source_excerpt_chars": EVALUATION_SOURCE_EXCERPT_CHARS,
         }
         return prompt, prompt_snapshot, source_chunks
@@ -970,12 +1204,15 @@ class QuestionWorkflowService:
         )
         feedback_action = str(payload.feedback.get("action") or "").strip().upper()
         feedback_severity = str(payload.feedback.get("severity") or "").strip().upper()
+        unsupported_claims = (payload.evidence or {}).get("unsupported_claims") or []
         action_requires_review = feedback_action in {"NEEDS_REVISION", "REJECT"}
         severe_issue = feedback_severity == "HIGH"
+        grounding_blocks_pass = bool(unsupported_claims)
         passed = (
             overall >= thresholds["pass_min"]
             and not action_requires_review
             and not severe_issue
+            and not grounding_blocks_pass
         )
         if feedback_action == "REJECT" or severe_issue:
             color = "RED"
@@ -987,7 +1224,8 @@ class QuestionWorkflowService:
                 "score_passed": overall >= thresholds["pass_min"],
                 "feedback_action": feedback_action or None,
                 "feedback_severity": feedback_severity or None,
-                "blocked_pass": action_requires_review or severe_issue,
+                "unsupported_claim_count": len(unsupported_claims),
+                "blocked_pass": action_requires_review or severe_issue or grounding_blocks_pass,
             },
         }
         now = utc_now()
@@ -1079,6 +1317,8 @@ class QuestionWorkflowService:
                             "color": color,
                             "evaluated_at": now,
                             "evaluator_model_code": evaluation["evaluator_model"].get("model_code"),
+                            "feedback": payload.feedback,
+                            "evidence": payload.evidence,
                         },
                         "updated_at": now,
                     }
@@ -1094,6 +1334,20 @@ class QuestionWorkflowService:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
+        source_chunks, retrieval_snapshot = self._retrieve_evaluation_sources(version)
+        grounded_version = {
+            **version,
+            "sources": [
+                {
+                    "chunk_id": source.get("chunk_id"),
+                    "chunk_content_hash": source.get("content_hash"),
+                    "citation_order": source.get("citation_order"),
+                    "is_primary": source.get("is_primary"),
+                    "context_excerpt": source.get("excerpt"),
+                }
+                for source in source_chunks
+            ],
+        }
         raw_model_response = None
         evaluator_code = payload.evaluator_model_code.strip()
         prompt_snapshot: dict = {}
@@ -1102,14 +1356,30 @@ class QuestionWorkflowService:
         model_snapshot: dict = {}
         llm = None
         if evaluator_code.lower() in {"local-heuristic-evaluator-v1", "heuristic"}:
-            scores, feedback, evidence = self._auto_scores(question, version)
+            scores, feedback, evidence = self._auto_scores(question, grounded_version)
             scores, feedback, evidence = self._apply_evaluation_guardrails(
                 scores,
                 feedback,
                 evidence,
-                version,
+                grounded_version,
             )
-            evidence["mode"] = "heuristic"
+            first_source = source_chunks[0]
+            evidence.update(
+                {
+                    "mode": "heuristic",
+                    "retrieval": retrieval_snapshot,
+                    "citations": [
+                        {
+                            "claim": "Nguồn được dùng cho đánh giá heuristic",
+                            "claim_type": "ANSWER",
+                            "chunk_id": first_source.get("chunk_id"),
+                            "exact_quote": first_source.get("excerpt", "")[:300],
+                            "entailment": "SUPPORTED",
+                            "verified": True,
+                        }
+                    ],
+                }
+            )
             evaluator_code = "local-heuristic-evaluator-v1"
         else:
             try:
@@ -1122,20 +1392,28 @@ class QuestionWorkflowService:
                 llm = get_llm_service(evaluator_code, model_snapshot=model_snapshot)
                 policy = self._policy()
                 policy_snapshot = self._policy_snapshot(policy)
-                prompt, prompt_snapshot, _ = self._build_evaluation_prompt(question, version, policy)
+                prompt, prompt_snapshot, _ = self._build_evaluation_prompt(
+                    question,
+                    version,
+                    policy,
+                    source_chunks=source_chunks,
+                )
                 started = time.perf_counter()
                 raw_model_response = await llm.generate_text(prompt)
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                evidence = self._validate_model_evidence(evidence, source_chunks)
+                scores, feedback = self._enforce_grounding_policy(scores, feedback, evidence)
                 scores, feedback, evidence = self._apply_evaluation_guardrails(
                     scores,
                     feedback,
                     evidence,
-                    version,
+                    grounded_version,
                 )
                 evidence = {
                     **evidence,
                     "mode": "local_llm",
+                    "retrieval": retrieval_snapshot,
                     "consistency": self._validate_llm_evaluation_consistency(
                         scores,
                         feedback,
@@ -1146,12 +1424,12 @@ class QuestionWorkflowService:
             except Exception as exc:
                 if not payload.fallback_to_heuristic:
                     raise ValueError(f"Local evaluator failed: {exc}") from exc
-                scores, feedback, evidence = self._auto_scores(question, version)
+                scores, feedback, evidence = self._auto_scores(question, grounded_version)
                 scores, feedback, evidence = self._apply_evaluation_guardrails(
                     scores,
                     feedback,
                     evidence,
-                    version,
+                    grounded_version,
                 )
                 evaluator_code = "local-heuristic-evaluator-v1"
                 feedback = {
@@ -1164,6 +1442,17 @@ class QuestionWorkflowService:
                 evidence = {
                     **evidence,
                     "mode": "heuristic_fallback",
+                    "retrieval": retrieval_snapshot,
+                    "citations": [
+                        {
+                            "claim": "Nguồn được dùng cho đánh giá heuristic dự phòng",
+                            "claim_type": "ANSWER",
+                            "chunk_id": source_chunks[0].get("chunk_id"),
+                            "exact_quote": source_chunks[0].get("excerpt", "")[:300],
+                            "entailment": "SUPPORTED",
+                            "verified": True,
+                        }
+                    ],
                     "fallback_reason": str(exc),
                     "raw_model_response": raw_model_response,
                 }
@@ -1437,12 +1726,16 @@ class QuestionWorkflowService:
         message: str,
         *,
         status: str = "ERROR",
+        question_status: str = "ERROR",
+        code: str = "EVALUATION_ERROR",
+        evidence: dict | None = None,
         raw_model_response: str | None = None,
         duration_ms: int | None = None,
         dead_lettered: bool = False,
     ) -> dict:
         now = utc_now()
         error = {
+            "code": code,
             "message": message,
             "raw_model_response_excerpt": (raw_model_response or "")[:1200] or None,
             "at": now,
@@ -1479,19 +1772,28 @@ class QuestionWorkflowService:
                     },
                     {
                         "$set": {
-                            "evaluation_status": "ERROR",
+                            "evaluation_status": question_status,
                             "quality_summary": {
                                 "latest_evaluation_job_id": job["_id"],
                                 "evaluated_version_id": job["question_version_id"],
                                 "evaluator_model_code": job.get("evaluator_model_code"),
                                 "error": error,
+                                "evidence": evidence or {},
                             },
                             "updated_at": now,
                         }
                     },
                     session=session,
                 )
-        return json_safe({**job, "status": status, "error": error, "finished_at": now})
+        return json_safe(
+            {
+                **job,
+                "status": status,
+                "error": error,
+                "evidence": evidence or {},
+                "finished_at": now,
+            }
+        )
 
     def heartbeat_evaluation_job(self, job_id: str, worker_id: str) -> bool:
         now = utc_now()
@@ -1646,15 +1948,53 @@ class QuestionWorkflowService:
 
         raw_model_response = None
         started = time.perf_counter()
+        retrieval_snapshot: dict = {}
         try:
             policy_snapshot = job.get("policy_snapshot")
             if not policy_snapshot:
                 policy_snapshot = await asyncio.to_thread(self._policy)
+            source_chunks, retrieval_snapshot = await asyncio.to_thread(
+                self._retrieve_evaluation_sources,
+                version,
+            )
+            grounded_version = {
+                **version,
+                "sources": [
+                    {
+                        "chunk_id": source.get("chunk_id"),
+                        "chunk_content_hash": source.get("content_hash"),
+                        "citation_order": source.get("citation_order"),
+                        "is_primary": source.get("is_primary"),
+                        "context_excerpt": source.get("excerpt"),
+                    }
+                    for source in source_chunks
+                ],
+            }
             prompt, prompt_snapshot, _ = await asyncio.to_thread(
                 self._build_evaluation_prompt,
                 question,
                 version,
                 policy_snapshot,
+                source_chunks=source_chunks,
+            )
+            await asyncio.to_thread(
+                self.db.evaluation_jobs.update_one,
+                {"_id": job["_id"], "status": "PROCESSING"},
+                {
+                    "$set": {
+                        "prompt_snapshot": prompt_snapshot,
+                        "retrieval_snapshot": retrieval_snapshot,
+                        "source_snapshot": [
+                            {
+                                key: value
+                                for key, value in source.items()
+                                if key != "excerpt"
+                            }
+                            for source in source_chunks
+                        ],
+                        "updated_at": utc_now(),
+                    }
+                },
             )
             prompt, prompt_snapshot, effective_model_snapshot = _prepare_evaluation_attempt(
                 prompt,
@@ -1672,11 +2012,13 @@ class QuestionWorkflowService:
             try:
                 raw_model_response = await llm.generate_text(prompt)
                 scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
+                evidence = self._validate_model_evidence(evidence, source_chunks)
+                scores, feedback = self._enforce_grounding_policy(scores, feedback, evidence)
                 scores, feedback, evidence = self._apply_evaluation_guardrails(
                     scores,
                     feedback,
                     evidence,
-                    version,
+                    grounded_version,
                 )
                 evidence = {
                     **evidence,
@@ -1691,12 +2033,12 @@ class QuestionWorkflowService:
                 if not job.get("fallback_to_heuristic"):
                     raise
                 heuristic_fallback = True
-                scores, feedback, evidence = self._auto_scores(question, version)
+                scores, feedback, evidence = self._auto_scores(question, grounded_version)
                 scores, feedback, evidence = self._apply_evaluation_guardrails(
                     scores,
                     feedback,
                     evidence,
-                    version,
+                    grounded_version,
                 )
                 feedback = {
                     **feedback,
@@ -1708,31 +2050,37 @@ class QuestionWorkflowService:
                 **evidence,
                 "mode": "heuristic_fallback" if heuristic_fallback else "local_llm",
                 "evaluation_job_id": str(job["_id"]),
-                "source_snapshot": json_safe(job.get("source_snapshot") or []),
+                "retrieval": json_safe(retrieval_snapshot),
+                "source_snapshot": json_safe(
+                    [
+                        {key: value for key, value in source.items() if key != "excerpt"}
+                        for source in source_chunks
+                    ]
+                ),
             }
             evaluation_payload = EvaluationCreateRequest(
-                    expected_version=version["version"],
-                    scores=scores,
-                    feedback=feedback,
-                    evidence=evidence,
-                    evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
-                    raw_model_response=raw_model_response,
-                    policy_snapshot=policy_snapshot,
-                    prompt_snapshot=prompt_snapshot,
-                    duration_ms=duration_ms,
-                    evaluation_job_id=str(job["_id"]),
-                    trigger=job.get("trigger"),
-                    model_snapshot=(
-                        {
-                            "model_code": "local-heuristic-evaluator-v1",
-                            "model_name": "Local heuristic evaluator",
-                            "runtime": "INTERNAL",
-                        }
-                        if heuristic_fallback
-                        else effective_model_snapshot or {}
-                    ),
-                    model_execution=get_llm_execution_snapshot(llm),
-                )
+                expected_version=version["version"],
+                scores=scores,
+                feedback=feedback,
+                evidence=evidence,
+                evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
+                raw_model_response=raw_model_response,
+                policy_snapshot=policy_snapshot,
+                prompt_snapshot=prompt_snapshot,
+                duration_ms=duration_ms,
+                evaluation_job_id=str(job["_id"]),
+                trigger=job.get("trigger"),
+                model_snapshot=(
+                    {
+                        "model_code": "local-heuristic-evaluator-v1",
+                        "model_name": "Local heuristic evaluator",
+                        "runtime": "INTERNAL",
+                    }
+                    if heuristic_fallback
+                    else effective_model_snapshot or {}
+                ),
+                model_execution=get_llm_execution_snapshot(llm),
+            )
             evaluation = await asyncio.to_thread(
                 self.evaluate,
                 str(question["_id"]),
@@ -1771,6 +2119,25 @@ class QuestionWorkflowService:
                 },
             )
             return evaluation
+        except EvidenceGateError as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            blocked_evidence = dict(exc.evidence)
+            if retrieval_snapshot:
+                blocked_evidence["retrieval"] = json_safe(retrieval_snapshot)
+            return self._mark_evaluation_job_error(
+                job,
+                str(exc),
+                status="BLOCKED",
+                question_status=(
+                    "EVIDENCE_VALIDATION_FAILED"
+                    if exc.code == "EVIDENCE_VALIDATION_FAILED"
+                    else "INSUFFICIENT_EVIDENCE"
+                ),
+                code=exc.code,
+                evidence=blocked_evidence,
+                raw_model_response=raw_model_response,
+                duration_ms=duration_ms,
+            )
         except RuntimeError as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             if str(exc) == "VERSION_CONFLICT":

@@ -15,7 +15,9 @@ TIÊU CHÍ
 
 GIỚI HẠN ĐIỂM
 - Ngưỡng pass mặc định: overall_score từ 0.65 trở lên là đạt để chuyển duyệt, nếu không có lỗi HIGH.
-- Nguồn rỗng/không liên quan: faithfulness và contextual_relevancy tối đa 0.45.
+- Nguồn rỗng/không liên quan: không được chấm điểm; hệ thống sẽ trả về INSUFFICIENT_EVIDENCE trước khi gọi mô hình.
+- Có nhận định trọng yếu không được nguồn hỗ trợ: không được APPROVE; faithfulness tối đa 0.40.
+- Nguồn mâu thuẫn với đáp án đúng hoặc giải thích: faithfulness tối đa 0.20 và action = REJECT.
 - Thiếu CLO: clo_alignment tối đa 0.65; chỉ tối đa 0.45 nếu bắt buộc phải gắn CLO.
 - Đáp án sai, thiếu, hoặc mâu thuẫn lựa chọn: answer_relevancy tối đa 0.40.
 - Cấu trúc chưa thật chuẩn nhưng vẫn chấm được: answer_relevancy tối đa 0.75 và moodle_readiness = "NEEDS_FIX".

@@ -192,6 +192,8 @@ VALIDATORS = {
                         "FAILED",
                         "ERROR",
                         "STALE",
+                        "INSUFFICIENT_EVIDENCE",
+                        "EVIDENCE_VALIDATION_FAILED",
                     ]
                 },
                 "review_status": {
@@ -328,6 +330,7 @@ VALIDATORS = {
                         "ERROR",
                         "STALE",
                         "CANCELLED",
+                        "BLOCKED",
                     ]
                 },
                 "trigger": {"bsonType": "string", "minLength": 1},
@@ -336,6 +339,7 @@ VALIDATORS = {
                 "policy_snapshot": {"bsonType": "object"},
                 "prompt_snapshot": {"bsonType": "object"},
                 "source_snapshot": {"bsonType": "array"},
+                "retrieval_snapshot": {"bsonType": "object"},
                 "attempt_no": {"bsonType": "int", "minimum": 1},
                 "max_attempts": {"bsonType": "int", "minimum": 1},
                 "result": {"bsonType": ["object", "null"]},

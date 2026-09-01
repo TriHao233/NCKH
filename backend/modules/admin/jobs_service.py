@@ -18,7 +18,7 @@ from modules.generation.mongodb import create_generation_job, get_generation_job
 from modules.questions.workflow_service import QuestionWorkflowService
 
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
-RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "failed"}
+RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "BLOCKED", "failed"}
 
 
 def utc_now() -> datetime:
@@ -108,7 +108,7 @@ def _uppercase_status_filter(status: str | None) -> str | dict | None:
     if normalized == "active":
         return {"$in": ["QUEUED", "PROCESSING"]}
     if normalized in {"retryable", "attention"}:
-        return {"$in": ["FAILED", "ERROR", "STALE"]}
+        return {"$in": ["FAILED", "ERROR", "STALE", "BLOCKED"]}
     return status.upper()
 
 

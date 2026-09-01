@@ -276,3 +276,166 @@ def get_context_for_generation(
         min_density=min_density,
         limit=limit,
     )["context_text"]
+
+
+def get_evaluation_evidence(
+    document_id: str,
+    query_text: str,
+    collection_name: str | None = None,
+    *,
+    limit: int = 5,
+    preferred_chunk_ids: list[str] | None = None,
+) -> dict:
+    """Retrieve and verify the current source chunks used by an AI evaluation.
+
+    Unlike generation retrieval, this function always performs a semantic query
+    and verifies every result against the active MongoDB chunk snapshot.  The
+    returned text is therefore suitable for citation validation after the model
+    responds.
+    """
+    query_text = re.sub(r"\s+", " ", str(query_text or "")).strip()
+    if not query_text:
+        raise ValueError("Không thể truy xuất nguồn vì nội dung đánh giá rỗng")
+
+    resolved_collection = collection_name or settings.chromadb_collection_name
+    chunk_set_id, vector_collection_id = _active_vector_snapshot(
+        document_id,
+        resolved_collection,
+    )
+    collection = get_collection(resolved_collection)
+    where_filter = {
+        "$and": [
+            {"document_id": document_id},
+            {"chunk_set_id": chunk_set_id},
+        ]
+    }
+
+    try:
+        results = collection.query(
+            query_texts=[query_text],
+            where=where_filter,
+            n_results=max(1, limit),
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception as exc:
+        logger.error("Lỗi truy xuất bằng chứng đánh giá: %s", exc)
+        raise ValueError(f"Lỗi truy xuất bằng chứng đánh giá: {exc}") from exc
+
+    raw_docs = (results.get("documents") or [[]])[0] or []
+    raw_metas = (results.get("metadatas") or [[]])[0] or []
+    raw_distances = (results.get("distances") or [[]])[0] or []
+    db = get_rag_db()
+    verified_results = []
+
+    for index, (content, metadata) in enumerate(zip(raw_docs, raw_metas)):
+        chunk_id = metadata.get("chunk_id")
+        if not content or not chunk_id:
+            continue
+        try:
+            chunk_oid = ObjectId(str(chunk_id))
+        except Exception:
+            logger.warning("Bỏ qua chunk Chroma có id không hợp lệ: %s", chunk_id)
+            continue
+
+        chunk = db.document_chunks.find_one(
+            {
+                "_id": chunk_oid,
+                "document_id": ObjectId(document_id),
+                "chunk_set_id": ObjectId(chunk_set_id),
+            }
+        )
+        if not chunk:
+            continue
+        content_hash = metadata.get("content_hash")
+        if not content_hash or content_hash != chunk.get("content_hash"):
+            logger.warning("Bỏ qua chunk %s vì content hash không khớp", chunk_id)
+            continue
+        if re.sub(r"\s+", " ", str(content)).strip() != re.sub(
+            r"\s+", " ", str(chunk.get("content") or "")
+        ).strip():
+            logger.warning("Bỏ qua chunk %s vì nội dung Chroma không khớp MongoDB", chunk_id)
+            continue
+
+        distance = raw_distances[index] if index < len(raw_distances) else None
+        similarity = None
+        if isinstance(distance, (int, float)):
+            similarity = round(max(0.0, min(1.0, 1.0 - float(distance))), 4)
+        page_range = chunk.get("page_range") or {}
+        verified_results.append(
+            {
+                "label": f"S{len(verified_results) + 1}",
+                "chunk_id": str(chunk_oid),
+                "chunk_set_id": chunk_set_id,
+                "content_hash": content_hash,
+                "page_start": metadata.get("page_start") or page_range.get("start"),
+                "page_end": metadata.get("page_end") or page_range.get("end"),
+                "heading": _build_heading_label(metadata),
+                "similarity": similarity,
+                "retrieval_mode": "SEMANTIC",
+                "excerpt": re.sub(r"\s+", " ", str(content)).strip()[:4000],
+            }
+        )
+
+    preferred_results = []
+    for chunk_id in dict.fromkeys(preferred_chunk_ids or []):
+        try:
+            chunk_oid = ObjectId(str(chunk_id))
+        except Exception:
+            continue
+        chunk = db.document_chunks.find_one(
+            {
+                "_id": chunk_oid,
+                "document_id": ObjectId(document_id),
+                "chunk_set_id": ObjectId(chunk_set_id),
+            }
+        )
+        content = re.sub(r"\s+", " ", str((chunk or {}).get("content") or "")).strip()
+        if not chunk or len(content) < 80:
+            continue
+        heading = chunk.get("heading") or {}
+        heading_path = heading.get("path") or []
+        heading_label = " > ".join(str(item) for item in heading_path if item)
+        heading_label = heading_label or heading.get("title") or ""
+        page_range = chunk.get("page_range") or {}
+        semantic_match = next(
+            (item for item in verified_results if item.get("chunk_id") == str(chunk_oid)),
+            None,
+        )
+        preferred_results.append(
+            {
+                "label": "",
+                "chunk_id": str(chunk_oid),
+                "chunk_set_id": chunk_set_id,
+                "content_hash": chunk.get("content_hash"),
+                "page_start": page_range.get("start"),
+                "page_end": page_range.get("end"),
+                "heading": heading_label,
+                "similarity": (semantic_match or {}).get("similarity"),
+                "information_density": float(chunk.get("information_density") or 0),
+                "retrieval_mode": "QUESTION_SOURCE",
+                "excerpt": content[:4000],
+            }
+        )
+
+    preferred_results.sort(
+        key=lambda item: (
+            -(item.get("information_density") or 0),
+            -len(item.get("excerpt") or ""),
+        )
+    )
+    preferred_ids = {item["chunk_id"] for item in preferred_results}
+    merged_results = preferred_results + [
+        item for item in verified_results if item.get("chunk_id") not in preferred_ids
+    ]
+    verified_results = merged_results[: max(1, limit)]
+    for index, item in enumerate(verified_results, start=1):
+        item["label"] = f"S{index}"
+
+    return {
+        "query": query_text,
+        "document_id": document_id,
+        "chunk_set_id": chunk_set_id,
+        "vector_collection_id": vector_collection_id,
+        "collection_name": resolved_collection,
+        "results": verified_results,
+    }

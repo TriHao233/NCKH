@@ -333,6 +333,58 @@
   margin-top: 8px;
 }
 
+.ai-evidence-block .ai-evidence-warning {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.ai-retrieval-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f0f7ff;
+  color: #003a75;
+  font-size: 0.8rem;
+}
+
+.ai-citation-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.ai-citation-list article {
+  padding: 10px;
+  border: 1px solid #dceaf8;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.ai-citation-list article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #003a75;
+}
+
+.ai-citation-list em {
+  color: #15803d;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.ai-citation-list blockquote {
+  margin: 7px 0;
+  padding-left: 9px;
+  border-left: 3px solid #8bbce8;
+  color: #344861;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 .quality-GREEN,
 .quality--green {
   color: #16a34a !important;

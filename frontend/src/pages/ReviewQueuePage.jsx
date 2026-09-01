@@ -74,6 +74,8 @@ const EVALUATION_STATUS_LABEL = {
   FAILED: 'AI đề xuất xem lại',
   ERROR: 'Chưa đánh giá được',
   STALE: 'Cần đánh giá lại',
+  INSUFFICIENT_EVIDENCE: 'Không đủ bằng chứng',
+  EVIDENCE_VALIDATION_FAILED: 'Minh chứng AI không hợp lệ',
 };
 
 const PUBLICATION_STATUS_LABEL = {
@@ -1292,12 +1294,12 @@ function ReviewQueuePage() {
     }
   };
 
-  const latestEvaluation = evaluations[0];
   const dashboardWorkload = dashboard?.workload || {};
   const dashboardPerformance = dashboard?.performance || {};
   const dashboardDecisions = dashboard?.decisions || {};
   const dashboardSubjects = dashboard?.subjects || [];
   const dashboardCalibration = dashboard?.calibration || {};
+  const latestEvaluation = evaluations[0];
   const mentionOptions = useMemo(() => {
     const map = new Map();
     [...teacherOptions, ...reviewerOptions].forEach((option) => {
@@ -1341,21 +1343,32 @@ function ReviewQueuePage() {
     const reviewerId = refId(assignmentOf(question).reviewer_user_id);
     return userOptionLabel(reviewerById.get(reviewerId)) || reviewerId || '--';
   };
-  const latestEvidence = latestEvaluation?.evidence || {};
-  const latestFeedback = latestEvaluation?.feedback || {};
-  const latestScores = latestEvaluation?.scores || {};
+  const qualitySummary = selected?.quality_summary || {};
+  const hasCurrentEvaluationError = Boolean(qualitySummary.error);
+  const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
+  const latestFeedback = latestEvaluation?.feedback || qualitySummary.feedback || {};
+  const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || {});
   const latestWeights = latestEvaluation?.policy?.weights || {};
-  const aiInsights = evaluationInsights(latestEvaluation, SCORE_COMPONENTS);
-  const answerGuardrail = answerGuardrailInsights(latestEvaluation);
-  const metadataGuardrail = metadataGuardrailInsights(latestEvaluation);
+  const latestEvaluationForInsights = latestEvaluation
+    ? {
+        ...latestEvaluation,
+        evidence: latestEvidence,
+        feedback: latestFeedback,
+        scores: latestScores,
+      }
+    : null;
+  const aiInsights = evaluationInsights(latestEvaluationForInsights, SCORE_COMPONENTS);
+  const answerGuardrail = answerGuardrailInsights(latestEvaluationForInsights);
+  const metadataGuardrail = metadataGuardrailInsights(latestEvaluationForInsights);
   const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
   const aiMissingItems = textList(latestFeedback.missing);
   const aiRiskItems = textList(latestEvidence.risks);
   const aiAction = String(latestFeedback.action || '').toUpperCase();
   const aiSeverity = String(latestFeedback.severity || '').toUpperCase();
-  const qualitySummary = selected?.quality_summary || {};
-  const overallScore = latestScores.overall ?? qualitySummary.overall_score;
-  const evaluationColor = latestEvaluation?.color || qualitySummary.color;
+  const evidenceCitations = Array.isArray(latestEvidence.citations) ? latestEvidence.citations : [];
+  const retrievalEvidence = latestEvidence.retrieval || {};
+  const overallScore = hasCurrentEvaluationError ? undefined : (latestScores.overall ?? qualitySummary.overall_score);
+  const evaluationColor = hasCurrentEvaluationError ? undefined : (latestEvaluation?.color || qualitySummary.color);
   const latestModel = latestEvaluation?.evaluator_model || {};
   const selectedAssignment = assignmentOf(selected);
   const selectedCatalogSubject = catalogSubjects.find((subject) => subject.id === subjectFilter);
@@ -1909,9 +1922,9 @@ function ReviewQueuePage() {
                   </button>
                 )}
                 <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
-                  {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
-                    ? 'Nhờ AI đánh giá lại'
-                    : 'Nhờ AI đánh giá'}
+                  {['ERROR', 'FAILED', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(selected.evaluation_status)
+                    ? 'Thử lại AI'
+                    : 'AI đánh giá'}
                 </button>
                 <button
                   type="button"
@@ -1964,7 +1977,7 @@ function ReviewQueuePage() {
                       <div>
                         <span>Kết luận</span>
                         <strong>
-                          {latestEvaluation
+                          {latestEvaluation && !hasCurrentEvaluationError
                             ? (latestEvaluation.passed ? 'Đạt' : 'Chưa đạt')
                             : evaluationStatusLabel(selected.evaluation_status)}
                         </strong>
@@ -2086,7 +2099,7 @@ function ReviewQueuePage() {
 
                     <div className="evaluation-meta">
                       <span>
-                        AI hỗ trợ: <b>{evaluatorModelLabel(latestModel)}</b>
+                        AI hỗ trợ: <b>{qualitySummary.evaluator_model_code || evaluatorModelLabel(latestModel)}</b>
                       </span>
                       <span>Bộ tiêu chí: <b>{latestEvaluation ? 'Tiêu chí kiểm duyệt hiện hành' : '--'}</b></span>
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
@@ -2107,8 +2120,43 @@ function ReviewQueuePage() {
                     <h3>Minh chứng đánh giá</h3>
                     <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có minh chứng.'}</p>
                     {latestEvidence.reasoning && <span>{latestEvidence.reasoning}</span>}
-                    {qualitySummary.error?.message && <span>Hệ thống chưa thể hoàn tất đánh giá. Vui lòng thử lại.</span>}
-                    {latestEvidence.fallback_reason && <span>Hệ thống đã dùng phương pháp đánh giá dự phòng.</span>}
+                    {qualitySummary.error?.message && (
+                      <span className="evidence-warning">
+                        {qualitySummary.error.code === 'INSUFFICIENT_EVIDENCE'
+                          ? 'Không thể chấm vì thiếu nguồn: '
+                          : qualitySummary.error.code === 'EVIDENCE_VALIDATION_FAILED'
+                            ? 'Minh chứng AI không hợp lệ: '
+                            : 'Lỗi đánh giá AI: '}
+                        {qualitySummary.error.message}
+                      </span>
+                    )}
+                    {latestEvidence.fallback_reason && <span>Lý do dùng đánh giá dự phòng: {latestEvidence.fallback_reason}</span>}
+                    {retrievalEvidence.status && (
+                      <div className="retrieval-summary">
+                        <b>Truy xuất nguồn: {retrievalEvidence.status === 'SUFFICIENT' ? 'Đủ bằng chứng' : 'Chưa đủ bằng chứng'}</b>
+                        <span>
+                          {retrievalEvidence.eligible_count ?? 0}/{retrievalEvidence.result_count ?? 0} chunk đạt ngưỡng
+                        </span>
+                      </div>
+                    )}
+                    {evidenceCitations.length > 0 && (
+                      <div className="citation-list">
+                        {evidenceCitations.map((citation, index) => (
+                          <article key={`${citation.chunk_id || 'citation'}-${index}`}>
+                            <div>
+                              <b>[{citation.chunk_id || `S${index + 1}`}]</b>
+                              <span>{citation.entailment || 'SUPPORTED'}</span>
+                              {citation.verified && <em>Đã xác minh</em>}
+                            </div>
+                            {citation.claim && <p>{citation.claim}</p>}
+                            <blockquote>{citation.exact_quote}</blockquote>
+                            {(citation.page_start || citation.page_end) && (
+                              <small>Trang {citation.page_start || citation.page_end}{citation.page_end && citation.page_end !== citation.page_start ? `–${citation.page_end}` : ''}</small>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    )}
                   </section>
 
                   <section className="source-viewer" hidden={detailView !== 'source'}>

@@ -5,6 +5,9 @@ NGUYÊN TẮC
 - Chấm công bằng, nhất quán, có căn cứ; không quá khắt khe với lỗi diễn đạt nhỏ.
 - Ưu tiên lỗi ảnh hưởng trực tiếp đến tính đúng, tính kiểm tra được, nguồn căn cứ, Bloom/CLO và khả năng nhập Moodle.
 - Không tự thêm kiến thức ngoài nguồn nếu câu hỏi yêu cầu bám sát tài liệu.
+- SOURCE_CHUNKS là kết quả hệ thống vừa truy xuất trực tiếp từ kho dữ liệu. Chỉ dùng các chunk này; tuyệt đối không dùng kiến thức bên ngoài.
+- Mọi nhận định về tính đúng của câu hỏi, đáp án hoặc giải thích phải có citation tới chunk_id và exact_quote tồn tại nguyên văn trong SOURCE_CHUNKS.
+- Nếu nguồn không hỗ trợ một nhận định trọng yếu, ghi nhận trong unsupported_claims và không chọn APPROVE.
 - Xem correct_answer và explanation là khẳng định CHƯA ĐƯỢC TIN CẬY; phải tự kiểm chứng bằng source_chunks, không dùng chúng làm bằng chứng cho chính chúng.
 - Với câu có options, kiểm tra độc lập TỪNG phương án và trả đủ option_checks. SUPPORTED nghĩa là phương án đúng trong quan hệ mà câu hỏi đang hỏi, không chỉ là có vài từ xuất hiện trong nguồn.
 - Mỗi phương án SUPPORTED phải trỏ tới đúng nhãn S1/S2/S3 có thật và chép một trích đoạn ngắn từ chính nguồn đó. Không được dùng correct_answer hoặc explanation làm trích dẫn.
@@ -14,7 +17,7 @@ NGUYÊN TẮC
 - Đọc quy định độ khó kèm theo. Ghi assessed_difficulty trong evidence bằng de, trung_binh hoặc kho. Độ khó là phân loại, không dùng để APPROVE/REJECT.
 
 QUY TẮC KẾT LUẬN
-- APPROVE: câu hỏi đúng, rõ, kiểm tra được; overall ước lượng khoảng 0.65 trở lên và không có lỗi nghiêm trọng.
+- APPROVE: câu hỏi đúng, rõ, kiểm tra được; overall ước lượng khoảng 0.65 trở lên, không có lỗi nghiêm trọng và mọi nhận định trọng yếu đều có bằng chứng.
 - NEEDS_REVISION: câu hỏi dùng được nhưng cần sửa nội dung, đáp án, giải thích, Bloom/CLO, nguồn hoặc cấu trúc trước khi dùng chính thức.
 - REJECT: sai kiến thức, thiếu căn cứ nghiêm trọng, đáp án mơ hồ/không kiểm tra được, hoặc phải viết lại gần như toàn bộ.
 - Không chọn REJECT chỉ vì câu hỏi chưa hoàn hảo; ưu tiên NEEDS_REVISION cho lỗi có thể sửa nhanh.

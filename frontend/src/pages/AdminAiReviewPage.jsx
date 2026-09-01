@@ -19,6 +19,8 @@ const EVALUATION_STATUS_LABEL = {
   FAILED: 'Chưa đạt AI',
   ERROR: 'AI lỗi',
   STALE: 'Cần đánh giá lại',
+  INSUFFICIENT_EVIDENCE: 'Không đủ bằng chứng',
+  EVIDENCE_VALIDATION_FAILED: 'Minh chứng AI không hợp lệ',
 };
 
 const REVIEW_STATUS_LABEL = {
@@ -35,7 +37,7 @@ const COLOR_LABEL = {
   RED: 'Rủi ro cao',
 };
 
-const AI_REVIEW_STATUSES = new Set(['QUEUED', 'PROCESSING', 'RUNNING', 'PASSED', 'FAILED', 'ERROR', 'STALE']);
+const AI_REVIEW_STATUSES = new Set(['QUEUED', 'PROCESSING', 'RUNNING', 'PASSED', 'FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED']);
 
 const SCORE_COMPONENTS = [
   { key: 'faithfulness', label: 'Bám sát nguồn' },
@@ -215,7 +217,7 @@ function AdminAiReviewPage() {
     active: questions.filter((item) => item.review_status !== 'APPROVED').length,
     processing: questions.filter((item) => isEvaluationBusy(item)).length,
     passed: questions.filter((item) => item.evaluation_status === 'PASSED' && item.review_status !== 'APPROVED').length,
-    failed: questions.filter((item) => ['FAILED', 'ERROR', 'STALE'].includes(item.evaluation_status)).length,
+    failed: questions.filter((item) => ['FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(item.evaluation_status)).length,
     approved: questions.filter((item) => item.review_status === 'APPROVED').length,
   }), [questions]);
 
@@ -225,7 +227,7 @@ function AdminAiReviewPage() {
       if (statusFilter === 'active' && item.review_status === 'APPROVED') return false;
       if (statusFilter === 'processing' && !isEvaluationBusy(item)) return false;
       if (statusFilter === 'passed' && !(item.evaluation_status === 'PASSED' && item.review_status !== 'APPROVED')) return false;
-      if (statusFilter === 'failed' && !['FAILED', 'ERROR', 'STALE'].includes(item.evaluation_status)) return false;
+      if (statusFilter === 'failed' && !['FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(item.evaluation_status)) return false;
       if (statusFilter === 'approved' && item.review_status !== 'APPROVED') return false;
       if (!normalizedSearch) return true;
       return [
@@ -238,12 +240,15 @@ function AdminAiReviewPage() {
 
   const latestEvaluation = evaluations[0];
   const qualitySummary = selected?.quality_summary || {};
-  const latestScores = latestEvaluation?.scores || qualitySummary.scores || {};
-  const latestEvidence = latestEvaluation?.evidence || qualitySummary.evidence || {};
+  const hasCurrentEvaluationError = Boolean(qualitySummary.error);
+  const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || qualitySummary.scores || {});
+  const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
   const latestWeights = latestEvaluation?.policy?.weights || qualitySummary.policy?.weights || {};
   const latestModel = latestEvaluation?.evaluator_model || {};
-  const overallScore = latestScores.overall ?? qualitySummary.overall_score;
-  const evaluationColor = latestEvaluation?.color || qualitySummary.color;
+  const overallScore = hasCurrentEvaluationError ? undefined : (latestScores.overall ?? qualitySummary.overall_score);
+  const evaluationColor = hasCurrentEvaluationError ? undefined : (latestEvaluation?.color || qualitySummary.color);
+  const evidenceCitations = Array.isArray(latestEvidence.citations) ? latestEvidence.citations : [];
+  const retrievalEvidence = latestEvidence.retrieval || {};
 
   const refreshSelection = async (questionId) => {
     const items = await fetchAiQuestions();
@@ -499,7 +504,7 @@ function AdminAiReviewPage() {
 
               <div className="ai-review-detail-actions">
                 <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
-                  {['FAILED', 'ERROR', 'STALE'].includes(selected.evaluation_status) ? 'Thử lại AI' : 'Chạy AI'}
+                  {['FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(selected.evaluation_status) ? 'Thử lại AI' : 'Chạy AI'}
                 </button>
                 <button
                   type="button"
@@ -529,7 +534,7 @@ function AdminAiReviewPage() {
                     </div>
                     <div>
                       <span>Kết luận</span>
-                      <strong>{latestEvaluation ? (latestEvaluation.passed ? 'Đạt' : 'Chưa đạt') : evaluationStatusLabel(selected.evaluation_status)}</strong>
+                      <strong>{latestEvaluation && !hasCurrentEvaluationError ? (latestEvaluation.passed ? 'Đạt' : 'Chưa đạt') : evaluationStatusLabel(selected.evaluation_status)}</strong>
                     </div>
                     <div>
                       <span>Mức chất lượng</span>
@@ -552,7 +557,7 @@ function AdminAiReviewPage() {
                   </div>
 
                   <div className="ai-evaluation-meta">
-                    <span>Mô hình: <b>{evaluatorModelLabel(latestModel, qualitySummary.evaluator_model_code)}</b></span>
+                    <span>Mô hình: <b>{qualitySummary.evaluator_model_code || evaluatorModelLabel(latestModel)}</b></span>
                     <span>Bộ tiêu chí: <b>{latestEvaluation?.policy?.name || '--'}</b></span>
                     <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
                   </div>
@@ -561,7 +566,39 @@ function AdminAiReviewPage() {
                     <h3>Minh chứng AI</h3>
                     <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có minh chứng.'}</p>
                     {latestEvidence.reasoning && <span>{latestEvidence.reasoning}</span>}
-                    {qualitySummary.error?.message && <span>Lỗi AI: {qualitySummary.error.message}</span>}
+                    {qualitySummary.error?.message && (
+                      <span className="ai-evidence-warning">
+                        {qualitySummary.error.code === 'INSUFFICIENT_EVIDENCE'
+                          ? 'Không thể chấm vì thiếu nguồn: '
+                          : qualitySummary.error.code === 'EVIDENCE_VALIDATION_FAILED'
+                            ? 'Minh chứng AI không hợp lệ: '
+                            : 'Lỗi AI: '}
+                        {qualitySummary.error.message}
+                      </span>
+                    )}
+                    {retrievalEvidence.status && (
+                      <div className="ai-retrieval-summary">
+                        <b>Truy xuất: {retrievalEvidence.status === 'SUFFICIENT' ? 'Đủ bằng chứng' : 'Chưa đủ bằng chứng'}</b>
+                        <span>{retrievalEvidence.eligible_count ?? 0}/{retrievalEvidence.result_count ?? 0} chunk đạt ngưỡng</span>
+                      </div>
+                    )}
+                    {evidenceCitations.length > 0 && (
+                      <div className="ai-citation-list">
+                        {evidenceCitations.map((citation, index) => (
+                          <article key={`${citation.chunk_id || 'citation'}-${index}`}>
+                            <div>
+                              <b>[{citation.chunk_id || `S${index + 1}`}]</b>
+                              <em>{citation.verified ? 'Đã xác minh' : citation.entailment}</em>
+                            </div>
+                            {citation.claim && <p>{citation.claim}</p>}
+                            <blockquote>{citation.exact_quote}</blockquote>
+                            {(citation.page_start || citation.page_end) && (
+                              <small>Trang {citation.page_start || citation.page_end}{citation.page_end && citation.page_end !== citation.page_start ? `–${citation.page_end}` : ''}</small>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </section>
               )}

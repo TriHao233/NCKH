@@ -597,6 +597,58 @@
   margin-bottom: 8px;
 }
 
+.evidence-block .evidence-warning {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.retrieval-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  margin: 10px 0;
+  border-radius: 8px;
+  background: #f0f7ff;
+  color: #003a75;
+  font-size: 0.78rem;
+}
+
+.citation-list {
+  display: grid;
+  gap: 9px;
+}
+
+.citation-list article {
+  padding: 10px;
+  border: 1px solid #dceaf8;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.citation-list article > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #003a75;
+  font-size: 0.75rem;
+}
+
+.citation-list em {
+  color: #15803d;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.citation-list blockquote {
+  margin: 6px 0;
+  padding-left: 9px;
+  border-left: 3px solid #8bbce8;
+  color: #344861;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .source-viewer {
   border-top: 1px solid #eaf3fc;
   padding-top: 12px;
