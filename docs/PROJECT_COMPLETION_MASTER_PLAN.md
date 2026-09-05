@@ -997,7 +997,7 @@ hash, model digest, recall@k và latency. **G4 chưa CLOSED** vì repository ch�
 cấp phép với nhãn evidence độc lập; không tự tuyên bố recall@5 ≥ 0.85. Chỉ cân nhắc reranker sau
 khi chạy benchmark đó và chứng minh lợi ích đủ bù latency/bộ nhớ.
 
-### E — Chất lượng câu hỏi, evaluator và HITL, 13–21 ngày công
+### E — Chất lượng câu hỏi, evaluator và HITL, 13–21 ngày công — **IMPLEMENTED (technical), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -1008,7 +1008,25 @@ khi chạy benchmark đó và chứng minh lợi ích đủ bù latency/bộ nh�
 | E05 | Chỉnh generation checkpoint/partial result/dedupe; đánh giá lại theo input/model/policy hash | BE + AI | E01–E03 | T10/T11; retry không duplicate; policy mới re-evaluate được | 2–3 |
 | E06 | UI review evidence/rubric/override, đúng version; hiệu chuẩn với reviewer thật | FE + AI + GV | E02/E03 | G5/G6/G7, lưu nhận xét và quyết định độc lập | 2–3 |
 
-**Gate E:** câu AI có nguồn và chấm được; không có hard failure được bỏ qua trong regression suite; phải báo kết quả thực nghiệm chứ không tự tuyên bố “đạt chuẩn” bằng ngưỡng mới.
+**Gate E — TECHNICAL IMPLEMENTED:** bảy dạng câu hỏi dùng chung typed contract cho AI/manual/import
+và có adapter cho options dạng danh sách cũ; dữ liệu sai bị từ chối rõ. Mỗi câu AI chỉ lưu chunk
+thật sự chứa trích dẫn, kèm char/page span, quote hash và trạng thái xác minh. Evaluator chọn nguồn
+theo token budget thay vì cắt ba chunk đầu, ghi criterion `NO_DATA`, score coverage, hard failures,
+policy hash và fingerprint theo question/model/policy; tổng điểm được tính phía server và hard
+failure không thể được điểm số bù qua.
+
+Code fence C/C++ đi qua syntax-only sandbox với allowlist, timeout/CPU/RAM/file/process limits,
+cấm process/network/filesystem primitives và lưu toolchain/source digest; image backend cài `g++`.
+Generation job giữ checkpoint theo plan, trả partial result và retry chỉ tiếp tục plan chưa hoàn tất;
+dedupe hiện có vẫn áp dụng trên cả dữ liệu đã checkpoint. Review UI hiển thị evidence span, `NO_DATA`,
+hard failures, sandbox/toolchain, score coverage, rubric và override theo đúng version; dashboard
+calibration người duyệt được giữ nguyên.
+
+Bằng chứng code-level: backend đạt **208 passed** (9 Mongo integration tests tách profile), gồm
+Stage-E contract/sandbox/checkpoint tests; frontend đạt **47/47**, ESLint và production build.
+**Gate E chưa CLOSED về chất lượng thực nghiệm**: G5/G6/G7 vẫn cần corpus CTDL được cấp phép,
+golden cases và reviewer độc lập để đo grounding/Bloom/CLO, inter-rater agreement và hiệu chuẩn.
+Không dùng điểm heuristic hoặc fixture tổng hợp để tự tuyên bố đạt chuẩn.
 
 ### F — Bộ đề dùng được, 8–13 ngày công
 

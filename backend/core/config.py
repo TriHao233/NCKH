@@ -150,6 +150,15 @@ class Settings(BaseModel):
     retrieval_context_token_budget: int = int(
         os.getenv("RETRIEVAL_CONTEXT_TOKEN_BUDGET", "2200")
     )
+    evaluation_source_token_budget: int = int(
+        os.getenv("EVALUATION_SOURCE_TOKEN_BUDGET", "1800")
+    )
+    code_sandbox_enabled: bool = _env_bool("CODE_SANDBOX_ENABLED", True)
+    code_sandbox_cpp_compiler: str = os.getenv("CODE_SANDBOX_CPP_COMPILER", "g++")
+    code_sandbox_timeout_seconds: int = int(os.getenv("CODE_SANDBOX_TIMEOUT_SECONDS", "4"))
+    code_sandbox_max_source_bytes: int = int(
+        os.getenv("CODE_SANDBOX_MAX_SOURCE_BYTES", "12000")
+    )
     retrieval_lexical_candidate_limit: int = int(
         os.getenv("RETRIEVAL_LEXICAL_CANDIDATE_LIMIT", "500")
     )

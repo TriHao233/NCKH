@@ -64,6 +64,28 @@ export function metadataGuardrailInsights(evaluation) {
   };
 }
 
+export function evaluationContractInsights(evaluation) {
+  const evidence = evaluation?.evidence || {};
+  const criterionStatus = evidence.criterion_status || {};
+  const hardFailures = Array.isArray(evidence.hard_failures)
+    ? evidence.hard_failures
+      .filter((item) => item && (item.code || item.message))
+      .map((item) => ({
+        code: String(item.code || 'HARD_FAILURE'),
+        message: String(item.message || '').trim(),
+      }))
+    : [];
+  return {
+    criterionStatus,
+    noDataCriteria: Object.entries(criterionStatus)
+      .filter(([, status]) => status === 'NO_DATA')
+      .map(([key]) => key),
+    hardFailures,
+    codeGuardrail: evidence.code_guardrail || {},
+    scoreCoverage: numericScore(evidence.score_coverage),
+  };
+}
+
 export function mergeAiSuggestionsIntoDraft(draft, evaluation, timestamp = Date.now()) {
   if (!draft || !evaluation) return draft;
   const feedback = evaluation.feedback || {};

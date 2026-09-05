@@ -20,6 +20,7 @@ from modules.generation.mongodb import (
     heartbeat_generation_job,
     retry_or_dead_letter_generation_job,
     update_generation_job,
+    update_generation_checkpoint,
     update_generation_progress,
 )
 from modules.generation.question import _content_mode, generate_questions_rag
@@ -126,6 +127,16 @@ async def process_generate_background(job_id: str, worker_id: str):
             async def report_progress(progress: dict) -> None:
                 await asyncio.to_thread(update_generation_progress, job_id, worker_id, progress)
 
+            async def save_checkpoint(checkpoint: dict) -> None:
+                saved = await asyncio.to_thread(
+                    update_generation_checkpoint,
+                    job_id,
+                    worker_id,
+                    checkpoint,
+                )
+                if not saved:
+                    raise RuntimeError("GENERATION_JOB_LEASE_LOST")
+
             result = await generate_questions_rag(
                 req,
                 requested_by_user_id=requested_by_user_id,
@@ -133,6 +144,8 @@ async def process_generate_background(job_id: str, worker_id: str):
                 model_snapshot=job.get("model_snapshot"),
                 code_model_snapshot=job.get("code_model_snapshot"),
                 fallback_model_snapshot=job.get("fallback_model_snapshot"),
+                resume_checkpoint=job.get("checkpoint"),
+                checkpoint_callback=save_checkpoint,
             )
             finished_at = utc_now()
             metrics = build_generation_metrics(
@@ -364,6 +377,14 @@ def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
         response_kwargs["data"] = [GeneratedQuestion(**item) for item in result_data]
         result_summary = job["result"].get("summary", [])
         response_kwargs["summary"] = [GenerationPlanSummary(**item) for item in result_summary]
+    elif job.get("partial_result"):
+        partial = job["partial_result"]
+        response_kwargs["data"] = [
+            GeneratedQuestion(**item) for item in partial.get("data", [])
+        ]
+        response_kwargs["summary"] = [
+            GenerationPlanSummary(**item) for item in partial.get("summary", [])
+        ]
 
     if job.get("metrics"):
         response_kwargs["metrics"] = job["metrics"]

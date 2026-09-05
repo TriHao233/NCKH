@@ -139,6 +139,7 @@ def persist_chunks(
     now = utc_now()
     chunk_set = db.chunk_sets.find_one({"_id": set_oid}) or {}
     source_processing_revision_id = chunk_set.get("source_processing_revision_id")
+    source_ocr_job_id = chunk_set.get("source_ocr_job_id")
     records = []
     for index, chunk in enumerate(chunks, start=1):
         metadata = chunk["metadata"]
@@ -167,6 +168,7 @@ def persist_chunks(
                 },
                 "parent_section_id": metadata.get("parent_section_id"),
                 "source_processing_revision_id": source_processing_revision_id,
+                "source_ocr_job_id": source_ocr_job_id,
                 "source_span": metadata.get("source_span") or {},
                 "chapter_key": metadata.get("chapter_key") or "",
                 "content_type": metadata.get("content_type", "text"),

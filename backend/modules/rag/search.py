@@ -159,6 +159,7 @@ def _mongo_lexical_candidates(chunk_set_id: str, normalized_target: str) -> list
             "token_budget_status": 1,
             "parent_section_id": 1,
             "source_processing_revision_id": 1,
+            "source_ocr_job_id": 1,
             "source_span": 1,
         },
     ).sort("chunk_no", 1).limit(max(1, settings.retrieval_lexical_candidate_limit))
@@ -182,6 +183,7 @@ def _mongo_lexical_candidates(chunk_set_id: str, normalized_target: str) -> list
             "source_processing_revision_id": str(
                 chunk.get("source_processing_revision_id") or ""
             ),
+            "source_ocr_job_id": str(chunk.get("source_ocr_job_id") or ""),
             "source_span": chunk.get("source_span") or {},
         }
         if normalized_target and not _heading_matches_target(metadata, normalized_target):
@@ -380,6 +382,7 @@ def get_context_snapshot(
             retrieval_results.append(
                 {
                     "chunk_id": meta.get("chunk_id"),
+                    "content": doc,
                     "chunk_set_id": meta.get("chunk_set_id"),
                     "chunk_content_hash": meta.get("content_hash"),
                     "page_start": meta.get("page_start"),
@@ -389,6 +392,7 @@ def get_context_snapshot(
                     "token_budget_status": meta.get("token_budget_status", "UNKNOWN"),
                     "parent_section_id": meta.get("parent_section_id"),
                     "source_processing_revision_id": meta.get("source_processing_revision_id"),
+                    "source_ocr_job_id": meta.get("source_ocr_job_id"),
                     "source_span": meta.get("source_span") or {},
                     "fusion_score": round(float(meta.get("_fusion_score", 0) or 0), 6),
                     "dense_rank": meta.get("_dense_rank"),

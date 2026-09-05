@@ -134,6 +134,7 @@ class GeneratedQuestion(BaseModel):
     source_keywords: List[str] = Field(default_factory=list)
     clo_codes: List[str] = Field(default_factory=list)
     false_mutation: Optional[dict[str, Any]] = None
+    evidence_spans: List[dict[str, Any]] = Field(default_factory=list)
     question_id: Optional[str] = None
     question_code: Optional[str] = None
     current_version: Optional[int] = None

@@ -37,6 +37,8 @@ from modules.notifications.service import (
     safe_notify_review_decision,
 )
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
+from modules.questions.contracts import validate_question_contract
+from modules.questions.code_sandbox import validate_code_question
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
     EvaluationCreateRequest,
@@ -71,11 +73,11 @@ EVALUATION_TYPE_PROMPT_DIR = "evaluation/question_type"
 DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
 EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
 EVALUATION_RETRYABLE_STATUSES = {"NOT_STARTED", "FAILED", "ERROR", "STALE"}
-EVALUATION_SOURCE_LIMIT = 3
+EVALUATION_SOURCE_LIMIT = 12
 OPTION_CHECK_VERDICTS = {"SUPPORTED", "CONTRADICTED", "NOT_IN_SOURCE", "AMBIGUOUS"}
-SINGLE_ANSWER_TYPES = {"TRAC_NGHIEM", "DUNG_SAI"}
+SINGLE_ANSWER_TYPES = {"TRAC_NGHIEM", "DUNG_SAI", "TINH_HUONG"}
 MULTIPLE_ANSWER_TYPES = {"NHIEU_LUA_CHON"}
-NON_OPTION_ANSWER_TYPES = {"DIEN_KHUYET", "GHEP_COT", "SAP_XEP", "TINH_HUONG"}
+NON_OPTION_ANSWER_TYPES = {"DIEN_KHUYET", "GHEP_COT", "SAP_XEP"}
 NEGATIVE_QUESTION_PATTERN = re.compile(
     r"\b(không\s+(?:phải|đúng|chính\s+xác|phù\s+hợp)|chưa\s+đúng|ngoại\s+trừ|sai)\b"
     r"|\b(?:nào|đâu)\b[^?.]{0,80}\bkhông\b",
@@ -103,6 +105,29 @@ LEGACY_REVIEW_CRITERION_MAP = {
     "answer_correctness": "answer_relevancy",
     "bloom_clo_alignment": "bloom_alignment",
 }
+
+
+def build_evaluation_fingerprint(
+    question_snapshot_hash: str,
+    model_record: dict,
+    policy_record: dict,
+) -> tuple[str, str]:
+    policy_hash = hashlib.sha256(
+        json.dumps(policy_record, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    input_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "question_snapshot_hash": question_snapshot_hash,
+                "model_digest": model_record.get("model_digest")
+                or model_record.get("model_code"),
+                "policy_hash": policy_hash,
+            },
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    return policy_hash, input_hash
 
 
 def _limit_evaluation_output(snapshot: dict | None) -> dict | None:
@@ -334,22 +359,55 @@ class QuestionWorkflowService:
     ) -> list[dict]:
         sources = sorted(
             version.get("sources") or [],
-            key=lambda source: source.get("citation_order") or 999,
+            key=lambda source: (
+                not bool(source.get("evidence")),
+                not bool(source.get("is_primary")),
+                source.get("citation_order") or 999,
+            ),
         )
         compacted = []
-        for index, source in enumerate(sources[:max_sources], start=1):
-            excerpt = cls._compact_text(source.get("context_excerpt") or "", excerpt_chars)
+        used_tokens = 0
+        for source in sources:
+            evidence = source.get("evidence") or {}
+            excerpt = str(
+                evidence.get("quote") or source.get("context_excerpt") or ""
+            ).strip()
+            token_count = int(
+                evidence.get("token_count")
+                or len(re.findall(r"[^\W_]+|[^\s\w]", excerpt, flags=re.UNICODE))
+            )
+            if (
+                compacted
+                and used_tokens + token_count > settings.evaluation_source_token_budget
+            ):
+                continue
+            index = len(compacted) + 1
             compacted.append(
                 {
                     "label": f"S{index}",
                     "chunk_id": source.get("chunk_id"),
                     "content_hash": source.get("chunk_content_hash"),
+                    "processing_revision_id": source.get(
+                        "source_processing_revision_id"
+                    ),
+                    "ocr_job_id": source.get("source_ocr_job_id"),
                     "citation_order": source.get("citation_order") or index,
                     "is_primary": bool(source.get("is_primary")),
                     "excerpt": excerpt,
                     "excerpt_hash": hashlib.sha256(excerpt.encode("utf-8")).hexdigest(),
+                    "token_count": token_count,
+                    "source_span": {
+                        "char_start": evidence.get("char_start"),
+                        "char_end": evidence.get("char_end"),
+                        "page_start": evidence.get("page_start"),
+                        "page_end": evidence.get("page_end"),
+                    },
+                    "evidence_status": evidence.get("status") or "LEGACY_UNVERIFIED",
                 }
             )
+            used_tokens += token_count
+            if len(compacted) >= max_sources:
+                break
         return compacted
 
     @staticmethod
@@ -467,6 +525,10 @@ class QuestionWorkflowService:
             "rendered_prompt_chars": len(prompt),
             "source_limit": EVALUATION_SOURCE_LIMIT,
             "source_excerpt_chars": EVALUATION_SOURCE_EXCERPT_CHARS,
+            "source_token_budget": settings.evaluation_source_token_budget,
+            "source_token_count": sum(
+                item.get("token_count", 0) for item in source_chunks
+            ),
         }
         return prompt, prompt_snapshot, source_chunks
 
@@ -872,12 +934,85 @@ class QuestionWorkflowService:
             evidence,
             version,
         )
-        return cls._apply_metadata_guardrail(
+        scores, feedback, evidence = cls._apply_metadata_guardrail(
             scores,
             feedback,
             evidence,
             version,
         )
+        question_data = version.get("question_data") or {}
+        raw_options = question_data.get("options")
+        option_text = (
+            "\n".join(str(item) for item in raw_options.values())
+            if isinstance(raw_options, dict)
+            else "\n".join(str(item) for item in raw_options)
+            if isinstance(raw_options, list)
+            else str(raw_options or "")
+        )
+        code_material = "\n".join(
+            [
+                str(version.get("content") or ""),
+                option_text,
+                str(question_data.get("correct_answer") or ""),
+                str(question_data.get("explanation") or ""),
+            ]
+        )
+        code_guardrail = validate_code_question(code_material)
+        code_guardrail = {
+            **code_guardrail,
+            "question_type": (version.get("classification") or {}).get(
+                "assessment_type"
+            ),
+            "question_contract": "typed-question-v1",
+        }
+        evidence = {**evidence, "code_guardrail": code_guardrail}
+        if not code_guardrail.get("applied") or code_guardrail.get("passed"):
+            return scores, feedback, evidence
+        issues = code_guardrail.get("issues") or ["Kiểm tra code không đạt"]
+        guarded_scores = EvaluationScores(
+            **{
+                **scores.model_dump(),
+                "faithfulness": min(scores.faithfulness, 0.35),
+                "answer_relevancy": min(scores.answer_relevancy, 0.35),
+            }
+        )
+        guarded_feedback = {
+            **feedback,
+            "action": "NEEDS_REVISION",
+            "severity": "HIGH",
+            "summary": "Sandbox code chặn tự động duyệt: " + str(issues[0]),
+            "missing": list(dict.fromkeys([*(feedback.get("missing") or []), *issues])),
+        }
+        return guarded_scores, guarded_feedback, evidence
+
+    @staticmethod
+    def _evaluation_hard_failures(version: dict, evidence: dict) -> list[dict]:
+        failures = []
+        if not version.get("sources"):
+            failures.append(
+                {"code": "SOURCE_MISSING", "message": "Câu hỏi không có nguồn kiểm chứng"}
+            )
+        try:
+            validate_question_contract(
+                version.get("content") or "",
+                (version.get("classification") or {}).get("assessment_type") or "",
+                version.get("question_data") or {},
+            )
+        except ValueError as exc:
+            failures.append({"code": "QUESTION_CONTRACT_INVALID", "message": str(exc)})
+        for guardrail_name in ("answer_guardrail", "metadata_guardrail", "code_guardrail"):
+            guardrail = evidence.get(guardrail_name) or {}
+            is_failure = guardrail.get("applied") and (
+                guardrail_name != "code_guardrail" or not guardrail.get("passed")
+            )
+            if is_failure:
+                failures.append(
+                    {
+                        "code": guardrail_name.upper(),
+                        "message": str((guardrail.get("issues") or [guardrail_name])[0]),
+                    }
+                )
+        return failures
 
     @staticmethod
     def _validate_llm_evaluation_consistency(
@@ -964,6 +1099,16 @@ class QuestionWorkflowService:
                 )
                 if missing
             ],
+            "action": (
+                "APPROVE"
+                if has_context and has_answer and has_explanation and has_bloom and has_clo
+                else "NEEDS_REVISION"
+            ),
+            "severity": (
+                "LOW"
+                if has_context and has_answer and has_explanation and has_bloom and has_clo
+                else "MEDIUM"
+            ),
         }
         evidence = {
             "source_count": len(sources),
@@ -980,14 +1125,71 @@ class QuestionWorkflowService:
         }
         return scores, feedback, evidence
 
-    def evaluate(self, question_id: str, payload: EvaluationCreateRequest, user_id) -> dict:
+    def evaluate(
+        self,
+        question_id: str,
+        payload: EvaluationCreateRequest,
+        user_id,
+        *,
+        trusted_policy_snapshot: bool = False,
+    ) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
-        policy = payload.policy_snapshot or self._policy()
-        scores = payload.scores.model_dump()
+        policy = (
+            payload.policy_snapshot
+            if trusted_policy_snapshot and payload.policy_snapshot
+            else self._policy()
+        )
+        policy = {
+            **policy,
+            "version": int(policy.get("version") or 1),
+            "weights": {**DEFAULT_WEIGHTS, **(policy.get("weights") or {})},
+            "thresholds": {**DEFAULT_THRESHOLDS, **(policy.get("thresholds") or {})},
+        }
+        if all(
+            key in payload.evidence
+            for key in ("answer_guardrail", "metadata_guardrail", "code_guardrail")
+        ):
+            guarded_scores = payload.scores
+            guarded_feedback = dict(payload.feedback)
+            guarded_evidence = dict(payload.evidence)
+        else:
+            guarded_scores, guarded_feedback, guarded_evidence = (
+                self._apply_evaluation_guardrails(
+                    payload.scores,
+                    dict(payload.feedback),
+                    dict(payload.evidence),
+                    version,
+                )
+            )
+        scores = guarded_scores.model_dump()
+        feedback_action = str(guarded_feedback.get("action") or "").strip().upper()
+        feedback_severity = str(guarded_feedback.get("severity") or "").strip().upper()
+        criterion_status = {
+            key: "AVAILABLE" for key in DEFAULT_WEIGHTS
+        }
+        if not version.get("sources"):
+            criterion_status["faithfulness"] = "NO_DATA"
+            criterion_status["contextual_relevancy"] = "NO_DATA"
+        if not version.get("clos"):
+            criterion_status["clo_alignment"] = "NO_DATA"
+        available_weight = sum(
+            float(policy["weights"][key])
+            for key, status in criterion_status.items()
+            if status == "AVAILABLE"
+        )
         overall = round(
-            sum(scores[key] * policy["weights"][key] for key in DEFAULT_WEIGHTS),
+            (
+                sum(
+                    scores[key] * float(policy["weights"][key])
+                    for key, status in criterion_status.items()
+                    if status == "AVAILABLE"
+                )
+                / available_weight
+                if available_weight
+                else 0.0
+            ),
             4,
         )
         thresholds = policy["thresholds"]
@@ -998,28 +1200,70 @@ class QuestionWorkflowService:
             if overall >= thresholds["yellow_min"]
             else "RED"
         )
-        feedback_action = str(payload.feedback.get("action") or "").strip().upper()
-        feedback_severity = str(payload.feedback.get("severity") or "").strip().upper()
         action_requires_review = feedback_action in {"NEEDS_REVISION", "REJECT"}
         severe_issue = feedback_severity == "HIGH"
+        hard_failures = self._evaluation_hard_failures(version, guarded_evidence)
+        if feedback_action not in {"APPROVE", "NEEDS_REVISION", "REJECT"}:
+            hard_failures.append(
+                {
+                    "code": "EVALUATION_ACTION_MISSING",
+                    "message": "Evaluator không đưa ra action hợp lệ",
+                }
+            )
+        if feedback_severity not in {"LOW", "MEDIUM", "HIGH"}:
+            hard_failures.append(
+                {
+                    "code": "EVALUATION_SEVERITY_MISSING",
+                    "message": "Evaluator không đưa ra severity hợp lệ",
+                }
+            )
         passed = (
             overall >= thresholds["pass_min"]
             and not action_requires_review
             and not severe_issue
+            and not hard_failures
+            and available_weight > 0
         )
-        if feedback_action == "REJECT" or severe_issue:
+        if feedback_action == "REJECT" or severe_issue or hard_failures:
             color = "RED"
         elif action_requires_review and color == "GREEN":
             color = "YELLOW"
         evidence = {
-            **payload.evidence,
+            **guarded_evidence,
+            "criterion_status": criterion_status,
+            "score_coverage": round(available_weight, 4),
+            "hard_failures": hard_failures,
             "decision_guardrail": {
                 "score_passed": overall >= thresholds["pass_min"],
                 "feedback_action": feedback_action or None,
                 "feedback_severity": feedback_severity or None,
-                "blocked_pass": action_requires_review or severe_issue,
+                "blocked_pass": action_requires_review or severe_issue or bool(hard_failures),
             },
         }
+        policy_record = {
+            "id": policy.get("_id") or policy.get("id"),
+            "name": policy.get("policy_name") or policy.get("name"),
+            "version": policy["version"],
+            "weights": policy["weights"],
+            "thresholds": thresholds,
+        }
+        model_record = payload.model_snapshot or self._model_snapshot(
+            payload.evaluator_model_code
+        )
+        policy_hash, input_hash = build_evaluation_fingerprint(
+            version["content_hash"],
+            model_record,
+            policy_record,
+        )
+        if self.db is not None:
+            existing = self.db.question_evaluations.find_one(
+                {
+                    "question_version_id": version["_id"],
+                    "evaluation_fingerprint": input_hash,
+                }
+            )
+            if existing:
+                return json_safe(existing)
         now = utc_now()
         evaluation_job_id = (
             object_id(payload.evaluation_job_id, "evaluation_job_id")
@@ -1034,20 +1278,15 @@ class QuestionWorkflowService:
             "question_version": version["version"],
             "question_snapshot_hash": version["content_hash"],
             "generation_run_id": version.get("generation_run_id"),
-            "evaluator_model": payload.model_snapshot or self._model_snapshot(payload.evaluator_model_code),
+            "evaluator_model": model_record,
             "model_execution": payload.model_execution,
             "requested_by_user_id": user_id,
-            "policy": {
-                "id": policy.get("_id") or policy.get("id"),
-                "name": policy.get("policy_name") or policy.get("name"),
-                "version": policy["version"],
-                "weights": policy["weights"],
-                "thresholds": thresholds,
-            },
+            "policy": {**policy_record, "hash": policy_hash},
+            "evaluation_fingerprint": input_hash,
             "scores": {**scores, "overall": overall},
             "color": color,
             "passed": passed,
-            "feedback": payload.feedback,
+            "feedback": guarded_feedback,
             "evidence": evidence,
             "raw_model_response": payload.raw_model_response,
             "prompt_snapshot": payload.prompt_snapshot,
@@ -1109,6 +1348,10 @@ class QuestionWorkflowService:
                             "color": color,
                             "evaluated_at": now,
                             "evaluator_model_code": evaluation["evaluator_model"].get("model_code"),
+                            "evaluation_fingerprint": input_hash,
+                            "evaluation_policy_hash": policy_hash,
+                            "score_coverage": evidence["score_coverage"],
+                            "hard_failure_count": len(hard_failures),
                         },
                         "updated_at": now,
                     }
@@ -1219,6 +1462,7 @@ class QuestionWorkflowService:
                 ),
             ),
             user_id,
+            trusted_policy_snapshot=True,
         )
 
     @staticmethod
@@ -1775,6 +2019,7 @@ class QuestionWorkflowService:
                 str(question["_id"]),
                 evaluation_payload,
                 job.get("requested_by_user_id"),
+                trusted_policy_snapshot=True,
             )
             finished_at = utc_now()
             await asyncio.to_thread(

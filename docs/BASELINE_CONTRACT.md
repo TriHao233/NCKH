@@ -83,6 +83,14 @@ These cannot be inferred from source code and block only the dependent stage, no
   tests plus 9 replica-set integration tests; frontend passed 46 tests, lint and build. G4 recall@5
   remains unclaimed until the licensed, expert-labelled CTDL query set is supplied and the
   reproducible benchmark report meets the predefined 0.85 target.
+- Gate E — question quality, evaluator and HITL: **IMPLEMENTED, pending expert calibration
+  on 2026-09-06**. Seven question types share one typed contract; AI evidence is persisted as
+  verified quote/page/character spans; evaluator input is token-budgeted and records no-data,
+  hard failures, policy/input/model fingerprints and server-side aggregation. C/C++ snippets use
+  a syntax-only constrained sandbox with a toolchain snapshot. Generation retries resume from
+  per-plan checkpoints and expose partial results. The code-level suite passed 208 tests and the
+  frontend passed 47 tests, lint and build. G5/G6/G7 remain external until the licensed CTDL
+  golden set and independent reviewers produce grounding, Bloom/CLO and inter-rater evidence.
 - Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
   produced one membership on first apply and zero changes on the second apply, with no
   duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.

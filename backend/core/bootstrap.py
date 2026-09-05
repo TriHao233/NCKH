@@ -677,9 +677,17 @@ def _ensure_indexes() -> None:
             ),
         ]
     )
-    rag_db.question_evaluations.create_index(
-        [("question_version_id", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_evaluations_version",
+    rag_db.question_evaluations.create_indexes(
+        [
+            IndexModel(
+                [("question_version_id", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_evaluations_version",
+            ),
+            IndexModel(
+                [("question_version_id", ASCENDING), ("evaluation_fingerprint", ASCENDING)],
+                name="ix_evaluations_fingerprint",
+            ),
+        ]
     )
     rag_db.question_reviews.create_index(
         [("question_version_id", ASCENDING), ("reviewed_at", DESCENDING)],

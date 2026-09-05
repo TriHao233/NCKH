@@ -42,11 +42,13 @@ from modules.generation.llm.model_registry import (
 )
 from modules.generation.mongodb import (
     create_generation_run,
+    derive_question_evidence,
     finish_generation_run,
     get_existing_question_texts,
     get_document_learning_outcomes,
     save_generated_questions,
 )
+from modules.questions.contracts import validate_question_contract
 
 logger = logging.getLogger(__name__)
 MAX_FORMAT_RETRY_ATTEMPTS = 1
@@ -96,6 +98,8 @@ async def generate_questions_rag(
     model_snapshot: dict | None = None,
     code_model_snapshot: dict | None = None,
     fallback_model_snapshot: dict | None = None,
+    resume_checkpoint: dict | None = None,
+    checkpoint_callback: Callable[[dict], Awaitable[None]] | None = None,
 ) -> QuestionGenerateResponse:
     plan = req.effective_plan()
     plan_log = ", ".join(
@@ -138,8 +142,16 @@ async def generate_questions_rag(
             raise ValueError(
                 "CLO_NOT_IN_DOCUMENT_SUBJECT: " + ", ".join(missing_codes)
             )
-    generated_questions: List[GeneratedQuestion] = []
-    summaries: List[GenerationPlanSummary] = []
+    checkpoint = resume_checkpoint or {}
+    completed_plan_indexes = {
+        int(index) for index in checkpoint.get("completed_plan_indexes") or []
+    }
+    generated_questions = [
+        GeneratedQuestion(**item) for item in checkpoint.get("data") or []
+    ]
+    summaries = [
+        GenerationPlanSummary(**item) for item in checkpoint.get("summary") or []
+    ]
     try:
         existing_questions = get_existing_question_texts(req.document_id)
     except Exception as exc:
@@ -155,6 +167,8 @@ async def generate_questions_rag(
         await progress_callback({"stage": "generating", "completed": 0, "total": len(plan)})
 
     for plan_index, plan_item in enumerate(plan, start=1):
+        if plan_index in completed_plan_indexes:
+            continue
         content_mode = _content_mode(plan_item, context_text, req.instruction)
         selected_provider = (
             req.code_model_provider if content_mode == "code" else req.model_provider
@@ -198,6 +212,16 @@ async def generate_questions_rag(
             seen_question_fingerprints.add(question_fingerprint(question.question))
         generated_questions.extend(questions)
         summaries.append(summary)
+        completed_plan_indexes.add(plan_index)
+        if checkpoint_callback:
+            await checkpoint_callback(
+                {
+                    "version": "generation-checkpoint-v1",
+                    "completed_plan_indexes": sorted(completed_plan_indexes),
+                    "data": [item.model_dump(mode="json") for item in generated_questions],
+                    "summary": [item.model_dump(mode="json") for item in summaries],
+                }
+            )
         if progress_callback:
             await progress_callback(
                 {
@@ -310,6 +334,11 @@ async def _generate_questions_for_plan_item(
             bloom_level=bloom_level.value,
             context_text=context_text,
         )
+        validated_data, evidence_errors = _attach_question_evidence(
+            validated_data,
+            context_snapshot["results"],
+        )
+        validation_errors.extend(evidence_errors)
         postprocessed_count = len(validated_data)
         deduped_data, duplicate_stats = filter_duplicate_questions(
             validated_data,
@@ -347,6 +376,11 @@ async def _generate_questions_for_plan_item(
                         bloom_level=bloom_level.value,
                         context_text=context_text,
                     )
+                    retry_validated, retry_evidence_errors = _attach_question_evidence(
+                        retry_validated,
+                        context_snapshot["results"],
+                    )
+                    retry_errors.extend(retry_evidence_errors)
                     postprocessed_count += len(retry_validated)
                     retry_deduped, retry_duplicate_stats = filter_duplicate_questions(
                         retry_validated,
@@ -382,11 +416,6 @@ async def _generate_questions_for_plan_item(
             [q.model_dump() for q in deduped_data],
             generation_run_id=generation_run_id,
             requested_by_user_id=requested_by_user_id,
-            source_chunk_ids=[
-                result["chunk_id"]
-                for result in context_snapshot["results"]
-                if result.get("chunk_id")
-            ],
             learning_outcomes=learning_outcomes,
         )
         summary = _build_plan_summary(
@@ -569,65 +598,36 @@ def _build_plan_summary(
 
 
 def _check_type_format(item: dict, question_type: str) -> str | None:
-    """Kiểm tra cấu trúc bắt buộc theo từng loại câu hỏi (xem app/prompts/question_structure/*.txt).
-    Trả về lý do lỗi nếu vi phạm, None nếu hợp lệ."""
-    options = item.get("options")
-    correct_answer = item.get("correct_answer") or ""
-
-    if question_type == "dien_khuyet":
-        if "_____" not in (item.get("question") or ""):
-            return "dien_khuyet thiếu placeholder '_____' trong câu hỏi"
-        if options is not None:
-            return "dien_khuyet phải có options = null"
-
-    elif question_type == "dung_sai":
-        if _looks_incomplete_true_false_statement(item.get("question") or ""):
-            return "dung_sai phải là một mệnh đề hoàn chỉnh, không được bỏ lửng như 'X là'"
-        if not isinstance(options, dict) or set(options.keys()) != {"A", "B"}:
-            return "dung_sai phải có đúng 2 lựa chọn A/B"
-        if normalize_exact_text(options.get("A")) != "đúng" or normalize_exact_text(options.get("B")) != "sai":
-            return 'dung_sai: options bắt buộc là {"A": "Đúng", "B": "Sai"}'
-        if str(correct_answer).strip() not in {"A", "B"}:
-            return "dung_sai: correct_answer phải là A hoặc B"
-
-    elif question_type in ("trac_nghiem", "tinh_huong"):
-        if not isinstance(options, dict) or set(options.keys()) != {"A", "B", "C", "D"}:
-            return f"{question_type} phải có đúng 4 lựa chọn A/B/C/D"
-
-    elif question_type == "nhieu_lua_chon":
-        valid_option_sets = (
-            {"A", "B", "C", "D"},
-            {"A", "B", "C", "D", "E"},
-            {"A", "B", "C", "D", "E", "F"},
+    """Compatibility wrapper around the bank-wide typed question contract."""
+    if question_type == "dung_sai" and _looks_incomplete_true_false_statement(
+        item.get("question") or ""
+    ):
+        return "dung_sai phải là một mệnh đề hoàn chỉnh, không được bỏ lửng như 'X là'"
+    try:
+        _, normalized = validate_question_contract(
+            item.get("question") or "",
+            question_type,
+            {
+                "options": item.get("options"),
+                "correct_answer": item.get("correct_answer"),
+                "explanation": item.get("explanation") or "",
+                "model_source_context": item.get("source_context") or "",
+                "source_keywords": item.get("source_keywords") or [],
+                "false_mutation": item.get("false_mutation"),
+            },
         )
-        if not isinstance(options, dict) or set(options.keys()) not in valid_option_sets:
-            return "nhieu_lua_chon phải có 4 đến 6 lựa chọn liên tiếp từ A"
-        correct_keys = [c.strip() for c in correct_answer.split(",") if c.strip()]
-        if len(correct_keys) < 2:
-            return "nhieu_lua_chon phải có ít nhất 2 đáp án đúng"
-        if len(correct_keys) >= len(options):
-            return "nhieu_lua_chon không được chọn tất cả lựa chọn làm đáp án đúng"
-        if any(key not in options for key in correct_keys):
-            return "nhieu_lua_chon có đáp án đúng không tồn tại trong options"
-
-    elif question_type == "ghep_cot":
-        if not isinstance(options, dict):
-            return "ghep_cot phải có options dạng object"
-        numeric_keys = [k for k in options if str(k).isdigit()]
-        alpha_keys = [k for k in options if str(k).isalpha()]
-        if len(numeric_keys) < 3 or len(alpha_keys) < len(numeric_keys) + 1:
-            return "ghep_cot cần tối thiểu 3 mục đánh số và số mục chữ phải nhiều hơn số mục số ít nhất 1 (distractor)"
-        if not re.search(r"\d+\s*-\s*[a-zA-Z]", correct_answer):
-            return "ghep_cot: correct_answer phải theo định dạng '1-b, 2-a, ...'"
-
-    elif question_type == "sap_xep":
-        if not isinstance(options, dict) or len(options) < 4:
-            return "sap_xep cần tối thiểu 4 bước trong options"
-        correct_keys = [c.strip() for c in correct_answer.split(",") if c.strip()]
-        if sorted(correct_keys) != sorted(str(k) for k in options.keys()):
-            return "sap_xep: correct_answer phải liệt kê đủ và đúng các khóa trong options theo thứ tự"
-
-    return None
+        item.update(
+            {
+                "options": normalized.get("options"),
+                "correct_answer": normalized.get("correct_answer"),
+                "explanation": normalized.get("explanation"),
+                "source_keywords": normalized.get("source_keywords") or [],
+                "false_mutation": normalized.get("false_mutation"),
+            }
+        )
+        return None
+    except ValueError as exc:
+        return str(exc)
 
 
 def _normalize_difficulty(value) -> str | None:
@@ -639,6 +639,32 @@ def _normalize_difficulty(value) -> str | None:
     if mapped in VALID_DIFFICULTIES:
         return mapped
     return None
+
+
+def _attach_question_evidence(
+    questions: list[GeneratedQuestion],
+    retrieval_results: list[dict],
+) -> tuple[list[GeneratedQuestion], list[GenerationRejection]]:
+    verified = []
+    errors = []
+    for candidate_index, question in enumerate(questions, start=1):
+        try:
+            question.evidence_spans = derive_question_evidence(
+                question.model_dump(),
+                retrieval_results,
+            )
+            verified.append(question)
+        except ValueError as exc:
+            errors.append(
+                GenerationRejection(
+                    code="QUESTION_EVIDENCE_INVALID",
+                    message=str(exc),
+                    candidate_index=candidate_index,
+                    question_excerpt=question.question[:180],
+                    repairable=True,
+                )
+            )
+    return verified, errors
 
 
 def _validate_and_format(

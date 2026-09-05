@@ -38,6 +38,7 @@ import {
 } from '../utils/reviewCommentTemplates';
 import {
   answerGuardrailInsights,
+  evaluationContractInsights,
   evaluationInsights,
   metadataGuardrailInsights,
   mergeAiSuggestionsIntoDraft,
@@ -454,7 +455,7 @@ function downloadMoodleExport(question, format, content) {
 }
 
 function SourceText({ source, page }) {
-  const excerpt = source?.context_excerpt || source?.chunk_text || '';
+  const excerpt = source?.evidence?.quote || source?.context_excerpt || source?.chunk_text || '';
   const pageText = page?.text || source?.chunk_text || '';
   return (
     <div className="source-text">
@@ -1360,6 +1361,10 @@ function ReviewQueuePage() {
   const aiInsights = evaluationInsights(latestEvaluation, SCORE_COMPONENTS);
   const answerGuardrail = answerGuardrailInsights(latestEvaluation);
   const metadataGuardrail = metadataGuardrailInsights(latestEvaluation);
+  const evaluationContract = evaluationContractInsights(latestEvaluation);
+  const criterionStatus = evaluationContract.criterionStatus;
+  const hardFailures = evaluationContract.hardFailures;
+  const codeGuardrail = evaluationContract.codeGuardrail;
   const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
   const aiMissingItems = textList(latestFeedback.missing);
   const aiRiskItems = textList(latestEvidence.risks);
@@ -1998,7 +2003,7 @@ function ReviewQueuePage() {
                           className={aiWeakCriterionKeys.has(component.key) ? 'score-card--weak' : ''}
                         >
                           <span>{component.label}</span>
-                          <b>{score(latestScores[component.key])}</b>
+                          <b>{criterionStatus[component.key] === 'NO_DATA' ? 'Thiếu dữ liệu' : score(latestScores[component.key])}</b>
                           <small>
                             Trọng số {percent(latestWeights[component.key])}
                           </small>
@@ -2034,6 +2039,20 @@ function ReviewQueuePage() {
                             <ul>
                               {metadataGuardrail.issues.map((item) => <li key={item}>{item}</li>)}
                             </ul>
+                          </div>
+                        )}
+                        {hardFailures.length > 0 && (
+                          <div className="answer-guardrail-warning" role="alert">
+                            <strong>Không thể tự động duyệt do lỗi bắt buộc</strong>
+                            <ul>
+                              {hardFailures.map((item) => <li key={`${item.code}-${item.message}`}>{item.code}: {item.message}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        {codeGuardrail.applied && (
+                          <div className={codeGuardrail.passed ? 'metadata-guardrail-warning' : 'answer-guardrail-warning'}>
+                            <strong>Kiểm tra code: {codeGuardrail.status || 'Chưa xác định'}</strong>
+                            <span>{codeGuardrail.toolchain?.compiler_version || codeGuardrail.toolchain?.contract_version}</span>
                           </div>
                         )}
                         {answerGuardrail.optionChecks.length > 0 && (
@@ -2101,6 +2120,9 @@ function ReviewQueuePage() {
                         AI hỗ trợ: <b>{evaluatorModelLabel(latestModel)}</b>
                       </span>
                       <span>Bộ tiêu chí: <b>{latestEvaluation ? 'Tiêu chí kiểm duyệt hiện hành' : '--'}</b></span>
+                      {evaluationContract.scoreCoverage !== null && (
+                        <span>Độ phủ dữ liệu chấm: <b>{percent(evaluationContract.scoreCoverage)}</b></span>
+                      )}
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
                       {latestEvidence.assessed_difficulty ? (
                         <span>
@@ -2149,6 +2171,7 @@ function ReviewQueuePage() {
                               <span>Nguồn {source.citation_order}</span>
                               <b>{pageRangeLabel(source.page_range)}</b>
                               <small>Đoạn tham chiếu {index + 1}</small>
+                              {source.evidence?.status === 'VERIFIED' && <em>Span đã xác minh</em>}
                               {source.is_current_chunk_set === false && <em>Nguồn cũ</em>}
                             </button>
                           ))}
@@ -2160,6 +2183,9 @@ function ReviewQueuePage() {
                               <span>Vị trí <b>{pageRangeLabel(activeSource.page_range)}</b></span>
                               <span>Thứ tự nguồn <b>{activeSource.citation_order || '--'}</b></span>
                               <span>Trạng thái <b>{activeSource.is_current_chunk_set === false ? 'Nguồn cũ' : 'Đang sử dụng'}</b></span>
+                              {activeSource.evidence && (
+                                <span>Evidence span <b>{activeSource.evidence.char_start}-{activeSource.evidence.char_end}</b></span>
+                              )}
                             </div>
                             {(activeSource.warnings || []).map((warning) => (
                               <p className="source-warning" key={warning}>{warning}</p>

@@ -25,6 +25,28 @@ BLOOM_TO_LEVEL = {
 }
 
 
+def derive_question_evidence(question: dict, retrieval_results: list[dict]) -> list[dict]:
+    quote = str(question.get("source_context") or "").strip()
+    if not quote:
+        raise ValueError("QUESTION_EVIDENCE_MISSING: source_context rỗng")
+    for result in retrieval_results:
+        content = str(result.get("content") or "")
+        char_start = content.find(quote)
+        chunk_id = str(result.get("chunk_id") or "")
+        if char_start >= 0 and chunk_id:
+            return [
+                {
+                    "chunk_id": chunk_id,
+                    "quote": quote,
+                    "char_start": char_start,
+                    "char_end": char_start + len(quote),
+                }
+            ]
+    raise ValueError(
+        "QUESTION_EVIDENCE_NOT_IN_CHUNK: source_context không nằm nguyên văn trong chunk retrieval"
+    )
+
+
 def utc_now():
     return datetime.now(timezone.utc)
 
@@ -265,7 +287,6 @@ def save_generated_questions(
     *,
     generation_run_id: str,
     requested_by_user_id,
-    source_chunk_ids: list[str],
     learning_outcomes: list[dict] | None = None,
 ) -> list[dict]:
     service = get_question_service()
@@ -295,7 +316,10 @@ def save_generated_questions(
                     },
                 },
                 document_id=document_id,
-                source_chunk_ids=source_chunk_ids,
+                source_chunk_ids=[
+                    item["chunk_id"] for item in question.get("evidence_spans") or []
+                ],
+                evidence_spans=question.get("evidence_spans") or [],
                 clo_ids=_resolve_clo_ids(document_id, question, learning_outcomes),
             ),
             requested_by_user_id,
@@ -341,6 +365,12 @@ def create_generation_job(
         "result": None,
         "metrics": None,
         "progress": {"stage": "queued", "completed": 0, "total": 0},
+        "checkpoint": {
+            "version": "generation-checkpoint-v1",
+            "completed_plan_indexes": [],
+            "data": [],
+            "summary": [],
+        },
         "error_message": None,
         "created_at": now,
         "updated_at": now,
@@ -418,6 +448,24 @@ def update_generation_progress(job_id: str, worker_id: str, progress: dict) -> b
     result = get_database().generation_jobs.update_one(
         {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
         {"$set": {"progress": progress, "updated_at": utc_now()}},
+    )
+    return result.matched_count == 1
+
+
+def update_generation_checkpoint(job_id: str, worker_id: str, checkpoint: dict) -> bool:
+    result = get_database().generation_jobs.update_one(
+        {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
+        {
+            "$set": {
+                "checkpoint": checkpoint,
+                "partial_result": {
+                    "status": "partial",
+                    "data": checkpoint.get("data") or [],
+                    "summary": checkpoint.get("summary") or [],
+                },
+                "updated_at": utc_now(),
+            }
+        },
     )
     return result.matched_count == 1
 
@@ -534,13 +582,15 @@ def retry_or_dead_letter_generation_job(
             settings.job_retry_max_seconds,
         )
         status = "queued"
+        completed = len((job.get("checkpoint") or {}).get("completed_plan_indexes") or [])
+        total = len((job.get("request") or {}).get("question_plan") or []) or 1
         fields = {
             "status": status,
             "error_message": error_message,
             "last_failed_at": now,
             "next_attempt_at": now + timedelta(seconds=delay),
             "updated_at": now,
-            "progress": {"stage": "retry_wait", "completed": 0, "total": 1},
+            "progress": {"stage": "retry_wait", "completed": completed, "total": total},
         }
     else:
         status = "failed"

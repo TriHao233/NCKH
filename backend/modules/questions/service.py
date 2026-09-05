@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ from core.access_policy import (
 from core.config import resolve_path
 from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
+from modules.questions.contracts import validate_question_contract
 from modules.questions.repository import (
     MongoQuestionRepository,
     MongoQuestionReferenceRepository,
@@ -203,11 +205,16 @@ class QuestionService:
         self,
         chunk_ids: list[str],
         expected_document_id: ObjectId | None = None,
+        evidence_spans: list | None = None,
     ) -> tuple[list[dict], ObjectId | None]:
         unique_chunk_ids = list(dict.fromkeys(chunk_ids))
         if not unique_chunk_ids:
             return [], expected_document_id
         sources = []
+        evidence_by_chunk = {
+            str(item.chunk_id if hasattr(item, "chunk_id") else item.get("chunk_id")): item
+            for item in (evidence_spans or [])
+        }
         resolved_document_id = expected_document_id
         for citation_order, chunk_id in enumerate(unique_chunk_ids, start=1):
             chunk_oid = object_id(chunk_id, "chunk_id")
@@ -219,15 +226,58 @@ class QuestionService:
                 resolved_document_id = chunk_document_id
             elif chunk_document_id != resolved_document_id:
                 raise ValueError("Các chunk nguồn phải thuộc cùng tài liệu")
+            content = str(chunk.get("content") or "")
+            evidence_input = evidence_by_chunk.get(str(chunk_id))
+            evidence = None
+            if evidence_input is not None:
+                value = (
+                    evidence_input.model_dump()
+                    if hasattr(evidence_input, "model_dump")
+                    else dict(evidence_input)
+                )
+                quote = str(value.get("quote") or "").strip()
+                char_start = value.get("char_start")
+                char_end = value.get("char_end")
+                if char_start is None:
+                    char_start = content.find(quote)
+                    char_end = char_start + len(quote) if char_start >= 0 else -1
+                if (
+                    char_start < 0
+                    or char_end > len(content)
+                    or content[char_start:char_end] != quote
+                ):
+                    raise ValueError(
+                        f"EVIDENCE_SPAN_MISMATCH: trích dẫn không khớp chunk {chunk_id}"
+                    )
+                quote_hash = hashlib.sha256(quote.encode("utf-8")).hexdigest()
+                source_span = chunk.get("source_span") or {}
+                evidence = {
+                    "contract_version": "question-evidence-v1",
+                    "quote": quote,
+                    "quote_hash": quote_hash,
+                    "char_start": char_start,
+                    "char_end": char_end,
+                    "token_count": len(re.findall(r"[^\W_]+|[^\s\w]", quote, flags=re.UNICODE)),
+                    "page_start": source_span.get("page_start")
+                    or (chunk.get("page_range") or {}).get("start"),
+                    "page_end": source_span.get("page_end")
+                    or (chunk.get("page_range") or {}).get("end"),
+                    "status": "VERIFIED",
+                }
             sources.append({
                 "source_type": "CHUNK",
                 "chunk_id": chunk_oid,
                 "chunk_set_id": chunk["chunk_set_id"],
                 "chunk_content_hash": chunk.get("content_hash"),
+                "source_processing_revision_id": chunk.get(
+                    "source_processing_revision_id"
+                ),
+                "source_ocr_job_id": chunk.get("source_ocr_job_id"),
                 "citation_order": citation_order,
                 "is_primary": citation_order == 1,
                 "scores": {},
-                "context_excerpt": chunk.get("content", "")[:2000],
+                "context_excerpt": evidence["quote"] if evidence else content[:2000],
+                "evidence": evidence,
             })
         return sources, resolved_document_id
 
@@ -431,6 +481,7 @@ class QuestionService:
         sources, resolved_document_id = self._sources(
             source_chunk_ids,
             expected_document_id,
+            payload.evidence_spans,
         )
         if resolved_document_id and document is None:
             document = self._document(resolved_document_id)
@@ -460,6 +511,8 @@ class QuestionService:
                 "context_excerpt": source_context,
             }]
         self._validate_active_sources(sources, document)
+        if origin == "AI" and (not sources or any(not source.get("evidence") for source in sources)):
+            raise ValueError("AI_EVIDENCE_REQUIRED: mỗi câu AI phải có evidence span đã kiểm chứng")
         document_subject_id = document.get("subject_id") if document else None
         document_chapter_id = document.get("chapter_id") if document else None
         if (
@@ -502,6 +555,12 @@ class QuestionService:
         question_data = deepcopy(payload.question_data)
         if source_context:
             question_data["model_source_context"] = source_context
+        normalized_type, question_data = validate_question_contract(
+            payload.content,
+            payload.question_type,
+            question_data,
+        )
+        classification["assessment_type"] = normalized_type.upper()
         content_hash = stable_hash(
             {
                 "content": payload.content,
@@ -898,10 +957,11 @@ class QuestionService:
 
             page_numbers = _source_page_numbers(source, chunk)
             page_records = []
-            if document and current_ocr_job_id:
+            source_ocr_job_id = source.get("source_ocr_job_id") or current_ocr_job_id
+            if document and source_ocr_job_id:
                 page_records = self.references.find_pages(
                     document["_id"],
-                    current_ocr_job_id,
+                    source_ocr_job_id,
                     page_numbers,
                 )
             page_map = {int(page.get("page_number", 0)): page for page in page_records}
@@ -929,6 +989,10 @@ class QuestionService:
                     "current_chunk_set_id": current_chunk_set_id,
                     "is_current_chunk_set": is_current_chunk_set,
                     "chunk_content_hash": source_hash,
+                    "source_processing_revision_id": source.get(
+                        "source_processing_revision_id"
+                    ),
+                    "source_ocr_job_id": source_ocr_job_id,
                     "current_content_hash": current_hash,
                     "content_hash_matches": content_hash_matches,
                     "page_range": (chunk or {}).get("page_range") or {},
@@ -937,6 +1001,8 @@ class QuestionService:
                     "semantic_type": (chunk or {}).get("semantic_type"),
                     "information_density": (chunk or {}).get("information_density"),
                     "context_excerpt": source.get("context_excerpt") or (chunk or {}).get("content", "")[:2000],
+                    "evidence": source.get("evidence"),
+                    "source_span": (chunk or {}).get("source_span") or {},
                     "chunk_text": ((chunk or {}).get("content") or source.get("context_excerpt") or "")[:4000],
                     "pages": pages,
                     "warnings": source_warnings,
@@ -1121,14 +1187,22 @@ class QuestionService:
             sources, resolved_document_id = self._sources(
                 payload.source_chunk_ids,
                 current_document_id,
+                payload.evidence_spans,
             )
         elif payload.chunk_id is not None:
             sources, resolved_document_id = self._sources(
                 [payload.chunk_id],
                 current_document_id,
+                payload.evidence_spans,
             )
         else:
             sources = current["sources"]
+        normalized_type, question_data = validate_question_contract(
+            content,
+            classification["assessment_type"],
+            question_data,
+        )
+        classification["assessment_type"] = normalized_type.upper()
         if current_document_id is None and resolved_document_id is not None:
             source_document = self._document(resolved_document_id)
             source_subject_id = source_document.get("subject_id")

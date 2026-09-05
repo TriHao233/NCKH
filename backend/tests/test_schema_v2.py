@@ -589,6 +589,10 @@ class SchemaV2Tests(unittest.TestCase):
     def test_question_can_reference_multiple_chunks(self):
         payload = QuestionCreateRequest(
             content="Question",
+            question_data={
+                "options": {"A": "One", "B": "Two", "C": "Three", "D": "Four"},
+                "correct_answer": "A",
+            },
             source_chunk_ids=["507f1f77bcf86cd799439011", "507f1f77bcf86cd799439012"],
         )
         self.assertEqual(len(payload.source_chunk_ids), 2)
@@ -611,7 +615,7 @@ class SchemaV2Tests(unittest.TestCase):
         version1_data = {
             "content": "Original stack question",
             "question_data": {
-                "options": {"A": "LIFO", "B": "FIFO"},
+                "options": {"A": "LIFO", "B": "FIFO", "C": "LILO", "D": "FILO"},
                 "correct_answer": "A",
                 "explanation": "Stack pops the newest item first.",
             },
@@ -619,7 +623,7 @@ class SchemaV2Tests(unittest.TestCase):
         version2_data = {
             "content": "Edited queue question",
             "question_data": {
-                "options": {"A": "LIFO", "B": "FIFO"},
+                "options": {"A": "LIFO", "B": "FIFO", "C": "LILO", "D": "FILO"},
                 "correct_answer": "B",
                 "explanation": "Queue removes the oldest item first.",
             },
@@ -725,7 +729,11 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual([item["version"] for item in history], [2, 1])
         self.assertEqual(restored["current_version"], 3)
         self.assertEqual(restored["content"], version1_data["content"])
-        self.assertEqual(restored["question_data"], version1_data["question_data"])
+        self.assertEqual(
+            restored["question_data"]["options"],
+            version1_data["question_data"]["options"],
+        )
+        self.assertEqual(restored["question_data"]["correct_answer"], "A")
         self.assertEqual(restored["evaluation_status"], "NOT_STARTED")
         self.assertEqual(restored["review_status"], "DRAFT")
         self.assertEqual(restored["publication_status"], "STALE")
@@ -1368,6 +1376,10 @@ class SchemaV2Tests(unittest.TestCase):
             service.create(
                 QuestionCreateRequest(
                     content="Question from a private document",
+                    question_data={
+                        "options": {"A": "One", "B": "Two", "C": "Three", "D": "Four"},
+                        "correct_answer": "A",
+                    },
                     document_id=str(document_id),
                 ),
                 actor.id,
@@ -2224,7 +2236,7 @@ class SchemaV2Tests(unittest.TestCase):
             "content": "Stack tuân theo nguyên tắc nào?",
             "classification": {"assessment_type": "TRAC_NGHIEM", "bloom": {"level": 2}},
             "question_data": {
-                "options": {"A": "LIFO", "B": "FIFO"},
+                "options": {"A": "LIFO", "B": "FIFO", "C": "LILO", "D": "FILO"},
                 "correct_answer": "A",
                 "explanation": "Stack theo LIFO.",
             },
@@ -2373,7 +2385,10 @@ class SchemaV2Tests(unittest.TestCase):
                 content="Queue tuân theo nguyên tắc nào?",
                 document_id=str(document_id),
                 source_context="Queue tuân theo nguyên tắc FIFO.",
-                question_data={"correct_answer": "FIFO"},
+                question_data={
+                    "options": {"A": "LIFO", "B": "FIFO", "C": "LILO", "D": "FILO"},
+                    "correct_answer": "B",
+                },
             ),
             owner.id,
             current_user=owner,
@@ -5851,7 +5866,7 @@ class SchemaV2Tests(unittest.TestCase):
             },
             "trac_nghiem",
         )
-        self.assertIn("4 lựa chọn", error)
+        self.assertIn("options A/B/C/D", error)
 
         self.assertIsNone(
             _check_type_format(

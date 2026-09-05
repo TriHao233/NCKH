@@ -280,6 +280,7 @@ def _metadata_for_existing_chunk(chunk: dict, vector_id: ObjectId) -> dict:
         "source_processing_revision_id": str(
             chunk.get("source_processing_revision_id") or ""
         ),
+        "source_ocr_job_id": str(chunk.get("source_ocr_job_id") or ""),
         "source_span": chunk.get("source_span") or {},
         "chapter_key": chunk.get("chapter_key") or "",
         "content_type": chunk.get("content_type", "text"),

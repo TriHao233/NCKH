@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   answerGuardrailInsights,
+  evaluationContractInsights,
   evaluationInsights,
   metadataGuardrailInsights,
   mergeAiSuggestionsIntoDraft,
@@ -94,6 +95,22 @@ test('metadata guardrail insights expose missing Bloom and CLO', () => {
   assert.equal(insights.applied, true);
   assert.deepEqual(insights.missingFields, ['bloom', 'clo']);
   assert.deepEqual(insights.issues, ['Thiếu Bloom', 'Thiếu CLO']);
+});
+
+test('evaluation contract exposes no-data criteria and hard failures', () => {
+  const insights = evaluationContractInsights({
+    evidence: {
+      criterion_status: { faithfulness: 'NO_DATA', bloom_alignment: 'AVAILABLE' },
+      score_coverage: 0.45,
+      hard_failures: [{ code: 'SOURCE_MISSING', message: 'Thiếu nguồn' }],
+      code_guardrail: { applied: true, passed: false, status: 'BLOCKED' },
+    },
+  });
+
+  assert.deepEqual(insights.noDataCriteria, ['faithfulness']);
+  assert.equal(insights.hardFailures[0].code, 'SOURCE_MISSING');
+  assert.equal(insights.codeGuardrail.status, 'BLOCKED');
+  assert.equal(insights.scoreCoverage, 0.45);
 });
 
 test('answer guardrail insights preserve inferred true-false provenance', () => {
