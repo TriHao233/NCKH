@@ -1,22 +1,22 @@
 ĐỊNH DẠNG ĐẦU RA:
 Chỉ trả về một JSON object thô, không bọc trong ```json, không thêm giải thích ngoài JSON.
-Tuân thủ đúng file QUESTION_STRUCTURE của loại câu hỏi đang sinh.
+Tuân thủ đúng quy tắc cấu trúc của loại câu hỏi đang sinh.
 
 SCHEMA:
 {
   "questions": [
     {
       "question": "string",
-      "options": "object hoặc null theo QUESTION_STRUCTURE",
+      "options": "object hoặc null theo cấu trúc dạng câu hỏi",
       "correct_answer": "string",
       "explanation": "string",
       "question_type": "string",
       "bloom_level": "string",
       "difficulty": "de | trung_binh | kho",
-      "source_context": "string (exact verbatim quote)",
-      "source_keywords": ["exact keyword or phrase from source_context"],
-      "clo_codes": ["CLO code selected only from LEARNING OUTCOMES; empty when none fit"],
-      "false_mutation": "object for a false dung_sai statement; otherwise null"
+      "source_context": "chuỗi trích dẫn nguyên văn chính xác",
+      "source_keywords": ["từ khóa hoặc cụm từ nguyên văn trong source_context"],
+      "clo_codes": ["chỉ mã CLO trong danh sách chuẩn đầu ra được phép; rỗng nếu không phù hợp"],
+      "false_mutation": "object cho mệnh đề dung_sai có đáp án Sai; trường hợp khác là null"
     }
   ]
 }

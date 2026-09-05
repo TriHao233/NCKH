@@ -5760,8 +5760,8 @@ class SchemaV2Tests(unittest.TestCase):
         prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "output_format.txt"
         output_format = prompt_path.read_text(encoding="utf-8")
 
-        self.assertIn("QUESTION_STRUCTURE", output_format)
-        self.assertIn('"options": "object hoặc null theo QUESTION_STRUCTURE"', output_format)
+        self.assertIn("cấu trúc của loại câu hỏi", output_format)
+        self.assertIn('"options": "object hoặc null theo cấu trúc dạng câu hỏi"', output_format)
         self.assertIn('"difficulty": "de | trung_binh | kho"', output_format)
 
     def test_difficulty_rule_is_loaded_into_generation_prompt(self):
@@ -5826,7 +5826,7 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("QUESTION RULES", prompt)
+        self.assertIn("QUY TẮC CÂU HỎI", prompt)
         self.assertIn("Tham chiếu nguồn học liệu", prompt)
         self.assertIn("Nếu vi phạm bất kỳ quy tắc nào", prompt)
 
@@ -5895,8 +5895,8 @@ class SchemaV2Tests(unittest.TestCase):
             validation_errors=["trac_nghiem phải có đúng 4 lựa chọn A/B/C/D"],
             avoid_questions=["Câu đã nhận"],
         )
-        self.assertIn('exactly "A", "B", "C", "D"', prompt)
-        self.assertIn("Generate exactly 2 additional questions", prompt)
+        self.assertIn('đúng các khóa "A", "B", "C", "D"', prompt)
+        self.assertIn("Sinh chính xác 2 câu bổ sung", prompt)
 
     def test_multi_answer_validation_allows_six_options(self):
         self.assertIsNone(
@@ -5937,8 +5937,8 @@ class SchemaV2Tests(unittest.TestCase):
             validation_errors=["nhieu_lua_chon phải có 4 đến 6 lựa chọn"],
             avoid_questions=[],
         )
-        self.assertIn("4 to 6 consecutive keys", prompt)
-        self.assertIn("Generate exactly 3 additional questions", prompt)
+        self.assertIn("4 đến 6 khóa liên tiếp", prompt)
+        self.assertIn("Sinh chính xác 3 câu bổ sung", prompt)
 
     def test_generation_preset_payload_limits_plan_rows(self):
         payload = GenerationPresetPayload(

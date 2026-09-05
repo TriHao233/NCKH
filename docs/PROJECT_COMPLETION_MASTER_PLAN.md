@@ -924,7 +924,7 @@ không đồng nghĩa đã publish lên Moodle của trường hoặc đã đư�
 - Công sức là **ngày công kỹ thuật**, gồm implement, review, test liên quan và sửa lỗi trong phạm vi task; chưa gồm thời gian chờ giảng viên/Moodle admin.
 - Đây là ước lượng ban đầu, cần cập nhật sau giai đoạn A; không phải cam kết deadline.
 - BE: backend/full-stack; FE: frontend/full-stack; AI: người phụ trách OCR/RAG/LLM; LMS: người phụ trách Moodle; GV: giảng viên/chuyên gia CTDL; QA: kiểm thử.
-- ID mới dùng tiền tố A–H để không nhầm với các backlog P0/P1 đã đánh dấu hoàn tất trong tài liệu tháng 7. Trạng thái tất cả task bên dưới là **PLANNED**, trừ hoạt động rà soát/baseline đã ghi tại mục 13.1.
+- ID mới dùng tiền tố A–H để không nhầm với các backlog P0/P1 đã đánh dấu hoàn tất trong tài liệu tháng 7. Trạng thái task được ghi tại tiêu đề và Gate của từng giai đoạn; các giai đoạn chưa triển khai vẫn là **PLANNED**.
 - Mỗi task tạo thay đổi nhỏ có thể review, kèm test theo rủi ro và migration nếu đụng schema. Không gom toàn bộ kế hoạch vào một PR.
 
 ### A — Chốt baseline và hợp đồng, 3–5 ngày công — **CLOSED (technical), 06/09/2026**
@@ -971,7 +971,7 @@ và chunk candidate activation; frontend đạt 46/46, lint và build. Gate ch�
 **CLOSED** sau khi T01–T03 chạy trên corpus CTDL được cấp phép và giảng viên ký xác nhận;
 không dùng fixture tổng hợp để thay bằng chứng ngoại vi đó.
 
-### D — Retrieval và prompt/model release, 10–16 ngày công
+### D — Retrieval và prompt/model release, 10–16 ngày công — **IMPLEMENTED (technical), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -982,7 +982,20 @@ không dùng fixture tổng hợp để thay bằng chứng ngoại vi đó.
 | D05 | Model role mapping + digest/config, structured output adapter, GPU scheduling profile | AI + BE | B05, D04 | Three logical roles hoạt động local, schema validation đầy đủ | 2–3 |
 | D06 | Generation request UI tách chapter/topic/CLO/code mode, retrieval insufficiency feedback | FE | D02/D05 | Không yêu cầu user nhập collection; thông báo thiếu nguồn có ích | 1–2 |
 
-**Gate D:** G3/G4 và generation contract chạy được trên corpus thí điểm. Reranker chỉ thêm nếu đánh giá D02–D03 cho thấy lợi ích đủ bù latency/bộ nhớ.
+**Gate D — TECHNICAL IMPLEMENTED:** chunk lưu token budget, parent/source span và không cắt
+âm thầm protected block; dense/lexical là hai nhánh độc lập, fusion có trace và chapter/mục
+là hard filter. Index manifest ghi model digest, hỗ trợ switch/rollback có kiểm coverage trong
+Mongo transaction. Generation run giữ prompt template version/hash thực dùng; DB prompt lỗi thì
+fail rõ thay vì fallback; admin có endpoint preview prompt đã render. Ba logical model role,
+structured-output adapter và local GPU scheduling profile đã được nối vào pipeline. UI tách
+chapter/topic/CLO/instruction và giải thích tình trạng thiếu evidence.
+
+Bằng chứng kỹ thuật: backend đạt **197 passed** (9 integration tests tách profile), Mongo replica
+set cô lập đạt **9/9** gồm reindex switch/rollback, frontend đạt **46/46**, ESLint và production
+build. Script `backend/scripts/benchmark_retrieval.py` sinh báo cáo dense/lexical/hybrid có fixture
+hash, model digest, recall@k và latency. **G4 chưa CLOSED** vì repository chưa có corpus CTDL được
+cấp phép với nhãn evidence độc lập; không tự tuyên bố recall@5 ≥ 0.85. Chỉ cân nhắc reranker sau
+khi chạy benchmark đó và chứng minh lợi ích đủ bù latency/bộ nhớ.
 
 ### E — Chất lượng câu hỏi, evaluator và HITL, 13–21 ngày công
 

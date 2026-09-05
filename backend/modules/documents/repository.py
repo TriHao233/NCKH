@@ -251,6 +251,7 @@ class MongoDocumentRepository:
                 "pending_processing_revision_id": None,
                 "chunk_set_id": None,
                 "vector_collection_id": None,
+                "index_manifest_id": None,
             },
             "pipeline_summary": {
                 "ocr_status": "NOT_STARTED",
@@ -536,6 +537,7 @@ class MongoDocumentRepository:
                         "current_processing.processing_revision_id": revision_id,
                         "current_processing.chunk_set_id": None,
                         "current_processing.vector_collection_id": None,
+                        "current_processing.index_manifest_id": None,
                         "pipeline_summary.ocr_status": "COMPLETED",
                         "pipeline_summary.chunk_status": "NOT_STARTED",
                         "pipeline_summary.index_status": "NOT_STARTED",

@@ -158,8 +158,15 @@ class GenerationStatusApiTests(unittest.TestCase):
             response = self.client.post("/api/v1/generate/questions", json=payload)
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(create_job.call_args.kwargs["model_snapshot"], snapshot)
-        self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], snapshot)
+        self.assertEqual(
+            create_job.call_args.kwargs["model_snapshot"]["logical_role"],
+            "GENERATION_GENERAL",
+        )
+        self.assertEqual(
+            create_job.call_args.kwargs["code_model_snapshot"]["logical_role"],
+            "GENERATION_CODE",
+        )
+        self.assertIn("model_digest", create_job.call_args.kwargs["model_snapshot"])
         self.assertIsNone(create_job.call_args.kwargs["fallback_model_snapshot"])
 
     def test_enqueue_freezes_separate_code_model_snapshot(self):
@@ -179,8 +186,14 @@ class GenerationStatusApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual([call.args[0] for call in resolve.call_args_list], ["qwen", "deepseek"])
-        self.assertEqual(create_job.call_args.kwargs["model_snapshot"], general_snapshot)
-        self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], code_snapshot)
+        self.assertEqual(
+            create_job.call_args.kwargs["model_snapshot"]["logical_role"],
+            "GENERATION_GENERAL",
+        )
+        self.assertEqual(
+            create_job.call_args.kwargs["code_model_snapshot"]["logical_role"],
+            "GENERATION_CODE",
+        )
 
     def test_content_mode_detects_code_and_honors_override(self):
         auto = QuestionPlanItem(question_type="trac_nghiem", content_mode="auto")
@@ -200,9 +213,9 @@ class GenerationStatusApiTests(unittest.TestCase):
             learning_outcomes=[{"clo_code": "CLO2", "description": "Cài đặt cấu trúc dữ liệu"}],
         )
 
-        self.assertIn("CONTENT MODE: CODE", prompt)
+        self.assertIn("CHẾ ĐỘ NỘI DUNG: CODE", prompt)
         self.assertIn("CLO2: Cài đặt cấu trúc dữ liệu", prompt)
-        self.assertIn("Do not invent codes", prompt)
+        self.assertIn("Không tự tạo mã mới", prompt)
 
     def test_hybrid_score_rewards_keyword_overlap(self):
         query_tokens = _keyword_tokens("cây nhị phân tìm kiếm")
@@ -230,6 +243,16 @@ class GenerationStatusApiTests(unittest.TestCase):
         with (
             patch("modules.rag.search._active_vector_snapshot", return_value=("set-1", "vector-1")),
             patch("modules.rag.search.get_collection", return_value=collection),
+            patch(
+                "modules.rag.search._mongo_lexical_candidates",
+                return_value=[
+                    ("Stack dùng LIFO.", {"chunk_id": "stack", "chunk_set_id": "set-1"}),
+                    (
+                        "Cây nhị phân tìm kiếm hỗ trợ tra cứu.",
+                        {"chunk_id": "tree", "chunk_set_id": "set-1"},
+                    ),
+                ],
+            ),
         ):
             snapshot = get_context_snapshot(
                 document_id=str(ObjectId()),

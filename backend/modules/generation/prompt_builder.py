@@ -1,56 +1,98 @@
-from modules.generation.prompt_loader import PromptLoader
+import hashlib
+
 from core.config import settings
 from core.database import get_database
+from modules.generation.prompt_loader import PromptLoader
+
 
 class PromptBuilder:
     @staticmethod
-    def _load_db_template(template_key: str) -> str | None:
-        try:
-            template = get_database().prompt_templates.find_one(
-                {"template_key": template_key, "is_active": True},
-                sort=[("version", -1)],
-            )
-            if template and template.get("prompt_body"):
-                return template["prompt_body"]
-        except Exception:
-            pass
-        return None
+    def _load_db_template(template_key: str) -> dict | None:
+        return get_database().prompt_templates.find_one(
+            {"template_key": template_key, "is_active": True},
+            sort=[("version", -1)],
+        )
 
     @staticmethod
-    def _load_template(template_key: str, relative_path: str) -> str:
+    def _load_template(template_key: str, relative_path: str) -> tuple[str, dict]:
         if settings.prompt_source == "db":
-            db_template = PromptBuilder._load_db_template(template_key)
-            if db_template:
-                return db_template
-        return PromptLoader.load(relative_path)
+            try:
+                template = PromptBuilder._load_db_template(template_key)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"PROMPT_SOURCE_UNAVAILABLE: không đọc được template '{template_key}'"
+                ) from exc
+            if not template or not template.get("prompt_body"):
+                raise RuntimeError(
+                    f"PROMPT_TEMPLATE_NOT_FOUND: thiếu template DB đang hoạt động '{template_key}'"
+                )
+            body = str(template["prompt_body"])
+            actual_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            recorded_hash = str(template.get("content_hash") or "")
+            if recorded_hash and recorded_hash != actual_hash:
+                raise RuntimeError(
+                    f"PROMPT_TEMPLATE_HASH_MISMATCH: template '{template_key}'"
+                )
+            return body, {
+                "template_key": template_key,
+                "source": "db",
+                "version": int(template.get("version") or 1),
+                "content_hash": actual_hash,
+                "template_id": str(template.get("_id") or "") or None,
+            }
 
-    def build(
+        body = PromptLoader.load(relative_path)
+        return body, {
+            "template_key": template_key,
+            "source": "file",
+            "version": "file",
+            "content_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "relative_path": relative_path,
+        }
+
+    def build_with_manifest(
         self,
         context: str,
         bloom_level: str,
         question_type: str,
         num_questions: int,
         instruction: str | None = None,
+        topic: str | None = None,
         avoid_questions: list[str] | None = None,
         learning_outcomes: list[dict] | None = None,
         content_mode: str = "general",
-    ):
-        system = self._load_template("system", "system.txt")
-        question_rule = self._load_template("question_rule", "question_rule.txt")
-        bloom = self._load_template(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
-        difficulty_rule = self._load_template("quy_dinh_do_kho", "quy_dinh_do_kho.txt")
-        qtype = self._load_template(f"question_type:{question_type}", f"question_type/{question_type}.txt")
-        qstructure = self._load_template(
-            f"question_structure:{question_type}",
-            f"question_structure/{question_type}.txt",
-        )
-        output = self._load_template("output_format", "output_format.txt")
+    ) -> dict:
+        specs = [
+            ("system", "system.txt"),
+            ("question_rule", "question_rule.txt"),
+            (f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt"),
+            ("quy_dinh_do_kho", "quy_dinh_do_kho.txt"),
+            (f"question_type:{question_type}", f"question_type/{question_type}.txt"),
+            (
+                f"question_structure:{question_type}",
+                f"question_structure/{question_type}.txt",
+            ),
+            ("output_format", "output_format.txt"),
+        ]
+        resolved = [self._load_template(key, path) for key, path in specs]
+        (
+            system,
+            question_rule,
+            bloom,
+            difficulty_rule,
+            qtype,
+            qstructure,
+            output,
+        ) = [item[0] for item in resolved]
+        manifest = [item[1] for item in resolved]
+
+        topic_block = f"\nCHỦ ĐỀ TRỌNG TÂM:\n{topic.strip()}\n" if topic else ""
         instruction_block = ""
         if instruction:
             instruction_block = f"""
-TEACHER REQUEST:
+YÊU CẦU CỦA GIẢNG VIÊN:
 {instruction.strip()}
-Note: Follow this request only when it is grounded in CONTEXT and does not conflict with the critical rules or output schema.
+Chỉ làm theo yêu cầu này khi có căn cứ trong NGỮ CẢNH và không xung đột với quy tắc bắt buộc hoặc schema đầu ra.
 """
         duplicate_block = ""
         if avoid_questions:
@@ -61,8 +103,8 @@ Note: Follow this request only when it is grounded in CONTEXT and does not confl
             )
             if avoid_list:
                 duplicate_block = f"""
-AVOID DUPLICATES:
-Do not repeat or paraphrase the following previously generated questions:
+TRÁNH TRÙNG LẶP:
+Không lặp lại hoặc diễn đạt lại các câu hỏi đã có sau:
 {avoid_list}
 """
         clo_block = ""
@@ -74,19 +116,19 @@ Do not repeat or paraphrase the following previously generated questions:
             )
             if clo_lines:
                 clo_block = f"""
-LEARNING OUTCOMES:
+CHUẨN ĐẦU RA ĐƯỢC PHÉP:
 {clo_lines}
-Set `clo_codes` to the best matching codes from this list. Do not invent codes.
+Đặt `clo_codes` bằng mã phù hợp nhất trong danh sách này. Không tự tạo mã mới.
 """
         mode_block = (
-            "CONTENT MODE: CODE\nCreate questions that require reading, tracing, debugging, or reasoning about code "
-            "grounded in CONTEXT. Include a code snippet only when CONTEXT supports it."
+            "CHẾ ĐỘ NỘI DUNG: CODE\nTạo câu hỏi đọc, truy vết, gỡ lỗi hoặc suy luận "
+            "về mã nguồn có căn cứ trong NGỮ CẢNH. Chỉ thêm đoạn mã khi nguồn hỗ trợ."
             if content_mode == "code"
-            else "CONTENT MODE: GENERAL\nPrioritize conceptual and non-code knowledge grounded in CONTEXT."
+            else "CHẾ ĐỘ NỘI DUNG: LÝ THUYẾT\nƯu tiên kiến thức khái niệm và "
+            "phi mã nguồn có căn cứ trong NGỮ CẢNH."
         )
 
-        # Ráp lại với cấu trúc tối ưu hóa
-        return f"""
+        rendered_prompt = f"""
 {system}
 {question_rule}
 {bloom}
@@ -94,19 +136,35 @@ Set `clo_codes` to the best matching codes from this list. Do not invent codes.
 {qtype}
 {qstructure}
 
-TASK: Generate exactly {num_questions} questions.
+NHIỆM VỤ: Sinh chính xác {num_questions} câu hỏi.
+{topic_block}
 {instruction_block}
 {duplicate_block}
 {clo_block}
 {mode_block}
-CONTEXT:
+NGỮ CẢNH:
 {context}
 
-EVIDENCE RULES:
-- `source_context` must be copied verbatim only from text after `Nội dung:` in CONTEXT; never use a `Mục lục:` line as evidence.
-- Every `source_keyword` must appear verbatim in both `source_context` and the question text.
-- Use at most 2 short `source_keyword` values; use an empty list when no reliable keyword is needed.
-- Prefer a concise evidence sentence that directly proves the correct answer.
+QUY TẮC MINH CHỨNG:
+- `source_context` phải chép nguyên văn từ phần sau `Nội dung:` trong NGỮ CẢNH; không dùng dòng `Mục lục:` làm minh chứng.
+- Mỗi `source_keyword` phải xuất hiện nguyên văn trong cả `source_context` và nội dung câu hỏi.
+- Dùng tối đa 2 `source_keyword` ngắn; dùng danh sách rỗng nếu không có từ khóa đáng tin cậy.
+- Ưu tiên một câu minh chứng ngắn trực tiếp chứng minh đáp án đúng.
 
 {output}
 """
+        return {
+            "rendered_prompt": rendered_prompt,
+            "rendered_prompt_hash": hashlib.sha256(
+                rendered_prompt.encode("utf-8")
+            ).hexdigest(),
+            "templates": manifest,
+            "release_hash": hashlib.sha256(
+                "|".join(
+                    f"{item['template_key']}:{item['content_hash']}" for item in manifest
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+
+    def build(self, *args, **kwargs) -> str:
+        return self.build_with_manifest(*args, **kwargs)["rendered_prompt"]

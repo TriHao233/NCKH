@@ -111,6 +111,9 @@ def update_document_status(
                             "current_processing.processing_revision_id": revision_id,
                             "current_processing.pending_ocr_job_id": None,
                             "current_processing.pending_processing_revision_id": None,
+                            "current_processing.chunk_set_id": None,
+                            "current_processing.vector_collection_id": None,
+                            "current_processing.index_manifest_id": None,
                             "updated_at": now,
                         }
                     },

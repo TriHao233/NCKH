@@ -20,6 +20,8 @@ def utc_now() -> datetime:
 
 def provider_concurrency_group(provider_code: str) -> str:
     normalized = provider_code.strip().lower()
+    if normalized.startswith("gpu:") or normalized.startswith("runtime:"):
+        return normalized
     if normalized == "gemini":
         return "gemini"
     if normalized in {"qwen", "deepseek", "deepseek-r1", "deepseek-r1:8b"} or normalized.startswith(
@@ -32,7 +34,7 @@ def provider_concurrency_group(provider_code: str) -> str:
 def provider_concurrency_limit(group: str) -> int:
     if group == "gemini":
         configured = settings.gemini_max_concurrency
-    elif group == "ollama":
+    elif group in {"ollama", "gpu:local_inference"}:
         configured = settings.ollama_max_concurrency
     else:
         configured = 1

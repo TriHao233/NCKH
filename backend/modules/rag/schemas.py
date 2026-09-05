@@ -105,6 +105,12 @@ class DocumentChunkRequest(BaseModel):
     buffer_max_pages: int = Field(default=settings.chunk_buffer_max_pages, ge=1, le=200)
     buffer_max_chars: int = Field(default=settings.chunk_buffer_max_chars, ge=1000, le=2000000)
     max_code_block_lines: int = Field(default=settings.max_code_block_lines, ge=10, le=500)
+    chunk_token_budget: int = Field(
+        default=settings.chunk_token_budget_default,
+        ge=64,
+        le=2048,
+        description="Soft token budget; protected code/table/formula blocks are never truncated.",
+    )
     dry_run: bool = Field(default=False, description="Skip embedding and storage")
 
 
@@ -117,3 +123,14 @@ class DocumentChunkResponse(BaseModel):
     total_chunks: int
     stored_chunks: int
     stats: ChunkingStats
+
+
+class IndexRollbackRequest(BaseModel):
+    expected_manifest_id: str = Field(..., min_length=24, max_length=24)
+
+
+class IndexRollbackResponse(BaseModel):
+    document_id: str
+    active_manifest_id: str
+    vector_collection_id: str
+    rolled_back_manifest_id: str

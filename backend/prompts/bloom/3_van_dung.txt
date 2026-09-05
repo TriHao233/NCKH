@@ -3,6 +3,6 @@ MỨC BLOOM: van_dung - Vận dụng
 
 YÊU CẦU:
 1. Đặt kiến thức vào một điều kiện, bài toán hoặc tình huống cụ thể.
-2. Người học phải chọn cách áp dụng đúng quy tắc, phương pháp, cú pháp, công thức hoặc quy trình từ CONTEXT.
-3. Có thể thay đổi bề mặt tình huống, nhưng nguyên tắc cần áp dụng phải bám CONTEXT.
+2. Người học phải chọn cách áp dụng đúng quy tắc, phương pháp, cú pháp, công thức hoặc quy trình từ NGỮ CẢNH.
+3. Có thể thay đổi bề mặt tình huống, nhưng nguyên tắc cần áp dụng phải bám NGỮ CẢNH.
 4. Đáp án đúng thể hiện việc biết làm gì tiếp theo, dùng quy tắc nào, hoặc kết quả nào phát sinh khi áp dụng kiến thức.

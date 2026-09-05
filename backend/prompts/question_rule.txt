@@ -1,4 +1,4 @@
-QUESTION RULES
+QUY TẮC CÂU HỎI
 
 KHÔNG TẠO CÂU HỎI NẾU:
 1. Hỏi về hình thức học liệu: chương, mục, trang, thứ tự, tên file, bố cục, màu sắc, font chữ.
@@ -7,14 +7,14 @@ KHÔNG TẠO CÂU HỎI NẾU:
 4. Phụ thuộc vào ngữ cảnh bên ngoài câu hỏi như "ở trên", "đã nêu", "ví dụ trước", "hình bên dưới". Mỗi câu phải tự đứng độc lập.
 5. Thiếu dữ kiện, mơ hồ, có nhiều cách hiểu hoặc không xác định được một đáp án đúng rõ ràng.
 6. Dài dòng, lan man, tình huống vô lý, mang tính đánh đố hoặc không phù hợp văn phong học thuật.
-7. Sử dụng công nghệ, ngôn ngữ lập trình, ví dụ hoặc dữ kiện không có trong CONTEXT.
+7. Sử dụng công nghệ, ngôn ngữ lập trình, ví dụ hoặc dữ kiện không có trong NGỮ CẢNH.
 8. Với câu hỏi một đáp án đúng: có nhiều đáp án đúng, lựa chọn trùng nghĩa hoặc phương án nhiễu vô lý/quá dễ loại.
 
 YÊU CẦU:
 - Ngắn gọn, rõ ràng, tự đủ nghĩa.
 - Có giá trị kiểm tra kiến thức chuyên môn.
-- Phù hợp chủ đề và phạm vi CONTEXT.
-- Không suy diễn hoặc bổ sung kiến thức ngoài CONTEXT.
+- Phù hợp chủ đề và phạm vi NGỮ CẢNH.
+- Không suy diễn hoặc bổ sung kiến thức ngoài NGỮ CẢNH.
 - Mức độ câu hỏi phải phù hợp với năng lực nhận thức cần đánh giá.
 
 Nếu vi phạm bất kỳ quy tắc nào, hãy thay bằng câu hỏi khác phù hợp hơn.

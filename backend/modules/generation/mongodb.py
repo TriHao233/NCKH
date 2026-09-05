@@ -112,8 +112,10 @@ def create_generation_run(
     request_snapshot: dict,
     model_snapshot: dict,
     rendered_prompt: str,
+    prompt_manifest: dict,
     context_text: str,
     retrieval_results: list[dict],
+    retrieval_trace: dict,
     chunk_set_id: str,
     vector_collection_id: str,
 ) -> str:
@@ -134,7 +136,7 @@ def create_generation_run(
         {
             "_id": chunk_set_oid,
             "document_id": document_oid,
-            "status": "COMPLETED",
+            "status": {"$in": ["ACTIVE", "COMPLETED"]},
         },
         {"_id": 1},
     ):
@@ -158,17 +160,22 @@ def create_generation_run(
         "document_version": document.get("current_version", 1),
         "chunk_set_id": chunk_set_oid,
         "vector_collection_id": vector_collection_oid,
+        "processing_revision_id": (document.get("current_processing") or {}).get(
+            "processing_revision_id"
+        ),
         "subject": {"id": document.get("subject_id")},
         "chapter": {"id": document.get("chapter_id")},
         "request": request_snapshot,
         "model": model_snapshot,
-        "prompts": [],
+        "prompts": prompt_manifest.get("templates") or [],
+        "prompt_release_hash": prompt_manifest.get("release_hash"),
         "rendered_prompt": rendered_prompt,
         "rendered_prompt_hash": hashlib.sha256(rendered_prompt.encode("utf-8")).hexdigest(),
         "retrieval": {
             "context_hash": hashlib.sha256(context_text.encode("utf-8")).hexdigest(),
             "context_excerpt": context_text[:4000],
             "results": retrieval_results,
+            "trace": retrieval_trace,
         },
         "execution": {
             "attempt_no": 1,

@@ -16,7 +16,12 @@ from core.database import get_database, mongo_transaction
 from core.bootstrap import SCHEMA_VERSION
 from modules.documents.repository import MongoDocumentRepository
 from modules.documents.worker import process_document_job_background
-from modules.rag.mongodb import start_chunk_set
+from modules.rag.mongodb import (
+    activate_reindex_manifest,
+    embedding_model_manifest,
+    rollback_index_manifest,
+    start_chunk_set,
+)
 from scripts.database.backfill_document_processing_revisions import backfill
 from modules.generation.mongodb import claim_generation_job
 from modules.generation.llm.concurrency import _release_slot, _try_acquire_slot
@@ -36,6 +41,9 @@ class MongoReplicaSetIntegrationTests(unittest.TestCase):
         self.db.integration_transactions.delete_many({"test_marker": "codex-integration"})
         self.db.llm_slots.delete_many({"provider": "integration-provider"})
         if self.document_ids:
+            self.db.index_manifests.delete_many(
+                {"document_id": {"$in": self.document_ids}}
+            )
             chunk_sets = list(
                 self.db.chunk_sets.find({"document_id": {"$in": self.document_ids}}, {"_id": 1})
             )
@@ -422,6 +430,83 @@ class MongoReplicaSetIntegrationTests(unittest.TestCase):
         self.assertEqual(chunk_set["status"], "ACTIVE")
         self.assertEqual(document["status"], "READY")
         self.assertEqual(document["current_processing"]["chunk_set_id"], ObjectId(chunk_set_id))
+        self.assertIsNotNone(document["current_processing"].get("index_manifest_id"))
+
+        first_manifest_id = document["current_processing"]["index_manifest_id"]
+        first_vector_id = document["current_processing"]["vector_collection_id"]
+        second_collection_name = f"{collection_name}_candidate"
+        self.vector_collection_names.append(second_collection_name)
+        second_vector_id = ObjectId()
+        model_manifest = embedding_model_manifest(second_collection_name)
+        self.db.vector_collections.insert_one(
+            {
+                "_id": second_vector_id,
+                "schema_version": SCHEMA_VERSION,
+                "provider": "CHROMA",
+                "collection_name": second_collection_name,
+                "persist_uri": "integration",
+                "embedding_model": {
+                    "provider": model_manifest["provider"],
+                    "model_name": model_manifest["model_name"],
+                    "normalize_embeddings": True,
+                },
+                "embedding_model_digest": model_manifest["model_digest"],
+                "distance_metric": "COSINE",
+                "is_active": True,
+                "created_at": now,
+            }
+        )
+        chunks = list(
+            self.db.document_chunks.find({"chunk_set_id": ObjectId(chunk_set_id)})
+        )
+        self.db.chunk_embeddings.insert_many(
+            [
+                {
+                    "_id": ObjectId(),
+                    "schema_version": SCHEMA_VERSION,
+                    "chunk_id": chunk["_id"],
+                    "chunk_set_id": ObjectId(chunk_set_id),
+                    "vector_collection_id": second_vector_id,
+                    "external_vector_id": f"{chunk['_id']}:{second_vector_id}",
+                    "chunk_content_hash": chunk["content_hash"],
+                    "embedding_content_hash": chunk["content_hash"],
+                    "status": "INDEXED",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for chunk in chunks
+            ]
+        )
+        index_job_id = ObjectId()
+        self.db.document_jobs.insert_one(
+            {
+                "_id": index_job_id,
+                "schema_version": SCHEMA_VERSION,
+                "document_id": document_id,
+                "job_type": "INDEX",
+                "status": "PROCESSING",
+                "worker_id": "index-worker",
+                "fencing_token": 3,
+                "created_at": now,
+            }
+        )
+        reindex_manifest_id = activate_reindex_manifest(
+            str(document_id),
+            str(index_job_id),
+            chunk_set_id,
+            str(second_vector_id),
+            expected_vector_collection_id=first_vector_id,
+            chunk_count=len(chunks),
+            worker_id="index-worker",
+            fencing_token=3,
+        )
+        rollback = rollback_index_manifest(str(document_id), reindex_manifest_id)
+        rolled_back_document = self.db.documents.find_one({"_id": document_id})
+        self.assertEqual(rollback["active_manifest_id"], str(first_manifest_id))
+        self.assertEqual(
+            rolled_back_document["current_processing"]["vector_collection_id"],
+            first_vector_id,
+        )
 
 
 if __name__ == "__main__":

@@ -23,12 +23,14 @@ RAG_COLLECTIONS = (
     "document_chunks",
     "vector_collections",
     "chunk_embeddings",
+    "index_manifests",
     "keywords",
     "ai_models",
     "prompt_templates",
     "evaluation_policies",
     "generation_jobs",
     "generation_runs",
+    "retrieval_benchmarks",
     "questions",
     "question_versions",
     "evaluation_jobs",
@@ -561,6 +563,18 @@ def _ensure_indexes() -> None:
             ),
         ]
     )
+    rag_db.index_manifests.create_indexes(
+        [
+            IndexModel(
+                [("document_id", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_index_manifest_document",
+            ),
+            IndexModel(
+                [("document_id", ASCENDING), ("status", ASCENDING)],
+                name="ix_index_manifest_status",
+            ),
+        ]
+    )
     rag_db.generation_jobs.create_indexes(
         [
             IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
@@ -593,6 +607,10 @@ def _ensure_indexes() -> None:
             IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
             IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"),
         ]
+    )
+    rag_db.retrieval_benchmarks.create_index(
+        [("created_at", DESCENDING)],
+        name="ix_retrieval_benchmark_created",
     )
     rag_db.questions.create_indexes(
         [

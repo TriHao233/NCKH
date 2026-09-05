@@ -76,6 +76,13 @@ These cannot be inferred from source code and block only the dependent stage, no
   validation. The code-level suite passed 189 tests plus 9 isolated replica-set
   integration tests; frontend passed 46 tests, lint and production build. T01–T03 on the
   licensed CTDL corpus remain external evidence and are not claimed by this technical gate.
+- Gate D — retrieval and prompt/model release: **IMPLEMENTED, pending licensed-corpus
+  benchmark on 2026-09-06**. Independent dense/lexical retrieval, hard chapter scope,
+  token-budgeted context, retrieval traces, index switch/rollback manifests, strict prompt
+  releases, prompt preview, local model roles and structured output are covered by 197 backend
+  tests plus 9 replica-set integration tests; frontend passed 46 tests, lint and build. G4 recall@5
+  remains unclaimed until the licensed, expert-labelled CTDL query set is supplied and the
+  reproducible benchmark report meets the predefined 0.85 target.
 - Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
   produced one membership on first apply and zero changes on the second apply, with no
   duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.

@@ -7,13 +7,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from core.config import settings
-from core.dependencies import CurrentUser, has_permission, require_teacher_or_admin
+from core.dependencies import CurrentUser, has_permission, require_admin, require_teacher_or_admin
 from core.job_worker import maintain_lease
 from modules.documents.service import DocumentService, get_document_service
 from modules.generation.mongodb import (
     claim_generation_job,
     count_active_generation_jobs,
     create_generation_job,
+    get_document_learning_outcomes,
     get_generation_job,
     get_generation_job_by_idempotency,
     heartbeat_generation_job,
@@ -21,14 +22,23 @@ from modules.generation.mongodb import (
     update_generation_job,
     update_generation_progress,
 )
-from modules.generation.question import generate_questions_rag
-from modules.generation.llm.model_registry import GENERATION_CAPABILITY, resolve_model_snapshot
+from modules.generation.question import _content_mode, generate_questions_rag
+from modules.generation.llm.model_registry import (
+    CODE_GENERATION_ROLE,
+    GENERAL_GENERATION_ROLE,
+    GENERATION_CAPABILITY,
+    bind_model_role,
+    resolve_model_snapshot,
+)
+from modules.generation.prompt_builder import PromptBuilder
+from modules.rag.search import get_context_snapshot
 from modules.generation.schemas import (
     GenerationJobStatus,
     GenerationJobStatusResponse,
     GenerationPlanSummary,
     GeneratedQuestion,
     JobAcceptedResponse,
+    PromptPreviewResponse,
     QuestionGenerateRequest,
 )
 
@@ -205,26 +215,35 @@ async def api_generate_questions(
             headers={"Retry-After": "15"},
         )
     try:
-        model_snapshot = await asyncio.to_thread(
-            resolve_model_snapshot,
-            req.model_provider,
-            capability=GENERATION_CAPABILITY,
+        model_snapshot = bind_model_role(
+            await asyncio.to_thread(
+                resolve_model_snapshot,
+                req.model_provider,
+                capability=GENERATION_CAPABILITY,
+            ),
+            GENERAL_GENERATION_ROLE,
         )
         code_model_snapshot = (
-            model_snapshot
+            bind_model_role(model_snapshot, CODE_GENERATION_ROLE)
             if req.code_model_provider == req.model_provider
-            else await asyncio.to_thread(
-                resolve_model_snapshot,
-                req.code_model_provider,
-                capability=GENERATION_CAPABILITY,
+            else bind_model_role(
+                await asyncio.to_thread(
+                    resolve_model_snapshot,
+                    req.code_model_provider,
+                    capability=GENERATION_CAPABILITY,
+                ),
+                CODE_GENERATION_ROLE,
             )
         )
         fallback_snapshot = None
         if settings.generation_fallback_provider:
-            fallback_snapshot = await asyncio.to_thread(
-                resolve_model_snapshot,
-                settings.generation_fallback_provider,
-                capability=GENERATION_CAPABILITY,
+            fallback_snapshot = bind_model_role(
+                await asyncio.to_thread(
+                    resolve_model_snapshot,
+                    settings.generation_fallback_provider,
+                    capability=GENERATION_CAPABILITY,
+                ),
+                GENERAL_GENERATION_ROLE,
             )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -243,6 +262,72 @@ async def api_generate_questions(
         status=GenerationJobStatus.QUEUED,
         message="Yêu cầu sinh câu hỏi đã được đưa vào hàng đợi.",
     )
+
+
+@router.post(
+    "/prompt-preview",
+    response_model=PromptPreviewResponse,
+    summary="Xem prompt đã render và manifest release (Admin)",
+)
+async def preview_generation_prompt(
+    req: QuestionGenerateRequest,
+    _current_user: CurrentUser = Depends(require_admin),
+    document_service: DocumentService = Depends(get_document_service),
+):
+    try:
+        document_service.get(req.document_id, _current_user)
+        context_snapshot = await asyncio.to_thread(
+            get_context_snapshot,
+            document_id=req.document_id,
+            collection_name=req.collection_name,
+            target_heading=req.target_heading,
+            query_text=" ".join(part for part in (req.topic, req.instruction) if part),
+            limit=req.retrieval_limit,
+            retrieval_mode=req.retrieval_mode,
+            context_token_budget=req.context_token_budget,
+        )
+        outcomes = await asyncio.to_thread(get_document_learning_outcomes, req.document_id)
+        if req.clo_codes:
+            selected_codes = set(req.clo_codes)
+            outcomes = [
+                item
+                for item in outcomes
+                if str(item.get("clo_code") or "").upper() in selected_codes
+            ]
+            found_codes = {
+                str(item.get("clo_code") or "").upper() for item in outcomes
+            }
+            missing_codes = sorted(selected_codes - found_codes)
+            if missing_codes:
+                raise ValueError(
+                    "CLO_NOT_IN_DOCUMENT_SUBJECT: " + ", ".join(missing_codes)
+                )
+        plan_item = req.effective_plan()[0]
+        bloom = plan_item.bloom_level or req.bloom_level
+        prompt_release = PromptBuilder().build_with_manifest(
+            context=context_snapshot["context_text"],
+            bloom_level=bloom.value,
+            question_type=plan_item.question_type.value,
+            num_questions=plan_item.num_questions,
+            instruction=req.instruction,
+            topic=req.topic,
+            learning_outcomes=outcomes,
+            content_mode=_content_mode(
+                plan_item,
+                context_snapshot["context_text"],
+                req.instruction,
+            ),
+        )
+        return PromptPreviewResponse(
+            **prompt_release,
+            retrieval_trace=context_snapshot.get("trace") or {},
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get(
@@ -291,6 +376,9 @@ def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
             "name": snapshot.get("display_name") or snapshot.get("model_name"),
             "version": snapshot.get("model_name"),
             "runtime": snapshot.get("runtime"),
+            "logical_role": snapshot.get("logical_role"),
+            "digest": snapshot.get("model_digest"),
+            "resource_profile": snapshot.get("resource_profile"),
         }
 
     if job["status"] == GenerationJobStatus.FAILED.value and job.get("error_message"):

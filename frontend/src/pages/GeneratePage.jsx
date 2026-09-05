@@ -138,6 +138,8 @@ function presetApiPayload(preset) {
     })),
     instruction: String(preset.instruction || '').trim(),
     targetHeading: preset.targetHeading || null,
+    topic: String(preset.topic || '').trim(),
+    cloCodes: Array.isArray(preset.cloCodes) ? preset.cloCodes : [],
   };
 }
 
@@ -256,6 +258,8 @@ function GeneratePage() {
   const [presetError, setPresetError] = useState('');
   const [teacherInstruction, setTeacherInstruction] = useState('');
   const [targetHeading, setTargetHeading] = useState('');
+  const [topic, setTopic] = useState('');
+  const [selectedCloCodes, setSelectedCloCodes] = useState([]);
   const [availableModels, setAvailableModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState('');
@@ -292,6 +296,15 @@ function GeneratePage() {
   const selectedDocumentSubjectName = selectedDocument
     ? subjects.find((item) => (item.id || item._id) === selectedDocument.subject_id)?.subject_name
     : null;
+  const generationSubjectId = sourceMode === 'upload'
+    ? selectedSubjectId
+    : selectedDocument?.subject_id;
+  const generationSubject = subjects.find(
+    (item) => (item.id || item._id) === generationSubjectId,
+  );
+  const availableClos = (generationSubject?.learning_outcomes || []).filter(
+    (item) => item.is_active !== false && item.clo_code,
+  );
   const selectedModel = availableModels.find((model) => model.code === selectedModelCode);
   const draftPageCount = Math.max(1, Math.ceil(drafts.length / DRAFTS_PER_PAGE));
   const safeDraftPage = Math.min(draftPage, draftPageCount - 1);
@@ -440,6 +453,15 @@ function GeneratePage() {
     syncGenerationPresets();
   }, []);
 
+  useEffect(() => {
+    const allowedCodes = new Set(
+      (generationSubject?.learning_outcomes || [])
+        .filter((item) => item.is_active !== false)
+        .map((item) => item.clo_code),
+    );
+    setSelectedCloCodes((current) => current.filter((code) => allowedCodes.has(code)));
+  }, [generationSubjectId, generationSubject]);
+
   const validateForm = () => {
     if (sourceMode === 'upload') {
       if (!file) return 'Vui lòng chọn file PDF hoặc DOCX';
@@ -481,6 +503,8 @@ function GeneratePage() {
     setPlanItems((preset.planItems || []).map((item) => createPlanItem(item)));
     setTeacherInstruction(presetInstructionValue(preset));
     setTargetHeading(String(preset.targetHeading || ''));
+    setTopic(String(preset.topic || ''));
+    setSelectedCloCodes(Array.isArray(preset.cloCodes) ? preset.cloCodes : []);
     setError('');
     setStatusDetail(`Đã áp dụng mẫu "${preset.name}"`);
   };
@@ -514,6 +538,8 @@ function GeneratePage() {
       })),
       instruction: teacherInstruction.trim(),
       targetHeading: targetHeading.trim() || null,
+      topic: topic.trim(),
+      cloCodes: selectedCloCodes,
     };
     try {
       const nextPreset = await saveGenerationPreset(presetPayload);
@@ -917,6 +943,8 @@ function GeneratePage() {
       questionPlan,
       teacherInstruction,
       targetHeading,
+      topic,
+      cloCodes: selectedCloCodes,
       sourceMode,
       modelProvider: selectedModelCode,
       timings: timingRef.current,
@@ -1029,7 +1057,10 @@ function GeneratePage() {
     } catch (err) {
       if (err.name === 'AbortError') return;
       setPhase('failed');
-      setError(err.message || 'Đã xảy ra lỗi');
+      const message = err.message || 'Đã xảy ra lỗi';
+      setError(message.includes('INSUFFICIENT_EVIDENCE')
+        ? 'Không tìm thấy đủ nguồn trong đúng chương/chủ đề đã chọn. Hãy kiểm tra tên mục, mở rộng chủ đề hoặc chọn tài liệu khác.'
+        : message);
       setStatusDetail('');
     }
   };
@@ -1478,7 +1509,7 @@ function GeneratePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Chương hoặc mục cần tập trung</label>
+              <label className="field-label">Giới hạn chương hoặc mục</label>
               <input
                 className="field-input"
                 value={targetHeading}
@@ -1487,10 +1518,47 @@ function GeneratePage() {
                 placeholder="Ví dụ: Cây nhị phân tìm kiếm"
                 onChange={(e) => setTargetHeading(e.target.value)}
               />
+              <p className="source-note">Khi nhập, retrieval chỉ dùng evidence thuộc đúng chương/mục này.</p>
             </div>
 
             <div className="field-group">
-              <label className="field-label">Yêu cầu sinh câu hỏi</label>
+              <label className="field-label">Chủ đề câu hỏi</label>
+              <input
+                className="field-input"
+                value={topic}
+                disabled={isBusy}
+                maxLength="300"
+                placeholder="Ví dụ: thao tác enqueue/dequeue và độ phức tạp"
+                onChange={(e) => setTopic(e.target.value)}
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Chuẩn đầu ra (CLO)</label>
+              <select
+                className="field-select gen-clo-select"
+                multiple
+                value={selectedCloCodes}
+                disabled={isBusy || availableClos.length === 0}
+                onChange={(event) => setSelectedCloCodes(
+                  Array.from(event.target.selectedOptions, (option) => option.value),
+                )}
+              >
+                {availableClos.map((clo) => (
+                  <option key={clo._id || clo.id || clo.clo_code} value={clo.clo_code}>
+                    {clo.clo_code} · {clo.description}
+                  </option>
+                ))}
+              </select>
+              <p className="source-note">
+                {availableClos.length > 0
+                  ? 'Giữ Ctrl/Cmd để chọn nhiều CLO; bỏ trống để hệ thống gợi ý trong phạm vi học phần.'
+                  : 'Học phần chưa có CLO đang hoạt động.'}
+              </p>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Chỉ dẫn bổ sung</label>
               <textarea
                 className="field-textarea"
                 rows="4"
@@ -1816,6 +1884,8 @@ function GeneratePage() {
 
             <div className="preset-dialog-context">
               <span><b>Chương/mục:</b> {targetHeading.trim() || 'Toàn bộ tài liệu'}</span>
+              <span><b>Chủ đề:</b> {topic.trim() || 'Không giới hạn thêm'}</span>
+              <span><b>CLO:</b> {selectedCloCodes.join(', ') || 'Hệ thống gợi ý'}</span>
               <span><b>Yêu cầu sinh câu hỏi:</b> {teacherInstruction.trim() || 'Chưa nhập'}</span>
             </div>
 

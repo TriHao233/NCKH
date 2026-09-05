@@ -160,6 +160,8 @@ class GenerationPresetPayload(BaseModel):
     planItems: list[GenerationPresetPlanItem] = Field(..., min_length=1, max_length=10)
     instruction: str = Field("", max_length=1200)
     targetHeading: Optional[str] = Field(None, max_length=300)
+    topic: str = Field("", max_length=300)
+    cloCodes: list[str] = Field(default_factory=list, max_length=10)
 
 
 class GenerationPresetResponse(GenerationPresetPayload):

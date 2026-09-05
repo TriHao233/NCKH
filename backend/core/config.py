@@ -146,6 +146,13 @@ class Settings(BaseModel):
     chunk_buffer_max_pages: int = int(os.getenv("CHUNK_BUFFER_MAX_PAGES", "30"))
     chunk_buffer_max_chars: int = int(os.getenv("CHUNK_BUFFER_MAX_CHARS", "200000"))
     max_code_block_lines: int = int(os.getenv("MAX_CODE_BLOCK_LINES", "50"))
+    chunk_token_budget_default: int = int(os.getenv("CHUNK_TOKEN_BUDGET_DEFAULT", "384"))
+    retrieval_context_token_budget: int = int(
+        os.getenv("RETRIEVAL_CONTEXT_TOKEN_BUDGET", "2200")
+    )
+    retrieval_lexical_candidate_limit: int = int(
+        os.getenv("RETRIEVAL_LEXICAL_CANDIDATE_LIMIT", "500")
+    )
 
     pdf_max_pages: int = int(os.getenv("PDF_MAX_PAGES", "500"))
     pdf_render_timeout_seconds: int = int(os.getenv("PDF_RENDER_TIMEOUT_SECONDS", "120"))
@@ -159,6 +166,9 @@ class Settings(BaseModel):
     chromadb_collection_name: str = os.getenv("CHROMADB_COLLECTION_NAME", "chunks")
     chromadb_batch_size: int = int(os.getenv("CHROMADB_BATCH_SIZE", "50"))
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+    gpu_scheduling_profile: str = os.getenv(
+        "GPU_SCHEDULING_PROFILE", "single_local_inference"
+    ).strip()
 
     chromadb_path: str = os.getenv("CHROMADB_PATH", "./data/chroma_data")
     output_dir: str = os.getenv("OUTPUT_DIR", "./data/outputs")

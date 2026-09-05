@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from typing import Any
 from urllib.parse import urlparse
@@ -9,11 +11,63 @@ from core.database import get_database
 
 GENERATION_CAPABILITY = "QUESTION_GENERATION"
 EVALUATION_CAPABILITY = "QUESTION_EVALUATION"
+GENERAL_GENERATION_ROLE = "GENERATION_GENERAL"
+CODE_GENERATION_ROLE = "GENERATION_CODE"
+EVALUATION_ROLE = "EVALUATION"
+MODEL_ROLES = {GENERAL_GENERATION_ROLE, CODE_GENERATION_ROLE, EVALUATION_ROLE}
+
+
+def _finalize_snapshot(snapshot: dict) -> dict:
+    finalized = dict(snapshot)
+    runtime = str(finalized.get("runtime") or "").upper()
+    finalized["resource_profile"] = {
+        "scheduler": settings.gpu_scheduling_profile,
+        "group": "gpu:local_inference" if runtime == "OLLAMA" else f"runtime:{runtime.lower()}",
+    }
+    digest_payload = {
+        key: value
+        for key, value in finalized.items()
+        if key not in {"catalog_id", "display_name", "description", "model_digest"}
+    }
+    finalized["model_digest"] = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return finalized
+
+
+def bind_model_role(snapshot: dict, role: str) -> dict:
+    normalized_role = str(role or "").strip().upper()
+    if normalized_role not in MODEL_ROLES:
+        raise ValueError(f"Vai trò model '{role}' chưa được hỗ trợ")
+    return _finalize_snapshot({**snapshot, "logical_role": normalized_role})
+
+
+def resolve_model_role_snapshot(
+    role: str,
+    model_code: str | None = None,
+    *,
+    database=None,
+) -> dict:
+    normalized_role = str(role or "").strip().upper()
+    defaults = {
+        GENERAL_GENERATION_ROLE: (settings.model_provider, GENERATION_CAPABILITY),
+        CODE_GENERATION_ROLE: (settings.code_generation_model_provider, GENERATION_CAPABILITY),
+        EVALUATION_ROLE: (settings.evaluation_model_provider, EVALUATION_CAPABILITY),
+    }
+    if normalized_role not in defaults:
+        raise ValueError(f"Vai trò model '{role}' chưa được hỗ trợ")
+    default_code, capability = defaults[normalized_role]
+    snapshot = resolve_model_snapshot(
+        model_code or default_code,
+        capability=capability,
+        database=database,
+    )
+    return bind_model_role(snapshot, normalized_role)
 
 
 def enforce_inference_policy(snapshot: dict) -> dict:
     if settings.inference_policy != "LOCAL_ONLY":
-        return snapshot
+        return _finalize_snapshot(snapshot)
     runtime = str(snapshot.get("runtime") or "").upper()
     if runtime != "OLLAMA" or not snapshot.get("is_local", runtime == "OLLAMA"):
         raise ValueError("Profile LOCAL_ONLY chỉ cho phép model Ollama nội bộ")
@@ -23,7 +77,7 @@ def enforce_inference_policy(snapshot: dict) -> dict:
         raise ValueError(
             f"Endpoint model '{host or endpoint}' không thuộc LOCAL_INFERENCE_ALLOWED_HOSTS"
         )
-    return snapshot
+    return _finalize_snapshot(snapshot)
 
 
 def _number(config: dict, key: str, default, *, minimum, maximum):

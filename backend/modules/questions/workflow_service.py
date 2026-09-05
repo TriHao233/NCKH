@@ -24,7 +24,12 @@ from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser, has_permission
 from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_execution_snapshot, get_llm_service
-from modules.generation.llm.model_registry import EVALUATION_CAPABILITY, resolve_model_snapshot
+from modules.generation.llm.model_registry import (
+    EVALUATION_CAPABILITY,
+    EVALUATION_ROLE,
+    bind_model_role,
+    resolve_model_snapshot,
+)
 from modules.generation.prompt_builder import PromptBuilder
 from modules.notifications.service import (
     NotificationService,
@@ -383,17 +388,18 @@ class QuestionWorkflowService:
         loaded = []
         for key, path in specs:
             try:
-                body = PromptBuilder._load_template(key, path)
+                body, resolution = PromptBuilder._load_template(key, path)
             except FileNotFoundError:
                 if key != f"{EVALUATION_TYPE_PROMPT_PREFIX}:{normalized_type}":
                     raise
                 fallback_key = f"{EVALUATION_TYPE_PROMPT_PREFIX}:general"
                 fallback_path = f"{EVALUATION_TYPE_PROMPT_DIR}/general.txt"
-                body = PromptBuilder._load_template(fallback_key, fallback_path)
+                body, resolution = PromptBuilder._load_template(fallback_key, fallback_path)
                 key, path = fallback_key, fallback_path
             parts.append(body)
             loaded.append(
                 {
+                    **resolution,
                     "template_key": key,
                     "template_path": path,
                     "template_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
@@ -1142,6 +1148,7 @@ class QuestionWorkflowService:
                     capability=EVALUATION_CAPABILITY,
                     database=self.db,
                 )
+                model_snapshot = bind_model_role(model_snapshot, EVALUATION_ROLE)
                 model_snapshot = _limit_evaluation_output(model_snapshot)
                 llm = get_llm_service(evaluator_code, model_snapshot=model_snapshot)
                 policy = self._policy()
@@ -1297,12 +1304,18 @@ class QuestionWorkflowService:
             capability=EVALUATION_CAPABILITY,
             database=self.db,
         )
+        model_snapshot = bind_model_role(model_snapshot, EVALUATION_ROLE)
         model_snapshot = _limit_evaluation_output(model_snapshot)
         if settings.evaluation_fallback_provider and fallback_model_snapshot is None:
             fallback_model_snapshot = resolve_model_snapshot(
                 settings.evaluation_fallback_provider,
                 capability=EVALUATION_CAPABILITY,
                 database=self.db,
+            )
+        if fallback_model_snapshot:
+            fallback_model_snapshot = bind_model_role(
+                fallback_model_snapshot,
+                EVALUATION_ROLE,
             )
         fallback_model_snapshot = _limit_evaluation_output(fallback_model_snapshot)
         if question.get("evaluation_status") == "PASSED":

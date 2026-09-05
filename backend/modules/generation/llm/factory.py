@@ -32,7 +32,10 @@ def _provider_from_snapshot(snapshot: dict) -> LLMProvider:
             temperature=parameters.get("temperature"),
             url=parameters.get("endpoint"),
         )
-        concurrency_code = f"ollama:{snapshot['model_name']}"
+        concurrency_code = (
+            (snapshot.get("resource_profile") or {}).get("group")
+            or f"ollama:{snapshot['model_name']}"
+        )
     elif runtime == "GEMINI":
         provider = GeminiProvider(
             snapshot["model_name"],

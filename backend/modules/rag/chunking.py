@@ -20,15 +20,24 @@ from modules.dictionary.mongodb import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import store_chunks
 from modules.rag.mongodb import (
+    activate_reindex_manifest,
     complete_chunk_set,
+    embedding_model_manifest,
     get_document_record,
     iter_document_pages,
     is_document_job_cancelled,
     persist_chunks,
+    rollback_index_manifest,
     start_chunk_set,
     update_chunking_status,
 )
-from modules.rag.schemas import ChunkingStats, DocumentChunkRequest, DocumentChunkResponse
+from modules.rag.schemas import (
+    ChunkingStats,
+    DocumentChunkRequest,
+    DocumentChunkResponse,
+    IndexRollbackRequest,
+    IndexRollbackResponse,
+)
 
 router = APIRouter(prefix=f"{settings.api_prefix}/chunk", tags=["chunking"])
 logger = logging.getLogger(__name__)
@@ -100,6 +109,28 @@ async def chunk_document(
         raise HTTPException(status_code=500, detail=str(ex)) from ex
 
 
+@router.post(
+    "/document/{document_id}/rollback-index",
+    response_model=IndexRollbackResponse,
+    summary="Rollback to the previous verified embedding index",
+)
+async def rollback_document_index(
+    document_id: str,
+    payload: IndexRollbackRequest,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    document_service: DocumentService = Depends(get_document_service),
+):
+    try:
+        document_service.can_use(document_id, current_user)
+        return rollback_index_manifest(document_id, payload.expected_manifest_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 def _chunk_run_config(config: dict) -> dict:
     return {
         "strategy": config.get("strategy") or "recursive",
@@ -108,6 +139,9 @@ def _chunk_run_config(config: dict) -> dict:
         "buffer_max_pages": int(config.get("buffer_max_pages") or settings.chunk_buffer_max_pages),
         "buffer_max_chars": int(config.get("buffer_max_chars") or settings.chunk_buffer_max_chars),
         "max_code_block_lines": int(config.get("max_code_block_lines") or settings.max_code_block_lines),
+        "chunk_token_budget": int(
+            config.get("chunk_token_budget") or settings.chunk_token_budget_default
+        ),
         "dry_run": bool(config.get("dry_run", False)),
         "collection_name": config.get("collection_name") or settings.chromadb_collection_name,
     }
@@ -183,10 +217,23 @@ def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, st
             sort=[("created_at", -1)],
         )
     if record:
+        if not record.get("embedding_model_digest"):
+            digest = embedding_model_manifest(resolved_collection)["model_digest"]
+            db.vector_collections.update_one(
+                {"_id": record["_id"]},
+                {"$set": {"embedding_model_digest": digest, "updated_at": now}},
+            )
+            record["embedding_model_digest"] = digest
         return record, resolved_collection
     record = db.vector_collections.find_one_and_update(
         {"provider": "CHROMA", "collection_name": resolved_collection},
         {
+            "$set": {
+                "embedding_model_digest": embedding_model_manifest(resolved_collection)[
+                    "model_digest"
+                ],
+                "updated_at": now,
+            },
             "$setOnInsert": {
                 "_id": ObjectId(),
                 "schema_version": SCHEMA_VERSION,
@@ -229,10 +276,18 @@ def _metadata_for_existing_chunk(chunk: dict, vector_id: ObjectId) -> dict:
         "page_start": page_range.get("start"),
         "page_end": page_range.get("end"),
         "page_marks": page_range.get("pages") or [],
+        "parent_section_id": chunk.get("parent_section_id"),
+        "source_processing_revision_id": str(
+            chunk.get("source_processing_revision_id") or ""
+        ),
+        "source_span": chunk.get("source_span") or {},
+        "chapter_key": chunk.get("chapter_key") or "",
         "content_type": chunk.get("content_type", "text"),
         "semantic_type": chunk.get("semantic_type", "theory"),
         "information_density": chunk.get("information_density", 0),
         "token_count": chunk.get("token_count", 0),
+        "token_budget": chunk.get("token_budget"),
+        "token_budget_status": chunk.get("token_budget_status", "UNKNOWN"),
     }
 
 
@@ -363,6 +418,18 @@ def process_document_reindex_background(
             raise RuntimeError(
                 f"INDEX_COVERAGE_MISMATCH expected={len(chunks)} stored={stored_chunks} indexed={indexed_count}"
             )
+        index_manifest_id = activate_reindex_manifest(
+            document_id,
+            index_job_id,
+            str(chunk_set_id),
+            str(vector["_id"]),
+            expected_vector_collection_id=(document.get("current_processing") or {}).get(
+                "vector_collection_id"
+            ),
+            chunk_count=len(chunks),
+            worker_id=worker_id,
+            fencing_token=fencing_token,
+        )
         completed_job = repository.update_job(
             index_job_id,
             "COMPLETED",
@@ -373,6 +440,8 @@ def process_document_reindex_background(
                 "collection_name": resolved_collection,
                 "vector_collection_id": str(vector["_id"]),
                 "embedding_model_name": settings.embedding_model_name,
+                "embedding_model_digest": vector.get("embedding_model_digest"),
+                "index_manifest_id": index_manifest_id,
                 "verified": True,
             },
             expected_worker_id=worker_id,
@@ -380,36 +449,6 @@ def process_document_reindex_background(
         )
         if not completed_job:
             raise RuntimeError("DOCUMENT_JOB_LEASE_LOST")
-        activation = get_database().documents.update_one(
-            {
-                "_id": document["_id"],
-                "archived_at": None,
-                "current_processing.chunk_set_id": object_id(chunk_set_id, "chunk_set_id"),
-            },
-            {
-                "$set": {
-                    "current_processing.vector_collection_id": vector["_id"],
-                    "current_processing.pending_index_job_id": None,
-                    "pipeline_summary.index_status": "COMPLETED",
-                    "status": "READY",
-                    "updated_at": now,
-                }
-            },
-        )
-        if not activation.matched_count:
-            get_database().document_jobs.update_one(
-                {"_id": object_id(index_job_id, "index_job_id")},
-                {
-                    "$set": {
-                        "status": "STALE",
-                        "error": {
-                            "message": "Chunk set changed before index activation",
-                            "at": utc_now(),
-                        },
-                        "finished_at": utc_now(),
-                    }
-                },
-            )
     except Exception as exc:
         logger.exception("Re-index job %s failed", index_job_id)
         repository.update_job(
@@ -447,6 +486,7 @@ def chunk_document_and_store(
     buffer_max_pages: int | None = None,
     buffer_max_chars: int | None = None,
     max_code_block_lines: int | None = None,
+    chunk_token_budget: int | None = None,
     dry_run: bool = False,
 ) -> DocumentChunkResponse:
     doc = get_document_record(document_id)
@@ -461,6 +501,7 @@ def chunk_document_and_store(
             "buffer_max_pages": buffer_max_pages,
             "buffer_max_chars": buffer_max_chars,
             "max_code_block_lines": max_code_block_lines,
+            "chunk_token_budget": chunk_token_budget,
             "dry_run": dry_run,
         }
     )
@@ -476,11 +517,14 @@ def _process_existing_chunk_set(
     worker_id: str | None = None,
     fencing_token: int | None = None,
 ) -> DocumentChunkResponse:
+    # Normalize persisted jobs created before newer chunking options existed.
+    run_config = _chunk_run_config(run_config)
     chunk_size = int(run_config["chunk_size"])
     chunk_overlap = int(run_config["chunk_overlap"])
     resolved_buffer_pages = int(run_config["buffer_max_pages"])
     resolved_buffer_chars = int(run_config["buffer_max_chars"])
     resolved_code_lines = int(run_config["max_code_block_lines"])
+    resolved_token_budget = int(run_config["chunk_token_budget"])
     resolved_collection = run_config["collection_name"]
     dry_run = bool(run_config.get("dry_run", False))
 
@@ -512,9 +556,10 @@ def _process_existing_chunk_set(
             buffer_text,
             document_id,
             chunk_size,
-            chunk_overlap,
-            resolved_code_lines,
-        ):
+                chunk_overlap,
+                resolved_code_lines,
+                resolved_token_budget,
+            ):
             content = chunk["content"]
             metadata = chunk["metadata"]
 
@@ -659,6 +704,11 @@ def _process_existing_chunk_set(
                 export_items,
                 chunk_set_id=chunk_set_id,
                 source_revision_id=str(chunk_set.get("source_processing_revision_id") or "") or None,
+                embedding_manifest=(
+                    embedding_model_manifest(resolved_collection)
+                    if not dry_run
+                    else None
+                ),
             )
             get_database().chunk_sets.update_one(
                 {"_id": object_id(chunk_set_id, "chunk_set_id")},
@@ -733,16 +783,21 @@ def _chunk_buffer(
 	chunk_size: int,
 	chunk_overlap: int,
 	max_code_block_lines: int,
+	token_budget: int | None = None,
 ) -> Iterable[dict]:
 	sections = _split_by_markdown_headers(text)
 	chunk_index = 0
+	resolved_token_budget = max(64, token_budget or settings.chunk_token_budget_default)
 
 	# LẤY TỪ KHÓA ĐỘNG TỪ MONGODB (Chỉ gọi 1 lần cho cả Buffer giúp tối ưu performance)
 	dynamic_keywords = get_active_keywords(course_id="it_fundamentals")
 
-	for section in sections:
+	for section_index, section in enumerate(sections, start=1):
 		masked_text, protected = _mask_blocks(section["content"], max_code_block_lines)
 		parts = _split_recursive(masked_text, chunk_size, chunk_overlap)
+		parent_section_id = hashlib.sha256(
+			f"{document_id}:{section_index}:{section['content']}".encode("utf-8")
+		).hexdigest()[:24]
 
 		for part in parts:
 			restored = _restore_blocks(part, protected)
@@ -753,6 +808,13 @@ def _chunk_buffer(
 
 			chunk_index += 1
 			token_count = _count_tokens(clean_text)
+			budget_status = (
+				"OVERSIZE_PROTECTED"
+				if token_count > resolved_token_budget and _contains_protected_block(clean_text)
+				else "OVER_BUDGET"
+				if token_count > resolved_token_budget
+				else "WITHIN_BUDGET"
+			)
 
 			# TRUYỀN TỪ KHÓA ĐỘNG VÀO HÀM TÍNH DENSITY
 			keyword_hits, density = _information_density(clean_text, token_count, dynamic_keywords)
@@ -771,11 +833,25 @@ def _chunk_buffer(
 				"page_start": page_marks["page_start"],
 				"page_end": page_marks["page_end"],
 				"page_marks": page_marks["pages"],
+				"parent_section_id": parent_section_id,
+				"source_span": {
+					"page_start": page_marks["page_start"],
+					"page_end": page_marks["page_end"],
+					"pages": page_marks["pages"],
+					"heading_path": section["heading_path"],
+				},
+				"chapter_key": (
+					_normalize_heading_meta(section["heading_path"][0])
+					if section["heading_path"]
+					else ""
+				),
 				"content_type": _detect_content_type(clean_text),
 				"semantic_type": semantic,
 				"keyword_hits": keyword_hits,
 				"information_density": density,
 				"token_count": token_count,
+				"token_budget": resolved_token_budget,
+				"token_budget_status": budget_status,
 			}
 
 			chunk_id = _generate_chunk_id(document_id, chunk_index, clean_text)
@@ -813,6 +889,11 @@ def _split_by_markdown_headers(text: str) -> list[dict]:
 		body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
 		body = text[body_start:body_end].strip()
 		content = f"{match.group(0).strip()}\n\n{body}" if body else match.group(0).strip()
+		preceding_markers = list(PAGE_MARKER_PATTERN.finditer(text[: match.start()]))
+		if preceding_markers:
+			marker = preceding_markers[-1].group(0)
+			if marker not in content:
+				content = f"{marker}\n{content}"
 
 		sections.append(
 			{
@@ -1033,6 +1114,15 @@ def _detect_content_type(text: str) -> str:
 	if has_formula:
 		return "formula"
 	return "text"
+
+
+def _contains_protected_block(text: str) -> bool:
+	return bool(
+		"```" in text
+		or "<FORMULA_BLOCK" in text
+		or "$$" in text
+		or TABLE_BLOCK_PATTERN.search(text)
+	)
 
 
 def _detect_semantic_type(text: str, heading: str) -> str:

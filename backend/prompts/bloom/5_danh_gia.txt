@@ -2,8 +2,8 @@ MỨC BLOOM: danh_gia - Đánh giá
 ĐỘNG TỪ TRỌNG TÂM: ĐÁNH GIÁ, NHẬN ĐỊNH, PHÊ BÌNH, BIỆN MINH, LỰA CHỌN, KẾT LUẬN, ĐỀ XUẤT.
 
 YÊU CẦU:
-1. Yêu cầu người học đưa ra phán đoán dựa trên tiêu chí rõ hoặc ngầm có trong CONTEXT.
+1. Yêu cầu người học đưa ra phán đoán dựa trên tiêu chí rõ hoặc ngầm có trong NGỮ CẢNH.
 2. Tiêu chí có thể là tính đúng, hiệu quả, phù hợp, an toàn, giới hạn, rủi ro hoặc đánh đổi.
 3. Câu hỏi phải buộc so sánh lựa chọn/nhận định và giải thích vì sao phương án tốt hơn hoặc yếu hơn.
 4. Không hỏi nhớ, liệt kê, định nghĩa hoặc nhận diện một bước.
-5. Nếu CONTEXT không đủ căn cứ để đánh giá sâu, tạo câu hỏi phán đoán ở mức an toàn hơn nhưng vẫn có tiêu chí.
+5. Nếu NGỮ CẢNH không đủ căn cứ để đánh giá sâu, tạo câu hỏi phán đoán ở mức an toàn hơn nhưng vẫn có tiêu chí.

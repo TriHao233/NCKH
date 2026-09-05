@@ -44,6 +44,23 @@ class QuestionGenerateRequest(BaseModel):
     document_id: str = Field(..., description="ID của giáo trình trong DB")
     collection_name: str = settings.chromadb_collection_name
     target_heading: Optional[str] = Field(None, description="Tên mục lục muốn giới hạn sinh câu hỏi")
+    topic: Optional[str] = Field(
+        None,
+        max_length=300,
+        description="Chủ đề cụ thể, tách khỏi giới hạn chương/mục và chỉ dẫn tự do",
+    )
+    clo_codes: List[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Các mã CLO đã chọn từ catalog của học phần",
+    )
+    retrieval_mode: Literal["hybrid", "dense", "lexical"] = "hybrid"
+    retrieval_limit: int = Field(default=5, ge=1, le=12)
+    context_token_budget: int = Field(
+        default_factory=lambda: settings.retrieval_context_token_budget,
+        ge=128,
+        le=12000,
+    )
     instruction: Optional[str] = Field(
         None,
         max_length=1200,
@@ -69,13 +86,23 @@ class QuestionGenerateRequest(BaseModel):
         description="Timing đo ở frontend trước khi enqueue job sinh câu hỏi",
     )
 
-    @field_validator("instruction")
+    @field_validator("instruction", "topic", "target_heading")
     @classmethod
     def normalize_instruction(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         value = value.strip()
         return value or None
+
+    @field_validator("clo_codes")
+    @classmethod
+    def normalize_clo_codes(cls, value: List[str]) -> List[str]:
+        normalized = []
+        for code in value:
+            item = str(code).strip().upper()
+            if item and item not in normalized:
+                normalized.append(item)
+        return normalized
 
     @model_validator(mode="after")
     def validate_total_questions(self):
@@ -147,6 +174,14 @@ class QuestionGenerateResponse(BaseModel):
     status: str
     data: List[GeneratedQuestion]
     summary: List[GenerationPlanSummary] = Field(default_factory=list)
+
+
+class PromptPreviewResponse(BaseModel):
+    rendered_prompt: str
+    rendered_prompt_hash: str
+    release_hash: str
+    templates: List[dict[str, Any]]
+    retrieval_trace: dict[str, Any]
 
 
 class GenerationJobMetrics(BaseModel):

@@ -5,4 +5,4 @@ YÊU CẦU:
 1. Yêu cầu người học kết hợp nhiều ý, bước, quy tắc hoặc thành phần để tạo một cấu trúc/giải pháp mới.
 2. Sản phẩm mong đợi có thể là kế hoạch, thuật toán, quy trình, thiết kế, phương án cải tiến hoặc giải pháp thay thế.
 3. Câu hỏi phải có ràng buộc đủ rõ để chấm được, không mở quá rộng.
-4. Giải pháp vẫn phải dựa trên nguyên tắc và dữ kiện trong CONTEXT, không phát minh ngoài căn cứ.
+4. Giải pháp vẫn phải dựa trên nguyên tắc và dữ kiện trong NGỮ CẢNH, không phát minh ngoài căn cứ.

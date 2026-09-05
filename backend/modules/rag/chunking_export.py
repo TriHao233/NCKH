@@ -74,6 +74,7 @@ def export_chunks_to_file(
     *,
     chunk_set_id: str | None = None,
     source_revision_id: str | None = None,
+    embedding_manifest: dict | None = None,
 ):
     """
     Xuất JSON metadata vao data/metadata va Markdown vao data/chunk_outputs.
@@ -95,6 +96,7 @@ def export_chunks_to_file(
         "document_id": document_id,
         "chunk_set_id": chunk_set_id,
         "source_processing_revision_id": source_revision_id,
+        "embedding": embedding_manifest or None,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "total_chunks": len(chunks),
         "chunks": chunks
@@ -117,6 +119,13 @@ def export_chunks_to_file(
             f.write(f"- Document ID: {document_id}\n")
             f.write(f"- Chunk Set ID: {chunk_set_id or '-'}\n")
             f.write(f"- Source Revision ID: {source_revision_id or '-'}\n")
+            if embedding_manifest:
+                f.write(
+                    f"- Embedding Model: {embedding_manifest.get('model_name') or '-'}\n"
+                )
+                f.write(
+                    f"- Embedding Digest: {embedding_manifest.get('model_digest') or '-'}\n"
+                )
             f.write(f"- Created (UTC): {timestamp}\n")
             f.write(f"- Total Chunks: {len(chunks)}\n\n")
             f.write("---\n\n")

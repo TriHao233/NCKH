@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import re
 import unicodedata
@@ -125,6 +126,137 @@ def _hybrid_score(doc: str, meta: dict, query_tokens: set[str], vector_rank: int
     return (0.55 * reciprocal_rank) + (0.40 * lexical) + (0.05 * density)
 
 
+def _estimated_tokens(text: str) -> int:
+    return len(re.findall(r"[^\W_]+|[^\s\w]", text or "", flags=re.UNICODE))
+
+
+def _candidate_key(document: str, metadata: dict) -> str:
+    return str(metadata.get("chunk_id") or hashlib.sha256(document.encode("utf-8")).hexdigest())
+
+
+def _mongo_lexical_candidates(chunk_set_id: str, normalized_target: str) -> list[tuple[str, dict]]:
+    try:
+        set_oid = ObjectId(chunk_set_id)
+    except Exception as exc:
+        raise ValueError("Chunk set hiện hành không hợp lệ") from exc
+    query: dict = {"chunk_set_id": set_oid}
+    if normalized_target:
+        target_pattern = re.escape(normalized_target)
+        query["$or"] = [
+            {"heading.normalized": {"$regex": target_pattern, "$options": "i"}},
+            {"heading.title": {"$regex": target_pattern, "$options": "i"}},
+            {"heading.path": {"$regex": target_pattern, "$options": "i"}},
+        ]
+    cursor = get_rag_db().document_chunks.find(
+        query,
+        {
+            "content": 1,
+            "content_hash": 1,
+            "heading": 1,
+            "page_range": 1,
+            "information_density": 1,
+            "token_count": 1,
+            "token_budget_status": 1,
+            "parent_section_id": 1,
+            "source_processing_revision_id": 1,
+            "source_span": 1,
+        },
+    ).sort("chunk_no", 1).limit(max(1, settings.retrieval_lexical_candidate_limit))
+    candidates = []
+    for chunk in cursor:
+        heading = chunk.get("heading") or {}
+        page_range = chunk.get("page_range") or {}
+        metadata = {
+            "chunk_id": str(chunk["_id"]),
+            "chunk_set_id": chunk_set_id,
+            "content_hash": chunk.get("content_hash"),
+            "heading": heading.get("title") or "",
+            "heading_path": heading.get("path") or [],
+            "heading_path_text": " > ".join(heading.get("path") or []),
+            "page_start": page_range.get("start"),
+            "page_end": page_range.get("end"),
+            "information_density": chunk.get("information_density", 0),
+            "token_count": chunk.get("token_count", 0),
+            "token_budget_status": chunk.get("token_budget_status", "UNKNOWN"),
+            "parent_section_id": chunk.get("parent_section_id"),
+            "source_processing_revision_id": str(
+                chunk.get("source_processing_revision_id") or ""
+            ),
+            "source_span": chunk.get("source_span") or {},
+        }
+        if normalized_target and not _heading_matches_target(metadata, normalized_target):
+            continue
+        content = str(chunk.get("content") or "")
+        if content:
+            candidates.append((content, metadata))
+    return candidates
+
+
+def _lexical_rank(
+    candidates: list[tuple[str, dict]], query_tokens: set[str]
+) -> list[tuple[str, dict]]:
+    ranked = []
+    for document, metadata in candidates:
+        document_tokens = _keyword_tokens(f"{_build_heading_label(metadata)} {document}")
+        matched = sorted(query_tokens & document_tokens)
+        if query_tokens and not matched:
+            continue
+        coverage = len(matched) / max(1, len(query_tokens)) if query_tokens else 0.0
+        density = min(1.0, max(0.0, float(metadata.get("information_density", 0) or 0)))
+        score = coverage + (0.05 * density)
+        ranked.append(
+            (
+                document,
+                {
+                    **metadata,
+                    "_lexical_score": score,
+                    "_matched_terms": matched,
+                },
+            )
+        )
+    ranked.sort(
+        key=lambda item: (
+            -float(item[1].get("_lexical_score", 0)),
+            item[1].get("page_start") or 0,
+        )
+    )
+    return ranked
+
+
+def _fuse_candidates(
+    dense: list[tuple[str, dict]],
+    lexical: list[tuple[str, dict]],
+    retrieval_mode: str,
+) -> list[tuple[str, dict]]:
+    fused: dict[str, tuple[str, dict]] = {}
+    branches = []
+    if retrieval_mode in {"hybrid", "dense"}:
+        branches.append(("dense", dense, 0.6 if retrieval_mode == "hybrid" else 1.0))
+    if retrieval_mode in {"hybrid", "lexical"}:
+        branches.append(("lexical", lexical, 0.4 if retrieval_mode == "hybrid" else 1.0))
+    for branch_name, branch, weight in branches:
+        for rank, (document, metadata) in enumerate(branch, start=1):
+            key = _candidate_key(document, metadata)
+            current_document, current = fused.get(key, (document, dict(metadata)))
+            current[f"_{branch_name}_rank"] = rank
+            current[f"_{branch_name}_score"] = metadata.get(f"_{branch_name}_score")
+            current["_matched_terms"] = sorted(
+                set(current.get("_matched_terms") or [])
+                | set(metadata.get("_matched_terms") or [])
+            )
+            current["_fusion_score"] = float(current.get("_fusion_score", 0)) + (
+                weight / (60 + rank)
+            )
+            fused[key] = (current_document, current)
+    return sorted(
+        fused.values(),
+        key=lambda item: (
+            -float(item[1].get("_fusion_score", 0)),
+            item[1].get("page_start") or 0,
+        ),
+    )
+
+
 def get_context_snapshot(
     document_id: str,
     collection_name: str,
@@ -132,105 +264,116 @@ def get_context_snapshot(
     query_text: str = None,
     min_density: float = 0.0,
     limit: int = 5,
+    retrieval_mode: str = "hybrid",
+    context_token_budget: int | None = None,
 ) -> dict:
-    """Truy xuất các chunk từ ChromaDB làm Context cho LLM"""
+    """Retrieve independent dense/lexical branches and fuse them without scope fallback."""
+    if retrieval_mode not in {"hybrid", "dense", "lexical"}:
+        raise ValueError("retrieval_mode phải là hybrid, dense hoặc lexical")
     chunk_set_id, vector_collection_id = _active_vector_snapshot(
         document_id,
         collection_name,
     )
-    collection = get_collection(collection_name)
-
-    where_filter = {
-        "$and": [
-            {"document_id": document_id},
-            {"chunk_set_id": chunk_set_id},
-        ]
-    }
     normalized_target = _normalize_heading_text(target_heading) if target_heading else ""
     semantic_query = " ".join(
         part.strip() for part in (target_heading, query_text) if part and part.strip()
     )
     query_tokens = _keyword_tokens(semantic_query)
+    resolved_budget = max(
+        128,
+        context_token_budget or settings.retrieval_context_token_budget,
+    )
 
     try:
-        candidate_limit = max(1, min(max(limit * 4, limit, 1), collection.count()))
-        if semantic_query:
-            results = collection.query(
-                query_texts=[semantic_query],
-                where=where_filter,
-                n_results=candidate_limit,
-                include=["documents", "metadatas"],
-            )
-            raw_docs = (results.get("documents") or [[]])[0] or []
-            raw_metas = (results.get("metadatas") or [[]])[0] or []
-        else:
-            initial_limit = candidate_limit
-            results = collection.get(
-                where=where_filter,
-                limit=initial_limit,
-                include=["documents", "metadatas"],
-            )
-            raw_docs = results.get("documents") or []
-            raw_metas = results.get("metadatas") or []
-            seed_text = ""
-            if raw_docs and raw_metas:
-                seed_pairs = list(zip(raw_docs, raw_metas))
-                seed_pairs.sort(
-                    key=lambda x: (-(x[1].get("information_density") or 0.0), x[1].get("page_start") or 0)
-                )
-                seed_doc, seed_meta = seed_pairs[0]
-                seed_text = _build_heading_label(seed_meta) or (seed_doc[:500] if seed_doc else "")
+        dense_candidates: list[tuple[str, dict]] = []
+        if retrieval_mode in {"hybrid", "dense"}:
+            collection = get_collection(collection_name)
+            collection_count = int(collection.count())
+            if collection_count:
+                candidate_limit = max(1, min(max(limit * 6, limit), collection_count))
+                where_filter = {
+                    "$and": [
+                        {"document_id": document_id},
+                        {"chunk_set_id": chunk_set_id},
+                    ]
+                }
+                if semantic_query:
+                    dense_results = collection.query(
+                        query_texts=[semantic_query],
+                        where=where_filter,
+                        n_results=candidate_limit,
+                        include=["documents", "metadatas", "distances"],
+                    )
+                    raw_docs = (dense_results.get("documents") or [[]])[0] or []
+                    raw_metas = (dense_results.get("metadatas") or [[]])[0] or []
+                    raw_distances = (dense_results.get("distances") or [[]])[0] or []
+                else:
+                    dense_results = collection.get(
+                        where=where_filter,
+                        limit=candidate_limit,
+                        include=["documents", "metadatas"],
+                    )
+                    raw_docs = dense_results.get("documents") or []
+                    raw_metas = dense_results.get("metadatas") or []
+                    raw_distances = []
+                for index, (document, metadata) in enumerate(zip(raw_docs, raw_metas)):
+                    if not document or (
+                        normalized_target
+                        and not _heading_matches_target(metadata, normalized_target)
+                    ):
+                        continue
+                    density = float(metadata.get("information_density", 0) or 0)
+                    if density < min_density:
+                        continue
+                    distance = raw_distances[index] if index < len(raw_distances) else None
+                    dense_candidates.append(
+                        (
+                            document,
+                            {
+                                **metadata,
+                                "_dense_score": (
+                                    max(0.0, 1.0 - float(distance))
+                                    if distance is not None
+                                    else 1.0 / (index + 1)
+                                ),
+                                "_dense_distance": distance,
+                            },
+                        )
+                    )
 
-            if seed_text:
-                query_results = collection.query(
-                    query_texts=[seed_text],
-                    where=where_filter,
-                    n_results=initial_limit,
-                    include=["documents", "metadatas"],
-                )
-                query_docs = (query_results.get("documents") or [[]])[0] or []
-                query_metas = (query_results.get("metadatas") or [[]])[0] or []
-                if query_docs:
-                    raw_docs = query_docs
-                    raw_metas = query_metas
-
-        if not raw_docs:
-            raise ValueError("Không tìm thấy đoạn văn nào hợp lệ để sinh câu hỏi.")
-
-        chunks_with_meta = list(zip(raw_docs, raw_metas))
-        candidate_chunks: list[tuple[str, dict]] = []
-        heading_matched_chunks: list[tuple[str, dict]] = []
-        for vector_rank, (doc, meta) in enumerate(chunks_with_meta):
-            if not doc:
-                continue
-            density = float(meta.get("information_density", 0) or 0)
-            if density < min_density:
-                continue
-
-            ranked_meta = {
-                **meta,
-                "_hybrid_score": _hybrid_score(doc, meta, query_tokens, vector_rank),
-            }
-            candidate_chunks.append((doc, ranked_meta))
-            if _heading_matches_target(ranked_meta, normalized_target):
-                heading_matched_chunks.append((doc, ranked_meta))
-
-        filtered_chunks = heading_matched_chunks or candidate_chunks
-        if not filtered_chunks:
-            raise ValueError("Không tìm thấy đoạn văn nào hợp lệ theo tiêu chí đã chọn.")
-        if normalized_target and not heading_matched_chunks:
-            logger.info(
-                "Không có heading khớp target_heading; dùng kết quả vector query làm fallback."
-            )
-
-        filtered_chunks.sort(
-            key=lambda x: (-(x[1].get("_hybrid_score") or 0.0), x[1].get("page_start") or 0)
+        lexical_candidates = []
+        if retrieval_mode in {"hybrid", "lexical"}:
+            lexical_source = _mongo_lexical_candidates(chunk_set_id, normalized_target)
+            lexical_candidates = _lexical_rank(lexical_source, query_tokens)
+        fused_candidates = _fuse_candidates(
+            dense_candidates,
+            lexical_candidates,
+            retrieval_mode,
         )
-        selected_chunks = filtered_chunks[:limit]
+        if not fused_candidates:
+            detail = (
+                f"không có evidence trong chương/mục '{target_heading}'"
+                if target_heading
+                else "không có evidence phù hợp với truy vấn"
+            )
+            raise ValueError(f"INSUFFICIENT_EVIDENCE: {detail}")
+
+        selected_chunks = []
+        used_tokens = 0
+        skipped_for_budget = 0
+        for document, metadata in fused_candidates:
+            token_count = int(metadata.get("token_count") or _estimated_tokens(document))
+            if selected_chunks and used_tokens + token_count > resolved_budget:
+                skipped_for_budget += 1
+                continue
+            selected_chunks.append((document, metadata, token_count))
+            used_tokens += token_count
+            if len(selected_chunks) >= max(1, limit):
+                break
 
         assembled_context = []
         retrieval_results = []
-        for doc, meta in selected_chunks:
+        for doc, meta, token_count in selected_chunks:
             heading_label = _build_heading_label(meta)
             heading = f"[{heading_label}]" if heading_label else ""
             assembled_context.append(f"Mục lục: {heading}\nNội dung: {doc}")
@@ -242,7 +385,17 @@ def get_context_snapshot(
                     "page_start": meta.get("page_start"),
                     "page_end": meta.get("page_end"),
                     "information_density": meta.get("information_density", 0),
-                    "hybrid_score": round(float(meta.get("_hybrid_score", 0) or 0), 4),
+                    "token_count": token_count,
+                    "token_budget_status": meta.get("token_budget_status", "UNKNOWN"),
+                    "parent_section_id": meta.get("parent_section_id"),
+                    "source_processing_revision_id": meta.get("source_processing_revision_id"),
+                    "source_span": meta.get("source_span") or {},
+                    "fusion_score": round(float(meta.get("_fusion_score", 0) or 0), 6),
+                    "dense_rank": meta.get("_dense_rank"),
+                    "dense_score": meta.get("_dense_score"),
+                    "lexical_rank": meta.get("_lexical_rank"),
+                    "lexical_score": meta.get("_lexical_score"),
+                    "matched_terms": meta.get("_matched_terms") or [],
                     "heading": heading_label,
                 }
             )
@@ -252,10 +405,26 @@ def get_context_snapshot(
             "results": retrieval_results,
             "chunk_set_id": chunk_set_id,
             "vector_collection_id": vector_collection_id,
+            "trace": {
+                "mode": retrieval_mode,
+                "query": semantic_query,
+                "target_heading": target_heading,
+                "scope": {"document_id": document_id, "chunk_set_id": chunk_set_id},
+                "dense_candidates": len(dense_candidates),
+                "lexical_candidates": len(lexical_candidates),
+                "fused_candidates": len(fused_candidates),
+                "selected_count": len(selected_chunks),
+                "context_token_budget": resolved_budget,
+                "context_tokens": used_tokens,
+                "skipped_for_budget": skipped_for_budget,
+                "hard_heading_filter": bool(normalized_target),
+            },
         }
 
     except Exception as e:
         logger.error(f"Lỗi khi truy xuất ChromaDB: {e}")
+        if str(e).startswith("INSUFFICIENT_EVIDENCE:"):
+            raise
         raise ValueError(f"Lỗi truy xuất hệ thống Vector: {str(e)}")
 
 
@@ -266,6 +435,8 @@ def get_context_for_generation(
     query_text: str = None,
     min_density: float = 0.0,
     limit: int = 5,
+    retrieval_mode: str = "hybrid",
+    context_token_budget: int | None = None,
 ) -> str:
     """Compatibility wrapper for callers that only need the assembled text."""
     return get_context_snapshot(
@@ -275,4 +446,6 @@ def get_context_for_generation(
         query_text=query_text,
         min_density=min_density,
         limit=limit,
+        retrieval_mode=retrieval_mode,
+        context_token_budget=context_token_budget,
     )["context_text"]

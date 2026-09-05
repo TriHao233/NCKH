@@ -838,3 +838,11 @@
   .generate-page .plan-builder-fields { grid-template-columns: 1fr; }
   .generate-page .plan-field--count { max-width: 120px; }
 }
+.gen-clo-select {
+  min-height: 7.5rem;
+  padding-block: 0.5rem;
+}
+
+.gen-clo-select option {
+  padding: 0.35rem 0.5rem;
+}

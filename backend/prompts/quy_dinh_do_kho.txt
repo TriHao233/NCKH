@@ -5,7 +5,7 @@ Nhiệm vụ: gán đúng MỘT nhãn độ khó cho mỗi câu hỏi. Chỉ dù
 - trung_binh
 - kho
 
-Độ khó khác Bloom. Bloom là thao tác tư duy (nhớ, hiểu, vận dụng...). Độ khó là mức dễ hay khó để người học trả lời đúng. Phải đo từ chính nội dung câu hỏi, không bịa thêm kiến thức ngoài CONTEXT, không tự làm khó bằng chi tiết vụn vặt.
+Độ khó khác Bloom. Bloom là thao tác tư duy (nhớ, hiểu, vận dụng...). Độ khó là mức dễ hay khó để người học trả lời đúng. Phải đo từ chính nội dung câu hỏi, không bịa thêm kiến thức ngoài NGỮ CẢNH, không tự làm khó bằng chi tiết vụn vặt.
 
 Đo theo ba tiêu chí, theo thứ tự ưu tiên.
 

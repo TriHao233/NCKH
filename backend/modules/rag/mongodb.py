@@ -20,6 +20,17 @@ def stable_hash(value) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def embedding_model_manifest(collection_name: str) -> dict:
+    payload = {
+        "provider": "SENTENCE_TRANSFORMERS",
+        "model_name": settings.embedding_model_name,
+        "normalize_embeddings": True,
+        "distance_metric": "COSINE",
+        "collection_name": collection_name,
+    }
+    return {**payload, "model_digest": stable_hash(payload)}
+
+
 def get_document_record(doc_id: str) -> dict | None:
     return MongoDocumentRepository(get_database()).find_by_id(doc_id)
 
@@ -126,6 +137,8 @@ def persist_chunks(
     document_oid = object_id(document_id, "document_id")
     set_oid = object_id(chunk_set_id, "chunk_set_id")
     now = utc_now()
+    chunk_set = db.chunk_sets.find_one({"_id": set_oid}) or {}
+    source_processing_revision_id = chunk_set.get("source_processing_revision_id")
     records = []
     for index, chunk in enumerate(chunks, start=1):
         metadata = chunk["metadata"]
@@ -152,16 +165,25 @@ def persist_chunks(
                     "end": metadata.get("page_end"),
                     "pages": metadata.get("page_marks", []),
                 },
+                "parent_section_id": metadata.get("parent_section_id"),
+                "source_processing_revision_id": source_processing_revision_id,
+                "source_span": metadata.get("source_span") or {},
+                "chapter_key": metadata.get("chapter_key") or "",
                 "content_type": metadata.get("content_type", "text"),
                 "semantic_type": metadata.get("semantic_type", "theory"),
                 "information_density": metadata.get("information_density", 0),
                 "token_count": metadata.get("token_count", 0),
+                "token_budget": metadata.get("token_budget"),
+                "token_budget_status": metadata.get("token_budget_status", "UNKNOWN"),
                 "created_at": now,
             }
         )
     vector = db.vector_collections.find_one_and_update(
         {"provider": "CHROMA", "collection_name": collection_name},
         {
+            "$set": {
+                "updated_at": now,
+            },
             "$setOnInsert": {
                 "_id": ObjectId(),
                 "schema_version": SCHEMA_VERSION,
@@ -172,6 +194,9 @@ def persist_chunks(
                     "normalize_embeddings": True,
                 },
                 "distance_metric": "COSINE",
+                "embedding_model_digest": embedding_model_manifest(collection_name)[
+                    "model_digest"
+                ],
                 "is_active": True,
                 "created_at": now,
                 "retired_at": None,
@@ -187,6 +212,13 @@ def persist_chunks(
             f"'{indexed_model}'. Hãy chọn collection_name mới cho model "
             f"'{settings.embedding_model_name}'."
         )
+    model_digest = embedding_model_manifest(collection_name)["model_digest"]
+    if vector.get("embedding_model_digest") != model_digest:
+        db.vector_collections.update_one(
+            {"_id": vector["_id"]},
+            {"$set": {"embedding_model_digest": model_digest, "updated_at": now}},
+        )
+        vector["embedding_model_digest"] = model_digest
     # A lease retry rebuilds the same candidate deterministically. Removing only
     # this inactive candidate never touches a previously active chunk set.
     db.chunk_embeddings.delete_many({"chunk_set_id": set_oid})
@@ -272,6 +304,15 @@ def complete_chunk_set(
         target_set = db.chunk_sets.find_one({"_id": set_oid}, session=session)
         if not target_set:
             raise RuntimeError("CHUNK_SET_NOT_FOUND")
+        document_filter: dict = {"_id": document_oid, "archived_at": None}
+        if not dry_run:
+            document_filter["current_processing.ocr_job_id"] = target_set.get(
+                "source_ocr_job_id"
+            )
+        current_document = db.documents.find_one(document_filter, session=session)
+        if not current_document:
+            raise RuntimeError("DOCUMENT_ARCHIVED_OR_SOURCE_CHANGED")
+        index_manifest_id = None
         if not dry_run:
             db.chunk_sets.update_many(
                 {
@@ -309,6 +350,52 @@ def complete_chunk_set(
                 ],
                 session=session,
             )
+        if not dry_run and vector_oid:
+            vector = db.vector_collections.find_one({"_id": vector_oid}, session=session)
+            chunk_hashes = [
+                item.get("content_hash")
+                for item in db.document_chunks.find(
+                    {"chunk_set_id": set_oid},
+                    {"content_hash": 1},
+                    session=session,
+                ).sort("chunk_no", 1)
+            ]
+            index_manifest_id = ObjectId()
+            previous_manifest_id = (current_document.get("current_processing") or {}).get(
+                "index_manifest_id"
+            )
+            db.index_manifests.update_many(
+                {"document_id": document_oid, "status": "ACTIVE"},
+                {"$set": {"status": "SUPERSEDED", "superseded_at": now}},
+                session=session,
+            )
+            db.index_manifests.insert_one(
+                {
+                    "_id": index_manifest_id,
+                    "schema_version": SCHEMA_VERSION,
+                    "document_id": document_oid,
+                    "chunk_set_id": set_oid,
+                    "vector_collection_id": vector_oid,
+                    "source_processing_revision_id": target_set.get(
+                        "source_processing_revision_id"
+                    ),
+                    "source_job_id": job_oid,
+                    "activation_kind": "CHUNK_INDEX",
+                    "previous_manifest_id": previous_manifest_id,
+                    "embedding_model": (vector or {}).get("embedding_model") or {},
+                    "embedding_model_digest": (vector or {}).get("embedding_model_digest"),
+                    "chunk_count": len(chunk_hashes),
+                    "chunk_set_hash": stable_hash(chunk_hashes),
+                    "status": "ACTIVE",
+                    "created_at": now,
+                },
+                session=session,
+            )
+            db.chunk_sets.update_one(
+                {"_id": set_oid},
+                {"$set": {"index_manifest_id": index_manifest_id}},
+                session=session,
+            )
         job_result = db.document_jobs.update_one(
             job_filter,
             {
@@ -331,15 +418,11 @@ def complete_chunk_set(
                     "pipeline_summary.total_chunks": total_chunks,
                     "current_processing.chunk_set_id": set_oid,
                     "current_processing.vector_collection_id": vector_oid,
+                    "current_processing.index_manifest_id": index_manifest_id,
                     "current_processing.pending_chunk_job_id": None,
                     "pipeline_summary.index_status": "COMPLETED",
                     "status": "READY",
                 }
-            )
-        document_filter: dict = {"_id": document_oid, "archived_at": None}
-        if not dry_run:
-            document_filter["current_processing.ocr_job_id"] = target_set.get(
-                "source_ocr_job_id"
             )
         document_result = db.documents.update_one(
             document_filter,
@@ -348,6 +431,201 @@ def complete_chunk_set(
         )
         if not document_result.matched_count:
             raise RuntimeError("DOCUMENT_ARCHIVED")
+
+
+def activate_reindex_manifest(
+    document_id: str,
+    index_job_id: str,
+    chunk_set_id: str,
+    vector_collection_id: str,
+    *,
+    expected_vector_collection_id,
+    chunk_count: int,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
+) -> str:
+    db = get_database()
+    document_oid = object_id(document_id, "document_id")
+    job_oid = object_id(index_job_id, "index_job_id")
+    set_oid = object_id(chunk_set_id, "chunk_set_id")
+    vector_oid = object_id(vector_collection_id, "vector_collection_id")
+    expected_vector_oid = (
+        object_id(expected_vector_collection_id, "expected_vector_collection_id")
+        if expected_vector_collection_id
+        else None
+    )
+    manifest_id = ObjectId(hashlib.sha256(str(job_oid).encode("utf-8")).hexdigest()[:24])
+    now = utc_now()
+    with mongo_transaction() as session:
+        job_filter: dict = {"_id": job_oid, "status": "PROCESSING"}
+        if worker_id is not None:
+            job_filter["worker_id"] = worker_id
+        if fencing_token is not None:
+            job_filter["fencing_token"] = fencing_token
+        if not db.document_jobs.find_one(job_filter, {"_id": 1}, session=session):
+            raise RuntimeError("DOCUMENT_JOB_LEASE_LOST")
+        existing = db.index_manifests.find_one({"_id": manifest_id}, session=session)
+        if existing:
+            active_document = db.documents.find_one(
+                {
+                    "_id": document_oid,
+                    "current_processing.index_manifest_id": manifest_id,
+                },
+                {"_id": 1},
+                session=session,
+            )
+            if existing.get("status") == "ACTIVE" and active_document:
+                return str(manifest_id)
+            raise RuntimeError("INDEX_MANIFEST_REPLAY_CONFLICT")
+        document_filter = {
+            "_id": document_oid,
+            "archived_at": None,
+            "current_processing.chunk_set_id": set_oid,
+            "current_processing.vector_collection_id": expected_vector_oid,
+        }
+        document = db.documents.find_one(document_filter, session=session)
+        if not document:
+            raise RuntimeError("INDEX_ACTIVATION_CONFLICT")
+        vector = db.vector_collections.find_one({"_id": vector_oid}, session=session)
+        if not vector:
+            raise RuntimeError("INDEX_VECTOR_COLLECTION_NOT_FOUND")
+        hashes = [
+            item.get("content_hash")
+            for item in db.document_chunks.find(
+                {"chunk_set_id": set_oid},
+                {"content_hash": 1},
+                session=session,
+            ).sort("chunk_no", 1)
+        ]
+        if len(hashes) != chunk_count:
+            raise RuntimeError("INDEX_MANIFEST_COUNT_MISMATCH")
+        indexed_count = db.chunk_embeddings.count_documents(
+            {
+                "chunk_set_id": set_oid,
+                "vector_collection_id": vector_oid,
+                "status": "INDEXED",
+                "$expr": {"$eq": ["$embedding_content_hash", "$chunk_content_hash"]},
+            },
+            session=session,
+        )
+        if indexed_count != chunk_count:
+            raise RuntimeError("INDEX_MANIFEST_COVERAGE_MISMATCH")
+        previous_manifest_id = (document.get("current_processing") or {}).get(
+            "index_manifest_id"
+        )
+        db.index_manifests.update_many(
+            {"document_id": document_oid, "status": "ACTIVE"},
+            {"$set": {"status": "SUPERSEDED", "superseded_at": now}},
+            session=session,
+        )
+        db.index_manifests.insert_one(
+            {
+                "_id": manifest_id,
+                "schema_version": SCHEMA_VERSION,
+                "document_id": document_oid,
+                "chunk_set_id": set_oid,
+                "vector_collection_id": vector_oid,
+                "source_processing_revision_id": document.get("current_processing", {}).get(
+                    "processing_revision_id"
+                ),
+                "source_job_id": job_oid,
+                "activation_kind": "REINDEX",
+                "previous_manifest_id": previous_manifest_id,
+                "embedding_model": (vector or {}).get("embedding_model") or {},
+                "embedding_model_digest": (vector or {}).get("embedding_model_digest"),
+                "chunk_count": chunk_count,
+                "chunk_set_hash": stable_hash(hashes),
+                "status": "ACTIVE",
+                "created_at": now,
+            },
+            session=session,
+        )
+        result = db.documents.update_one(
+            document_filter,
+            {
+                "$set": {
+                    "current_processing.vector_collection_id": vector_oid,
+                    "current_processing.index_manifest_id": manifest_id,
+                    "current_processing.pending_index_job_id": None,
+                    "pipeline_summary.index_status": "COMPLETED",
+                    "status": "READY",
+                    "updated_at": now,
+                }
+            },
+            session=session,
+        )
+        if not result.matched_count:
+            raise RuntimeError("INDEX_ACTIVATION_CONFLICT")
+    return str(manifest_id)
+
+
+def rollback_index_manifest(document_id: str, expected_manifest_id: str) -> dict:
+    db = get_database()
+    document_oid = object_id(document_id, "document_id")
+    expected_oid = object_id(expected_manifest_id, "index_manifest_id")
+    now = utc_now()
+    with mongo_transaction() as session:
+        current = db.index_manifests.find_one(
+            {"_id": expected_oid, "document_id": document_oid, "status": "ACTIVE"},
+            session=session,
+        )
+        if not current or not current.get("previous_manifest_id"):
+            raise ValueError("INDEX_ROLLBACK_NOT_AVAILABLE")
+        previous = db.index_manifests.find_one(
+            {"_id": current["previous_manifest_id"], "document_id": document_oid},
+            session=session,
+        )
+        if not previous or previous.get("chunk_set_id") != current.get("chunk_set_id"):
+            raise ValueError("INDEX_ROLLBACK_SOURCE_MISMATCH")
+        expected_count = db.document_chunks.count_documents(
+            {"chunk_set_id": previous["chunk_set_id"]}, session=session
+        )
+        indexed_count = db.chunk_embeddings.count_documents(
+            {
+                "chunk_set_id": previous["chunk_set_id"],
+                "vector_collection_id": previous["vector_collection_id"],
+                "status": "INDEXED",
+                "$expr": {"$eq": ["$embedding_content_hash", "$chunk_content_hash"]},
+            },
+            session=session,
+        )
+        if expected_count == 0 or indexed_count != expected_count:
+            raise ValueError("INDEX_ROLLBACK_COVERAGE_MISMATCH")
+        db.index_manifests.update_one(
+            {"_id": current["_id"], "status": "ACTIVE"},
+            {"$set": {"status": "ROLLED_BACK", "rolled_back_at": now}},
+            session=session,
+        )
+        db.index_manifests.update_one(
+            {"_id": previous["_id"]},
+            {"$set": {"status": "ACTIVE", "reactivated_at": now}},
+            session=session,
+        )
+        result = db.documents.update_one(
+            {
+                "_id": document_oid,
+                "current_processing.index_manifest_id": current["_id"],
+            },
+            {
+                "$set": {
+                    "current_processing.vector_collection_id": previous[
+                        "vector_collection_id"
+                    ],
+                    "current_processing.index_manifest_id": previous["_id"],
+                    "pipeline_summary.index_status": "COMPLETED",
+                    "updated_at": now,
+                }
+            },
+            session=session,
+        )
+        if not result.matched_count:
+            raise RuntimeError("INDEX_ROLLBACK_CONFLICT")
+    return {
+        "document_id": str(document_oid),
+        "active_manifest_id": str(previous["_id"]),
+        "vector_collection_id": str(previous["vector_collection_id"]),
+        "rolled_back_manifest_id": str(current["_id"]),
+    }
 
 
 def fail_chunk_set(document_id: str, message: str) -> None:

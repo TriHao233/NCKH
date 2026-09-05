@@ -31,9 +31,14 @@ from modules.generation.llm.factory import (
     get_llm_service,
     reset_llm_execution_tracking,
 )
+from modules.generation.llm.structured_output import (
+    extract_question_candidates,
+    parse_structured_json,
+)
 from modules.generation.llm.model_registry import (
-    GENERATION_CAPABILITY,
-    resolve_model_snapshot,
+    CODE_GENERATION_ROLE,
+    GENERAL_GENERATION_ROLE,
+    resolve_model_role_snapshot,
 )
 from modules.generation.mongodb import (
     create_generation_run,
@@ -67,13 +72,13 @@ DIFFICULTY_ALIASES = {
 }
 
 QUESTION_TYPE_RETRY_RULES = {
-    "trac_nghiem": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
-    "tinh_huong": 'options must contain exactly "A", "B", "C", "D"; correct_answer must be one key.',
-    "dung_sai": 'options must contain exactly {"A": "Đúng", "B": "Sai"}; question must be one complete true/false statement; source_context must be a verbatim CONTEXT quote; source_keywords must occur exactly in both source_context and question; false answers require one false_mutation.',
-    "nhieu_lua_chon": 'options must contain 4 to 6 consecutive keys from "A"; correct_answer must contain at least two comma-separated keys but not every option key.',
-    "dien_khuyet": 'options must be null; question text must contain "_____".',
-    "ghep_cot": "options must be a matching object with numbered keys and extra lettered distractors.",
-    "sap_xep": "options must contain ordered step keys; correct_answer must list every key in the correct order.",
+    "trac_nghiem": 'options phải có đúng các khóa "A", "B", "C", "D"; correct_answer phải là một khóa.',
+    "tinh_huong": 'options phải có đúng các khóa "A", "B", "C", "D"; correct_answer phải là một khóa.',
+    "dung_sai": 'options phải đúng bằng {"A": "Đúng", "B": "Sai"}; question phải là một mệnh đề hoàn chỉnh; source_context phải là trích dẫn nguyên văn từ NGỮ CẢNH; source_keywords phải xuất hiện chính xác trong source_context và question; đáp án Sai phải có false_mutation.',
+    "nhieu_lua_chon": 'options phải có từ 4 đến 6 khóa liên tiếp bắt đầu từ "A"; correct_answer phải có ít nhất hai khóa phân cách bằng dấu phẩy nhưng không được chọn tất cả.',
+    "dien_khuyet": 'options phải là null; question phải chứa "_____".',
+    "ghep_cot": "options phải là object ghép cặp có khóa số và phương án nhiễu bằng chữ.",
+    "sap_xep": "options phải chứa các khóa bước; correct_answer phải liệt kê đủ khóa theo đúng thứ tự.",
 }
 
 
@@ -104,7 +109,12 @@ async def generate_questions_rag(
         document_id=req.document_id,
         collection_name=req.collection_name,
         target_heading=req.target_heading,
-        query_text=req.instruction,
+        query_text=" ".join(
+            part for part in (req.topic, req.instruction) if part
+        ),
+        limit=req.retrieval_limit,
+        retrieval_mode=req.retrieval_mode,
+        context_token_budget=req.context_token_budget,
     )
     context_text = context_snapshot["context_text"]
 
@@ -113,6 +123,21 @@ async def generate_questions_rag(
 
     prompt_builder = PromptBuilder()
     learning_outcomes = get_document_learning_outcomes(req.document_id)
+    if req.clo_codes:
+        allowed_codes = set(req.clo_codes)
+        learning_outcomes = [
+            item
+            for item in learning_outcomes
+            if str(item.get("clo_code") or "").upper() in allowed_codes
+        ]
+        found_codes = {
+            str(item.get("clo_code") or "").upper() for item in learning_outcomes
+        }
+        missing_codes = sorted(allowed_codes - found_codes)
+        if missing_codes:
+            raise ValueError(
+                "CLO_NOT_IN_DOCUMENT_SUBJECT: " + ", ".join(missing_codes)
+            )
     generated_questions: List[GeneratedQuestion] = []
     summaries: List[GenerationPlanSummary] = []
     try:
@@ -134,13 +159,16 @@ async def generate_questions_rag(
         selected_provider = (
             req.code_model_provider if content_mode == "code" else req.model_provider
         )
-        selected_snapshot = (
-            model_snapshot
-            if selected_provider == req.model_provider and model_snapshot
-            else code_model_snapshot
-            if selected_provider == req.code_model_provider and code_model_snapshot
-            else resolve_model_snapshot(selected_provider, capability=GENERATION_CAPABILITY)
-        )
+        if content_mode == "code":
+            selected_snapshot = code_model_snapshot or resolve_model_role_snapshot(
+                CODE_GENERATION_ROLE,
+                selected_provider,
+            )
+        else:
+            selected_snapshot = model_snapshot or resolve_model_role_snapshot(
+                GENERAL_GENERATION_ROLE,
+                selected_provider,
+            )
         llm = get_llm_service(
             selected_provider,
             settings.generation_fallback_provider,
@@ -207,16 +235,18 @@ async def _generate_questions_for_plan_item(
     reset_llm_execution_tracking(llm)
     bloom_level = plan_item.bloom_level or req.bloom_level
     # 2. Xây dựng Prompt thông qua hệ thống file-based cho từng dạng câu hỏi
-    full_prompt = prompt_builder.build(
+    prompt_release = prompt_builder.build_with_manifest(
         context=context_text,
         bloom_level=bloom_level.value,
         question_type=plan_item.question_type.value,
         num_questions=plan_item.num_questions,
         instruction=req.instruction,
+        topic=req.topic,
         avoid_questions=avoid_questions,
         learning_outcomes=learning_outcomes,
         content_mode=content_mode,
     )
+    full_prompt = prompt_release["rendered_prompt"]
     request_snapshot = req.model_dump(mode="json")
     request_snapshot["active_plan_item"] = {
         **plan_item.model_dump(mode="json"),
@@ -228,8 +258,10 @@ async def _generate_questions_for_plan_item(
         request_snapshot=request_snapshot,
         model_snapshot=model_snapshot or {"provider": req.model_provider},
         rendered_prompt=full_prompt,
+        prompt_manifest=prompt_release,
         context_text=context_text,
         retrieval_results=context_snapshot["results"],
+        retrieval_trace=context_snapshot.get("trace") or {},
         chunk_set_id=context_snapshot["chunk_set_id"],
         vector_collection_id=context_snapshot["vector_collection_id"],
     )
@@ -254,21 +286,21 @@ async def _generate_questions_for_plan_item(
 
     try:
         try:
-            parsed_data = json.loads(clean_json_str)
-        except json.JSONDecodeError as initial_parse_error:
+            parsed_data = parse_structured_json(clean_json_str)
+        except ValueError as initial_parse_error:
             repair_attempt_count += 1
             retry_prompt = _build_retry_prompt(
                 original_prompt=full_prompt,
                 question_type=plan_item.question_type.value,
                 bloom_level=bloom_level.value,
                 missing_count=plan_item.num_questions,
-                validation_errors=[f"Invalid JSON response: {initial_parse_error.msg}"],
+                validation_errors=[str(initial_parse_error)],
                 avoid_questions=avoid_questions,
             )
             retry_raw_response = await llm.generate_text(retry_prompt)
             raw_response = f"{raw_response}\n\n--- JSON REPAIR ---\n{retry_raw_response}"
-            parsed_data = json.loads(_clean_llm_output(retry_raw_response))
-        questions_list = _extract_questions_list(parsed_data)
+            parsed_data = parse_structured_json(_clean_llm_output(retry_raw_response))
+        questions_list = extract_question_candidates(parsed_data)
         parsed_count = len(questions_list)
 
         # Validate và đóng gói. Nếu AI trả dư, phần dư được dùng để bù câu sai format/trùng.
@@ -306,8 +338,8 @@ async def _generate_questions_for_plan_item(
                         f"{raw_response}\n\n--- FORMAT RETRY {retry_index} ---\n"
                         f"{retry_raw_response}"
                     )
-                    retry_data = json.loads(_clean_llm_output(retry_raw_response))
-                    retry_questions = _extract_questions_list(retry_data)
+                    retry_data = parse_structured_json(_clean_llm_output(retry_raw_response))
+                    retry_questions = extract_question_candidates(retry_data)
                     parsed_count += len(retry_questions)
                     retry_validated, retry_errors = _validate_and_format(
                         retry_questions,
@@ -453,32 +485,32 @@ def _build_retry_prompt(
         for error in validation_errors[-5:]
         if error
     ]
-    errors = "\n".join(f"- {error}" for error in error_messages) or "- Not enough valid questions were produced."
+    errors = "\n".join(f"- {error}" for error in error_messages) or "- Chưa sinh đủ câu hỏi hợp lệ."
     avoid_list = "\n".join(
         f"- {question.strip()}"
         for question in avoid_questions[-12:]
         if question and question.strip()
-    ) or "- None"
-    type_rule = QUESTION_TYPE_RETRY_RULES.get(question_type, "Follow the QUESTION TYPE rules exactly.")
+    ) or "- Không có"
+    type_rule = QUESTION_TYPE_RETRY_RULES.get(question_type, "Tuân thủ chính xác quy tắc của dạng câu hỏi.")
     return f"""
 {original_prompt}
 
-FORMAT REPAIR REQUEST:
-The previous response did not produce enough valid questions.
-Generate exactly {missing_count} additional questions.
+YÊU CẦU SỬA ĐỊNH DẠNG:
+Phản hồi trước chưa tạo đủ câu hỏi hợp lệ.
+Sinh chính xác {missing_count} câu bổ sung.
 
-STRICT TARGET:
+MỤC TIÊU BẮT BUỘC:
 - question_type: {question_type}
 - bloom_level: {bloom_level}
-- required structure: {type_rule}
+- cấu trúc bắt buộc: {type_rule}
 
-RECENT VALIDATION ERRORS TO FIX:
+LỖI KIỂM TRA GẦN NHẤT CẦN SỬA:
 {errors}
 
-DO NOT DUPLICATE THESE ACCEPTED/PREVIOUS QUESTIONS:
+KHÔNG TRÙNG CÁC CÂU ĐÃ NHẬN/TRƯỚC ĐÓ:
 {avoid_list}
 
-Return ONLY the same raw JSON object shape:
+Chỉ trả về object JSON thô theo đúng cấu trúc sau:
 {{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "difficulty": "de|trung_binh|kho", "source_context": "...", "source_keywords": ["..."], "false_mutation": null}}]}}
 """
 
