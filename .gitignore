@@ -57,3 +57,8 @@ IMPLEMENTATION_CHANGES.md
 # Local inspection/render artifacts
 /tmp/
 Prompt/
+
+# Local-only development files
+AGENTS.md
+note.txt
+prompts/
