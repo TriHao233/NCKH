@@ -1,7 +1,7 @@
 export const PERMISSIONS = Object.freeze({
   teacherWorkspace: Object.freeze(["Teacher"]),
   teacherAdminWorkspace: Object.freeze(["Teacher", "Admin"]),
-  reviewerWorkspace: Object.freeze(["Reviewer", "Admin"]),
+  reviewerWorkspace: Object.freeze(["Reviewer"]),
   adminWorkspace: Object.freeze(["Admin"]),
   authenticated: Object.freeze(["Admin", "Teacher", "Reviewer"]),
 });
@@ -18,7 +18,8 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
     "documents.manage_all",
     "questions.manage_all",
     "questions.use_shared_bank",
-    "reviews.manage",
+    "questions.read_review_queue",
+    "questions.review_assign",
   ]),
   Teacher: Object.freeze([
     "documents.manage_own",
@@ -31,9 +32,13 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
   ]),
   Reviewer: Object.freeze([
     "reviews.manage",
+    "questions.review",
+    "questions.review_override",
+    "questions.evaluate",
     "questions.read_review_queue",
     "questions.comment",
     "questions.export_moodle",
+    "questions.publish_moodle",
   ]),
 });
 
@@ -43,7 +48,7 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/lam-de-thi": Object.freeze(["exams.manage_own"]),
   "/quan-ly-hoc-phan": Object.freeze(["catalog.subjects.manage_own"]),
   "/lam-de-thi/:examId": Object.freeze(["exams.manage_own"]),
-  "/kiem-duyet": Object.freeze(["reviews.manage"]),
+  "/kiem-duyet": Object.freeze(["questions.read_review_queue"]),
   "/duyet-ai": Object.freeze(["admin.ai_review"]),
   "/tong-quan": Object.freeze(["admin.overview"]),
   "/danh-muc": Object.freeze(["admin.catalog"]),

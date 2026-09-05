@@ -150,3 +150,20 @@ class MoodlePublicationRequest(BaseModel):
     category_id: str = Field("qbank-demo", min_length=1, max_length=120)
     export_format: Literal["GIFT", "XML", "BOTH"] = "BOTH"
     mock: bool = True
+
+
+class MoodleExportItem(BaseModel):
+    question_id: str = Field(..., min_length=1, max_length=120)
+    expected_version: int = Field(..., ge=1)
+
+
+class BulkMoodleExportRequest(BaseModel):
+    items: list[MoodleExportItem] = Field(..., min_length=1, max_length=500)
+    format: Literal["gift", "xml"] = "gift"
+
+    @model_validator(mode="after")
+    def reject_duplicate_questions(self):
+        ids = [item.question_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Danh sách export có question_id trùng")
+        return self

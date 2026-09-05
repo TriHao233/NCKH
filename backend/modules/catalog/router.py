@@ -21,6 +21,8 @@ from modules.catalog.schemas import (
     PromptTemplatePayload,
     PromptTemplateTestPayload,
     SubjectPayload,
+    SubjectMembershipPayload,
+    SubjectMembershipResponse,
     SubjectResponse,
     SubjectUpdatePayload,
 )
@@ -44,6 +46,46 @@ require_subject_manager = require_any_permission(
     "admin.catalog",
     "catalog.subjects.manage_own",
 )
+
+
+@router.get("/subject-memberships/me", response_model=list[SubjectMembershipResponse])
+def list_my_subject_memberships(
+    user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    return service.list_my_memberships(user)
+
+
+@router.get(
+    "/subjects/{subject_id}/memberships",
+    response_model=list[SubjectMembershipResponse],
+)
+def list_subject_memberships(
+    subject_id: str,
+    user: CurrentUser = Depends(require_subject_manager),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.list_memberships(subject_id, user)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.put(
+    "/subjects/{subject_id}/memberships/{user_id}",
+    response_model=SubjectMembershipResponse,
+)
+def upsert_subject_membership(
+    subject_id: str,
+    user_id: str,
+    payload: SubjectMembershipPayload,
+    user: CurrentUser = Depends(require_subject_manager),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.upsert_membership(subject_id, user_id, payload, user)
+    except Exception as exc:
+        _translate(exc)
 
 
 @router.get("/overview")

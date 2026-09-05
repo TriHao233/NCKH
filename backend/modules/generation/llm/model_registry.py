@@ -2,12 +2,28 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from urllib.parse import urlparse
 
 from core.config import settings
 from core.database import get_database
 
 GENERATION_CAPABILITY = "QUESTION_GENERATION"
 EVALUATION_CAPABILITY = "QUESTION_EVALUATION"
+
+
+def enforce_inference_policy(snapshot: dict) -> dict:
+    if settings.inference_policy != "LOCAL_ONLY":
+        return snapshot
+    runtime = str(snapshot.get("runtime") or "").upper()
+    if runtime != "OLLAMA" or not snapshot.get("is_local", runtime == "OLLAMA"):
+        raise ValueError("Profile LOCAL_ONLY chỉ cho phép model Ollama nội bộ")
+    endpoint = str((snapshot.get("parameters") or {}).get("endpoint") or "").strip()
+    host = (urlparse(endpoint).hostname or "").lower()
+    if not host or host not in set(settings.local_inference_allowed_hosts):
+        raise ValueError(
+            f"Endpoint model '{host or endpoint}' không thuộc LOCAL_INFERENCE_ALLOWED_HOSTS"
+        )
+    return snapshot
 
 
 def _number(config: dict, key: str, default, *, minimum, maximum):
@@ -61,7 +77,7 @@ def _snapshot_from_record(record: dict, requested_code: str, capability: str | N
     model_name = str(record.get("model_name") or "").strip()
     if not model_name:
         raise ValueError("Model chưa có tên phiên bản")
-    return {
+    return enforce_inference_policy({
         "catalog_id": str(record.get("_id")) if record.get("_id") is not None else None,
         "requested_code": requested_code,
         "model_code": str(record.get("model_code") or requested_code),
@@ -74,7 +90,11 @@ def _snapshot_from_record(record: dict, requested_code: str, capability: str | N
         "is_local": bool(record.get("is_local", runtime == "OLLAMA")),
         "parameters": _runtime_parameters(runtime, record.get("config") or {}),
         "source": "catalog",
-    }
+    })
+
+
+def validate_model_configuration(record: dict) -> dict:
+    return _snapshot_from_record(record, str(record.get("model_code") or ""), None)
 
 
 def resolve_direct_model_snapshot(model_code: str, capability: str | None = None) -> dict:
@@ -112,7 +132,7 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
     if not model_name:
         raise ValueError("Mã model phải kèm tên phiên bản")
     capabilities = [GENERATION_CAPABILITY, EVALUATION_CAPABILITY]
-    return {
+    return enforce_inference_policy({
         "catalog_id": None,
         "requested_code": model_code,
         "model_code": model_code,
@@ -125,7 +145,7 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
         "is_local": runtime == "OLLAMA",
         "parameters": _runtime_parameters(runtime, config),
         "source": "environment",
-    }
+    })
 
 
 def resolve_model_snapshot(

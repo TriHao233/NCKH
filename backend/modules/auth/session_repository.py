@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Protocol
 
 from pymongo import ReturnDocument
@@ -12,7 +13,7 @@ class FirebaseSessionRepository(Protocol):
 
 
 class MongoFirebaseSessionRepository:
-    """Persistence adapter for the minimal NCKH.User Firebase session link."""
+    """Persist only a revocable identity marker, never the Firebase bearer token."""
 
     def __init__(self, database: Database):
         self.collection = database["User"]
@@ -20,7 +21,13 @@ class MongoFirebaseSessionRepository:
     def upsert(self, uid: str, token: str | None) -> dict:
         return self.collection.find_one_and_replace(
             {"uid": uid},
-            {"uid": uid, "token": token},
+            {
+                "uid": uid,
+                # Kept nullable for schema/read compatibility while legacy raw
+                # bearer values are removed by the stage-B migration.
+                "token": None,
+                "last_seen_at": datetime.now(timezone.utc),
+            },
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )

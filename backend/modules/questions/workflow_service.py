@@ -12,6 +12,13 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION
+from core.access_policy import (
+    active_subject_ids,
+    has_subject_access,
+    is_explicitly_shared,
+    is_subject_shared_with_member,
+    subject_id_from_record,
+)
 from core.config import settings
 from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser, has_permission
@@ -191,16 +198,29 @@ class QuestionWorkflowService:
 
     @staticmethod
     def _can_review_all(current_user: CurrentUser) -> bool:
-        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+        return current_user.role == "Reviewer" or has_permission(current_user, "questions.review")
 
     @staticmethod
     def _can_manage_all(current_user: CurrentUser) -> bool:
         return current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
 
-    @staticmethod
-    def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
-        shared_with = set(question.get("shared_with_user_ids") or [])
-        return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
+    def _is_shared_question(self, question: dict, version: dict, current_user: CurrentUser) -> bool:
+        return is_explicitly_shared(question, current_user.id) or is_subject_shared_with_member(
+            self.db, question, current_user.id, version=version
+        )
+
+    def _has_review_scope(self, question: dict, version: dict, current_user: CurrentUser) -> bool:
+        if not self._can_review_all(current_user):
+            return False
+        subject_id = subject_id_from_record(question, version)
+        # Legacy unclassified records remain reviewable so they can be repaired.
+        if subject_id is None:
+            return True
+        # Lightweight unit-test adapters and legacy service embeddings may not
+        # expose the new collection. Real bootstrapped databases always do.
+        if getattr(self.db, "subject_memberships", None) is None:
+            return True
+        return has_subject_access(self.db, current_user.id, subject_id)
 
     def _ensure_read_access(
         self,
@@ -208,9 +228,13 @@ class QuestionWorkflowService:
         version: dict,
         current_user: CurrentUser | None,
     ) -> None:
-        if not current_user or self._can_manage_all(current_user) or self._can_review_all(current_user):
+        if not current_user or self._can_manage_all(current_user) or self._has_review_scope(
+            question, version, current_user
+        ):
             return
-        if not self._owns_question(question, version, current_user.id) and not self._is_shared_question(question, current_user):
+        if not self._owns_question(question, version, current_user.id) and not self._is_shared_question(
+            question, version, current_user
+        ):
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _policy(self) -> dict:
@@ -1803,7 +1827,7 @@ class QuestionWorkflowService:
         return now + timedelta(minutes=max(1, settings.review_lock_timeout_minutes))
 
     def _assignment_available_filter(self, current_user: CurrentUser, now) -> list[dict]:
-        if current_user.role == "Admin":
+        if has_permission(current_user, "questions.review_assign"):
             return []
         return [
             {"review_assignment": {"$exists": False}},
@@ -1814,7 +1838,7 @@ class QuestionWorkflowService:
         ]
 
     def _ensure_review_lock(self, question: dict, current_user: CurrentUser, now) -> None:
-        if current_user.role == "Admin":
+        if has_permission(current_user, "questions.review_assign"):
             return
         assignment = question.get("review_assignment") or {}
         if assignment.get("status") != "IN_REVIEW":
@@ -1830,7 +1854,10 @@ class QuestionWorkflowService:
         reviewer = self.db.users.find_one(
             {
                 "_id": reviewer_oid,
-                "role": {"$in": ["Reviewer", "Admin"]},
+                "$or": [
+                    {"role": "Reviewer"},
+                    {"permissions": "questions.review"},
+                ],
                 "is_active": True,
             },
             {"_id": 1, "display_name": 1, "email": 1, "role": 1},
@@ -1882,6 +1909,10 @@ class QuestionWorkflowService:
     def claim_review(self, question_id: str, current_user: CurrentUser) -> dict:
         pair = self._pair(question_id)
         question, version = pair
+        if not self._has_review_scope(question, version, current_user):
+            raise PermissionError("Bạn chưa được phân công vào học phần của câu hỏi")
+        if self._owns_question(question, version, current_user.id):
+            raise PermissionError("Người tạo hoặc chủ nguồn không được tự kiểm duyệt câu hỏi")
         if question["review_status"] != "PENDING":
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể claim")
         now = utc_now()
@@ -1933,7 +1964,7 @@ class QuestionWorkflowService:
             "lifecycle_status": "ACTIVE",
             "review_status": "PENDING",
         }
-        if current_user.role != "Admin":
+        if not has_permission(current_user, "questions.review_assign"):
             query["review_assignment.reviewer_user_id"] = current_user.id
         assignment = _empty_review_assignment(now, "released")
         updated = self.db.questions.find_one_and_update(
@@ -1966,6 +1997,13 @@ class QuestionWorkflowService:
         now = utc_now()
         if payload.reviewer_user_id:
             reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
+            subject_id = subject_id_from_record(question, version)
+            if (
+                subject_id is not None
+                and getattr(self.db, "subject_memberships", None) is not None
+                and not has_subject_access(self.db, reviewer["_id"], subject_id)
+            ):
+                raise ValueError("Reviewer chưa được phân công vào học phần của câu hỏi")
             assignment = {
                 "status": "ASSIGNED",
                 "reviewer_user_id": reviewer["_id"],
@@ -1980,13 +2018,16 @@ class QuestionWorkflowService:
         else:
             assignment = _empty_review_assignment(now, payload.note or "unassigned")
             action = "QUESTION_REVIEW_UNASSIGNED"
+        assignment_query = {
+            "_id": question["_id"],
+            "current_version_id": version["_id"],
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+        if "review_assignment" in question:
+            assignment_query["review_assignment"] = question.get("review_assignment")
         updated = self.db.questions.find_one_and_update(
-            {
-                "_id": question["_id"],
-                "current_version_id": version["_id"],
-                "lifecycle_status": "ACTIVE",
-                "review_status": "PENDING",
-            },
+            assignment_query,
             {"$set": {"review_assignment": assignment, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
@@ -2078,6 +2119,12 @@ class QuestionWorkflowService:
             raise RuntimeError("VERSION_CONFLICT")
         if question.get("review_status") != "PENDING":
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể được kiểm duyệt")
+        if not self._has_review_scope(question, version, current_user):
+            raise PermissionError("Bạn chưa được phân công vào học phần của câu hỏi")
+        if self._owns_question(question, version, current_user.id):
+            raise PermissionError("Người tạo hoặc chủ nguồn không được tự kiểm duyệt câu hỏi")
+        if payload.override.applied and not has_permission(current_user, "questions.review_override"):
+            raise PermissionError("Bạn không có quyền override kết quả đánh giá AI")
         if (
             payload.decision == "APPROVED"
             and question["evaluation_status"] != "PASSED"
@@ -2203,13 +2250,23 @@ class QuestionWorkflowService:
         }
         with mongo_transaction() as session:
             self.db.question_reviews.insert_one(review, session=session)
+            update_query = {
+                "_id": question["_id"],
+                "current_version_id": version["_id"],
+                "lifecycle_status": "ACTIVE",
+                "latest_review_id": question.get("latest_review_id"),
+            }
+            if not has_permission(current_user, "questions.review_assign"):
+                assignment = question.get("review_assignment") or {}
+                update_query.update(
+                    {
+                        "review_assignment.status": "IN_REVIEW",
+                        "review_assignment.reviewer_user_id": current_user.id,
+                        "review_assignment.lock_expires_at": assignment.get("lock_expires_at"),
+                    }
+                )
             result = self.db.questions.update_one(
-                {
-                    "_id": question["_id"],
-                    "current_version_id": version["_id"],
-                    "lifecycle_status": "ACTIVE",
-                    "latest_review_id": question.get("latest_review_id"),
-                },
+                update_query,
                 {"$set": question_fields},
                 session=session,
             )
@@ -2666,6 +2723,16 @@ class QuestionWorkflowService:
             exports["xml"] = cls._moodle_xml(question, version)
         return exports
 
+    @staticmethod
+    def _moodle_export_error(question: dict, version: dict, expected_version: int | None = None) -> tuple[str, str] | None:
+        if expected_version is not None and question["current_version"] != expected_version:
+            return "VERSION_CONFLICT", "Phiên bản câu hỏi đã thay đổi"
+        if question["review_status"] != "APPROVED":
+            return "NOT_APPROVED", "Câu hỏi chưa được duyệt"
+        if question.get("approved_version_id") != version["_id"]:
+            return "STALE_APPROVAL", "Phiên bản hiện tại chưa được duyệt"
+        return None
+
     def export_moodle(
         self,
         question_id: str,
@@ -2674,8 +2741,9 @@ class QuestionWorkflowService:
     ) -> dict:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
-        if question["review_status"] != "APPROVED" or question.get("approved_version_id") != version["_id"]:
-            raise ValueError("Chỉ câu hỏi đã được duyệt ở phiên bản hiện tại mới được export Moodle")
+        eligibility_error = self._moodle_export_error(question, version)
+        if eligibility_error:
+            raise ValueError(eligibility_error[1])
         normalized = export_format.lower()
         if normalized not in {"gift", "xml"}:
             raise ValueError("Định dạng export Moodle phải là gift hoặc xml")
@@ -2685,6 +2753,78 @@ class QuestionWorkflowService:
             "filename": f"{question['question_code']}.{normalized}",
             "content": content,
             "media_type": "application/xml" if normalized == "xml" else "text/plain",
+        }
+
+    def export_moodle_bulk(self, items, export_format: str, current_user: CurrentUser) -> dict:
+        normalized = export_format.lower()
+        if normalized not in {"gift", "xml"}:
+            raise ValueError("Định dạng export Moodle phải là gift hoặc xml")
+        resolved = []
+        errors = []
+        for item in items:
+            try:
+                question, version = self._pair(item.question_id)
+                self._ensure_read_access(question, version, current_user)
+                eligibility_error = self._moodle_export_error(
+                    question, version, item.expected_version
+                )
+                if eligibility_error:
+                    errors.append(
+                        {
+                            "question_id": item.question_id,
+                            "question_code": question.get("question_code"),
+                            "code": eligibility_error[0],
+                            "message": eligibility_error[1],
+                        }
+                    )
+                    continue
+                resolved.append((question, version))
+            except LookupError as exc:
+                errors.append(
+                    {
+                        "question_id": item.question_id,
+                        "question_code": None,
+                        "code": "NOT_FOUND",
+                        "message": str(exc),
+                    }
+                )
+            except PermissionError as exc:
+                errors.append(
+                    {
+                        "question_id": item.question_id,
+                        "question_code": None,
+                        "code": "FORBIDDEN",
+                        "message": str(exc),
+                    }
+                )
+            except ValueError as exc:
+                errors.append(
+                    {
+                        "question_id": item.question_id,
+                        "question_code": None,
+                        "code": "INVALID_REQUEST",
+                        "message": str(exc),
+                    }
+                )
+        if errors:
+            return {
+                "filename": None,
+                "content": None,
+                "format": normalized,
+                "exported_count": 0,
+                "errors": errors,
+            }
+        if normalized == "gift":
+            content = "\n\n".join(self._moodle_gift(question, version) for question, version in resolved) + "\n"
+        else:
+            body = "\n".join(self._moodle_xml_question(question, version) for question, version in resolved)
+            content = f'<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n{body}\n</quiz>\n'
+        return {
+            "filename": f"moodle-questions.{normalized}",
+            "content": content,
+            "format": normalized,
+            "exported_count": len(resolved),
+            "errors": [],
         }
 
     def publish_to_moodle(
@@ -2699,10 +2839,18 @@ class QuestionWorkflowService:
         if settings.app_env == "production" and not settings.demo_mode:
             raise ValueError("Mô phỏng Moodle bị tắt trong production; hãy dùng export GIFT/XML")
         question, version = self._pair(question_id)
+        current_user = user_id if isinstance(user_id, CurrentUser) else None
+        publisher_user_id = current_user.id if current_user else user_id
+        publisher_role = current_user.role if current_user else publisher_role
+        if current_user:
+            self._ensure_read_access(question, version, current_user)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
-        if question["review_status"] != "APPROVED" or question.get("approved_version_id") != version["_id"]:
-            raise ValueError("Chỉ câu hỏi đã được duyệt ở phiên bản hiện tại mới được xuất Moodle")
+        eligibility_error = self._moodle_export_error(question, version, payload.expected_version)
+        if eligibility_error:
+            if eligibility_error[0] == "VERSION_CONFLICT":
+                raise RuntimeError("VERSION_CONFLICT")
+            raise ValueError(eligibility_error[1])
 
         target_service = MoodleTargetService(self.db)
         target_config = target_service.find_target(payload.target_id or payload.moodle_site_id)
@@ -2753,7 +2901,7 @@ class QuestionWorkflowService:
             "question_id": question["_id"],
             "question_version_id": version["_id"],
             "question_version": version["version"],
-            "publisher_user_id": user_id,
+            "publisher_user_id": publisher_user_id,
             "target": target,
             "publication_mode": publication_mode,
             "external_sync": False,
@@ -2863,12 +3011,18 @@ class QuestionWorkflowService:
         now = utc_now()
         since_7d = now - timedelta(days=7)
         since_30d = now - timedelta(days=30)
-        is_admin = current_user.role == "Admin"
+        is_admin = self._can_manage_all(current_user)
         pending_base = {
             "schema_version": SCHEMA_VERSION,
             "lifecycle_status": "ACTIVE",
             "review_status": "PENDING",
         }
+        if not is_admin and getattr(self.db, "subject_memberships", None) is not None:
+            subject_ids = active_subject_ids(self.db, current_user.id)
+            pending_base["$or"] = [
+                {"subject_id": {"$in": list(subject_ids)}},
+                {"subject_id": None},
+            ]
 
         def pending_count(extra: dict | None = None) -> int:
             if not extra:

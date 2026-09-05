@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks
 
 from core.audit import record_audit_event
+from core.access_policy import active_subject_ids, has_subject_access, is_explicitly_shared, is_subject_shared_with_member
 from core.config import resolve_path, settings
 from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
@@ -36,15 +37,15 @@ class DocumentService:
     def _is_owner(record: dict, current_user: CurrentUser) -> bool:
         return record.get("uploaded_by_user_id") == current_user.id
 
-    @staticmethod
-    def _ensure_access(record: dict | None, current_user: CurrentUser) -> None:
+    def _ensure_access(self, record: dict | None, current_user: CurrentUser) -> None:
         if not record or DocumentService._can_manage_all(current_user):
             return
-        shared_with = set(record.get("shared_with_user_ids") or [])
         if (
             DocumentService._is_owner(record, current_user)
-            or current_user.id in shared_with
-            or record.get("shared_scope") == "SUBJECT"
+            or is_explicitly_shared(record, current_user.id)
+            or is_subject_shared_with_member(
+                getattr(self.repository, "db", None), record, current_user.id
+            )
         ):
             return
         raise PermissionError("Bạn không có quyền truy cập tài liệu này")
@@ -56,7 +57,21 @@ class DocumentService:
         if not DocumentService._is_owner(record, current_user):
             raise PermissionError("Bạn không có quyền truy cập tài liệu này")
 
-    def create(self, payload: DocumentCreateRequest, uploaded_by_user_id) -> dict:
+    def create(
+        self,
+        payload: DocumentCreateRequest,
+        uploaded_by_user_id,
+        current_user: CurrentUser | None = None,
+    ) -> dict:
+        access_database = getattr(self.repository, "db", None)
+        if (
+            payload.subject_id
+            and current_user
+            and not self._can_manage_all(current_user)
+            and getattr(access_database, "subject_memberships", None) is not None
+            and not has_subject_access(access_database, current_user.id, payload.subject_id)
+        ):
+            raise PermissionError("Bạn chưa được phân công vào học phần đã chọn")
         return serialize_document(
             self.repository.create(payload.model_dump(), uploaded_by_user_id)
         )
@@ -85,6 +100,11 @@ class DocumentService:
                 if not current_user or self._can_manage_all(current_user)
                 else current_user.id
             ),
+            visible_subject_ids=(
+                ()
+                if not current_user or self._can_manage_all(current_user)
+                else active_subject_ids(getattr(self.repository, "db", None), current_user.id)
+            ),
         )
         return {
             "items": [serialize_document(item) for item in records],
@@ -102,6 +122,15 @@ class DocumentService:
         if current_user:
             self._ensure_manage_access(self.repository.find_by_id(document_id), current_user)
         fields = payload.model_dump(exclude_none=True)
+        access_database = getattr(self.repository, "db", None)
+        if (
+            fields.get("subject_id")
+            and current_user
+            and not self._can_manage_all(current_user)
+            and getattr(access_database, "subject_memberships", None) is not None
+            and not has_subject_access(access_database, current_user.id, fields["subject_id"])
+        ):
+            raise PermissionError("Bạn chưa được phân công vào học phần đã chọn")
         record = self.repository.update(document_id, fields)
         return serialize_document(record) if record else None
 

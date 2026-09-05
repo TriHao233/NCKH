@@ -25,7 +25,7 @@ Việc soạn ngân hàng câu hỏi tại các cơ sở giáo dục hiện ch�
 2. Tự động hóa sinh đề bằng LLM + RAG, nhanh hơn nhiều lần so với thủ công.
 3. Đảm bảo chất lượng nội dung qua cơ chế Human-in-the-loop (AI khởi tạo → giảng viên thẩm định).
 4. Kiểm chứng tính khả thi của LLM **chạy local** (chi phí thấp, bảo mật cao) cho bài toán giáo dục chuyên ngành.
-5. Đồng bộ dữ liệu câu hỏi sang **Moodle** (LMS của trường) thông qua Plugin.
+5. Xuất GIFT/XML đúng chuẩn Moodle; đồng bộ Question Bank thật là giai đoạn G và chưa được claim ở baseline hiện tại.
 
 ## 3. Phạm vi
 
@@ -37,7 +37,13 @@ Việc soạn ngân hàng câu hỏi tại các cơ sở giáo dục hiện ch�
 | Loại câu hỏi | Trắc nghiệm 4 lựa chọn (MCQ), Đúng/Sai, Điền khuyết, Ghép đôi, Câu hỏi tình huống |
 | Mô hình AI | LLM mã nguồn mở, chạy **local** (ứng viên: Qwen, Llama...) |
 | Kỹ thuật lõi | RAG (truy xuất ngữ cảnh từ tài liệu để giảm ảo giác) |
-| Đầu ra | Lưu trực tiếp vào Question Bank của Moodle qua Plugin |
+| Đầu ra hiện tại | Ngân hàng nội bộ, đề PDF/DOCX và GIFT/XML; publication cục bộ chỉ là mô phỏng |
+| Đầu ra mục tiêu | Đồng bộ Question Bank Moodle thật sau khi Moodle contract và quyền trường được xác nhận |
+
+Baseline triển khai A–H, requirement IDs và gate nghiệm thu được chốt tại
+[`docs/BASELINE_CONTRACT.md`](docs/BASELINE_CONTRACT.md). Thiết kế chi tiết vẫn theo
+[`docs/DATABASE_DESIGN_V2.md`](docs/DATABASE_DESIGN_V2.md); kế hoạch triển khai nằm tại
+[`docs/PROJECT_COMPLETION_MASTER_PLAN.md`](docs/PROJECT_COMPLETION_MASTER_PLAN.md).
 
 ## 4. Kiến trúc hệ thống & tech stack hiện tại
 
@@ -103,12 +109,12 @@ NCKH/
 7. Câu hỏi đã duyệt → lưu vào Ngân hàng câu hỏi (Question Bank nội bộ)
         │
         ▼
-8. Xuất bản / đồng bộ sang Moodle
+8. Export Moodle hiện tại; publication thật ở giai đoạn G
    - Chuyển đổi dữ liệu sang định dạng chuẩn Moodle (nội dung, đáp án, xáo trộn)
-   - Plugin Moodle (PHP + Moodle Database API) nhận và lưu vào Question Bank của Moodle
+   - Baseline hiện tại chưa có connector/plugin Moodle thật; chế độ mock chỉ ghi local và không phải Moodle ID
 ```
 
-**Vòng đời một câu hỏi:** `Soạn thảo (AI draft) → Phản biện → Duyệt → Xuất bản (Moodle)`
+**Vòng đời một câu hỏi:** `Soạn thảo → AI evaluation → Reviewer độc lập duyệt version → Export/Publish theo capability`
 
 ## 6. Chức năng chính (theo nhóm người dùng)
 
@@ -120,7 +126,7 @@ NCKH/
 - Upload tài liệu nguồn (`GeneratePage`) → kích hoạt pipeline sinh câu hỏi.
 - Chỉnh sửa câu hỏi bằng Question Editor.
 - Quản lý ngân hàng câu hỏi cá nhân/môn học (`ManagePage`).
-- Duyệt & xuất bản câu hỏi sang Moodle.
+- Gửi câu hỏi để reviewer độc lập duyệt; export/publish Moodle là capability riêng.
 - Quản lý hồ sơ cá nhân (`UserProfile`).
 
 Các trang frontend hiện có khớp với các chức năng trên: `HomePage`, `LoginPage`/`RegisterPage` (auth), `GeneratePage` (sinh câu hỏi từ tài liệu), `ManagePage` (quản lý ngân hàng câu hỏi), `GuidePage`, `AboutPage`, `ContactPage`.
@@ -145,14 +151,14 @@ Các trang frontend hiện có khớp với các chức năng trên: `HomePage`,
 ## 9. Sản phẩm bàn giao
 
 - Hệ thống Web quản lý & sinh câu hỏi trắc nghiệm (Admin Dashboard).
-- Plugin tích hợp Moodle (đồng bộ câu hỏi tự động, đúng chuẩn Moodle).
+- Plugin/connector Moodle thật (mục tiêu giai đoạn G; chưa có trong baseline hiện tại).
 - Mã nguồn hoàn chỉnh Backend + Moodle Plugin, tài liệu hướng dẫn cài đặt/tích hợp.
 - Báo cáo tổng kết + video demo quy trình (≤ 2 phút).
 
 ## 10. Định hướng kỹ thuật cần lưu ý khi code tiếp
 
 - **RAG là xương sống chống hallucination** — mọi câu hỏi sinh ra phải truy xuất ngữ cảnh từ ChromaDB trước khi gọi LLM, không sinh "chay" từ kiến thức nội tại của model.
-- **LLM mục tiêu là chạy local/mã nguồn mở** (Qwen, Llama...) — `google-genai` trong requirements hiện tại là phương án thử nghiệm/tạm thời, không phải đích cuối.
+- **LLM nghiệm thu chạy local/mã nguồn mở**. `INFERENCE_POLICY=LOCAL_ONLY` chặn runtime/endpoint cloud; cloud chỉ được bật bằng quyết định môi trường rõ ràng.
 - **OCR chỉ cần khi tài liệu là PDF scan** (ảnh) — tài liệu PDF text thuần không cần qua easyocr.
 - **Không được auto-publish câu hỏi AI sinh ra** — luôn phải qua bước duyệt của giảng viên (human-in-the-loop) trước khi vào Moodle.
 - **Chuẩn hóa output theo Moodle**: đáp án, thiết lập xáo trộn, mã hóa tiếng Việt phải đúng ngay từ bước Generation để Plugin xuất bản không cần xử lý lại.
@@ -171,7 +177,7 @@ Nhánh `fixed_CRUD` giữ cấu trúc feature-based của `full-dev` và bổ su
 
 Sao chép `backend/.env.example` thành `backend/.env`, cấu hình `MONGO_URI`,
 `AUTH_DB_NAME=NCKH`, `RAG_DB_NAME=rag_database` và đường dẫn Firebase service
-account. `NCKH.User` chỉ lưu `uid` và Firebase token; hồ sơ/role đầy đủ để CRUD
+account. `NCKH.User` chỉ lưu `uid`, mốc hoạt động và token rỗng để tương thích schema; không lưu bearer token Firebase thô. Hồ sơ/role đầy đủ để CRUD
 nằm ở `rag_database.users`. Token do Firebase phát hành và xác minh, backend
 không phát JWT riêng. MongoDB phải là replica set.
 Trong workspace cũ, backend cũng tự fallback sang `rag-ocr-pipeline/.env` để

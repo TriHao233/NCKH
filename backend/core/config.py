@@ -91,6 +91,15 @@ class Settings(BaseModel):
     ollama_max_concurrency: int = int(os.getenv("OLLAMA_MAX_CONCURRENCY", "1"))
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
+    inference_policy: str = os.getenv("INFERENCE_POLICY", "LOCAL_ONLY").strip().upper()
+    local_inference_allowed_hosts: list[str] = [
+        host.strip().lower()
+        for host in os.getenv(
+            "LOCAL_INFERENCE_ALLOWED_HOSTS",
+            "localhost,127.0.0.1,::1,host.docker.internal,ollama",
+        ).split(",")
+        if host.strip()
+    ]
 
     firebase_credentials_path: str = os.getenv(
         "FIREBASE_CREDENTIALS_PATH", str(BASE_DIR / "firebase-service-account.json")

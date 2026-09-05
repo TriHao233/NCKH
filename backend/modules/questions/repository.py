@@ -131,6 +131,8 @@ class QuestionRepository(Protocol):
         creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
         visible_to_user_id: ObjectId | None = None,
+        visible_subject_ids: tuple[ObjectId, ...] = (),
+        scoped_subject_ids: tuple[ObjectId, ...] = (),
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
@@ -293,6 +295,8 @@ class MongoQuestionRepository:
         creator_user_id: ObjectId | None = None,
         owner_user_id: ObjectId | None = None,
         visible_to_user_id: ObjectId | None = None,
+        visible_subject_ids: tuple[ObjectId, ...] = (),
+        scoped_subject_ids: tuple[ObjectId, ...] = (),
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
@@ -389,6 +393,14 @@ class MongoQuestionRepository:
                 }
             )
         if visible_to_user_id is not None:
+            scope_filters = []
+            if scoped_subject_ids:
+                scope_filters.extend(
+                    [
+                        {"subject_id": {"$in": list(scoped_subject_ids)}},
+                        {"subject_id": None},
+                    ]
+                )
             pipeline.append(
                 {
                     "$match": {
@@ -396,7 +408,11 @@ class MongoQuestionRepository:
                             {"created_by_user_id": visible_to_user_id},
                             {"version.created_by_user_id": visible_to_user_id},
                             {"shared_with_user_ids": visible_to_user_id},
-                            {"shared_scope": "SUBJECT"},
+                            {
+                                "shared_scope": "SUBJECT",
+                                "subject_id": {"$in": list(visible_subject_ids)},
+                            },
+                            *scope_filters,
                         ]
                     }
                 }

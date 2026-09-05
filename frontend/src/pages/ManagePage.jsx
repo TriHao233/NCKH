@@ -22,6 +22,7 @@ import {
   createQuestion,
   deleteQuestion,
   duplicateQuestion,
+  exportQuestionsToMoodle,
   getQuestion,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
@@ -49,6 +50,7 @@ import { listSubjects } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
+import { permissionsForUser } from '../auth/permissions';
 import {
   SINGLE_CHOICE_TYPES,
   MULTI_CHOICE_TYPES,
@@ -83,8 +85,6 @@ import {
   QUESTION_BANK_EXPORT_COLUMNS,
   downloadTextFile,
   parseQuestionBankImportFile,
-  questionsToGift,
-  questionsToMoodleXml,
   timestampedQuestionBankFilename,
 } from '../utils/questionBankExchange';
 import '../css/ManagePage.css';
@@ -481,9 +481,11 @@ function ManagePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useContext(AuthContext);
+  const userPermissions = permissionsForUser(user);
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
-  const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
+  const canReviewQuestions = userPermissions.includes('questions.review');
+  const canExportMoodle = userPermissions.includes('questions.export_moodle');
 
   const [questions, setQuestions] = useState([]);
   const [questionTotal, setQuestionTotal] = useState(0);
@@ -1380,15 +1382,43 @@ function ManagePage() {
           'Question bank',
         );
       } else if (questionExportFormat === 'gift') {
+        if (!canExportMoodle) {
+          throw new Error('Tài khoản chưa được cấp quyền export Moodle chính thức.');
+        }
+        const result = await exportQuestionsToMoodle(
+          exportableQuestions.map((question) => ({
+            question_id: question.id,
+            expected_version: question.current_version,
+          })),
+          'gift',
+        );
+        if (result.errors?.length) {
+          const first = result.errors[0];
+          throw new Error(`${result.errors.length} câu không đủ điều kiện. ${first.question_code || first.question_id}: ${first.message}`);
+        }
         downloadTextFile(
-          timestampedQuestionBankFilename(prefix, 'gift'),
-          questionsToGift(exportableQuestions),
+          result.filename || timestampedQuestionBankFilename(prefix, 'gift'),
+          result.content,
           'text/plain;charset=utf-8',
         );
       } else if (questionExportFormat === 'xml') {
+        if (!canExportMoodle) {
+          throw new Error('Tài khoản chưa được cấp quyền export Moodle chính thức.');
+        }
+        const result = await exportQuestionsToMoodle(
+          exportableQuestions.map((question) => ({
+            question_id: question.id,
+            expected_version: question.current_version,
+          })),
+          'xml',
+        );
+        if (result.errors?.length) {
+          const first = result.errors[0];
+          throw new Error(`${result.errors.length} câu không đủ điều kiện. ${first.question_code || first.question_id}: ${first.message}`);
+        }
         downloadTextFile(
-          timestampedQuestionBankFilename(prefix, 'xml'),
-          questionsToMoodleXml(exportableQuestions),
+          result.filename || timestampedQuestionBankFilename(prefix, 'xml'),
+          result.content,
           'application/xml;charset=utf-8',
         );
       }
@@ -2014,7 +2044,13 @@ function ManagePage() {
                     onChange={(e) => setQuestionExportFormat(e.target.value)}
                   >
                     {QUESTION_BANK_EXPORT_FORMATS.map((format) => (
-                      <option key={format.value} value={format.value}>{format.label}</option>
+                      <option
+                        key={format.value}
+                        value={format.value}
+                        disabled={['gift', 'xml'].includes(format.value) && !canExportMoodle}
+                      >
+                        {format.label}{['gift', 'xml'].includes(format.value) ? ' (chỉ câu đã duyệt)' : ''}
+                      </option>
                     ))}
                   </select>
                   <button

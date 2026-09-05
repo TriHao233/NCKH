@@ -27,6 +27,7 @@ import {
 import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
+import { permissionsForUser } from '../auth/permissions';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import {
   DEFAULT_REVIEW_COMMENT_TEMPLATES,
@@ -471,6 +472,13 @@ function ReviewQueuePage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
+  const userPermissions = permissionsForUser(user);
+  const canReviewQuestions = userPermissions.includes('questions.review');
+  const canAssignReviews = userPermissions.includes('questions.review_assign');
+  const canEvaluateQuestions = userPermissions.includes('questions.evaluate');
+  const canOverrideEvaluation = userPermissions.includes('questions.review_override');
+  const canPublishMoodle = userPermissions.includes('questions.publish_moodle');
+  const canExportMoodle = userPermissions.includes('questions.export_moodle');
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -887,13 +895,13 @@ function ReviewQueuePage() {
   };
 
   const canClaimQuestion = (question) => {
-    if (!question || question.review_status !== 'PENDING') return false;
+    if (!canReviewQuestions || !question || question.review_status !== 'PENDING') return false;
     const assignment = assignmentOf(question);
     return (
       assignment.status === 'UNASSIGNED'
       || isAssignmentMine(question, user)
       || isReviewLockExpired(assignment)
-      || user?.role === 'Admin'
+      || canAssignReviews
     );
   };
 
@@ -901,12 +909,12 @@ function ReviewQueuePage() {
     if (!question || question.review_status !== 'PENDING') return false;
     const assignment = assignmentOf(question);
     if (assignment.status === 'UNASSIGNED') return false;
-    return user?.role === 'Admin' || isAssignmentMine(question, user);
+    return canAssignReviews || isAssignmentMine(question, user);
   };
 
   const canReviewQuestion = (question) => {
-    if (!question || question.review_status !== 'PENDING') return false;
-    if (user?.role === 'Admin') return true;
+    if (!canReviewQuestions || !question || question.review_status !== 'PENDING') return false;
+    if (canAssignReviews) return true;
     const assignment = assignmentOf(question);
     return (
       assignment.status === 'IN_REVIEW'
@@ -1177,6 +1185,10 @@ function ReviewQueuePage() {
       return;
     }
     const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
+    if (needsOverride && !canOverrideEvaluation) {
+      setReviewFormError('Tài khoản chưa được cấp quyền override đánh giá AI.');
+      return;
+    }
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
       setReviewFormError('Cần ghi lý do khi duyệt câu mà AI đề xuất xem lại.');
       return;
@@ -1898,17 +1910,17 @@ function ReviewQueuePage() {
                 <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => releaseReview(selected)}>
                   Trả câu
                 </button>
-                {user?.role === 'Admin' && (
+                {canAssignReviews && (
                   <button type="button" disabled={busyId === selected.id || selected.review_status !== 'PENDING'} onClick={() => openAssignmentForm(selected)}>
                     Gán người duyệt
                   </button>
                 )}
-                {user?.role === 'Admin' && (
+                {canAssignReviews && (
                   <button type="button" disabled={busyId === selected.id || !canReleaseQuestion(selected)} onClick={() => unassignReview(selected)}>
                     Bỏ gán
                   </button>
                 )}
-                <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
+                <button type="button" disabled={busyId === selected.id || !canEvaluateQuestions || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
                   {selected.evaluation_status === 'ERROR' || selected.evaluation_status === 'FAILED' || selected.evaluation_status === 'STALE'
                     ? 'Nhờ AI đánh giá lại'
                     : 'Nhờ AI đánh giá'}
@@ -2270,9 +2282,9 @@ function ReviewQueuePage() {
                       ))}
                       {publications.length === 0 && <p>Chưa có lần xuất bản.</p>}
                       <div className="history-moodle-actions">
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải tệp GIFT</button>
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải tệp XML</button>
+                        <button type="button" disabled={busyId === selected.id || !canPublishMoodle || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Ghi mô phỏng Moodle</button>
+                        <button type="button" disabled={busyId === selected.id || !canExportMoodle || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải tệp GIFT</button>
+                        <button type="button" disabled={busyId === selected.id || !canExportMoodle || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải tệp XML</button>
                       </div>
                     </div>
                   </section>

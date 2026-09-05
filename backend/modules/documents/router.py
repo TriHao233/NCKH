@@ -46,7 +46,9 @@ def create_document(
     service: DocumentService = Depends(get_document_service),
 ):
     try:
-        return service.create(payload, current_user.id)
+        return service.create(payload, current_user.id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

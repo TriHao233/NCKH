@@ -138,6 +138,13 @@ export function submitQuestionForReview(id) {
   return apiRequest(`/questions/${id}/submit-review`, { method: 'POST' });
 }
 
+export function exportQuestionsToMoodle(items, format) {
+  return apiRequest('/questions/moodle-export/bulk', {
+    method: 'POST',
+    body: { items, format },
+  });
+}
+
 export function deleteQuestion(id) {
   return apiRequest(`/questions/${id}`, { method: 'DELETE' });
 }

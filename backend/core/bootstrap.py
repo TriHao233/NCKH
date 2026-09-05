@@ -14,6 +14,7 @@ AUTH_COLLECTIONS = ("User",)
 RAG_COLLECTIONS = (
     "users",
     "subjects",
+    "subject_memberships",
     "documents",
     "document_jobs",
     "document_pages",
@@ -57,6 +58,7 @@ VALIDATORS = {
                 "_id": {"bsonType": "objectId"},
                 "uid": {"bsonType": "string", "minLength": 1},
                 "token": {"bsonType": ["string", "null"]},
+                "last_seen_at": {"bsonType": ["date", "null"]},
             },
         }
     },
@@ -81,6 +83,28 @@ VALIDATORS = {
                 "role": {"enum": ["Admin", "Teacher", "Reviewer"]},
                 "generation_presets": {"bsonType": "array"},
                 "is_active": {"bsonType": "bool"},
+                "created_at": {"bsonType": "date"},
+                "updated_at": {"bsonType": "date"},
+            },
+        }
+    },
+    "subject_memberships": {
+        "$jsonSchema": {
+            "bsonType": "object",
+            "required": [
+                "schema_version", "user_id", "subject_id", "roles",
+                "capabilities", "status", "origin", "created_at", "updated_at",
+            ],
+            "properties": {
+                "schema_version": {"bsonType": "int", "minimum": 2},
+                "user_id": {"bsonType": "objectId"},
+                "subject_id": {"bsonType": "objectId"},
+                "roles": {"bsonType": "array"},
+                "capabilities": {"bsonType": "array"},
+                "status": {"enum": ["ACTIVE", "SUSPENDED", "REVOKED"]},
+                "origin": {"enum": ["MANUAL", "BACKFILL", "MOODLE"]},
+                "external_course_id": {"bsonType": ["string", "null"]},
+                "created_by_user_id": {"bsonType": ["objectId", "null"]},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
             },
@@ -432,6 +456,23 @@ def _ensure_indexes() -> None:
         ]
     )
     rag_db.subjects.create_index([("subject_code", ASCENDING)], unique=True, name="uq_subject_code")
+    rag_db.subject_memberships.create_indexes(
+        [
+            IndexModel(
+                [("user_id", ASCENDING), ("subject_id", ASCENDING), ("origin", ASCENDING)],
+                unique=True,
+                name="uq_subject_membership_user_subject_origin",
+            ),
+            IndexModel(
+                [("subject_id", ASCENDING), ("status", ASCENDING), ("user_id", ASCENDING)],
+                name="ix_subject_memberships_subject_status_user",
+            ),
+            IndexModel(
+                [("user_id", ASCENDING), ("status", ASCENDING), ("subject_id", ASCENDING)],
+                name="ix_subject_memberships_user_status_subject",
+            ),
+        ]
+    )
     rag_db.documents.create_indexes(
         [
             IndexModel(

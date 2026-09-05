@@ -252,8 +252,7 @@ class MoodleTargetService:
         result = QuestionWorkflowService(self.db).publish_to_moodle(
             str(publication["question_id"]),
             payload,
-            current_user.id,
-            current_user.role,
+            current_user,
         )
         saved_id = result.get("_id") or result.get("id")
         saved = (

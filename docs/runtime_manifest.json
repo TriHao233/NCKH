@@ -1,0 +1,29 @@
+{
+  "manifest_version": "2026-09-05.1",
+  "runtimes": {
+    "python": "3.10.14",
+    "node": "20.19.0",
+    "mongodb": "7.0",
+    "torch_cuda": "2.5.1+cu124"
+  },
+  "services": {
+    "backend": "FastAPI modular monolith",
+    "worker": "Python Mongo job worker",
+    "frontend": "React 18 + Vite",
+    "vector_index": "ChromaDB 0.5.5 (rebuildable)"
+  },
+  "acceptance_inference": {
+    "policy": "LOCAL_ONLY",
+    "runtime": "OLLAMA",
+    "generation_default": "qwen2.5:7b",
+    "code_default": "deepseek-r1",
+    "evaluation_default": "qwen2.5:7b",
+    "fallbacks": [],
+    "required_before_benchmark": [
+      "record exact Ollama version",
+      "record model digest and quantization",
+      "record GPU/VRAM/RAM",
+      "record context and output limits"
+    ]
+  }
+}

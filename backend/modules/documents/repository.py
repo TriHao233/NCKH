@@ -114,6 +114,7 @@ class DocumentRepository(Protocol):
         *,
         uploaded_by_user_id: ObjectId | None = None,
         visible_to_user_id: ObjectId | None = None,
+        visible_subject_ids: tuple[ObjectId, ...] = (),
     ) -> tuple[list[dict], int]: ...
 
     def update(self, document_id: str | ObjectId, fields: dict) -> dict | None: ...
@@ -259,18 +260,23 @@ class MongoDocumentRepository:
         *,
         uploaded_by_user_id: ObjectId | None = None,
         visible_to_user_id: ObjectId | None = None,
+        visible_subject_ids: tuple[ObjectId, ...] = (),
     ) -> tuple[list[dict], int]:
         query: dict = {"schema_version": SCHEMA_VERSION, "archived_at": None}
         if uploaded_by_user_id is not None:
             query["uploaded_by_user_id"] = uploaded_by_user_id
         filters = []
         if visible_to_user_id is not None:
+            subject_scope = {
+                "shared_scope": "SUBJECT",
+                "subject_id": {"$in": list(visible_subject_ids)},
+            }
             filters.append(
                 {
                     "$or": [
                         {"uploaded_by_user_id": visible_to_user_id},
                         {"shared_with_user_ids": visible_to_user_id},
-                        {"shared_scope": "SUBJECT"},
+                        subject_scope,
                     ]
                 }
             )

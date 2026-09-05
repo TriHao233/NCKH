@@ -7,6 +7,7 @@ from typing import Any
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
+from core.access_policy import has_subject_access
 from core.database import get_database
 from core.dependencies import CurrentUser
 from modules.exams.repository import (
@@ -105,14 +106,18 @@ class ExamService:
             raise LookupError("Không tìm thấy đề thi")
         return exam
 
-    @staticmethod
-    def _assert_can_access(exam: dict, current_user: CurrentUser | None) -> None:
+    def _assert_can_access(self, exam: dict, current_user: CurrentUser | None) -> None:
         if current_user is None:
             raise PermissionError("Bạn chưa đăng nhập")
         if current_user.role == "Admin":
             return
         if current_user.role == "Teacher" and str(exam.get("created_by_user_id")) == str(current_user.id):
-            return
+            access_database = getattr(self.repository, "db", None)
+            if (
+                getattr(access_database, "subject_memberships", None) is None
+                or has_subject_access(access_database, current_user.id, exam.get("subject_id"))
+            ):
+                return
         raise PermissionError("Bạn không có quyền truy cập đề thi này")
 
     def _get_for_user_or_404(self, exam_id: str, current_user: CurrentUser | None) -> dict:
@@ -180,14 +185,24 @@ class ExamService:
             "created_at": utc_now(),
         }
 
-    def create_exam(self, payload: ExamCreateRequest, created_by_user_id: ObjectId) -> dict:
+    def create_exam(self, payload: ExamCreateRequest, current_user: CurrentUser | ObjectId) -> dict:
         now = utc_now()
+        created_by_user_id = current_user.id if isinstance(current_user, CurrentUser) else current_user
+        subject_id = object_id(payload.subject_id, "subject_id")
+        access_database = getattr(self.repository, "db", None)
+        if (
+            isinstance(current_user, CurrentUser)
+            and current_user.role != "Admin"
+            and getattr(access_database, "subject_memberships", None) is not None
+            and not has_subject_access(access_database, current_user.id, subject_id)
+        ):
+            raise PermissionError("Bạn chưa được phân công vào học phần đã chọn")
         exam = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
             "name": payload.name,
             "exam_title": payload.exam_title,
-            "subject_id": object_id(payload.subject_id, "subject_id"),
+            "subject_id": subject_id,
             "question_count": payload.question_count,
             "header": payload.header.model_dump(),
             "matrix": [],

@@ -24,10 +24,12 @@ DEFAULT_ROLE_PERMISSIONS = {
         "admin.audit",
         "admin.jobs",
         "admin.moodle",
+        "admin.ai_review",
         "documents.manage_all",
         "questions.manage_all",
-        "reviews.manage",
         "questions.use_shared_bank",
+        "questions.read_review_queue",
+        "questions.review_assign",
     },
     "Teacher": {
         "documents.manage_own",
@@ -40,9 +42,13 @@ DEFAULT_ROLE_PERMISSIONS = {
     },
     "Reviewer": {
         "reviews.manage",
+        "questions.review",
+        "questions.review_override",
+        "questions.evaluate",
         "questions.read_review_queue",
         "questions.comment",
         "questions.export_moodle",
+        "questions.publish_moodle",
     },
 }
 

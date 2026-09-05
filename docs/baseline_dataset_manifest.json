@@ -1,0 +1,36 @@
+{
+  "manifest_version": "2026-09-05.1",
+  "pilot_subject": "Data Structures",
+  "code_language_assumption": "C/C++ provisional",
+  "split_policy": {
+    "unit": "source-section",
+    "splits": ["development", "calibration", "holdout"],
+    "leakage_rule": "The same source section and paraphrases of one question must stay in one split."
+  },
+  "rubric_dimensions": [
+    "source_integrity",
+    "answer_correctness",
+    "answerability",
+    "distractor_quality",
+    "bloom_alignment",
+    "clo_alignment",
+    "moodle_readiness"
+  ],
+  "files": [
+    {
+      "path": "docs/Bản sao của THUYẾT MINH ĐỀ TÀI - NGHIÊN CỨU VÀ XÂY DỰNG ỨNG DỤNG WEB QUẢN LÝ NGÂN HÀNG CÂU HỎI SỬ DỤNG MÔ HÌNH NGÔN NGỮ LỚN (LLMs).pdf",
+      "sha256": "dda778de05d71583010429f7107ea2f1499131339a554dfed6d4172c36cbeaba",
+      "size_bytes": 280549,
+      "purpose": "repository checksum/pipeline fixture only",
+      "acceptance_corpus": false,
+      "required_in_repository": false
+    }
+  ],
+  "required_external_assets": [
+    "licensed text PDF",
+    "licensed scanned PDF",
+    "licensed mixed PDF",
+    "official CLO revision",
+    "expert-labelled queries and questions"
+  ]
+}

@@ -1,5 +1,5 @@
 import math
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -58,6 +58,41 @@ class SubjectResponse(BaseModel):
     owner_id: str | None = None
     owner_email: str = ""
     can_manage: bool = True
+
+
+class SubjectMembershipPayload(BaseModel):
+    roles: list[Literal["TEACHER", "REVIEWER", "OWNER"]] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list, max_length=50)
+    status: Literal["ACTIVE", "SUSPENDED", "REVOKED"] = "ACTIVE"
+    origin: Literal["MANUAL", "BACKFILL", "MOODLE"] = "MANUAL"
+    external_course_id: str | None = Field(None, max_length=120)
+
+    @model_validator(mode="after")
+    def normalize_membership(self):
+        self.roles = list(dict.fromkeys(role.upper() for role in self.roles))
+        self.capabilities = list(
+            dict.fromkeys(
+                capability.strip()
+                for capability in self.capabilities
+                if capability.strip()
+            )
+        )
+        if self.status == "ACTIVE" and not self.roles and not self.capabilities:
+            raise ValueError("Membership active cần ít nhất một role hoặc capability")
+        return self
+
+
+class SubjectMembershipResponse(BaseModel):
+    id: str
+    user_id: str
+    subject_id: str
+    roles: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    status: str
+    origin: str
+    external_course_id: str | None = None
+    created_at: Any
+    updated_at: Any
 
 
 class AiModelPayload(BaseModel):

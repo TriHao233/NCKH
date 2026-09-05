@@ -15,6 +15,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.concurrency import run_in_threadpool
 
 from core.config import resolve_path, settings
+from core.access_policy import has_subject_access
+from core.database import get_database
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.service import DocumentService, get_document_service
 from modules.ocr.mongodb import (
@@ -217,6 +219,15 @@ async def queue_pdf_ocr_upload(
     file.file.seek(0)
     if file_size > 50 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dung lượng tối đa 50 MB")
+
+    access_database = get_database()
+    if (
+        subject_id
+        and current_user.role != "Admin"
+        and getattr(access_database, "subject_memberships", None) is not None
+        and not has_subject_access(access_database, current_user.id, subject_id)
+    ):
+        raise HTTPException(status_code=403, detail="Bạn chưa được phân công vào học phần đã chọn")
 
     title = Path(safe_filename).stem.replace("_", " ")
     document_id = create_document_record(

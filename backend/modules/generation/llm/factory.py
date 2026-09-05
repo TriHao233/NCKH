@@ -5,7 +5,7 @@ from modules.generation.llm.base import LLMProvider
 from modules.generation.llm.concurrency import ConcurrencyLimitedProvider
 from modules.generation.llm.fallback import FallbackProvider
 from modules.generation.llm.gemini import GeminiProvider
-from modules.generation.llm.model_registry import resolve_direct_model_snapshot
+from modules.generation.llm.model_registry import enforce_inference_policy, resolve_direct_model_snapshot
 from modules.generation.llm.ollama import OllamaProvider
 
 ProviderFactory = Callable[[str], LLMProvider]
@@ -57,8 +57,10 @@ def _get_single_provider(provider: str, snapshot: dict | None = None) -> LLMProv
     provider_code = (provider or settings.model_provider).strip()
     normalized = provider_code.lower()
     if snapshot is not None:
-        return _provider_from_snapshot(snapshot)
+        return _provider_from_snapshot(enforce_inference_policy(dict(snapshot)))
     if normalized in PROVIDER_REGISTRY:
+        if settings.inference_policy == "LOCAL_ONLY":
+            raise ValueError("Provider đăng ký động không được phép trong profile LOCAL_ONLY")
         direct = PROVIDER_REGISTRY[normalized](provider_code)
         runtime_snapshot = {
             "requested_code": provider_code,

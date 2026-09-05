@@ -4,7 +4,9 @@ source_dump.txt
 .claude/settings.local.json
 frontend/.claude/launch.json
 /rag-ocr-pipeline/
-/docs/
+/docs/*
+!/docs/*.md
+!/docs/*.json
 
 # Sensitive files
 .env

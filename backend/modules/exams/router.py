@@ -44,7 +44,7 @@ def create_exam(
     service: ExamService = Depends(get_exam_service),
 ):
     try:
-        return service.create_exam(payload, current_user.id)
+        return service.create_exam(payload, current_user)
     except Exception as exc:
         _translate(exc)
 

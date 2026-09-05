@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
+import {
+  PROTECTED_ROUTE_ROLES,
+  canAccessPath,
+  landingPathForRole,
+  permissionsForUser,
+  rolesForPath,
+} from "./permissions.js";
 
 const PROTECTED_APP_ROUTES = [
   "/sinh-cau-hoi",
@@ -21,11 +27,12 @@ const PROTECTED_APP_ROUTES = [
   "/ho-so",
 ];
 
-test("admin can access reviewer supervision, admin, question management, and exam routes", () => {
+test("admin can assign the queue but has no implicit professional-review capability", () => {
   assert.equal(canAccessPath("Admin", "/sinh-cau-hoi"), false);
   assert.equal(canAccessPath("Admin", "/quan-ly"), true);
   assert.equal(canAccessPath("Admin", "/lam-de-thi/abc123"), true);
   assert.equal(canAccessPath("Admin", "/kiem-duyet"), true);
+  assert.equal(permissionsForUser("Admin").includes("questions.review"), false);
   assert.equal(canAccessPath("Admin", "/duyet-ai"), true);
   assert.equal(canAccessPath("Admin", "/tong-quan"), true);
   assert.equal(canAccessPath("Admin", "/nhat-ky-he-thong"), true);
@@ -56,6 +63,10 @@ test("explicit permissions can grant access outside the base role", () => {
   );
   assert.equal(
     canAccessPath({ role: "Reviewer", permissions: ["questions.generate"] }, "/sinh-cau-hoi"),
+    true,
+  );
+  assert.equal(
+    canAccessPath({ role: "Admin", permissions: ["questions.review"] }, "/kiem-duyet"),
     true,
   );
   assert.equal(

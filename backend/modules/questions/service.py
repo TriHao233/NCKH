@@ -10,6 +10,13 @@ from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
 from core.audit import record_audit_event
+from core.access_policy import (
+    active_subject_ids,
+    has_subject_access,
+    is_explicitly_shared,
+    is_subject_shared_with_member,
+    subject_id_from_record,
+)
 from core.config import resolve_path
 from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
@@ -139,32 +146,47 @@ class QuestionService:
 
     @staticmethod
     def _can_review_all(current_user: CurrentUser) -> bool:
-        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+        return current_user.role == "Reviewer" or has_permission(current_user, "questions.review")
 
-    @staticmethod
-    def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
-        shared_with = set(question.get("shared_with_user_ids") or [])
-        return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
+    def _is_shared_question(self, question: dict, version: dict, current_user: CurrentUser) -> bool:
+        return is_explicitly_shared(question, current_user.id) or is_subject_shared_with_member(
+            getattr(self.repository, "db", None),
+            question,
+            current_user.id,
+            version=version,
+        )
 
-    @staticmethod
-    def _can_use_document(document: dict | None, current_user: CurrentUser) -> bool:
+    def _has_review_scope(self, question: dict, version: dict, current_user: CurrentUser) -> bool:
+        if not self._can_review_all(current_user):
+            return False
+        subject_id = subject_id_from_record(question, version)
+        if subject_id is None or getattr(getattr(self.repository, "db", None), "subject_memberships", None) is None:
+            return True
+        return has_subject_access(getattr(self.repository, "db", None), current_user.id, subject_id)
+
+    def _can_use_document(self, document: dict | None, current_user: CurrentUser) -> bool:
         if not document:
             return True
         if current_user.role == "Admin" or has_permission(current_user, "documents.manage_all"):
             return True
         if document.get("uploaded_by_user_id") == current_user.id:
             return True
-        shared_with = set(document.get("shared_with_user_ids") or [])
-        return current_user.id in shared_with or document.get("shared_scope") == "SUBJECT"
+        return is_explicitly_shared(document, current_user.id) or is_subject_shared_with_member(
+            getattr(self.repository, "db", None), document, current_user.id
+        )
 
     def _ensure_read_access(
         self,
         pair: tuple[dict, dict] | None,
         current_user: CurrentUser | None,
     ) -> None:
-        if not pair or not current_user or self._can_manage_all(current_user) or self._can_review_all(current_user):
+        if not pair or not current_user or self._can_manage_all(current_user) or self._has_review_scope(
+            pair[0], pair[1], current_user
+        ):
             return
-        if not self._owns_question(pair[0], pair[1], current_user.id) and not self._is_shared_question(pair[0], current_user):
+        if not self._owns_question(pair[0], pair[1], current_user.id) and not self._is_shared_question(
+            pair[0], pair[1], current_user
+        ):
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _ensure_write_access(
@@ -454,6 +476,15 @@ class QuestionService:
             raise ValueError("Chương câu hỏi không khớp với tài liệu nguồn")
         subject_id = document_subject_id or payload.subject_id
         chapter_id = document_chapter_id or payload.chapter_id
+        access_database = getattr(self.repository, "db", None)
+        if (
+            subject_id
+            and actor
+            and not self._can_manage_all(actor)
+            and getattr(access_database, "subject_memberships", None) is not None
+            and not has_subject_access(access_database, actor.id, subject_id)
+        ):
+            raise PermissionError("Bạn chưa được phân công vào học phần đã chọn")
         validated_subject = self._validate_classification_refs(subject_id, chapter_id)
         classification = self._classification(
             question_type=payload.question_type,
@@ -687,11 +718,16 @@ class QuestionService:
             raise ValueError("Bộ lọc nguồn không hợp lệ")
         if secondary_status not in {None, "AWAITING_SECONDARY", "COMPLETED"}:
             raise ValueError("Bộ lọc duyệt lần hai không hợp lệ")
+        scoped_reviewer = bool(
+            current_user
+            and self._can_review_all(current_user)
+            and not self._can_manage_all(current_user)
+        )
         owner_user_id = (
             current_user.id
             if current_user
             and not self._can_manage_all(current_user)
-            and not self._can_review_all(current_user)
+            and not scoped_reviewer
             else None
         )
         assigned_reviewer_user_id = None
@@ -730,7 +766,21 @@ class QuestionService:
             assignment_status=assignment_status,
             assigned_reviewer_user_id=assigned_reviewer_user_id,
             creator_user_id=creator_oid,
-            visible_to_user_id=owner_user_id,
+            visible_to_user_id=(
+                current_user.id
+                if current_user and not self._can_manage_all(current_user)
+                else None
+            ),
+            visible_subject_ids=(
+                ()
+                if not current_user or self._can_manage_all(current_user)
+                else active_subject_ids(getattr(self.repository, "db", None), current_user.id)
+            ),
+            scoped_subject_ids=(
+                active_subject_ids(getattr(self.repository, "db", None), current_user.id)
+                if scoped_reviewer
+                else ()
+            ),
             waiting_since=waiting_since,
             overdue_at=overdue_at,
             created_from=created_from,
@@ -994,6 +1044,15 @@ class QuestionService:
                 if payload.chapter_id is not None
                 else classification["chapter"].get("id")
             )
+            access_database = getattr(self.repository, "db", None)
+            if (
+                next_subject_id
+                and actor
+                and not self._can_manage_all(actor)
+                and getattr(access_database, "subject_memberships", None) is not None
+                and not has_subject_access(access_database, actor.id, next_subject_id)
+            ):
+                raise PermissionError("Bạn chưa được phân công vào học phần đã chọn")
             current_document = self._document(current.get("document_id"))
             if current_document:
                 document_subject_id = current_document.get("subject_id")

@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from core.config import settings
 from core.dependencies import (
     CurrentUser,
-    require_admin,
-    require_reviewer_or_admin,
+    require_any_permission,
+    require_permissions,
     require_teacher_reviewer_or_admin,
 )
 from modules.questions.workflow_schemas import (
     AutoEvaluationRequest,
+    BulkMoodleExportRequest,
     EvaluationCreateRequest,
     MoodlePublicationRequest,
     QuestionCommentCreateRequest,
@@ -40,9 +41,23 @@ def _translate_workflow_error(exc: Exception):
     raise exc
 
 
+@router.post("/moodle-export/bulk")
+def export_questions_to_moodle(
+    payload: BulkMoodleExportRequest,
+    current_user: CurrentUser = Depends(require_permissions("questions.export_moodle")),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.export_moodle_bulk(payload.items, payload.format, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
 @router.get("/review-dashboard")
 def review_dashboard(
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(
+        require_any_permission("questions.read_review_queue", "questions.review")
+    ),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -54,7 +69,7 @@ def review_dashboard(
 @router.get("/{question_id}/review-draft")
 def get_review_draft(
     question_id: str,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -67,7 +82,7 @@ def get_review_draft(
 def save_review_draft(
     question_id: str,
     payload: ReviewDraftUpsertRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -79,7 +94,7 @@ def save_review_draft(
 @router.delete("/{question_id}/review-draft")
 def delete_review_draft(
     question_id: str,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -92,7 +107,7 @@ def delete_review_draft(
 def evaluate_question(
     question_id: str,
     payload: EvaluationCreateRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.evaluate")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -105,7 +120,7 @@ def evaluate_question(
 async def auto_evaluate_question(
     question_id: str,
     payload: AutoEvaluationRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.evaluate")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -139,7 +154,7 @@ def evaluation_history(
 def review_question(
     question_id: str,
     payload: ReviewCreateRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -151,7 +166,7 @@ def review_question(
 @router.post("/{question_id}/review-assignment/claim")
 def claim_review_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -163,7 +178,7 @@ def claim_review_question(
 @router.post("/{question_id}/review-assignment/release")
 def release_review_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -176,7 +191,7 @@ def release_review_question(
 def assign_review_question(
     question_id: str,
     payload: ReviewAssignmentRequest,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review_assign")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -253,7 +268,7 @@ def delete_question_comment(
 def set_secondary_review(
     question_id: str,
     payload: SecondaryReviewRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.review")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -266,11 +281,11 @@ def set_secondary_review(
 def publish_question_to_moodle(
     question_id: str,
     payload: MoodlePublicationRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.publish_moodle")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        return service.publish_to_moodle(question_id, payload, current_user.id, current_user.role)
+        return service.publish_to_moodle(question_id, payload, current_user)
     except Exception as exc:
         _translate_workflow_error(exc)
 
@@ -291,7 +306,7 @@ def moodle_publication_history(
 def export_question_to_moodle(
     question_id: str,
     format: str = Query("gift", pattern="^(gift|xml)$"),
-    current_user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_permissions("questions.export_moodle")),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:

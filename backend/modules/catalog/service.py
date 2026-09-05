@@ -8,6 +8,7 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
+from core.access_policy import active_subject_ids
 from core.config import settings
 from core.database import get_database
 from modules.catalog.schemas import (
@@ -24,6 +25,7 @@ from modules.catalog.schemas import (
     PromptTemplatePayload,
     PromptTemplateTestPayload,
     SubjectPayload,
+    SubjectMembershipPayload,
     SubjectUpdatePayload,
 )
 from modules.generation.llm.factory import get_llm_service
@@ -32,6 +34,7 @@ from modules.generation.llm.model_registry import (
     GENERATION_CAPABILITY,
     available_model_options,
     resolve_model_snapshot,
+    validate_model_configuration,
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import json_safe, object_id
@@ -121,6 +124,23 @@ def _subject_response(
     )
 
 
+def _membership_response(record: dict) -> dict:
+    return json_safe(
+        {
+            "id": record["_id"],
+            "user_id": record["user_id"],
+            "subject_id": record["subject_id"],
+            "roles": record.get("roles") or [],
+            "capabilities": record.get("capabilities") or [],
+            "status": record["status"],
+            "origin": record["origin"],
+            "external_course_id": record.get("external_course_id"),
+            "created_at": record["created_at"],
+            "updated_at": record["updated_at"],
+        }
+    )
+
+
 class CatalogService:
     def __init__(self, database):
         self.db = database
@@ -201,6 +221,56 @@ class CatalogService:
             raise LookupError("Không tìm thấy học phần")
         return subject
 
+    def list_memberships(self, subject_id: str, viewer: Any) -> list[dict]:
+        subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
+        records = self.db.subject_memberships.find({"subject_id": subject["_id"]}).sort("updated_at", -1)
+        return [_membership_response(record) for record in records]
+
+    def list_my_memberships(self, viewer: Any) -> list[dict]:
+        records = self.db.subject_memberships.find(
+            {"user_id": viewer.id, "status": "ACTIVE"}
+        ).sort("updated_at", -1)
+        return [_membership_response(record) for record in records]
+
+    def upsert_membership(
+        self,
+        subject_id: str,
+        user_id: str,
+        payload: SubjectMembershipPayload,
+        viewer: Any,
+    ) -> dict:
+        subject = self._subject_or_404(subject_id)
+        self._ensure_can_manage(subject, viewer)
+        user_oid = object_id(user_id, "user_id")
+        if not self.db.users.find_one({"_id": user_oid, "is_active": True}, {"_id": 1}):
+            raise ValueError("Người dùng không tồn tại hoặc đã bị khóa")
+        now = utc_now()
+        record = self.db.subject_memberships.find_one_and_update(
+            {"user_id": user_oid, "subject_id": subject["_id"], "origin": payload.origin},
+            {
+                "$set": {
+                    "schema_version": SCHEMA_VERSION,
+                    "roles": payload.roles,
+                    "capabilities": payload.capabilities,
+                    "status": payload.status,
+                    "external_course_id": payload.external_course_id,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "_id": ObjectId(),
+                    "user_id": user_oid,
+                    "subject_id": subject["_id"],
+                    "origin": payload.origin,
+                    "created_by_user_id": getattr(viewer, "id", None),
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return _membership_response(record)
+
     @staticmethod
     def _ensure_can_manage(subject: dict, viewer: Any) -> None:
         if not _can_manage_subject(subject, viewer):
@@ -244,7 +314,15 @@ class CatalogService:
         return normalized
 
     def list_subjects(self, viewer: Any = None) -> list[dict]:
-        records = self.db.subjects.find().sort("subject_code", 1)
+        query = {}
+        if viewer is not None and not _is_catalog_admin(viewer):
+            query = {
+                "$or": [
+                    {"owner_id": viewer.id},
+                    {"_id": {"$in": list(active_subject_ids(self.db, viewer.id))}},
+                ]
+            }
+        records = self.db.subjects.find(query).sort("subject_code", 1)
         return [
             _subject_response(record, self._usage_counts(record), viewer)
             for record in records
@@ -558,6 +636,7 @@ class CatalogService:
         )
 
     def upsert_ai_model(self, payload: AiModelPayload) -> dict:
+        validate_model_configuration(payload.model_dump())
         now = utc_now()
         record = self.db.ai_models.find_one_and_update(
             {"model_code": payload.model_code},
