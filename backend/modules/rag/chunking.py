@@ -8,7 +8,6 @@ from typing import Iterable
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
-from fastapi.concurrency import run_in_threadpool
 from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
@@ -17,7 +16,6 @@ from core.database import get_database
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.documents.service import DocumentService, get_document_service
-from modules.dictionary.dictionary import run_dictionary_auto_learning
 from modules.dictionary.mongodb import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import store_chunks
@@ -63,7 +61,12 @@ DEFINITION_PATTERN = re.compile(r"\b(định nghĩa|khái niệm|là gì)\b", re
 # -------------------------------------------------------------
 # API: Chunk tài liệu OCR và lưu vào ChromaDB
 # -------------------------------------------------------------
-@router.post("/document", response_model=DocumentChunkResponse, summary="Chunk OCR document and store to ChromaDB")
+@router.post(
+    "/document",
+    response_model=DocumentChunkResponse,
+    status_code=202,
+    summary="Queue OCR document chunking and indexing",
+)
 async def chunk_document(
     req: DocumentChunkRequest,
     background_tasks: BackgroundTasks,
@@ -79,27 +82,18 @@ async def chunk_document(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     try:
-        result = await run_in_threadpool(
-            chunk_document_and_store,
+        run_config = _chunk_run_config(req.model_dump())
+        chunk_job_id, chunk_set_id = start_chunk_set(req.document_id, run_config)
+        return DocumentChunkResponse(
             document_id=req.document_id,
-            chunk_size=req.chunk_size,
-            chunk_overlap=req.chunk_overlap,
-            collection_name=req.collection_name,
-            buffer_max_pages=req.buffer_max_pages,
-            buffer_max_chars=req.buffer_max_chars,
-            max_code_block_lines=req.max_code_block_lines,
-            dry_run=req.dry_run,
+            chunk_job_id=chunk_job_id,
+            chunk_set_id=chunk_set_id,
+            vector_collection_id=None,
+            collection_name=run_config["collection_name"],
+            total_chunks=0,
+            stored_chunks=0,
+            stats=_empty_chunk_stats(),
         )
-
-        if not req.dry_run and result.total_chunks > 0:
-            logger.info("Đang kích hoạt tiến trình AI học từ khóa ngầm...")
-            background_tasks.add_task(
-                run_dictionary_auto_learning,
-                document_id=req.document_id,
-                course_id="it_fundamentals"
-            )
-
-        return result
     except Exception as ex:
         logger.exception("Chunking failed: %s", ex)
         update_chunking_status(req.document_id, status="failed", error_message=str(ex))
@@ -165,13 +159,6 @@ def process_chunk_retry_background(
 def queue_chunk_retry(background_tasks: BackgroundTasks, document_id: str, config: dict) -> dict:
     run_config = _chunk_run_config(config)
     chunk_job_id, chunk_set_id = start_chunk_set(document_id, run_config)
-    background_tasks.add_task(
-        process_chunk_retry_background,
-        document_id=document_id,
-        chunk_job_id=chunk_job_id,
-        chunk_set_id=chunk_set_id,
-        run_config=run_config,
-    )
     return {"chunk_job_id": chunk_job_id, "chunk_set_id": chunk_set_id}
 
 
@@ -311,6 +298,8 @@ def process_document_reindex_background(
     document_id: str,
     index_job_id: str,
     collection_name: str,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
 ) -> None:
     repository = MongoDocumentRepository(get_database())
     try:
@@ -320,9 +309,15 @@ def process_document_reindex_background(
         chunk_set_id = (document.get("current_processing") or {}).get("chunk_set_id")
         if not chunk_set_id:
             raise ValueError("Tài liệu chưa có chunk set để re-index")
-        if is_document_job_cancelled(index_job_id):
+        if is_document_job_cancelled(index_job_id, worker_id, fencing_token):
             return
-        repository.update_job(index_job_id, "PROCESSING", progress=5)
+        repository.update_job(
+            index_job_id,
+            "PROCESSING",
+            progress=5,
+            expected_worker_id=worker_id,
+            expected_fencing_token=fencing_token,
+        )
         chunks = list(
             get_database().document_chunks.find(
                 {
@@ -335,12 +330,12 @@ def process_document_reindex_background(
             raise ValueError("Chunk set hiện hành chưa có chunks")
         vector, resolved_collection = _vector_collection_for_current_model(collection_name)
         ids, documents, metadatas, embedding_ids = _reindex_payload(chunks, vector)
-        if is_document_job_cancelled(index_job_id):
+        if is_document_job_cancelled(index_job_id, worker_id, fencing_token):
             _mark_embeddings_cancelled(embedding_ids)
             return
         stored_chunks = store_chunks(ids, documents, metadatas, resolved_collection)
         now = utc_now()
-        if is_document_job_cancelled(index_job_id):
+        if is_document_job_cancelled(index_job_id, worker_id, fencing_token):
             _mark_embeddings_cancelled(embedding_ids)
             return
         get_database().chunk_embeddings.update_many(
@@ -357,7 +352,18 @@ def process_document_reindex_background(
                 }
             ],
         )
-        repository.update_job(
+        indexed_count = get_database().chunk_embeddings.count_documents(
+            {
+                "_id": {"$in": embedding_ids},
+                "status": "INDEXED",
+                "$expr": {"$eq": ["$embedding_content_hash", "$chunk_content_hash"]},
+            }
+        )
+        if stored_chunks != len(chunks) or indexed_count != len(chunks):
+            raise RuntimeError(
+                f"INDEX_COVERAGE_MISMATCH expected={len(chunks)} stored={stored_chunks} indexed={indexed_count}"
+            )
+        completed_job = repository.update_job(
             index_job_id,
             "COMPLETED",
             progress=100,
@@ -367,22 +373,52 @@ def process_document_reindex_background(
                 "collection_name": resolved_collection,
                 "vector_collection_id": str(vector["_id"]),
                 "embedding_model_name": settings.embedding_model_name,
+                "verified": True,
             },
+            expected_worker_id=worker_id,
+            expected_fencing_token=fencing_token,
         )
-        get_database().documents.update_one(
-            {"_id": document["_id"], "archived_at": None},
+        if not completed_job:
+            raise RuntimeError("DOCUMENT_JOB_LEASE_LOST")
+        activation = get_database().documents.update_one(
+            {
+                "_id": document["_id"],
+                "archived_at": None,
+                "current_processing.chunk_set_id": object_id(chunk_set_id, "chunk_set_id"),
+            },
             {
                 "$set": {
                     "current_processing.vector_collection_id": vector["_id"],
+                    "current_processing.pending_index_job_id": None,
                     "pipeline_summary.index_status": "COMPLETED",
                     "status": "READY",
                     "updated_at": now,
                 }
             },
         )
+        if not activation.matched_count:
+            get_database().document_jobs.update_one(
+                {"_id": object_id(index_job_id, "index_job_id")},
+                {
+                    "$set": {
+                        "status": "STALE",
+                        "error": {
+                            "message": "Chunk set changed before index activation",
+                            "at": utc_now(),
+                        },
+                        "finished_at": utc_now(),
+                    }
+                },
+            )
     except Exception as exc:
         logger.exception("Re-index job %s failed", index_job_id)
-        repository.update_job(index_job_id, "FAILED", error_message=str(exc))
+        repository.update_job(
+            index_job_id,
+            "FAILED",
+            error_message=str(exc),
+            expected_worker_id=worker_id,
+            expected_fencing_token=fencing_token,
+        )
 
 
 def queue_document_reindex(
@@ -399,12 +435,6 @@ def queue_document_reindex(
             "collection_name": resolved_collection,
             "embedding_model_name": settings.embedding_model_name,
         },
-    )
-    background_tasks.add_task(
-        process_document_reindex_background,
-        document_id=document_id,
-        index_job_id=str(job["_id"]),
-        collection_name=resolved_collection,
     )
     return {"index_job_id": str(job["_id"])}
 
@@ -443,6 +473,8 @@ def _process_existing_chunk_set(
     chunk_job_id: str,
     chunk_set_id: str,
     run_config: dict,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
 ) -> DocumentChunkResponse:
     chunk_size = int(run_config["chunk_size"])
     chunk_overlap = int(run_config["chunk_overlap"])
@@ -452,7 +484,7 @@ def _process_existing_chunk_set(
     resolved_collection = run_config["collection_name"]
     dry_run = bool(run_config.get("dry_run", False))
 
-    if is_document_job_cancelled(chunk_job_id):
+    if is_document_job_cancelled(chunk_job_id, worker_id, fencing_token):
         return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
 
     total_chunks = 0
@@ -465,13 +497,15 @@ def _process_existing_chunk_set(
 
     all_chunks_for_export: list[dict] = []
     vector_collection_id: str | None = None
+    processed_buffers = 0
 
     for buffer_text, source_len in _iter_chapter_buffers(
         document_id,
         resolved_buffer_pages,
         resolved_buffer_chars,
     ):
-        if is_document_job_cancelled(chunk_job_id):
+        processed_buffers += 1
+        if is_document_job_cancelled(chunk_job_id, worker_id, fencing_token):
             return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
         original_length += source_len
         for chunk in _chunk_buffer(
@@ -494,8 +528,20 @@ def _process_existing_chunk_set(
             max_chunk = max(max_chunk, char_count)
             content_type_distribution[metadata.get("content_type", "text")] += 1
 
-            if is_document_job_cancelled(chunk_job_id):
+            if is_document_job_cancelled(chunk_job_id, worker_id, fencing_token):
                 return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
+        if worker_id is not None and fencing_token is not None:
+            MongoDocumentRepository(get_database()).update_checkpoint(
+                chunk_job_id,
+                worker_id,
+                fencing_token,
+                {
+                    "stage": "CHUNK_BUFFER_COMPLETED",
+                    "buffer_no": processed_buffers,
+                    "total_chunks": total_chunks,
+                },
+                progress=min(75, 5 + processed_buffers * 5),
+            )
 
     avg_chunk = round(total_chars / max(total_chunks, 1), 2)
     stats = ChunkingStats(
@@ -508,10 +554,18 @@ def _process_existing_chunk_set(
         content_type_distribution=dict(content_type_distribution),
     )
 
-    if is_document_job_cancelled(chunk_job_id):
+    if is_document_job_cancelled(chunk_job_id, worker_id, fencing_token):
         return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
 
     if not dry_run and all_chunks_for_export:
+        if worker_id is not None and fencing_token is not None:
+            MongoDocumentRepository(get_database()).update_checkpoint(
+                chunk_job_id,
+                worker_id,
+                fencing_token,
+                {"stage": "INDEXING", "total_chunks": total_chunks},
+                progress=80,
+            )
         (
             vector_collection_id,
             vector_ids,
@@ -523,7 +577,7 @@ def _process_existing_chunk_set(
             resolved_collection,
             all_chunks_for_export,
         )
-        if is_document_job_cancelled(chunk_job_id):
+        if is_document_job_cancelled(chunk_job_id, worker_id, fencing_token):
             return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
         stored_chunks = store_chunks(
             vector_ids,
@@ -531,8 +585,46 @@ def _process_existing_chunk_set(
             vector_metadatas,
             resolved_collection,
         )
+        database = get_database()
+        set_oid = object_id(chunk_set_id, "chunk_set_id")
+        persisted_count = database.document_chunks.count_documents(
+            {"document_id": object_id(document_id, "document_id"), "chunk_set_id": set_oid}
+        )
+        pending_embedding_count = database.chunk_embeddings.count_documents(
+            {
+                "chunk_set_id": set_oid,
+                "status": "PENDING",
+            }
+        )
+        if not (
+            stored_chunks == total_chunks
+            and persisted_count == total_chunks
+            and pending_embedding_count == total_chunks
+        ):
+            raise RuntimeError(
+                "INDEX_COVERAGE_MISMATCH "
+                f"expected={total_chunks} stored={stored_chunks} "
+                f"chunks={persisted_count} embeddings={pending_embedding_count}"
+            )
+        stats_payload = stats.model_dump()
+        stats_payload["index_validation"] = {
+            "verified": True,
+            "stored_chunks": stored_chunks,
+            "document_chunks": persisted_count,
+            "embeddings": pending_embedding_count,
+        }
+        if worker_id is not None and fencing_token is not None:
+            MongoDocumentRepository(get_database()).update_checkpoint(
+                chunk_job_id,
+                worker_id,
+                fencing_token,
+                {"stage": "INDEX_VERIFIED", **stats_payload["index_validation"]},
+                progress=95,
+            )
+    else:
+        stats_payload = stats.model_dump()
 
-    if is_document_job_cancelled(chunk_job_id):
+    if is_document_job_cancelled(chunk_job_id, worker_id, fencing_token):
         return _cancelled_chunk_response(document_id, chunk_job_id, chunk_set_id, resolved_collection)
 
     complete_chunk_set(
@@ -542,14 +634,36 @@ def _process_existing_chunk_set(
         vector_collection_id,
         total_chunks=total_chunks,
         total_characters=total_chars,
-        stats=stats.model_dump(),
+        stats=stats_payload,
         dry_run=dry_run,
+        worker_id=worker_id,
+        fencing_token=fencing_token,
     )
 
     # THỰC HIỆN XUẤT FILE SAU KHI ĐÃ CẮT XONG (Bao gồm cả dry_run và real run)
     if all_chunks_for_export:
         try:
-            export_chunks_to_file(document_id, all_chunks_for_export)
+            chunk_set = get_database().chunk_sets.find_one(
+                {"_id": object_id(chunk_set_id, "chunk_set_id")}
+            ) or {}
+            export_items = []
+            for index, chunk in enumerate(all_chunks_for_export):
+                item = {**chunk}
+                if not dry_run and index < len(vector_metadatas):
+                    item["chunk_id"] = vector_metadatas[index].get("chunk_id")
+                    item["vector_id"] = vector_ids[index]
+                    item["metadata"] = {**chunk.get("metadata", {}), **vector_metadatas[index]}
+                export_items.append(item)
+            manifest = export_chunks_to_file(
+                document_id,
+                export_items,
+                chunk_set_id=chunk_set_id,
+                source_revision_id=str(chunk_set.get("source_processing_revision_id") or "") or None,
+            )
+            get_database().chunk_sets.update_one(
+                {"_id": object_id(chunk_set_id, "chunk_set_id")},
+                {"$set": {"manifest": manifest, "manifest_created_at": utc_now()}},
+            )
         except Exception as e:
             logger.error(f"Lỗi khi xuất file metadata: {e}")
 

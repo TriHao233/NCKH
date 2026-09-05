@@ -50,16 +50,23 @@ async def process_available_jobs_once(worker_id: str | None = None) -> bool:
     from modules.generation.generate import process_generate_background
     from modules.generation.mongodb import get_next_queued_generation_job_id
     from modules.questions.workflow_service import process_evaluation_job_background
+    from modules.documents.worker import (
+        get_next_queued_document_job_id,
+        process_document_job_background,
+    )
 
     worker_id = worker_id or get_worker_id()
     found_work = False
     generation_job_id = await asyncio.to_thread(get_next_queued_generation_job_id)
     evaluation_job_id = await asyncio.to_thread(get_next_queued_evaluation_job_id)
+    document_job_id = await asyncio.to_thread(get_next_queued_document_job_id)
     tasks = []
     if generation_job_id:
         tasks.append(process_generate_background(generation_job_id, worker_id))
     if evaluation_job_id:
         tasks.append(process_evaluation_job_background(evaluation_job_id, worker_id))
+    if document_job_id:
+        tasks.append(process_document_job_background(document_job_id, worker_id))
     if tasks:
         found_work = True
         await asyncio.gather(*tasks)

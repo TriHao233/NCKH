@@ -952,7 +952,7 @@ không đồng nghĩa đã publish lên Moodle của trường hoặc đã đư�
 
 **Gate B — CLOSED:** G1 và phần enforcement G3 đạt qua unit/contract/full-suite/Mongo integration và migration rehearsal. Có thể demo flow review/export nội bộ đúng quyền trước khi nâng chất lượng AI.
 
-### C — Nguồn PDF đáng tin và durable document pipeline, 13–21 ngày công
+### C — Nguồn PDF đáng tin và durable document pipeline, 13–21 ngày công — **IMPLEMENTED (technical), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -963,7 +963,13 @@ không đồng nghĩa đã publish lên Moodle của trường hoặc đã đư�
 | C05 | Index activation/reconciliation, hash/count validation và rebuild adapter | BE + AI | C03/C04 | G2; crash giữa index không tạo active set thiếu dữ liệu | 2–3 |
 | C06 | UI đối chiếu PDF/OCR, flags/code, correction và tiến độ; source version indicator | FE | C02/C03 | Giảng viên sửa nguồn và tạo revision mới trong UI | 1–2 |
 
-**Gate C:** artifact/page/chunk/index đồng nhất và truy vết được; tiếp tục đo chất lượng AI trên nguồn đã kiểm chứng.
+**Gate C — TECHNICAL IMPLEMENTED:** artifact/page/chunk/index đã có processing revision,
+page-set hash, lease/fencing và activation validation; raw/layout/visual evidence được giữ
+để đối chiếu. Full backend suite đạt 189 passed (9 integration tests bị tách profile);
+profile Mongo replica set cô lập đạt 9/9, gồm durable worker, revision migration chạy lặp
+và chunk candidate activation; frontend đạt 46/46, lint và build. Gate chỉ được ghi
+**CLOSED** sau khi T01–T03 chạy trên corpus CTDL được cấp phép và giảng viên ký xác nhận;
+không dùng fixture tổng hợp để thay bằng chứng ngoại vi đó.
 
 ### D — Retrieval và prompt/model release, 10–16 ngày công
 
@@ -1168,8 +1174,8 @@ Quy ước: **Đã có** nghĩa đã thấy implementation và nêu rõ test li�
 
 | ID | Góp ý ngày 11/8 | Kết quả kiểm tra | Căn cứ và phần cần làm tiếp |
 |---|---|---|---|
-| R11-01 | OCR đánh dấu lưu đồ | **Chưa thấy implementation chuyên biệt** | OCR lấy text từ bounding boxes nhưng không giữ flowchart block/quan hệ mũi tên/nút. Chunk types hiện chỉ text/code/formula/mixed. Cần vùng lưu đồ có page/bbox/crop/ref và cờ cần đối chiếu. |
-| R11-02 | Xem cách đặt tên và lưu trữ chunk đa dạng | **Một phần** | Có Mongo chunks, Chroma embeddings, export JSON và Markdown; tên file theo document ID + timestamp giây. Chưa có manifest export nối rõ source version/chunk set/model; ID trong export và Mongo/vector khác nhau, chưa thể dùng thay thế nhau. |
+| R11-01 | OCR đánh dấu lưu đồ | **Một phần; đã có vùng cần đối chiếu** | Extraction ghi `visual_blocks` có ID/page/bbox, số drawing/image, cờ `VISUAL_REVIEW_REQUIRED` và marker trong Markdown; UI hiển thị cờ và mở artifact gốc. Chưa suy diễn nút/cạnh của lưu đồ hoặc tạo crop riêng, và còn cần kiểm trên corpus thật. |
+| R11-02 | Xem cách đặt tên và lưu trữ chunk đa dạng | **Một phần; manifest kỹ thuật đã bổ sung** | Export JSON/Markdown dùng tên duy nhất theo chunk set + timestamp microsecond, nối document/source processing revision/chunk DB ID/vector ID và lưu checksum manifest trên chunk set. Còn cần đưa model digest trực tiếp vào manifest và thử lỗi ghi file/rebuild trên môi trường triển khai. |
 | R11-03 | Xem lại model sinh câu | **Một phần** | Đã có code/general routing, model snapshots và tests; mặc định code là DeepSeek qua cấu hình, general Qwen. Chưa có benchmark so sánh trên PDF tiếng Việt/CTDL thật để chốt model đạt. |
 | R11-04 | Prompt nên bằng tiếng Việt | **Chưa đầy đủ** | System, type prompts và difficulty rule có tiếng Việt; PromptBuilder vẫn ghép chỉ dẫn English và format-repair prompt chủ yếu English. Cần Việt hóa chỉ dẫn ở cả lần đầu/retry/fallback, giữ nguyên keys JSON và code. |
 | R11-05 | Sàng lọc câu ngay sau sinh | **Đã có, còn lỗ hổng** | Có required fields, format, grounding, true/false clarity, exact/near dedup, một lần repair và rejection summary. Kiểm bổ sung phát hiện `_check_type_format` nhận ba cấu trúc đáp án sai tại 19.2. |
@@ -1227,4 +1233,4 @@ Các dạng Đúng/Sai đang có guardrails và tests đáng giữ lại; không
 | E03/E06 | Rubric độ khó do giảng viên xác nhận; thiếu nhãn phải có hành động rõ; không suy trực tiếp khó/dễ từ Bloom hoặc keyword. |
 | H03/H04 | UAT riêng cho từng dạng câu, câu Đúng/Sai tiếng Việt và bảng thống kê; lưu biên bản chấp nhận thay vì chỉ dựa test unit. |
 
-Kết luận đối với checklist ngày 11/8: đã có nhiều sửa đổi được xác nhận bằng code và tests, nhưng **chưa thể đánh dấu tất cả hoàn tất**. Những phần thiếu rõ nhất là đánh dấu lưu đồ, prompt tiếng Việt xuyên suốt, manifest/tên chunk, validator theo dạng câu và nghiệm thu AI/UX với dữ liệu thật.
+Kết luận đối với checklist ngày 11/8: đã có nhiều sửa đổi được xác nhận bằng code và tests, nhưng **chưa thể đánh dấu tất cả hoàn tất**. Đánh dấu vùng lưu đồ và manifest/tên chunk đã có nền tảng kỹ thuật ở Stage C; phần thiếu rõ nhất còn lại là diễn giải/crop lưu đồ nâng cao, model digest trong manifest, prompt tiếng Việt xuyên suốt, validator theo dạng câu và nghiệm thu AI/UX với dữ liệu thật.

@@ -24,12 +24,22 @@ def get_document_record(doc_id: str) -> dict | None:
     return MongoDocumentRepository(get_database()).find_by_id(doc_id)
 
 
-def is_document_job_cancelled(job_id: str) -> bool:
+def is_document_job_cancelled(
+    job_id: str,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
+) -> bool:
     job = get_database().document_jobs.find_one(
         {"_id": object_id(job_id, "job_id")},
-        {"status": 1},
+        {"status": 1, "worker_id": 1, "fencing_token": 1},
     )
-    return bool(job and job.get("status") == "CANCELLED")
+    if not job or job.get("status") == "CANCELLED":
+        return True
+    if worker_id is not None and job.get("worker_id") != worker_id:
+        return True
+    if fencing_token is not None and job.get("fencing_token") != fencing_token:
+        return True
+    return False
 
 
 def iter_document_pages(doc_id: str):
@@ -58,7 +68,17 @@ def start_chunk_set(document_id: str, config: dict) -> tuple[str, str]:
     if not source_ocr_job_id:
         raise ValueError("Tài liệu chưa có OCR job hoàn tất")
     job = repository.create_job(document_id, "CHUNK", config=config)
-    repository.update_job(str(job["_id"]), "PROCESSING", progress=1)
+    get_database().documents.update_one(
+        {"_id": document["_id"], "current_processing.ocr_job_id": source_ocr_job_id},
+        {
+            "$set": {
+                "pipeline_summary.index_status": "NOT_STARTED",
+                "current_processing.pending_index_job_id": None,
+                "latest_error": None,
+                "updated_at": utc_now(),
+            }
+        },
+    )
     if config.get("dry_run"):
         get_database().documents.update_one(
             {"_id": document["_id"]},
@@ -78,6 +98,9 @@ def start_chunk_set(document_id: str, config: dict) -> tuple[str, str]:
         "document_id": document["_id"],
         "document_version": document["current_version"],
         "source_ocr_job_id": source_ocr_job_id,
+        "source_processing_revision_id": (document.get("current_processing") or {}).get(
+            "processing_revision_id"
+        ),
         "chunk_job_id": job["_id"],
         "strategy": config.get("strategy", "recursive"),
         "config": config,
@@ -107,9 +130,12 @@ def persist_chunks(
     for index, chunk in enumerate(chunks, start=1):
         metadata = chunk["metadata"]
         content_hash = stable_hash(chunk["content"])
+        chunk_id = ObjectId(
+            hashlib.sha256(f"{set_oid}:{index}:{content_hash}".encode("utf-8")).hexdigest()[:24]
+        )
         records.append(
             {
-                "_id": ObjectId(),
+                "_id": chunk_id,
                 "schema_version": SCHEMA_VERSION,
                 "document_id": document_oid,
                 "chunk_set_id": set_oid,
@@ -161,6 +187,10 @@ def persist_chunks(
             f"'{indexed_model}'. Hãy chọn collection_name mới cho model "
             f"'{settings.embedding_model_name}'."
         )
+    # A lease retry rebuilds the same candidate deterministically. Removing only
+    # this inactive candidate never touches a previously active chunk set.
+    db.chunk_embeddings.delete_many({"chunk_set_id": set_oid})
+    db.document_chunks.delete_many({"chunk_set_id": set_oid})
     if records:
         db.document_chunks.insert_many(records, ordered=True)
 
@@ -209,6 +239,8 @@ def complete_chunk_set(
     total_characters: int,
     stats: dict,
     dry_run: bool,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
 ) -> None:
     db = get_database()
     document_oid = object_id(document_id)
@@ -217,7 +249,14 @@ def complete_chunk_set(
     vector_oid = object_id(vector_collection_id) if vector_collection_id else None
     now = utc_now()
     with mongo_transaction() as session:
-        job = db.document_jobs.find_one({"_id": job_oid}, {"status": 1}, session=session)
+        job_filter: dict = {"_id": job_oid}
+        if worker_id is not None:
+            job_filter["worker_id"] = worker_id
+        if fencing_token is not None:
+            job_filter["fencing_token"] = fencing_token
+        job = db.document_jobs.find_one(job_filter, {"status": 1}, session=session)
+        if not job:
+            raise RuntimeError("DOCUMENT_JOB_LEASE_LOST")
         if job and job.get("status") == "CANCELLED":
             db.chunk_sets.update_one(
                 {"_id": set_oid},
@@ -230,11 +269,24 @@ def complete_chunk_set(
                 session=session,
             )
             return
+        target_set = db.chunk_sets.find_one({"_id": set_oid}, session=session)
+        if not target_set:
+            raise RuntimeError("CHUNK_SET_NOT_FOUND")
+        if not dry_run:
+            db.chunk_sets.update_many(
+                {
+                    "document_id": document_oid,
+                    "_id": {"$ne": set_oid},
+                    "status": "ACTIVE",
+                },
+                {"$set": {"status": "SUPERSEDED", "superseded_at": now}},
+                session=session,
+            )
         db.chunk_sets.update_one(
             {"_id": set_oid},
             {
                 "$set": {
-                    "status": "DRY_RUN" if dry_run else "COMPLETED",
+                    "status": "DRY_RUN" if dry_run else "ACTIVE",
                     "total_chunks": total_chunks,
                     "total_characters": total_characters,
                     "completed_at": now,
@@ -257,8 +309,8 @@ def complete_chunk_set(
                 ],
                 session=session,
             )
-        db.document_jobs.update_one(
-            {"_id": job_oid},
+        job_result = db.document_jobs.update_one(
+            job_filter,
             {
                 "$set": {
                     "status": "COMPLETED",
@@ -269,6 +321,8 @@ def complete_chunk_set(
             },
             session=session,
         )
+        if not job_result.matched_count:
+            raise RuntimeError("DOCUMENT_JOB_LEASE_LOST")
         document_fields = {"updated_at": now}
         if not dry_run:
             document_fields.update(
@@ -277,12 +331,18 @@ def complete_chunk_set(
                     "pipeline_summary.total_chunks": total_chunks,
                     "current_processing.chunk_set_id": set_oid,
                     "current_processing.vector_collection_id": vector_oid,
+                    "current_processing.pending_chunk_job_id": None,
                     "pipeline_summary.index_status": "COMPLETED",
                     "status": "READY",
                 }
             )
+        document_filter: dict = {"_id": document_oid, "archived_at": None}
+        if not dry_run:
+            document_filter["current_processing.ocr_job_id"] = target_set.get(
+                "source_ocr_job_id"
+            )
         document_result = db.documents.update_one(
-            {"_id": document_oid, "archived_at": None},
+            document_filter,
             {"$set": document_fields},
             session=session,
         )

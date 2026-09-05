@@ -1,4 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from core.config import settings
 from core.dependencies import CurrentUser, require_teacher_or_admin
@@ -121,6 +122,26 @@ def list_document_pages(
     if not result:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
     return result
+
+
+@router.get("/{document_id}/source")
+def get_document_source(
+    document_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    service: DocumentService = Depends(get_document_service),
+):
+    try:
+        artifact = service.source_artifact(document_id, current_user)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu")
+    path = artifact["path"]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File nguồn không còn tồn tại")
+    return FileResponse(path, media_type=artifact["mime_type"], filename=artifact["filename"])
 
 
 @router.patch("/{document_id}/pages/{page_id}", response_model=DocumentPageResponse)

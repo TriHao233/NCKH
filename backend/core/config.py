@@ -147,6 +147,15 @@ class Settings(BaseModel):
     chunk_buffer_max_chars: int = int(os.getenv("CHUNK_BUFFER_MAX_CHARS", "200000"))
     max_code_block_lines: int = int(os.getenv("MAX_CODE_BLOCK_LINES", "50"))
 
+    pdf_max_pages: int = int(os.getenv("PDF_MAX_PAGES", "500"))
+    pdf_render_timeout_seconds: int = int(os.getenv("PDF_RENDER_TIMEOUT_SECONDS", "120"))
+    ocr_dpi: int = int(os.getenv("OCR_DPI", "300"))
+    ocr_max_page_pixels: int = int(os.getenv("OCR_MAX_PAGE_PIXELS", "40000000"))
+    ocr_text_layer_min_chars: int = int(os.getenv("OCR_TEXT_LAYER_MIN_CHARS", "80"))
+    ocr_text_layer_min_alnum_ratio: float = float(
+        os.getenv("OCR_TEXT_LAYER_MIN_ALNUM_RATIO", "0.45")
+    )
+
     chromadb_collection_name: str = os.getenv("CHROMADB_COLLECTION_NAME", "chunks")
     chromadb_batch_size: int = int(os.getenv("CHROMADB_BATCH_SIZE", "50"))
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")

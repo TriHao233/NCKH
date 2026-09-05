@@ -37,6 +37,7 @@ import {
 import {
   cancelDocumentJob,
   deleteDocument,
+  fetchDocumentSource,
   listDocumentJobs,
   listDocumentPages,
   listDocuments,
@@ -211,7 +212,7 @@ function jobErrorMessage(job) {
 }
 
 function pageTextPreview(page) {
-  return page?.cleaned_text || page?.raw_text || '';
+  return page?.cleaned_text ?? page?.raw_text ?? '';
 }
 
 function canRetryDocumentJob(job) {
@@ -1561,10 +1562,12 @@ function ManagePage() {
     setSavingOcrPageKey(actionKey);
     try {
       const updated = await updateDocumentPage(doc.id, page.id, { cleaned_text: cleanedText });
+      const refreshed = await listDocumentPages(doc.id, { limit: 100 });
       setDocumentPagesById((current) => ({
         ...current,
-        [doc.id]: (current[doc.id] || []).map((item) => (item.id === updated.id ? updated : item)),
+        [doc.id]: refreshed.items || [updated],
       }));
+      await fetchDocuments();
       setOcrPageDrafts((current) => {
         const next = { ...current };
         delete next[page.id];
@@ -1574,6 +1577,16 @@ function ManagePage() {
       alert('Lưu OCR page thất bại: ' + error.message);
     } finally {
       setSavingOcrPageKey('');
+    }
+  };
+
+  const handleOpenDocumentSource = async (doc) => {
+    try {
+      const url = await fetchDocumentSource(doc.id);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      alert('Mở tài liệu nguồn thất bại: ' + error.message);
     }
   };
 
@@ -2554,7 +2567,25 @@ function ManagePage() {
                                     )}
                                     {(documentPagesById[d.id] || []).map((page) => (
                                       <div className="doc-page-row" key={page.id}>
-                                        <b>Trang {page.page_number}</b>
+                                        <div className="doc-page-heading">
+                                          <b>Trang {page.page_number}</b>
+                                          <span>{page.extraction_method === 'TEXT' ? 'Text PDF' : 'OCR ảnh'}</span>
+                                          {page.revision_no && <span>Revision {page.revision_no}</span>}
+                                        </div>
+                                        {(page.quality_flags || []).length > 0 && (
+                                          <small className="doc-page-flags">
+                                            Cần đối chiếu: {page.quality_flags.join(', ')}
+                                          </small>
+                                        )}
+                                        {(page.visual_blocks || []).length > 0 && (
+                                          <small>
+                                            {page.visual_blocks.length} vùng hình/lưu đồ cần đối chiếu với PDF gốc
+                                          </small>
+                                        )}
+                                        <details className="doc-page-raw">
+                                          <summary>Xem dữ liệu trích xuất thô</summary>
+                                          <pre>{page.raw_text || 'Không có dữ liệu thô.'}</pre>
+                                        </details>
                                         {canEditDocumentOcr(d) ? (
                                           <>
                                             <textarea
@@ -2591,6 +2622,14 @@ function ManagePage() {
                             )}
                             </div>
                           <div className="doc-actions">
+                            <button
+                              type="button"
+                              className="icon-btn doc-source-btn"
+                              title="Mở PDF/DOCX nguồn để đối chiếu"
+                              onClick={() => handleOpenDocumentSource(d)}
+                            >
+                              <FontAwesomeIcon icon={faFile} />
+                            </button>
                             <button
                               type="button"
                               className="icon-btn doc-jobs-btn"

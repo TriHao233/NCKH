@@ -17,6 +17,7 @@ RAG_COLLECTIONS = (
     "subject_memberships",
     "documents",
     "document_jobs",
+    "document_processing_revisions",
     "document_pages",
     "chunk_sets",
     "document_chunks",
@@ -501,11 +502,28 @@ def _ensure_indexes() -> None:
                 name="uq_document_job_attempt",
             ),
             IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_document_jobs_queue"),
+            IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_document_jobs_lease"),
+        ]
+    )
+    rag_db.document_processing_revisions.create_indexes(
+        [
+            IndexModel(
+                [("document_id", ASCENDING), ("revision_no", ASCENDING)],
+                unique=True,
+                name="uq_document_processing_revision",
+            ),
+            IndexModel([("source_job_id", ASCENDING)], unique=True, name="uq_processing_revision_job"),
         ]
     )
     rag_db.document_pages.create_indexes(
         [
             IndexModel([("ocr_job_id", ASCENDING), ("page_number", ASCENDING)], unique=True, name="uq_ocr_job_page"),
+            IndexModel(
+                [("processing_revision_id", ASCENDING), ("page_number", ASCENDING)],
+                unique=True,
+                sparse=True,
+                name="uq_processing_revision_page",
+            ),
             IndexModel(
                 [("document_id", ASCENDING), ("document_version", ASCENDING), ("page_number", ASCENDING)],
                 name="ix_document_pages_version",

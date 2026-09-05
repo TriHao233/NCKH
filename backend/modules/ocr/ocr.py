@@ -65,27 +65,64 @@ async def process_ocr_background(
     upload_path: str,
     output_path: str,
     document_title: str,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
 ):
+    repository = get_document_service().repository
+    def checkpoint(event: dict) -> None:
+        if worker_id is None or fencing_token is None:
+            return
+        total_pages = int(event.get("total_pages") or event.get("pages_in_batch") or 1)
+        page_number = int(event.get("page_number") or 0)
+        base = 5 if event.get("stage") == "TEXT_EXTRACTION" else 45
+        span = 35 if event.get("stage") == "TEXT_EXTRACTION" else 40
+        updated = repository.update_checkpoint(
+            job_id,
+            worker_id,
+            fencing_token,
+            event,
+            progress=base + round(span * page_number / max(total_pages, 1)),
+        )
+        if not updated:
+            current_job = repository.find_job(job_id)
+            if (current_job or {}).get("status") == "CANCELLED":
+                raise RuntimeError("DOCUMENT_JOB_CANCELLED")
+            raise RuntimeError("DOCUMENT_JOB_LEASE_LOST")
     try:
         async with gpu_semaphore:
             if _ocr_job_cancelled(job_id):
                 return
-            update_document_status(document_id, job_id, status="processing")
+            update_document_status(
+                document_id,
+                job_id,
+                status="processing",
+                worker_id=worker_id,
+                fencing_token=fencing_token,
+            )
             started_at = time.time()
             result = await run_in_threadpool(
                 run_ocr_pipeline,
                 pdf_path=upload_path,
                 output_path=output_path,
                 document_title=document_title,
+                progress_callback=checkpoint,
             )
             if _ocr_job_cancelled(job_id):
                 return
             stats = result["stats"]
             stats["processing_time"] = round(time.time() - started_at, 1)
             save_document_pages(document_id, job_id, result["pages"])
+            checkpoint({"stage": "PAGE_SET_SAVED", "page_number": 1, "total_pages": 1})
             if _ocr_job_cancelled(job_id):
                 return
-            update_document_status(document_id, job_id, status="completed", stats=stats)
+            update_document_status(
+                document_id,
+                job_id,
+                status="completed",
+                stats=stats,
+                worker_id=worker_id,
+                fencing_token=fencing_token,
+            )
     except Exception as exc:
         logger.exception("OCR job %s failed", job_id)
         if _ocr_job_cancelled(job_id):
@@ -95,6 +132,8 @@ async def process_ocr_background(
             job_id,
             status="failed",
             error_message=str(exc),
+            worker_id=worker_id,
+            fencing_token=fencing_token,
         )
 
 
@@ -169,11 +208,19 @@ async def process_docx_background(
     upload_path: str,
     output_path: str,
     document_title: str,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
 ):
     try:
         if _ocr_job_cancelled(job_id):
             return
-        update_document_status(document_id, job_id, status="processing")
+        update_document_status(
+            document_id,
+            job_id,
+            status="processing",
+            worker_id=worker_id,
+            fencing_token=fencing_token,
+        )
         started_at = time.time()
         pages, stats = await run_in_threadpool(extract_docx_pages, upload_path)
         if _ocr_job_cancelled(job_id):
@@ -187,7 +234,14 @@ async def process_docx_background(
         if _ocr_job_cancelled(job_id):
             return
         stats["processing_time"] = round(time.time() - started_at, 1)
-        update_document_status(document_id, job_id, status="completed", stats=stats)
+        update_document_status(
+            document_id,
+            job_id,
+            status="completed",
+            stats=stats,
+            worker_id=worker_id,
+            fencing_token=fencing_token,
+        )
     except Exception as exc:
         logger.exception("DOCX extraction job %s failed", job_id)
         if _ocr_job_cancelled(job_id):
@@ -197,6 +251,8 @@ async def process_docx_background(
             job_id,
             status="failed",
             error_message=str(exc),
+            worker_id=worker_id,
+            fencing_token=fencing_token,
         )
 
 
@@ -237,7 +293,6 @@ async def queue_pdf_ocr_upload(
         subject_id=subject_id,
         chapter_id=chapter_id,
     )
-    job_id = create_ocr_job(document_id, config={"source_format": upload_type["source_format"]})
     upload_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
     output_path = _OUTPUT_DIR / f"{document_id}_result.md"
 
@@ -257,24 +312,18 @@ async def queue_pdf_ocr_upload(
             mime_type=upload_type["mime_type"],
         )
     except Exception as exc:
-        update_document_status(
-            document_id,
-            job_id,
-            status="failed",
-            error_message="Lỗi lưu file vật lý",
-        )
         raise HTTPException(status_code=500, detail="Lỗi lưu file") from exc
     finally:
         file.file.close()
 
-    processor = process_docx_background if upload_type["source_format"] == "docx" else process_ocr_background
-    background_tasks.add_task(
-        processor,
-        document_id=document_id,
-        job_id=job_id,
-        upload_path=str(upload_path),
-        output_path=str(output_path),
-        document_title=title,
+    job_id = create_ocr_job(
+        document_id,
+        config={
+            "source_format": upload_type["source_format"],
+            "upload_path": str(upload_path),
+            "output_path": str(output_path),
+            "document_title": title,
+        },
     )
     return {
         "message": "File đã được tiếp nhận và đang xử lý nền",

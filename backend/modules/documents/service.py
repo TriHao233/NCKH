@@ -228,7 +228,21 @@ class DocumentService:
             page_id,
             document_version=record.get("current_version", 1),
             cleaned_text=payload.cleaned_text,
+            corrected_by_user_id=current_user.id,
         )
+        if page:
+            record_audit_event(
+                action="document.ocr_correction",
+                entity_type="document_page",
+                entity_id=page["_id"],
+                actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                before={"page_id": page_id},
+                after={
+                    "processing_revision_id": page.get("processing_revision_id"),
+                    "page_number": page.get("page_number"),
+                },
+            )
         return serialize_document_page(page) if page else None
 
     def retry_job(
@@ -268,19 +282,18 @@ class DocumentService:
         upload_path = ((artifact.get("storage") or {}).get("uri"))
         source_format = "docx" if artifact.get("type") == "ORIGINAL_DOCX" else "pdf"
         config = {**(job.get("config") or {}), "source_format": source_format}
-        new_job = self.repository.create_job(document["_id"], "OCR", config=config)
-
-        from modules.ocr.ocr import process_docx_background, process_ocr_background
-
         output_path = resolve_path(settings.ocr_output_dir) / f"{document['_id']}_result.md"
-        processor = process_docx_background if source_format == "docx" else process_ocr_background
-        background_tasks.add_task(
-            processor,
-            document_id=str(document["_id"]),
-            job_id=str(new_job["_id"]),
-            upload_path=str(Path(upload_path)),
-            output_path=str(output_path),
-            document_title=document.get("title") or document.get("original_filename") or "Document",
+        new_job = self.repository.create_job(
+            document["_id"],
+            "OCR",
+            config={
+                **config,
+                "upload_path": str(Path(upload_path)),
+                "output_path": str(output_path),
+                "document_title": document.get("title")
+                or document.get("original_filename")
+                or "Document",
+            },
         )
         return {"job": serialize_document_job(new_job)}
 
@@ -326,6 +339,18 @@ class DocumentService:
             return False
         self._ensure_access(record, current_user)
         return True
+
+    def source_artifact(self, document_id: str, current_user: CurrentUser) -> dict | None:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            return None
+        self._ensure_access(record, current_user)
+        artifact = self._original_source_artifact(record)
+        return {
+            "path": Path((artifact.get("storage") or {})["uri"]).resolve(),
+            "filename": record.get("original_filename") or "source.pdf",
+            "mime_type": artifact.get("mime_type") or "application/octet-stream",
+        }
 
     def _accessible_job(
         self,

@@ -59,6 +59,10 @@ class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
                 "modules.questions.workflow_service.process_evaluation_job_background",
                 evaluation_processor,
             ),
+            patch(
+                "modules.documents.worker.get_next_queued_document_job_id",
+                return_value=None,
+            ),
         ):
             found_work = await process_available_jobs_once()
 

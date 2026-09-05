@@ -3191,8 +3191,17 @@ class SchemaV2Tests(unittest.TestCase):
             def find_by_id(self, _document_id):
                 return self.document
 
-            def update_page(self, _document_id, _page_id, *, document_version, cleaned_text):
+            def update_page(
+                self,
+                _document_id,
+                _page_id,
+                *,
+                document_version,
+                cleaned_text,
+                corrected_by_user_id=None,
+            ):
                 self.requested_version = document_version
+                self.corrected_by_user_id = corrected_by_user_id
                 self.page["cleaned_text"] = cleaned_text
                 return self.page
 
@@ -3205,6 +3214,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         result = service.update_page(str(document_id), str(page_id), payload, owner)
         self.assertEqual(repository.requested_version, 1)
+        self.assertEqual(repository.corrected_by_user_id, owner.id)
         self.assertEqual(result["cleaned_text"], "new OCR")
 
         repository.document["pipeline_summary"]["chunk_status"] = "COMPLETED"
@@ -3321,7 +3331,11 @@ class SchemaV2Tests(unittest.TestCase):
         retried = service.retry_job(str(document_id), str(failed_job_id), background_tasks, owner)
         self.assertEqual(retried["job"]["attempt_no"], 2)
         self.assertEqual(retried["job"]["status"], "QUEUED")
-        self.assertEqual(background_tasks.tasks[0]["kwargs"]["document_id"], str(document_id))
+        self.assertEqual(background_tasks.tasks, [])
+        self.assertEqual(retried["job"]["document_id"], str(document_id))
+        queued_job = service.repository.find_job(retried["job"]["id"])
+        self.assertEqual(queued_job["config"]["source_format"], "pdf")
+        self.assertTrue(queued_job["config"]["upload_path"].endswith("owner.pdf"))
 
         with self.assertRaises(PermissionError):
             service.cancel_job(str(document_id), str(active_job_id), other_teacher)
@@ -5150,10 +5164,11 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(question["evaluation_status"], "STALE")
         self.assertIn("exceeded 60 minute recovery timeout", question["quality_summary"]["error"]["message"])
         document = db.documents.find_one({"_id": document_id})
-        self.assertEqual(document["status"], "FAILED")
-        self.assertEqual(document["pipeline_summary"]["chunk_status"], "FAILED")
-        self.assertEqual(db.chunk_sets.find_one({"_id": chunk_set_id})["status"], "FAILED")
-        self.assertEqual(db.chunk_embeddings.find_one({"chunk_set_id": chunk_set_id})["status"], "FAILED")
+        self.assertEqual(document["status"], "PROCESSING")
+        self.assertEqual(document["pipeline_summary"]["chunk_status"], "QUEUED")
+        self.assertEqual(db.document_jobs.find_one({"_id": chunk_job_id})["status"], "QUEUED")
+        self.assertEqual(db.chunk_sets.find_one({"_id": chunk_set_id})["status"], "PROCESSING")
+        self.assertEqual(db.chunk_embeddings.find_one({"chunk_set_id": chunk_set_id})["status"], "PENDING")
 
     def test_admin_audit_service_normalizes_flat_and_nested_records(self):
         class FakeCursor(list):

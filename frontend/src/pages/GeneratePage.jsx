@@ -889,11 +889,20 @@ function GeneratePage() {
     return docId;
   };
 
-  const runChunk = async (docId) => {
+  const runChunk = async (docId, signal) => {
     setPhase('chunking');
     setStatusDetail('Đang chunk và lưu vector...');
     const chunkStartedAt = nowMs();
-    await chunkDocument(docId);
+    const queued = await chunkDocument(docId);
+    if (!queued.chunk_job_id) throw new Error('Backend không trả về mã tác vụ chunk');
+    const chunkResult = await pollJob(getOcrStatus, queued.chunk_job_id, {
+      signal,
+      timeoutMs: 45 * 60 * 1000,
+      onUpdate: (status) => setStatusDetail(`Chunk/index tài liệu: ${status.status}`),
+    });
+    if (chunkResult.status === 'failed') {
+      throw new Error(chunkResult.error_message || 'Chunk/index tài liệu thất bại');
+    }
     markTiming('chunkMs', chunkStartedAt);
     setChunkReady(true);
   };
@@ -997,7 +1006,7 @@ function GeneratePage() {
         }
       } else if (sourceMode === 'upload') {
         docId = await runOcrPipeline(file, signal);
-        await runChunk(docId);
+        await runChunk(docId, signal);
         await fetchReusableDocuments();
       } else {
         if (!selectedDocument) {
@@ -1010,7 +1019,7 @@ function GeneratePage() {
           setTimingValues({ documentMs: 'reused' });
           setStatusDetail('Sử dụng tài liệu đã xử lý và index trước đó');
         } else {
-          await runChunk(docId);
+          await runChunk(docId, signal);
           await fetchReusableDocuments();
         }
       }

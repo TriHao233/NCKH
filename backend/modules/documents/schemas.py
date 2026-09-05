@@ -70,6 +70,10 @@ class DocumentJobResponse(BaseModel):
     queued_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    worker_id: str | None = None
+    heartbeat_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    checkpoint: dict[str, Any] | None = None
 
 
 class DocumentJobListResponse(BaseModel):
@@ -85,11 +89,20 @@ class DocumentPageResponse(BaseModel):
     document_id: str
     document_version: int | None = None
     ocr_job_id: str | None = None
+    processing_revision_id: str | None = None
+    revision_no: int | None = None
     page_number: int
     raw_text: str | None = None
     cleaned_text: str | None = None
     formula_blocks: list[Any] = Field(default_factory=list)
+    layout_blocks: list[Any] = Field(default_factory=list)
+    visual_blocks: list[Any] = Field(default_factory=list)
+    extraction_method: str | None = None
+    quality_flags: list[str] = Field(default_factory=list)
+    corrected_from_page_id: str | None = None
+    corrected_by_user_id: str | None = None
     created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class DocumentPageListResponse(BaseModel):

@@ -1,8 +1,10 @@
 import json
 import os
 import logging
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from core.config import resolve_path, settings
 
@@ -66,7 +68,13 @@ class ChunkMarkdownExporter:
         self._file.close()
         logger.info("Chunk export written: %s", self._path)
 
-def export_chunks_to_file(document_id: str, chunks: list[dict]):
+def export_chunks_to_file(
+    document_id: str,
+    chunks: list[dict],
+    *,
+    chunk_set_id: str | None = None,
+    source_revision_id: str | None = None,
+):
     """
     Xuất JSON metadata vao data/metadata va Markdown vao data/chunk_outputs.
     """
@@ -75,15 +83,19 @@ def export_chunks_to_file(document_id: str, chunks: list[dict]):
     os.makedirs(metadata_dir, exist_ok=True)
     os.makedirs(chunk_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    run_key = chunk_set_id or uuid4().hex
+    file_stem = f"{document_id}_chunks_{run_key}_{timestamp}"
 
     # 1. TẠO FILE JSON
-    json_filename = f"{document_id}_chunks_{timestamp}.json"
+    json_filename = f"{file_stem}.json"
     json_filepath = metadata_dir / json_filename
 
     json_payload = {
         "document_id": document_id,
-        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "chunk_set_id": chunk_set_id,
+        "source_processing_revision_id": source_revision_id,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
         "total_chunks": len(chunks),
         "chunks": chunks
     }
@@ -96,13 +108,15 @@ def export_chunks_to_file(document_id: str, chunks: list[dict]):
         logger.error(f"Lỗi khi xuất file JSON: {e}")
 
     # 2. TẠO FILE MARKDOWN
-    md_filename = f"{document_id}_chunks_{timestamp}.md"
+    md_filename = f"{file_stem}.md"
     md_filepath = chunk_dir / md_filename
 
     try:
         with open(md_filepath, "w", encoding="utf-8") as f:
             f.write("# Chunk Export\n\n")
             f.write(f"- Document ID: {document_id}\n")
+            f.write(f"- Chunk Set ID: {chunk_set_id or '-'}\n")
+            f.write(f"- Source Revision ID: {source_revision_id or '-'}\n")
             f.write(f"- Created (UTC): {timestamp}\n")
             f.write(f"- Total Chunks: {len(chunks)}\n\n")
             f.write("---\n\n")
@@ -124,4 +138,13 @@ def export_chunks_to_file(document_id: str, chunks: list[dict]):
     except Exception as e:
         logger.error(f"Lỗi khi xuất file MD: {e}")
 
-    return json_filepath, md_filepath
+    return {
+        "json": {
+            "uri": str(json_filepath),
+            "sha256": hashlib.sha256(json_filepath.read_bytes()).hexdigest(),
+        },
+        "markdown": {
+            "uri": str(md_filepath),
+            "sha256": hashlib.sha256(md_filepath.read_bytes()).hexdigest(),
+        },
+    }

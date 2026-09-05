@@ -1,12 +1,4 @@
 import re
-from typing import List, Dict, Any
-from modules.ocr.text_cleaner import is_code_line
-
-try:
-    from sympy import SympifyError, sympify
-    HAS_SYMPY = True
-except ImportError:
-    HAS_SYMPY = False
 
 def _raw_to_latex(raw: str) -> str:
     latex = raw.strip()

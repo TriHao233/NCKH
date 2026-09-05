@@ -3,11 +3,11 @@ import re
 import logging
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from modules.ocr.easyocr_engine import is_easyocr_available, stream_and_ocr_pdf
+from modules.ocr.easyocr_engine import extract_text_or_ocr_pdf
 from modules.ocr.formula_processor import process_pages_with_formula_blocks
-from modules.ocr.text_cleaner import clean_ocr_pages
+from modules.ocr.text_cleaner import clean_ocr_pages, is_code_line
 from modules.ocr.formula_detector import mark_formulas_in_pages
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def remove_headers_footers(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             filtered_lines.append(line)
 
-        cleaned_pages.append({"page_number": page["page_number"], "text": "\n".join(filtered_lines)})
+        cleaned_pages.append({**page, "text": "\n".join(filtered_lines)})
 
     return cleaned_pages
 
@@ -100,9 +100,23 @@ def clean_text_basic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for page in pages:
         lines = page["text"].split("\n")
         processed_lines = []
+        in_fenced_code = False
 
         for line in lines:
             stripped = line.strip()
+
+            if stripped.startswith("```"):
+                in_fenced_code = not in_fenced_code
+                processed_lines.append(line.rstrip())
+                continue
+
+            # Code is source data. Keep indentation and operator-only lines verbatim;
+            # generic OCR cleanup is allowed to normalize prose, not program syntax.
+            if in_fenced_code or is_code_line(line) or stripped in {
+                "{", "}", ";", "*", "&", "++", "--", "->",
+            }:
+                processed_lines.append(line.rstrip())
+                continue
 
             # Bỏ qua công thức toán học đã bọc
             if stripped.startswith("$$") and stripped.endswith("$$"):
@@ -123,7 +137,7 @@ def clean_text_basic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         text = "\n".join(processed_lines)
         text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-        cleaned_pages.append({"page_number": page["page_number"], "text": text.strip()})
+        cleaned_pages.append({**page, "text": text.strip()})
 
     return cleaned_pages
 
@@ -159,22 +173,22 @@ def run_ocr_pipeline(
     languages: list[str] | None = None,
     gpu: bool | None = None,
     poppler_path: str | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     if languages is None:
         languages = ["vi", "en"]
 
-    if not is_easyocr_available():
-        raise RuntimeError("EasyOCR is not installed")
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
     logger.info(f"====== BẮT ĐẦU TIẾN TRÌNH OCR: {document_title or pdf_path} ======")
 
-    raw_pages = stream_and_ocr_pdf(
+    raw_pages = extract_text_or_ocr_pdf(
         pdf_path=pdf_path,
         languages=languages,
         gpu=gpu,
-        poppler_path=poppler_path
+        poppler_path=poppler_path,
+        progress_callback=progress_callback,
     )
     logger.info("[Filter 0/4] Đang nhận diện và gắn thẻ Công thức Toán học...")
     pages_with_formulas = mark_formulas_in_pages(raw_pages)
@@ -190,6 +204,13 @@ def run_ocr_pipeline(
 
     logger.info("[Filter 4/4] Đang bóc tách và đóng gói Công thức Toán học (LaTeX)...")
     final_pages = process_pages_with_formula_blocks(cleaned_pages)
+    for page in final_pages:
+        markers = [
+            f"<!-- VISUAL_BLOCK:{block['id']} TYPE:{block['type']} REVIEW_REQUIRED -->"
+            for block in page.get("visual_blocks", [])
+        ]
+        if markers:
+            page["text"] = f"{page.get('text', '').rstrip()}\n\n" + "\n".join(markers)
 
     title = document_title or Path(pdf_path).stem.replace("_", " ")
     total_chars = sum(len(p["text"]) for p in final_pages)
@@ -198,6 +219,12 @@ def run_ocr_pipeline(
         "total_pages": len(final_pages),
         "total_chars": total_chars,
         "avg_chars_per_page": round(total_chars / max(len(final_pages), 1)),
+        "extraction_methods": dict(Counter(
+            str(page.get("extraction_method") or "OCR") for page in final_pages
+        )),
+        "pages_with_quality_flags": sum(
+            1 for page in final_pages if page.get("quality_flags")
+        ),
     }
 
     logger.info(f"Đang lưu kết quả Markdown tại: {output_path}")

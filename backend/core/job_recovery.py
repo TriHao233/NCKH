@@ -114,24 +114,33 @@ def _recover_document_jobs(db, cutoff: datetime, now: datetime, message: str) ->
     )
     error = {"message": message, "at": now}
     for job in active_jobs:
+        run_attempt = int(job.get("run_attempt", 0))
+        retryable = job.get("job_type") in {"OCR", "CHUNK", "INDEX"} and run_attempt < settings.job_max_attempts
+        next_status = "QUEUED" if retryable else "FAILED"
+        fields = {
+            "status": next_status,
+            "error": error,
+            "worker_id": None,
+            "lease_expires_at": None,
+            "heartbeat_at": None,
+            "updated_at": now,
+        }
+        if retryable:
+            fields["queued_at"] = now
+            fields["finished_at"] = None
+        else:
+            fields["finished_at"] = now
         db.document_jobs.update_one(
             {"_id": job["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
-            {
-                "$set": {
-                    "status": "FAILED",
-                    "error": error,
-                    "finished_at": now,
-                    "updated_at": now,
-                }
-            },
+            {"$set": fields},
         )
         job_type = str(job.get("job_type") or "UNKNOWN").lower()
         db.documents.update_one(
             {"_id": job.get("document_id"), "archived_at": None},
             {
                 "$set": {
-                    "status": "FAILED",
-                    f"pipeline_summary.{job_type}_status": "FAILED",
+                    "status": "PROCESSING" if retryable else "FAILED",
+                    f"pipeline_summary.{job_type}_status": next_status,
                     "latest_error": {
                         "job_id": job["_id"],
                         "job_type": job.get("job_type"),
@@ -142,7 +151,19 @@ def _recover_document_jobs(db, cutoff: datetime, now: datetime, message: str) ->
                 }
             },
         )
-        if job.get("job_type") == "CHUNK":
+        if job.get("job_type") == "OCR" and job.get("processing_revision_id"):
+            db.document_processing_revisions.update_one(
+                {"_id": job["processing_revision_id"]},
+                {
+                    "$set": {
+                        "status": next_status,
+                        "error": error,
+                        "updated_at": now,
+                        **({"completed_at": now} if not retryable else {}),
+                    }
+                },
+            )
+        if job.get("job_type") == "CHUNK" and not retryable:
             chunk_sets = list(
                 db.chunk_sets.find(
                     {"chunk_job_id": job["_id"], "status": "PROCESSING"},

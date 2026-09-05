@@ -1,4 +1,7 @@
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, ApiError } from '../services/apiClient';
+import { auth } from '../firebase';
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
 
 export function listDocuments({ page = 1, pageSize = 20, status, search } = {}) {
   const params = new URLSearchParams();
@@ -27,6 +30,17 @@ export function listDocumentPages(id, { limit = 100 } = {}) {
 
 export function updateDocumentPage(documentId, pageId, payload) {
   return apiRequest(`/documents/${documentId}/pages/${pageId}`, { method: 'PATCH', body: payload });
+}
+
+export async function fetchDocumentSource(documentId) {
+  await auth.authStateReady();
+  const firebaseUser = auth.currentUser;
+  if (!firebaseUser) throw new ApiError('Bạn chưa đăng nhập', 401, null);
+  const response = await fetch(`${API_BASE_URL}/documents/${documentId}/source`, {
+    headers: { Authorization: `Bearer ${await firebaseUser.getIdToken()}` },
+  });
+  if (!response.ok) throw new ApiError('Không mở được tài liệu nguồn', response.status, null);
+  return window.URL.createObjectURL(await response.blob());
 }
 
 export function retryDocumentJob(documentId, jobId) {

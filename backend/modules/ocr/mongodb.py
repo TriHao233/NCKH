@@ -1,4 +1,5 @@
-from core.database import get_database
+from core.database import get_database, mongo_transaction
+from modules.documents.repository import utc_now
 from modules.documents.repository import (
     MongoDocumentRepository,
     json_safe,
@@ -60,6 +61,8 @@ def update_document_status(
     status: str,
     stats: dict | None = None,
     error_message: str | None = None,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
 ):
     normalized = {
         "queued": "QUEUED",
@@ -74,7 +77,85 @@ def update_document_status(
         progress=100 if normalized == "COMPLETED" else None,
         stats=stats,
         error_message=error_message,
+        expected_worker_id=worker_id,
+        expected_fencing_token=fencing_token,
     )
+    job = repository.find_job(job_id)
+    if worker_id is not None and (
+        not job
+        or job.get("worker_id") != worker_id
+        or job.get("fencing_token") != fencing_token
+    ):
+        return
+    if not job or job.get("status") != normalized:
+        return
+    if job and job.get("processing_revision_id"):
+        revision_id = job["processing_revision_id"]
+        now = utc_now()
+        if normalized == "PROCESSING":
+            get_database().document_processing_revisions.update_one(
+                {"_id": revision_id, "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                {"$set": {"status": "PROCESSING", "updated_at": now}},
+            )
+        elif normalized == "COMPLETED":
+            with mongo_transaction() as session:
+                activation = get_database().documents.update_one(
+                    {
+                        "_id": job["document_id"],
+                        "archived_at": None,
+                        "current_processing.pending_ocr_job_id": job["_id"],
+                    },
+                    {
+                        "$set": {
+                            "current_processing.ocr_job_id": job["_id"],
+                            "current_processing.processing_revision_id": revision_id,
+                            "current_processing.pending_ocr_job_id": None,
+                            "current_processing.pending_processing_revision_id": None,
+                            "updated_at": now,
+                        }
+                    },
+                    session=session,
+                )
+                if not activation.matched_count:
+                    raise RuntimeError("DOCUMENT_PROCESSING_REVISION_STALE")
+                get_database().document_processing_revisions.update_many(
+                    {
+                        "document_id": job["document_id"],
+                        "_id": {"$ne": revision_id},
+                        "status": "ACTIVE",
+                    },
+                    {"$set": {"status": "SUPERSEDED", "superseded_at": now}},
+                    session=session,
+                )
+                get_database().document_processing_revisions.update_one(
+                    {"_id": revision_id},
+                    {"$set": {"status": "ACTIVE", "completed_at": now, "updated_at": now}},
+                    session=session,
+                )
+        elif normalized in {"FAILED", "CANCELLED"}:
+            get_database().document_processing_revisions.update_one(
+                {"_id": revision_id},
+                {
+                    "$set": {
+                        "status": normalized,
+                        "error": {"message": error_message, "at": now},
+                        "completed_at": now,
+                        "updated_at": now,
+                    }
+                },
+            )
+            get_database().documents.update_one(
+                {
+                    "_id": job["document_id"],
+                    "current_processing.pending_ocr_job_id": job["_id"],
+                },
+                {
+                    "$set": {
+                        "current_processing.pending_ocr_job_id": None,
+                        "current_processing.pending_processing_revision_id": None,
+                    }
+                },
+            )
     if normalized == "COMPLETED":
         document = repository.find_by_id(document_id)
         if document:

@@ -1141,3 +1141,37 @@
   .manage-page .bulk-actions .btn { width: 100%; }
   .manage-page .bulk-actions .btn { flex: 1; }
 }
+.doc-page-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.doc-page-heading span {
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+}
+
+.doc-page-flags {
+  color: #b45309;
+}
+
+.doc-page-raw summary {
+  color: #475569;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.doc-page-raw pre {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+}

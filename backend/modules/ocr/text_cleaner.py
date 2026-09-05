@@ -151,7 +151,18 @@ def clean_page_text(text: str) -> str:
     lines = text.split('\n')
 
     cleaned_lines = []
+    in_fenced_code = False
     for l in lines:
+        stripped_source = l.strip()
+        if stripped_source.startswith("```"):
+            in_fenced_code = not in_fenced_code
+            cleaned_lines.append(l.rstrip())
+            continue
+        if in_fenced_code or is_code_line(l) or stripped_source in {
+            "{", "}", ";", "*", "&", "++", "--", "->",
+        }:
+            cleaned_lines.append(l.rstrip())
+            continue
         fixed_line = fix_easyocr_typos(l)
         cleaned = clean_line(fixed_line)
         if not is_garbled_line(cleaned) or not cleaned.strip():
@@ -225,4 +236,4 @@ def format_code_blocks(lines: list[str], default_lang: str = "cpp") -> list[str]
     return result
 
 def clean_ocr_pages(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [{"page_number": p["page_number"], "text": clean_page_text(p.get("text", ""))} for p in pages]
+    return [{**p, "text": clean_page_text(p.get("text", ""))} for p in pages]

@@ -68,6 +68,14 @@ These cannot be inferred from source code and block only the dependent stage, no
   Python 3.10.14 suite passed 180 tests (4 integration tests are separately gated), all
   4 Mongo replica-set integration tests passed, and the frontend passed 46 tests, lint
   and production build.
+- Gate C — trustworthy source and durable document processing: **IMPLEMENTED, pending
+  pilot-corpus sign-off on 2026-09-06**. PDF processing is extraction-first per page with
+  OCR fallback and resource limits; raw/layout/visual evidence is retained in immutable
+  processing revisions; corrections create a new page set; OCR/chunk/index jobs use the
+  Mongo worker lease/fencing path; index candidates are activated only after coverage
+  validation. The code-level suite passed 189 tests plus 9 isolated replica-set
+  integration tests; frontend passed 46 tests, lint and production build. T01–T03 on the
+  licensed CTDL corpus remain external evidence and are not claimed by this technical gate.
 - Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
   produced one membership on first apply and zero changes on the second apply, with no
   duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.
