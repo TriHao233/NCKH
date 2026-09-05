@@ -1,6 +1,6 @@
 # QBankCTU — Baseline contract A–H
 
-Baseline version: **2026-09-05.1**. Branch: `feature/assessment-pipeline-roadmap`.
+Baseline version: **2026-09-06.1**. Branch: `feature/assessment-pipeline-roadmap`.
 
 ## Product boundary
 
@@ -62,7 +62,16 @@ These cannot be inferred from source code and block only the dependent stage, no
 
 ## Gate status
 
-- Gate A contract/code inventory: **established**.
-- Gate A corpus: **awaiting licensed CTDL PDFs and expert labels**; the repository PDF is only a checksum fixture.
-- Gate A Moodle spike: **contract drafted, institutional facts pending**.
-- Gate B: implementation in progress; it is complete only after all negative authorization/export tests run in the pinned environment.
+- Gate A — technical baseline and contracts: **CLOSED on 2026-09-06**. Requirements,
+  runtime, data manifest, rubric/split contract and Moodle boundary are explicit and reproducible.
+- Gate B — authorization, export and invariants: **CLOSED on 2026-09-06**. The pinned
+  Python 3.10.14 suite passed 180 tests (4 integration tests are separately gated), all
+  4 Mongo replica-set integration tests passed, and the frontend passed 46 tests, lint
+  and production build.
+- Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
+  produced one membership on first apply and zero changes on the second apply, with no
+  duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.
+- Institutional validation remains external: licensed CTDL corpus/expert labels and the
+  real Moodle version, service-account capabilities, course/category and round-trip
+  fixture. These do not reopen A/B implementation; they are required evidence for the
+  dependent quality and Moodle gates (E/G/H).

@@ -902,11 +902,24 @@ False GREEN ở G6 là tỷ lệ câu lỗi nghiêm trọng theo nhãn người 
 
 ### 14.1. Cách đọc backlog
 
-**Cập nhật triển khai 05/09/2026:** nhánh `feature/assessment-pipeline-roadmap` đã bắt đầu A–B.
-A01/A02 có baseline contract, runtime pin và verifier; A03/A04 đã có manifest/contract nhưng còn
-chờ corpus CTDL, CLO chính thức và thông tin Moodle của trường. B01–B07 đã có lớp enforcement ban
-đầu và regression tests; chỉ chuyển `DONE` sau khi chạy toàn bộ suite trên Python 3.10/Mongo replica
-set và nghiệm thu migration với bản sao dữ liệu.
+**Cập nhật đóng giai đoạn 06/09/2026:** nhánh `feature/assessment-pipeline-roadmap` đã đóng
+**Gate A và Gate B ở phạm vi kỹ thuật nội bộ**.
+
+- A01–A04: **DONE/BASELINED**. Requirements, runtime, dataset/rubric/split manifest và hợp đồng
+  Moodle đã đủ để các giai đoạn sau triển khai mà không phải suy diễn phạm vi. Corpus CTDL có
+  license/nhãn chuyên gia và fixture từ Moodle trường là bằng chứng nghiệm thu ngoại vi cho E/G/H,
+  không được ghi nhận giả là đã có.
+- B01–B07: **DONE**. Subject membership/scope, backend export eligibility, self-review guard,
+  assignment/review CAS, capability separation, local-only policy, bearer sanitization và UX
+  eligibility đã được triển khai.
+- Bằng chứng: full backend suite trên Python 3.10.14 đạt **180 passed**; profile Mongo replica set
+  đạt **4/4 integration tests**; frontend đạt **46/46 tests**, ESLint và production build; baseline
+  checksum verifier đạt.
+- Migration rehearsal trên database copy cô lập: dry-run không ghi dữ liệu; apply membership lần
+  đầu tạo 1 record, lần hai `changed: 0`, không duplicate; bearer migration giảm raw token từ 1 về 0.
+
+**Giới hạn tuyên bố:** trạng thái này cho phép chuyển sang C và demo flow nội bộ đúng quyền. Nó
+không đồng nghĩa đã publish lên Moodle của trường hoặc đã được giảng viên xác nhận chất lượng corpus.
 
 - Công sức là **ngày công kỹ thuật**, gồm implement, review, test liên quan và sửa lỗi trong phạm vi task; chưa gồm thời gian chờ giảng viên/Moodle admin.
 - Đây là ước lượng ban đầu, cần cập nhật sau giai đoạn A; không phải cam kết deadline.
@@ -914,7 +927,7 @@ set và nghiệm thu migration với bản sao dữ liệu.
 - ID mới dùng tiền tố A–H để không nhầm với các backlog P0/P1 đã đánh dấu hoàn tất trong tài liệu tháng 7. Trạng thái tất cả task bên dưới là **PLANNED**, trừ hoạt động rà soát/baseline đã ghi tại mục 13.1.
 - Mỗi task tạo thay đổi nhỏ có thể review, kèm test theo rủi ro và migration nếu đụng schema. Không gom toàn bộ kế hoạch vào một PR.
 
-### A — Chốt baseline và hợp đồng, 3–5 ngày công
+### A — Chốt baseline và hợp đồng, 3–5 ngày công — **CLOSED (technical), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -923,9 +936,9 @@ set và nghiệm thu migration với bản sao dữ liệu.
 | A03 | Thu thập tập PDF/query/câu mẫu, lập rubric và split ban đầu; chốt giả định code language/Bloom/CLO | AI + GV | A01 | Dataset manifest có checksum, nhãn mẫu, tránh trùng split | 1–2 |
 | A04 | Spike Moodle: phiên bản, quyền plugin/web service, course/category/qtype, identity/SSO scope | LMS | A01 | Contract khả thi và fixture export thật; danh sách quyền cần từ trường | 0.5–1 |
 
-**Gate A:** biết rõ cái gì nghiệm thu được và ở môi trường nào. Chưa chọn model mới chỉ từ benchmark công khai; chưa migrate identity khi chưa chốt flow.
+**Gate A — CLOSED:** biết rõ cái gì nghiệm thu được và ở môi trường nào. Chưa chọn model mới chỉ từ benchmark công khai; chưa migrate identity khi chưa chốt flow. Dữ liệu/fixture do trường cung cấp tiếp tục được gắn vào manifest khi có và được kiểm tại E/G/H.
 
-### B — Khóa quyền, export và invariants, 10–16 ngày công
+### B — Khóa quyền, export và invariants, 10–16 ngày công — **CLOSED, 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -937,7 +950,7 @@ set và nghiệm thu migration với bản sao dữ liệu.
 | B06 | Bỏ lưu raw bearer không cần thiết theo migration; bảo vệ snapshot evaluator và secret target | BE | A02 | Không có token mới trong persistence/log; client không giả metadata AI | 1–2 |
 | B07 | Đồng bộ UI lý do disabled/action eligibility, test các trường hợp batch lỗi một phần | FE | B02–B05 | UX không gợi thao tác backend cấm; errors theo item/version | 1 |
 
-**Gate B:** G1 và phần enforcement G3 đạt. Có thể demo flow review/export nội bộ đúng quyền trước khi nâng chất lượng AI.
+**Gate B — CLOSED:** G1 và phần enforcement G3 đạt qua unit/contract/full-suite/Mongo integration và migration rehearsal. Có thể demo flow review/export nội bộ đúng quyền trước khi nâng chất lượng AI.
 
 ### C — Nguồn PDF đáng tin và durable document pipeline, 13–21 ngày công
 

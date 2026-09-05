@@ -63,15 +63,13 @@ def main() -> None:
         result = database.subject_memberships.update_one(
             {"user_id": user_id, "subject_id": subject_id, "origin": "BACKFILL"},
             {
-                "$set": {
+                "$setOnInsert": {
                     "schema_version": SCHEMA_VERSION,
                     "roles": ["TEACHER"],
                     "capabilities": [],
                     "status": "ACTIVE",
                     "external_course_id": None,
                     "updated_at": now,
-                },
-                "$setOnInsert": {
                     "created_by_user_id": None,
                     "created_at": now,
                 },

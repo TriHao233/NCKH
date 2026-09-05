@@ -1,5 +1,5 @@
 {
-  "manifest_version": "2026-09-05.1",
+  "manifest_version": "2026-09-06.1",
   "pilot_subject": "Data Structures",
   "code_language_assumption": "C/C++ provisional",
   "split_policy": {

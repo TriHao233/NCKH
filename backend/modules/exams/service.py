@@ -106,13 +106,18 @@ class ExamService:
             raise LookupError("Không tìm thấy đề thi")
         return exam
 
-    def _assert_can_access(self, exam: dict, current_user: CurrentUser | None) -> None:
+    @staticmethod
+    def _assert_can_access(
+        exam: dict,
+        current_user: CurrentUser | None,
+        repository: ExamRepository | None = None,
+    ) -> None:
         if current_user is None:
             raise PermissionError("Bạn chưa đăng nhập")
         if current_user.role == "Admin":
             return
         if current_user.role == "Teacher" and str(exam.get("created_by_user_id")) == str(current_user.id):
-            access_database = getattr(self.repository, "db", None)
+            access_database = getattr(repository, "db", None)
             if (
                 getattr(access_database, "subject_memberships", None) is None
                 or has_subject_access(access_database, current_user.id, exam.get("subject_id"))
@@ -122,7 +127,7 @@ class ExamService:
 
     def _get_for_user_or_404(self, exam_id: str, current_user: CurrentUser | None) -> dict:
         exam = self._get_or_404(exam_id)
-        self._assert_can_access(exam, current_user)
+        self._assert_can_access(exam, current_user, self.repository)
         return exam
 
     @staticmethod
@@ -540,7 +545,7 @@ class ExamVariantService:
 
     def _get_exam_for_user_or_404(self, exam_id: str, current_user: CurrentUser | None) -> dict:
         exam = self._get_exam_or_404(exam_id)
-        ExamService._assert_can_access(exam, current_user)
+        ExamService._assert_can_access(exam, current_user, self.exams)
         return exam
 
     def get_exam_variant_pair(

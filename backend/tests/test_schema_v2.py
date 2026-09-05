@@ -5686,7 +5686,8 @@ class SchemaV2Tests(unittest.TestCase):
     def test_auth_user_is_minimal_uid_and_token_link(self):
         schema = VALIDATORS["User"]["$jsonSchema"]
         self.assertEqual(set(schema["required"]), {"uid", "token"})
-        self.assertEqual(set(schema["properties"]), {"_id", "uid", "token"})
+        self.assertEqual(set(schema["properties"]), {"_id", "uid", "token", "last_seen_at"})
+        self.assertEqual(schema["properties"]["token"]["bsonType"], ["string", "null"])
         self.assertFalse(schema["additionalProperties"])
 
     def test_question_sources_cannot_mix_documents(self):

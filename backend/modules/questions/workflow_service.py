@@ -2024,8 +2024,26 @@ class QuestionWorkflowService:
             "lifecycle_status": "ACTIVE",
             "review_status": "PENDING",
         }
-        if "review_assignment" in question:
-            assignment_query["review_assignment"] = question.get("review_assignment")
+        previous_assignment = question.get("review_assignment")
+        if previous_assignment is None:
+            assignment_query["review_assignment"] = {"$exists": False}
+        else:
+            for field in (
+                "status",
+                "reviewer_user_id",
+                "assigned_by_user_id",
+                "assigned_at",
+                "claimed_at",
+                "lock_expires_at",
+                "last_released_at",
+                "release_reason",
+            ):
+                path = f"review_assignment.{field}"
+                assignment_query[path] = (
+                    previous_assignment[field]
+                    if field in previous_assignment
+                    else {"$exists": False}
+                )
         updated = self.db.questions.find_one_and_update(
             assignment_query,
             {"$set": {"review_assignment": assignment, "updated_at": now}},
