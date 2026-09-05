@@ -49,6 +49,27 @@ def attach_original_artifact(
     )
 
 
+def attach_processing_artifact(
+    document_id: str,
+    job_id: str,
+    *,
+    uri: str,
+    size_bytes: int,
+    sha256: str,
+    artifact_type: str,
+    mime_type: str,
+) -> None:
+    _repository().attach_processing_artifact(
+        document_id,
+        job_id=job_id,
+        uri=uri,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        artifact_type=artifact_type,
+        mime_type=mime_type,
+    )
+
+
 def create_ocr_job(document_id: str, config: dict | None = None) -> str:
     job = _repository().create_job(document_id, "OCR", config=config)
     return str(job["_id"])
@@ -77,7 +98,10 @@ def update_document_status(
     )
     if normalized == "COMPLETED":
         document = repository.find_by_id(document_id)
-        if document:
+        has_active_lineage = bool(
+            ((document or {}).get("current_processing") or {}).get("chunk_set_id")
+        )
+        if document and not has_active_lineage:
             get_database().documents.update_one(
                 {"_id": document["_id"], "archived_at": None},
                 {

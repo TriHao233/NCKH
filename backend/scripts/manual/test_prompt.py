@@ -1,8 +1,8 @@
 import sys
 from pathlib import Path
 
-# Thêm thư mục gốc vào sys.path để có thể import package 'app'
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Thêm thư mục backend để chạy script từ bất kỳ working directory nào.
+BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE_DIR))
 
 from modules.generation.prompt_builder import PromptBuilder

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QBank independent extraction ground truth",
+  "type": "object",
+  "required": ["corpus_version", "pages"],
+  "properties": {
+    "corpus_version": {"type": "string"},
+    "pages": {
+      "type": "array",
+      "minItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["page_number", "text"],
+        "properties": {
+          "page_number": {"type": "integer", "minimum": 1},
+          "text": {"type": "string"},
+          "code_lines": {"type": "array", "items": {"type": "string"}},
+          "formulae": {"type": "array", "items": {"type": "string"}},
+          "tables": {"type": "array"},
+          "assets": {"type": "array"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -24,6 +24,17 @@ class SubjectPayload(BaseModel):
     description: str = ""
     is_active: bool = True
 
+    @model_validator(mode="after")
+    def normalize_subject_fields(self):
+        self.subject_code = self.subject_code.strip()
+        self.subject_name = self.subject_name.strip()
+        self.description = self.description.strip()
+        if not self.subject_code:
+            raise ValueError("Mã môn học không được để trống")
+        if not self.subject_name:
+            raise ValueError("Tên môn học không được để trống")
+        return self
+
 
 class SubjectUpdatePayload(BaseModel):
     subject_code: str | None = Field(None, min_length=1, max_length=40)

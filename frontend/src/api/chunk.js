@@ -1,12 +1,13 @@
 import { apiFetch } from './client';
 
-export function chunkDocument(documentId, collectionName = 'chunks') {
+export function chunkDocument(documentId, collectionName) {
+  const payload = { document_id: documentId };
+  if (collectionName) {
+    payload.collection_name = collectionName;
+  }
   return apiFetch('/chunk/document', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      document_id: documentId,
-      collection_name: collectionName,
-    }),
+    body: JSON.stringify(payload),
   });
 }

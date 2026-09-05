@@ -1,0 +1,80 @@
+{
+  "manifest_version": "1.0.0",
+  "manifest_status": "raw_generated",
+  "requires_human_review": true,
+  "fixture_id": "doc-vi",
+  "source_file": "backend/tests/golden_corpus/v1/generated/doc-vi.doc",
+  "source_file_name": "doc-vi.doc",
+  "relative_path": "generated/doc-vi.doc",
+  "file_extension": ".doc",
+  "mime_type": "application/msword",
+  "file_size": 23040,
+  "sha256": "0af924cfb157dfc7dacb1f845a088344e3f2a6b42d5d978dc30fb26df8684fdc",
+  "language_detected": "vi",
+  "document_category": "legacy_doc",
+  "page_count": null,
+  "source_unit_count": 1,
+  "has_text_layer": null,
+  "is_scanned": false,
+  "is_mixed": false,
+  "expected_content_types": [
+    "prose",
+    "table",
+    "image",
+    "caption"
+  ],
+  "detected_code_locations": [],
+  "detected_table_locations": [
+    {
+      "source_unit": 1,
+      "truth_page_number": 10,
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "detected_formula_locations": [],
+  "detected_image_or_diagram_locations": [
+    {
+      "source_unit": 1,
+      "truth_page_number": 10,
+      "detected_type": "image",
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "ground_truth_available": true,
+  "ground_truth_independent": true,
+  "ground_truth_references": [
+    {
+      "relative_path": "truth/pages.json",
+      "sha256": "7fd36173bc9630a1c36f604d17140cf8ab6431a5bd5cb0228a6ce9fa0a647968",
+      "status": "author_before_render_needs_second_reviewer",
+      "evidence": null,
+      "truth_page_numbers": [
+        10
+      ],
+      "local_page_mapping": {
+        "1": 10
+      },
+      "case_ids": null
+    }
+  ],
+  "rag_questions_available": false,
+  "rag_question_references": [],
+  "parser_selected": "LegacyDocParser",
+  "extractor_strategy": "libreoffice_doc_to_docx_then_python_docx_fail_closed",
+  "detection_confidence": 0.99,
+  "generator_version": "qbank-raw-manifest/2026-09-04.1",
+  "generation_timestamp": "2026-09-04T00:00:00Z",
+  "eligible_for_cer_wer": true,
+  "detection_evidence": {
+    "initial_manifest": "manifest.json#cases[id=doc-vi]",
+    "ground_truth_method": "author_before_render",
+    "signature": "d0cf11e0a1b11ae1"
+  },
+  "warnings": [
+    "Raw supplement; manifest.json không bị sửa hoặc ghi đè.",
+    "Ground truth độc lập nhưng corpus còn ở trạng thái needs_second_reviewer; không dùng để tuyên bố production-ready.",
+    "LibreOffice vẫn phải được xác minh trong runtime; conversion failure phải fail-closed và không index."
+  ]
+}

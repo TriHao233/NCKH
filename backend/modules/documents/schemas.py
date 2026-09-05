@@ -49,6 +49,7 @@ class DocumentResponse(BaseModel):
     page_count: int | None
     artifacts: list[dict[str, Any]]
     current_processing: dict[str, Any]
+    pending_processing: dict[str, Any] = Field(default_factory=dict)
     pipeline_summary: dict[str, Any]
     latest_error: dict[str, Any] | None
     created_at: datetime
@@ -85,9 +86,15 @@ class DocumentPageResponse(BaseModel):
     document_id: str
     document_version: int | None = None
     ocr_job_id: str | None = None
-    page_number: int
+    page_number: int | None = None
+    unit_number: int | None = None
+    source_location: dict[str, Any] = Field(default_factory=dict)
     raw_text: str | None = None
     cleaned_text: str | None = None
+    content_blocks: list[dict[str, Any]] = Field(default_factory=list)
+    assets: list[dict[str, Any]] = Field(default_factory=list)
+    raw_extraction: dict[str, Any] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
     formula_blocks: list[Any] = Field(default_factory=list)
     created_at: datetime | None = None
 

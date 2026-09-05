@@ -45,8 +45,9 @@ import {
   updateDocumentSharing,
   updateDocumentPage,
 } from '../api/documents';
-import { listSubjects } from '../api/catalog';
+import { listSubjects, saveSubject } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
+import { permissionsForUser } from '../auth/permissions';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
@@ -175,6 +176,7 @@ const QUESTION_BANK_EXPORT_FORMATS = [
 ];
 const QUESTION_IMPORT_ACCEPT = '.csv,.xlsx,.gift,.txt,.xml';
 const QUESTIONS_PER_PAGE = 7;
+const EMPTY_SUBJECT_FORM = { subject_code: '', subject_name: '', description: '' };
 
 function formatDateTime(value) {
   if (!value) return '—';
@@ -484,6 +486,7 @@ function ManagePage() {
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
   const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
+  const canCreateSubjects = permissionsForUser(user).includes('admin.catalog');
 
   const [questions, setQuestions] = useState([]);
   const [questionTotal, setQuestionTotal] = useState(0);
@@ -507,6 +510,11 @@ function ManagePage() {
   const [expandedDocumentPagesId, setExpandedDocumentPagesId] = useState('');
   const [subjects, setSubjects] = useState([]);
   const [subjectsError, setSubjectsError] = useState('');
+  const [subjectModalOpen, setSubjectModalOpen] = useState(false);
+  const [subjectForm, setSubjectForm] = useState(EMPTY_SUBJECT_FORM);
+  const [subjectFormErrors, setSubjectFormErrors] = useState({});
+  const [subjectSaving, setSubjectSaving] = useState(false);
+  const [subjectNotice, setSubjectNotice] = useState('');
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all-type');
@@ -796,6 +804,69 @@ function ManagePage() {
     }
   };
 
+  const openCreateSubject = () => {
+    setSubjectForm(EMPTY_SUBJECT_FORM);
+    setSubjectFormErrors({});
+    setSubjectModalOpen(true);
+  };
+
+  const closeCreateSubject = () => {
+    if (subjectSaving) return;
+    setSubjectModalOpen(false);
+    setSubjectFormErrors({});
+  };
+
+  const updateSubjectFormField = (field, value) => {
+    setSubjectForm((current) => ({ ...current, [field]: value }));
+    setSubjectFormErrors((current) => ({ ...current, [field]: '', form: '' }));
+  };
+
+  const handleCreateSubject = async (event) => {
+    event.preventDefault();
+    const payload = {
+      subject_code: subjectForm.subject_code.trim(),
+      subject_name: subjectForm.subject_name.trim(),
+      description: subjectForm.description.trim(),
+      is_active: true,
+    };
+    const errors = {};
+    if (!payload.subject_code) errors.subject_code = 'Vui lòng nhập mã môn học.';
+    if (!payload.subject_name) errors.subject_name = 'Vui lòng nhập tên môn học.';
+    if (
+      payload.subject_code
+      && subjects.some((subject) => String(subject.subject_code || '').trim().toLowerCase() === payload.subject_code.toLowerCase())
+    ) {
+      errors.subject_code = 'Mã môn học đã tồn tại.';
+    }
+    if (Object.keys(errors).length > 0) {
+      setSubjectFormErrors(errors);
+      return;
+    }
+
+    setSubjectSaving(true);
+    setSubjectFormErrors({});
+    try {
+      const created = await saveSubject(payload);
+      setSubjects((current) => (
+        [...current, created].sort((left, right) => (
+          String(left.subject_code || '').localeCompare(String(right.subject_code || ''), 'vi')
+        ))
+      ));
+      setSubjectModalOpen(false);
+      setSubjectNotice(`Đã thêm môn học “${created.subject_name}”.`);
+    } catch (error) {
+      const message = error?.status >= 500
+        ? 'Không thể thêm môn học do máy chủ hoặc cơ sở dữ liệu gặp lỗi. Vui lòng thử lại.'
+        : (error.message || 'Thêm môn học thất bại.');
+      setSubjectFormErrors({
+        ...(error?.status === 409 ? { subject_code: message } : {}),
+        ...(error?.status === 409 ? {} : { form: message }),
+      });
+    } finally {
+      setSubjectSaving(false);
+    }
+  };
+
   const loadWorkflowHistory = async (question, { keepMessage = false } = {}) => {
     if (!question) return;
     setHistoryLoading(true);
@@ -873,6 +944,12 @@ function ManagePage() {
   useEffect(() => {
     fetchSubjects();
   }, []);
+
+  useEffect(() => {
+    if (!subjectNotice) return undefined;
+    const timer = window.setTimeout(() => setSubjectNotice(''), 4000);
+    return () => window.clearTimeout(timer);
+  }, [subjectNotice]);
 
   useEffect(() => {
     if (!selectedQuestion) return;
@@ -1958,6 +2035,11 @@ function ManagePage() {
                   <span>{filtered.length} / {questionTotal} câu đang hiển thị</span>
                 </div>
                 <div className="list-actions">
+                  {canCreateSubjects && (
+                    <button type="button" className="btn btn--outline" onClick={openCreateSubject}>
+                      + Thêm môn học
+                    </button>
+                  )}
                   {canEditQuestions && (
                     <button type="button" className="btn btn--primary" onClick={openCreateQuestion}>
                       + Thêm câu hỏi
@@ -1965,6 +2047,10 @@ function ManagePage() {
                   )}
                 </div>
               </div>
+
+              {subjectNotice && (
+                <p className="manage-notice" role="status">{subjectNotice}</p>
+              )}
 
               {/* Thanh công cụ: tìm kiếm luôn hiển thị, phần còn lại thu gọn theo nhu cầu. */}
               <div className="list-toolbar">
@@ -3151,6 +3237,77 @@ function ManagePage() {
               </button>
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {subjectModalOpen && canCreateSubjects && (
+        <div className="modal-overlay" onClick={closeCreateSubject}>
+          <form
+            className="modal-card subject-create-modal"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={handleCreateSubject}
+            aria-labelledby="create-subject-title"
+          >
+            <div>
+              <h3 className="profile-card-title" id="create-subject-title">Thêm môn học</h3>
+              <p className="subject-create-hint">Môn học mới sẽ xuất hiện ngay trong các danh sách chọn và bộ lọc.</p>
+            </div>
+
+            {subjectFormErrors.form && (
+              <p className="subject-create-alert" role="alert">{subjectFormErrors.form}</p>
+            )}
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="new-subject-code">Mã môn học *</label>
+              <input
+                id="new-subject-code"
+                className={`field-input ${subjectFormErrors.subject_code ? 'field-input--error' : ''}`}
+                maxLength={40}
+                autoFocus
+                value={subjectForm.subject_code}
+                onChange={(event) => updateSubjectFormField('subject_code', event.target.value)}
+                aria-invalid={Boolean(subjectFormErrors.subject_code)}
+              />
+              {subjectFormErrors.subject_code && (
+                <span className="subject-field-error">{subjectFormErrors.subject_code}</span>
+              )}
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="new-subject-name">Tên môn học *</label>
+              <input
+                id="new-subject-name"
+                className={`field-input ${subjectFormErrors.subject_name ? 'field-input--error' : ''}`}
+                maxLength={200}
+                value={subjectForm.subject_name}
+                onChange={(event) => updateSubjectFormField('subject_name', event.target.value)}
+                aria-invalid={Boolean(subjectFormErrors.subject_name)}
+              />
+              {subjectFormErrors.subject_name && (
+                <span className="subject-field-error">{subjectFormErrors.subject_name}</span>
+              )}
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="new-subject-description">Mô tả</label>
+              <textarea
+                id="new-subject-description"
+                className="field-input"
+                rows={3}
+                value={subjectForm.description}
+                onChange={(event) => updateSubjectFormField('description', event.target.value)}
+              />
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={closeCreateSubject} disabled={subjectSaving}>
+                Huỷ
+              </button>
+              <button type="submit" className="btn btn--primary" disabled={subjectSaving}>
+                {subjectSaving ? 'Đang thêm...' : 'Thêm môn học'}
               </button>
             </div>
           </form>

@@ -9,6 +9,7 @@ from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
 from modules.documents.repository import MongoDocumentRepository, object_id
+from modules.rag.chromadb_engine import embedding_config_hash, embedding_config_snapshot
 
 
 def utc_now():
@@ -32,20 +33,26 @@ def is_document_job_cancelled(job_id: str) -> bool:
     return bool(job and job.get("status") == "CANCELLED")
 
 
-def iter_document_pages(doc_id: str):
+def iter_document_pages(doc_id: str, ocr_job_id: str | ObjectId | None = None):
     document = get_document_record(doc_id)
     if not document:
         return
-    ocr_job_id = (document.get("current_processing") or {}).get("ocr_job_id")
+    ocr_job_id = ocr_job_id or (document.get("current_processing") or {}).get("ocr_job_id")
     if not ocr_job_id:
         return
     cursor = get_database().document_pages.find(
         {"document_id": document["_id"], "ocr_job_id": ocr_job_id}
-    ).sort("page_number", 1)
+    ).sort([("unit_number", 1), ("page_number", 1)])
     for page in cursor:
         yield {
-            "page_number": int(page.get("page_number", 0)),
+            "unit_number": int(page.get("unit_number") or page.get("page_number") or 0),
+            "page_number": int(page["page_number"]) if page.get("page_number") is not None else None,
             "text": page.get("cleaned_text", ""),
+            "raw_text": page.get("raw_text", ""),
+            "source_location": page.get("source_location") or {},
+            "content_blocks": page.get("content_blocks") or [],
+            "assets": page.get("assets") or [],
+            "quality": page.get("quality") or {},
         }
 
 
@@ -54,7 +61,8 @@ def start_chunk_set(document_id: str, config: dict) -> tuple[str, str]:
     document = repository.find_by_id(document_id)
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
-    source_ocr_job_id = (document.get("current_processing") or {}).get("ocr_job_id")
+    source_ocr_job_id = (document.get("pending_processing") or {}).get("ocr_job_id")
+    source_ocr_job_id = source_ocr_job_id or (document.get("current_processing") or {}).get("ocr_job_id")
     if not source_ocr_job_id:
         raise ValueError("Tài liệu chưa có OCR job hoàn tất")
     job = repository.create_job(document_id, "CHUNK", config=config)
@@ -126,13 +134,40 @@ def persist_chunks(
                     "end": metadata.get("page_end"),
                     "pages": metadata.get("page_marks", []),
                 },
+                "source": {
+                    "source_file_name": metadata.get("source_file_name"),
+                    "source_uri": metadata.get("source_uri"),
+                    "source_artifact_id": metadata.get("source_artifact_id"),
+                    "document_type": metadata.get("document_type"),
+                    "document_title": metadata.get("document_title"),
+                    "document_version": metadata.get("document_version"),
+                    "source_locations": metadata.get("source_locations") or [],
+                    "block_ids": metadata.get("block_ids") or [],
+                    "block_types": str(metadata.get("source_block_types_text") or "").split(","),
+                    "asset_ids": str(metadata.get("asset_ids_text") or "").split(",")
+                    if metadata.get("asset_ids_text") else [],
+                    "asset_types": str(metadata.get("source_asset_types_text") or "").split(",")
+                    if metadata.get("source_asset_types_text") else [],
+                    "provenance_schema": metadata.get("provenance_schema"),
+                },
+                "continuation": {
+                    "continuation_of": metadata.get("continuation_of"),
+                    "part_index": metadata.get("part_index"),
+                    "part_count": metadata.get("part_count"),
+                },
                 "content_type": metadata.get("content_type", "text"),
+                "validation": {
+                    "statuses": metadata.get("validation_statuses") or ["passed"],
+                    "requires_review": bool(metadata.get("requires_review")),
+                },
                 "semantic_type": metadata.get("semantic_type", "theory"),
                 "information_density": metadata.get("information_density", 0),
                 "token_count": metadata.get("token_count", 0),
                 "created_at": now,
             }
         )
+    embedding_snapshot = embedding_config_snapshot()
+    current_embedding_config_hash = embedding_config_hash()
     vector = db.vector_collections.find_one_and_update(
         {"provider": "CHROMA", "collection_name": collection_name},
         {
@@ -142,9 +177,9 @@ def persist_chunks(
                 "persist_uri": settings.chromadb_path,
                 "embedding_model": {
                     "provider": "SENTENCE_TRANSFORMERS",
-                    "model_name": settings.embedding_model_name,
-                    "normalize_embeddings": True,
+                    **embedding_snapshot,
                 },
+                "embedding_config_hash": current_embedding_config_hash,
                 "distance_metric": "COSINE",
                 "is_active": True,
                 "created_at": now,
@@ -155,11 +190,11 @@ def persist_chunks(
         return_document=ReturnDocument.AFTER,
     )
     indexed_model = (vector.get("embedding_model") or {}).get("model_name")
-    if indexed_model != settings.embedding_model_name:
+    indexed_config_hash = vector.get("embedding_config_hash")
+    if indexed_model != settings.embedding_model_name or indexed_config_hash != current_embedding_config_hash:
         raise ValueError(
-            "Collection ChromaDB đã dùng embedding model "
-            f"'{indexed_model}'. Hãy chọn collection_name mới cho model "
-            f"'{settings.embedding_model_name}'."
+            "Collection ChromaDB đã dùng cấu hình embedding khác. "
+            "Hãy chọn collection_name mới cho model/precision hiện tại."
         )
     if records:
         db.document_chunks.insert_many(records, ordered=True)
@@ -197,6 +232,46 @@ def persist_chunks(
     if embeddings:
         db.chunk_embeddings.insert_many(embeddings, ordered=True)
     return str(vector["_id"]), ids, documents, metadatas
+
+
+def _completion_pointer_update(
+    current_document: dict,
+    *,
+    source_ocr_job_id: ObjectId | None,
+    chunk_set_id: ObjectId,
+    vector_collection_id: ObjectId | None,
+    chunk_job_id: ObjectId,
+    total_chunks: int,
+    now: datetime,
+) -> tuple[dict, dict]:
+    """Activate the first lineage, but defer every replacement until formal promotion."""
+    has_active_lineage = bool((current_document.get("current_processing") or {}).get("chunk_set_id"))
+    if has_active_lineage:
+        return (
+            {
+                "pending_processing.ocr_job_id": source_ocr_job_id,
+                "pending_processing.chunk_set_id": chunk_set_id,
+                "pending_processing.vector_collection_id": vector_collection_id,
+                "pending_processing.validation_status": "AWAITING_VALIDATION",
+                "pending_processing.completed_at": now,
+                "pipeline_attempts.chunk.status": "COMPLETED",
+                "pipeline_attempts.chunk.job_id": chunk_job_id,
+                "status": "READY",
+            },
+            {},
+        )
+    return (
+        {
+            "pipeline_summary.chunk_status": "COMPLETED",
+            "pipeline_summary.total_chunks": total_chunks,
+            "current_processing.ocr_job_id": source_ocr_job_id,
+            "current_processing.chunk_set_id": chunk_set_id,
+            "current_processing.vector_collection_id": vector_collection_id,
+            "pipeline_summary.index_status": "COMPLETED",
+            "status": "READY",
+        },
+        {"pending_processing": ""},
+    )
 
 
 def complete_chunk_set(
@@ -270,20 +345,37 @@ def complete_chunk_set(
             session=session,
         )
         document_fields = {"updated_at": now}
+        unset_fields: dict[str, str] = {}
+        source_ocr_job_id = None
         if not dry_run:
-            document_fields.update(
-                {
-                    "pipeline_summary.chunk_status": "COMPLETED",
-                    "pipeline_summary.total_chunks": total_chunks,
-                    "current_processing.chunk_set_id": set_oid,
-                    "current_processing.vector_collection_id": vector_oid,
-                    "pipeline_summary.index_status": "COMPLETED",
-                    "status": "READY",
-                }
+            completed_set = db.chunk_sets.find_one(
+                {"_id": set_oid},
+                {"source_ocr_job_id": 1},
+                session=session,
             )
+            source_ocr_job_id = (completed_set or {}).get("source_ocr_job_id")
+            current_document = db.documents.find_one(
+                {"_id": document_oid, "archived_at": None},
+                {"current_processing": 1, "pipeline_summary": 1},
+                session=session,
+            ) or {}
+            pointer_fields, pointer_unsets = _completion_pointer_update(
+                current_document,
+                source_ocr_job_id=source_ocr_job_id,
+                chunk_set_id=set_oid,
+                vector_collection_id=vector_oid,
+                chunk_job_id=job_oid,
+                total_chunks=total_chunks,
+                now=now,
+            )
+            document_fields.update(pointer_fields)
+            unset_fields.update(pointer_unsets)
+        update_document = {"$set": document_fields}
+        if unset_fields:
+            update_document["$unset"] = unset_fields
         document_result = db.documents.update_one(
             {"_id": document_oid, "archived_at": None},
-            {"$set": document_fields},
+            update_document,
             session=session,
         )
         if not document_result.matched_count:
@@ -321,17 +413,23 @@ def fail_chunk_set(document_id: str, message: str) -> None:
                 }
             },
         )
-    db.documents.update_one(
-        {"_id": document["_id"], "archived_at": None},
-        {
-            "$set": {
+    has_active_chunk_set = bool((document.get("current_processing") or {}).get("chunk_set_id"))
+    document_fields = {
+        "latest_error": {"message": message, "at": now},
+        "pipeline_attempts.chunk.status": "FAILED",
+        "updated_at": now,
+    }
+    if not has_active_chunk_set:
+        document_fields.update(
+            {
                 "status": "FAILED",
                 "pipeline_summary.chunk_status": "FAILED",
                 "pipeline_summary.index_status": "FAILED",
-                "latest_error": {"message": message, "at": now},
-                "updated_at": now,
             }
-        },
+        )
+    db.documents.update_one(
+        {"_id": document["_id"], "archived_at": None},
+        {"$set": document_fields},
     )
 
 

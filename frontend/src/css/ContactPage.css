@@ -7,15 +7,17 @@
 
 /* ─── Body ───────────────────────────────────────────────────── */
 .contact-page .contact-body { padding: 72px 0 96px; background: #fff; }
-.contact-page .contact-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 28px; align-items: start; }
+.contact-page .contact-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 28px; align-items: start; }
 
-.contact-page .contact-info { display: flex; flex-direction: column; gap: 20px; }
+.contact-page .contact-info { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
 .contact-page .info-card {
+  min-width: 0;
   background: #fafcff;
   border: 1px solid #EAF3FC;
   border-radius: 14px;
   padding: 26px 24px;
 }
+.contact-page .info-card :is(h3, p, li, a) { overflow-wrap: anywhere; }
 .contact-page .info-card--muted { background: linear-gradient(135deg, #EBF8FF 0%, #F5FAFF 100%); border-color: rgba(12,120,212,0.2); }
 .contact-page .info-label {
   display: inline-block;
@@ -43,6 +45,7 @@
 
 /* ─── Form ───────────────────────────────────────────────────── */
 .contact-page .contact-form {
+  min-width: 0;
   background: #fff;
   border: 1px solid #EAF3FC;
   border-radius: 16px;

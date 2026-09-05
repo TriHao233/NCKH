@@ -91,6 +91,11 @@ class Settings(BaseModel):
     ollama_max_concurrency: int = int(os.getenv("OLLAMA_MAX_CONCURRENCY", "1"))
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
+    gpu_coordination_enabled: bool = _env_bool("GPU_COORDINATION_ENABLED", True)
+    gpu_lock_path: str = os.getenv("GPU_LOCK_PATH", "./data/gpu-operation.lock")
+    gpu_lock_timeout_seconds: float = float(os.getenv("GPU_LOCK_TIMEOUT_SECONDS", "1200"))
+    gpu_lock_stale_seconds: float = float(os.getenv("GPU_LOCK_STALE_SECONDS", "3600"))
+    gpu_lock_poll_seconds: float = float(os.getenv("GPU_LOCK_POLL_SECONDS", "0.25"))
 
     firebase_credentials_path: str = os.getenv(
         "FIREBASE_CREDENTIALS_PATH", str(BASE_DIR / "firebase-service-account.json")
@@ -141,10 +146,43 @@ class Settings(BaseModel):
     chromadb_collection_name: str = os.getenv("CHROMADB_COLLECTION_NAME", "chunks")
     chromadb_batch_size: int = int(os.getenv("CHROMADB_BATCH_SIZE", "50"))
     embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+    embedding_model_revision: str = os.getenv("EMBEDDING_MODEL_REVISION", "").strip()
+    embedding_precision: str = os.getenv("EMBEDDING_PRECISION", "auto").strip().lower()
+    embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "16"))
+    embedding_batch_max_tokens: int = int(os.getenv("EMBEDDING_BATCH_MAX_TOKENS", "8192"))
+    embedding_max_tokens: int = int(os.getenv("EMBEDDING_MAX_TOKENS", "1024"))
+    embedding_token_overlap: int = int(os.getenv("EMBEDDING_TOKEN_OVERLAP", "128"))
+    embedding_cache_enabled: bool = _env_bool("EMBEDDING_CACHE_ENABLED", True)
+    lexical_fallback_max_chunks: int = int(os.getenv("LEXICAL_FALLBACK_MAX_CHUNKS", "1200"))
+    lexical_fallback_distance_threshold: float = float(
+        os.getenv("LEXICAL_FALLBACK_DISTANCE_THRESHOLD", "0.55")
+    )
 
     # Docling OCR
     docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001")
     docling_timeout: int = int(os.getenv("DOCLING_TIMEOUT", "600"))
+    docling_poll_seconds: float = float(os.getenv("DOCLING_POLL_SECONDS", "0.5"))
+    docling_ocr_preset: str = os.getenv("DOCLING_OCR_PRESET", "rapidocr").strip().lower()
+    docling_ocr_backend: str = os.getenv("DOCLING_OCR_BACKEND", "onnxruntime").strip().lower()
+    docling_ocr_languages: list[str] = [
+        language.strip()
+        for language in os.getenv("DOCLING_OCR_LANGUAGES", "vi").split(",")
+        if language.strip()
+    ]
+    docling_images_scale: float = float(os.getenv("DOCLING_IMAGES_SCALE", "2.0"))
+    docling_table_mode: str = os.getenv("DOCLING_TABLE_MODE", "accurate").strip().lower()
+    docling_do_table_structure: bool = _env_bool("DOCLING_DO_TABLE_STRUCTURE", True)
+    docling_include_images: bool = _env_bool("DOCLING_INCLUDE_IMAGES", True)
+
+    pdf_text_fast_path_enabled: bool = _env_bool("PDF_TEXT_FAST_PATH_ENABLED", True)
+    pdf_text_fast_path_min_coverage: float = float(os.getenv("PDF_TEXT_FAST_PATH_MIN_COVERAGE", "0.98"))
+    pdf_text_fast_path_min_chars_per_page: int = int(os.getenv("PDF_TEXT_FAST_PATH_MIN_CHARS_PER_PAGE", "150"))
+    pdf_text_fast_path_max_image_page_ratio: float = float(
+        os.getenv("PDF_TEXT_FAST_PATH_MAX_IMAGE_PAGE_RATIO", "0.0")
+    )
+    pdf_text_fast_path_max_replacement_ratio: float = float(
+        os.getenv("PDF_TEXT_FAST_PATH_MAX_REPLACEMENT_RATIO", "0.005")
+    )
 
     chromadb_path: str = os.getenv("CHROMADB_PATH", "./data/chroma_data")
     output_dir: str = os.getenv("OUTPUT_DIR", "./data/outputs")
@@ -152,6 +190,11 @@ class Settings(BaseModel):
     chunk_output_dir: str = os.getenv("CHUNK_OUTPUT_DIR", "./data/chunk_outputs")
     upload_dir: str = os.getenv("UPLOAD_DIR", "./data/uploads")
     ocr_output_dir: str = os.getenv("OCR_OUTPUT_DIR", "./data/ocr_outputs")
+    raw_artifact_compression: str = os.getenv("RAW_ARTIFACT_COMPRESSION", "gzip").strip().lower()
+    artifact_hot_retention_days: int = int(os.getenv("ARTIFACT_HOT_RETENTION_DAYS", "30"))
+    artifact_cold_retention_days: int = int(os.getenv("ARTIFACT_COLD_RETENTION_DAYS", "365"))
+    artifact_cold_dir: str = os.getenv("ARTIFACT_COLD_DIR", "./data/artifact_archive")
+    artifact_blob_dir: str = os.getenv("ARTIFACT_BLOB_DIR", "./data/artifact_blobs")
 
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
     prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()

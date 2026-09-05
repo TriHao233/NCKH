@@ -3,6 +3,8 @@
 # ===========================
 .env
 .env.local
+.env.*
+!.env.example
 .env.*.local
 firebase-service-account.json
 
@@ -54,3 +56,4 @@ IMPLEMENTATION_CHANGES.md
 
 # Local inspection/render artifacts
 /tmp/
+Prompt/

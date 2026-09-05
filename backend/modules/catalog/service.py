@@ -6,6 +6,7 @@ from typing import Any
 
 from bson import ObjectId
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
@@ -71,6 +72,10 @@ def _with_child_usage(item: dict, usage_counts: dict[str, dict]) -> dict:
 
 ADMIN_CATALOG_PERMISSION = "admin.catalog"
 SUBJECT_OWNER_PERMISSION = "catalog.subjects.manage_own"
+
+
+class CatalogConflictError(ValueError):
+    """Raised when catalog data conflicts with an existing unique value."""
 
 
 def _is_catalog_admin(viewer: Any) -> bool:
@@ -222,7 +227,7 @@ class CatalogService:
         normalized = subject_code.strip()
         duplicate = self._find_subject_by_code(normalized)
         if duplicate and duplicate.get("_id") != current_subject_id:
-            raise ValueError("Mã học phần đã tồn tại")
+            raise CatalogConflictError("Mã môn học đã tồn tại")
         return normalized
 
     @staticmethod
@@ -250,35 +255,29 @@ class CatalogService:
             for record in records
         ]
 
-    def upsert_subject(self, payload: SubjectPayload, viewer: Any = None) -> dict:
+    def create_subject(self, payload: SubjectPayload, viewer: Any = None) -> dict:
         now = utc_now()
-        subject_code = payload.subject_code.strip()
-        existing = self._find_subject_by_code(subject_code)
-        if existing:
-            self._ensure_can_manage(existing, viewer)
-        record = self.db.subjects.find_one_and_update(
-            {"_id": existing["_id"]} if existing else {"subject_code": subject_code},
-            {
-                "$set": {
-                    "schema_version": SCHEMA_VERSION,
-                    "subject_code": subject_code,
-                    "subject_name": payload.subject_name,
-                    "description": payload.description,
-                    "is_active": payload.is_active,
-                    "updated_at": now,
-                },
-                "$setOnInsert": {
-                    "_id": ObjectId(),
-                    "chapters": [],
-                    "learning_outcomes": [],
-                    "created_at": now,
-                    "owner_id": getattr(viewer, "id", None),
-                    "owner_email": getattr(viewer, "email", "") or "",
-                },
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
+        subject_code = self._ensure_subject_code_available(payload.subject_code)
+        record = {
+            "_id": ObjectId(),
+            "schema_version": SCHEMA_VERSION,
+            "subject_code": subject_code,
+            "subject_name": payload.subject_name,
+            "description": payload.description,
+            "chapters": [],
+            "learning_outcomes": [],
+            "is_active": payload.is_active,
+            "created_at": now,
+            "updated_at": now,
+            "owner_id": getattr(viewer, "id", None),
+            "owner_email": getattr(viewer, "email", "") or "",
+        }
+        try:
+            self.db.subjects.insert_one(record)
+        except DuplicateKeyError as exc:
+            # The pre-check gives a friendly case-insensitive error; the unique
+            # index remains the final guard for concurrent requests.
+            raise CatalogConflictError("Mã môn học đã tồn tại") from exc
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def deactivate_subject(self, subject_id: str, viewer: Any = None) -> dict:

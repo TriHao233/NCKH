@@ -7,12 +7,12 @@ from bson import ObjectId
 
 from core.config import settings
 from core.database import get_rag_db
-from modules.rag.chromadb_engine import get_collection
+from modules.rag.chromadb_engine import embedding_config_hash, get_collection
 
 logger = logging.getLogger(__name__)
 
 
-def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str, str]:
+def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str, str, str]:
     try:
         document_oid = ObjectId(document_id)
     except Exception as exc:
@@ -36,9 +36,10 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
     )
     if not vector:
         raise ValueError("Không tìm thấy cấu hình vector hiện hành")
-    if vector.get("collection_name") != collection_name:
+    active_collection_name = vector.get("collection_name")
+    if active_collection_name != collection_name and collection_name != settings.chromadb_collection_name:
         raise ValueError(
-            f"Tài liệu đang được index trong collection '{vector.get('collection_name')}'"
+            f"Tài liệu đang được index trong collection '{active_collection_name}'"
         )
     indexed_model = (vector.get("embedding_model") or {}).get("model_name")
     if indexed_model != settings.embedding_model_name:
@@ -46,7 +47,10 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
             "Embedding model hiện tại không khớp snapshot đã index: "
             f"'{settings.embedding_model_name}' != '{indexed_model}'"
         )
-    return str(chunk_set_id), str(vector_collection_id)
+    indexed_config_hash = vector.get("embedding_config_hash")
+    if indexed_config_hash and indexed_config_hash != embedding_config_hash():
+        raise ValueError("Cấu hình embedding hiện tại không khớp snapshot đã index")
+    return str(chunk_set_id), str(vector_collection_id), str(active_collection_name)
 
 def _strip_accents(text: str) -> str:
     text = (text or "").replace("đ", "d").replace("Đ", "D")
@@ -70,6 +74,18 @@ def _coerce_heading_path(meta: dict) -> list[str]:
                 return [str(x) for x in parsed if x]
         except Exception:
             return [heading_path]
+    return []
+
+
+def _coerce_metadata_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return [item for item in value.split(",") if item]
     return []
 
 
@@ -117,12 +133,28 @@ def _keyword_tokens(text: str) -> set[str]:
     }
 
 
+def _looks_like_identifier_query(text: str) -> bool:
+    """Return true only for identifiers that vector search commonly underweights."""
+    return bool(
+        re.search(r"\b[A-ZĐ]{2,}(?:[0-9_\-][A-ZĐ0-9_\-]*)?\b", text or "")
+        or re.search(r"\b[A-Za-z]+_[A-Za-z0-9_]+\b|\b[A-Za-z]+\d+[A-Za-z0-9]*\b", text or "")
+        or re.search(r"(?:->|::|==|!=|<=|>=)", text or "")
+    )
+
+
+def _requires_lexical_fallback(text: str, distances: list[float] | None) -> bool:
+    if _looks_like_identifier_query(text):
+        return True
+    usable = [float(value) for value in distances or [] if value is not None]
+    return bool(usable and min(usable) >= settings.lexical_fallback_distance_threshold)
+
+
 def _hybrid_score(doc: str, meta: dict, query_tokens: set[str], vector_rank: int) -> float:
     doc_tokens = _keyword_tokens(f"{_build_heading_label(meta)} {doc}")
     lexical = len(query_tokens & doc_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
     density = min(1.0, max(0.0, float(meta.get("information_density", 0) or 0)))
     reciprocal_rank = 1.0 / (vector_rank + 1)
-    return (0.55 * reciprocal_rank) + (0.40 * lexical) + (0.05 * density)
+    return (0.35 * reciprocal_rank) + (0.60 * lexical) + (0.05 * density)
 
 
 def get_context_snapshot(
@@ -134,11 +166,16 @@ def get_context_snapshot(
     limit: int = 5,
 ) -> dict:
     """Truy xuất các chunk từ ChromaDB làm Context cho LLM"""
-    chunk_set_id, vector_collection_id = _active_vector_snapshot(
+    active_snapshot = _active_vector_snapshot(
         document_id,
         collection_name,
     )
-    collection = get_collection(collection_name)
+    if len(active_snapshot) == 2:
+        chunk_set_id, vector_collection_id = active_snapshot
+        active_collection_name = collection_name
+    else:
+        chunk_set_id, vector_collection_id, active_collection_name = active_snapshot
+    collection = get_collection(active_collection_name)
 
     where_filter = {
         "$and": [
@@ -159,10 +196,39 @@ def get_context_snapshot(
                 query_texts=[semantic_query],
                 where=where_filter,
                 n_results=candidate_limit,
-                include=["documents", "metadatas"],
+                include=["documents", "metadatas", "distances"],
             )
             raw_docs = (results.get("documents") or [[]])[0] or []
             raw_metas = (results.get("metadatas") or [[]])[0] or []
+            vector_distances = (results.get("distances") or [[]])[0] or []
+            if query_tokens and _requires_lexical_fallback(semantic_query, vector_distances) and hasattr(collection, "get"):
+                # Vector top-k alone can miss exact technical identifiers such
+                # as FIFO/LIFO. Fetch a bounded lexical pool from the active
+                # document and let the normalized hybrid score rerank the union.
+                lexical_limit = min(
+                    max(limit * 60, 200),
+                    settings.lexical_fallback_max_chunks,
+                    collection.count(),
+                )
+                lexical_results = collection.get(
+                    where=where_filter,
+                    limit=max(1, lexical_limit),
+                    include=["documents", "metadatas"],
+                )
+                seen = {
+                    (meta.get("chunk_id") or "", doc)
+                    for doc, meta in zip(raw_docs, raw_metas)
+                }
+                for lexical_doc, lexical_meta in zip(
+                    lexical_results.get("documents") or [],
+                    lexical_results.get("metadatas") or [],
+                ):
+                    marker = (lexical_meta.get("chunk_id") or "", lexical_doc)
+                    if marker in seen:
+                        continue
+                    seen.add(marker)
+                    raw_docs.append(lexical_doc)
+                    raw_metas.append(lexical_meta)
         else:
             initial_limit = candidate_limit
             results = collection.get(
@@ -202,6 +268,8 @@ def get_context_snapshot(
         heading_matched_chunks: list[tuple[str, dict]] = []
         for vector_rank, (doc, meta) in enumerate(chunks_with_meta):
             if not doc:
+                continue
+            if meta.get("requires_review"):
                 continue
             density = float(meta.get("information_density", 0) or 0)
             if density < min_density:
@@ -244,6 +312,12 @@ def get_context_snapshot(
                     "information_density": meta.get("information_density", 0),
                     "hybrid_score": round(float(meta.get("_hybrid_score", 0) or 0), 4),
                     "heading": heading_label,
+                    "source_uri": meta.get("source_uri"),
+                    "page_marks": _coerce_metadata_list(meta.get("page_marks")),
+                    "content_type": meta.get("content_type"),
+                    "source_block_types": meta.get("source_block_types_text"),
+                    "asset_ids": meta.get("asset_ids_text"),
+                    "source_asset_types": meta.get("source_asset_types_text"),
                 }
             )
 

@@ -616,6 +616,15 @@
 .manage-page .doc-job-action svg { width: 12px; height: 12px; }
 .manage-page .empty-note { text-align: center; color: var(--text-muted, #5c6f89); font-size: 0.88rem; padding: 24px 0; }
 .manage-page .manage-error { color: #DC2626; font-size: 0.85rem; margin-bottom: 12px; }
+.manage-page .manage-notice {
+  color: #15803D;
+  background: #ECFDF3;
+  border: 1px solid #C9EFD5;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  margin: 0 20px 14px;
+}
 .manage-page .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ─── Edit modal ─────────────────────────────────────────────── */
@@ -706,6 +715,28 @@
 .manage-page .modal-card textarea.field-input { resize: vertical; font-family: inherit; }
 .manage-page .modal-card .profile-card-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy, #003a75); }
 .manage-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.manage-page .subject-create-modal { gap: 18px; }
+.manage-page .subject-create-hint {
+  color: var(--text-muted, #5c6f89);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  margin-top: 5px;
+}
+.manage-page .subject-create-alert {
+  color: #B91C1C;
+  background: #FFF0F0;
+  border: 1px solid #FADADA;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  padding: 10px 12px;
+}
+.manage-page .field-input--error { border-color: #DC2626; }
+.manage-page .subject-field-error {
+  display: block;
+  color: #B91C1C;
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
 .manage-page .draft-option-editor { display: flex; flex-direction: column; gap: 9px; }
 .manage-page .draft-option-row {
   display: grid;

@@ -10,24 +10,29 @@ services:
       - ./backend/.env:/app/.env
       # Ánh xạ thư mục data để không bị mất dữ liệu VectorDB (Chroma) và file tải lên
       - ./backend/data:/app/data
+      # Cache mô hình HuggingFace (bge-m3) để không phải tải lại mỗi lần chạy docker
+      - huggingface_cache:/root/.cache/huggingface
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
     environment:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
+      ANONYMIZED_TELEMETRY: "False"
+      DOCLING_OCR_PRESET: ${DOCLING_OCR_PRESET:-tesseract}
+      DOCLING_OCR_LANGUAGES: ${DOCLING_OCR_LANGUAGES:-vie}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
-    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU BẠN CHẠY BẰNG GPU (NVIDIA) 
+    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU CHẠY BẰNG GPU (NVIDIA)
     # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
     depends_on:
       mongodb:
@@ -37,19 +42,34 @@ services:
     restart: unless-stopped
 
   docling:
-    image: quay.io/docling-project/docling-serve
+    build:
+      context: ./backend
+      dockerfile: Docling.Dockerfile
+    image: nckh-docling-vie
     container_name: nckh-docling
     ports:
       - "5001:5001"
     environment:
-      - OCR_ENGINE=paddleocr
-      - PADDLE_OCR_LANG=vi
+      DOCLING_SERVE_OCR_BATCH_SIZE: ${DOCLING_SERVE_OCR_BATCH_SIZE:-4}
+      DOCLING_SERVE_LAYOUT_BATCH_SIZE: ${DOCLING_SERVE_LAYOUT_BATCH_SIZE:-4}
+      DOCLING_SERVE_TABLE_BATCH_SIZE: ${DOCLING_SERVE_TABLE_BATCH_SIZE:-4}
+      DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS: ${DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS:-0.1}
+      DOCLING_SERVE_OPTIONS_CACHE_SIZE: ${DOCLING_SERVE_OPTIONS_CACHE_SIZE:-1}
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: ${DOCLING_SERVE_LOAD_MODELS_AT_BOOT:-false}
+      DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG: ${DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG:-false}
     volumes:
       - docling_models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
 
   mongodb:
-    image: mongo:7.0
+    image: mongo:latest
     container_name: nckh-mongodb
     ports:
       - "27017:27017"
@@ -72,17 +92,26 @@ services:
     volumes:
       - ./backend/.env:/app/.env
       - ./backend/data:/app/data
+      - huggingface_cache:/root/.cache/huggingface
     command: ["python", "-m", "workers.run"]
     environment:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
+      ANONYMIZED_TELEMETRY: "False"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       mongodb:
         condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
 
   frontend:
@@ -102,3 +131,4 @@ services:
 volumes:
   mongodb_data:
   docling_models:
+  huggingface_cache:

@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from firebase_admin import auth
 from pydantic import BaseModel
 from pymongo import ReturnDocument
@@ -13,14 +13,14 @@ from core.database import get_rag_db
 from core.dependencies import CurrentUser, get_current_user
 from modules.auth.session_repository import get_firebase_session_repository
 from modules.users.service import get_user_service
+from core.limiter import limiter
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Tolerate small clock drift between this host and Google's servers when
-# checking token iat/exp/auth_time, to avoid intermittent 401s on otherwise
-# valid tokens.
-TOKEN_CLOCK_SKEW_SECONDS = 10
+# checking token iat/exp/auth_time, to avoid intermittent# Keep in sync with core/dependencies.py's TOKEN_CLOCK_SKEW_SECONDS.
+TOKEN_CLOCK_SKEW_SECONDS = 60
 
 
 class TokenRequest(BaseModel):
@@ -90,12 +90,13 @@ def _ensure_demo_app_user(firebase_uid: str, demo_user: dict) -> dict:
 
 if settings.demo_mode:
     @router.post("/demo-login")
-    def demo_login(request: DemoLoginRequest):
-        username = request.username.strip().lower()
+    @limiter.limit("5/minute")
+    def demo_login(request: Request, body: DemoLoginRequest):
+        username = body.username.strip().lower()
         demo_user = DEMO_USERS.get(username)
         if not demo_user or not demo_user["password"]:
             raise HTTPException(status_code=503, detail="Demo login chưa được cấu hình")
-        if request.password != demo_user["password"]:
+        if body.password != demo_user["password"]:
             raise HTTPException(status_code=401, detail="Tài khoản demo không chính xác")
         firebase_user = _ensure_demo_firebase_user(
             demo_user["email"],
@@ -117,11 +118,12 @@ if settings.demo_mode:
 
 
 @router.post("/login")
-def login_user(request: TokenRequest):
+@limiter.limit("5/minute")
+def login_user(request: Request, body: TokenRequest):
     """Verify Firebase identity and synchronize the MongoDB application profile."""
     try:
         claims = auth.verify_id_token(
-            request.id_token,
+            body.id_token,
             clock_skew_seconds=TOKEN_CLOCK_SKEW_SECONDS,
         )
     except Exception as exc:
@@ -135,7 +137,7 @@ def login_user(request: TokenRequest):
         user = get_user_service().sync_from_claims(claims)
         if not user["is_active"]:
             raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
-        get_firebase_session_repository().upsert(claims["uid"], request.id_token)
+        get_firebase_session_repository().upsert(claims["uid"], body.id_token)
         return {"message": "Đăng nhập thành công", "user": user}
     except HTTPException:
         raise

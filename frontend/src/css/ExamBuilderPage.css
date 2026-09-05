@@ -82,7 +82,8 @@
 }
 .exam-builder-page .field-input:focus, .exam-builder-page .field-select:focus { border-color: var(--primary, #0c78d4); }
 
-.exam-builder-page .matrix-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+.exam-builder-page .matrix-table-wrap { width: 100%; overflow-x: auto; margin-bottom: 14px; }
+.exam-builder-page .matrix-table { width: 100%; min-width: 680px; border-collapse: collapse; }
 .exam-builder-page .matrix-table th, .exam-builder-page .matrix-table td { padding: 6px 8px; text-align: left; }
 .exam-builder-page .matrix-table th { font-size: 0.78rem; color: var(--text-muted, #5c6f89); }
 .exam-builder-page .matrix-count { width: 70px; }

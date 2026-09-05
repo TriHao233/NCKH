@@ -1,0 +1,17 @@
+{
+  "corpus_version": "1.0.0",
+  "pages": [
+    {"page_number": 1, "text": "Cấu trúc dữ liệu hàng đợi\nFIFO: phần tử vào trước sẽ ra trước.", "assets": []},
+    {"page_number": 2, "text": "Bảng độ phức tạp\n\n| Thao tác | Thời gian |\n| --- | --- |\n| Push | O(1) |\n| Pop | O(1) |", "tables": [{"rows": [["Thao tác", "Thời gian"], ["Push", "O(1)"], ["Pop", "O(1)"]]}]},
+    {"page_number": 3, "text": "Tiếng Việt có dấu: dữ liệu, giải thuật, độ phức tạp.", "assets": []},
+    {"page_number": 4, "text": "Mỗi đỉnh u nối với đỉnh v bằng một cạnh có trọng số w.", "assets": [{"type": "diagram", "caption": "Sơ đồ đồ thị"}]},
+    {"page_number": 5, "text": "Ảnh quét mờ vẫn phải giữ đúng dấu tiếng Việt và số 0, 1.", "assets": []},
+    {"page_number": 6, "text": "Công thức: T(n) = 2T(n/2) + n.", "formulae": ["T(n) = 2T(n/2) + n"]},
+    {"page_number": 7, "text": "PDF hỗn hợp: cây nhị phân tìm kiếm.\nint push(int x);\nh(v) = 1 + max(h(v.left), h(v.right))\n\n| Phần tử | Giá trị |\n| --- | --- |\n| root | 10 |", "code_lines": ["int push(int x);"], "formulae": ["h(v) = 1 + max(h(v.left), h(v.right))"], "tables": [{"rows": [["Phần tử", "Giá trị"], ["root", "10"]]}], "assets": [{"type": "image", "caption": "Minh họa cây"}]},
+    {"page_number": 8, "text": "Trang scan trong PDF hỗn hợp: duyệt theo chiều rộng BFS.", "assets": [{"type": "diagram", "caption": "Sơ đồ duyệt BFS"}]},
+    {"page_number": 9, "text": "Tài liệu DOCX tiếng Việt\nMã nguồn giữ nguyên thụt dòng.\nif x:\n    print(x)", "code_lines": ["if x:", "    print(x)"]},
+    {"page_number": 10, "text": "Tài liệu DOC legacy có bảng và hình minh họa.\n\n| Nhóm | Nhóm |\n| --- | --- |\n| A | B |\n| 1 | 2 |", "tables": [{"rows": [["Nhóm", "Nhóm"], ["A", "B"], ["1", "2"]], "merged_cells": [{"row": 0, "column": 0, "row_span": 1, "column_span": 2}]}], "assets": [{"type": "image", "caption": "Hình minh họa"}]},
+    {"page_number": 11, "text": "# Markdown tiếng Việt\n\n```python\nfor i in range(3):\n    print(i)\n```", "code_lines": ["```python", "for i in range(3):", "    print(i)", "```"]},
+    {"page_number": 12, "text": "Văn bản thuần UTF-8: Nguyễn Văn A học cấu trúc dữ liệu.", "assets": []}
+  ]
+}

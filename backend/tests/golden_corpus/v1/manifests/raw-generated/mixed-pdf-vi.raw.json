@@ -1,0 +1,128 @@
+{
+  "manifest_version": "1.0.0",
+  "manifest_status": "raw_generated",
+  "requires_human_review": true,
+  "fixture_id": "mixed-pdf-vi",
+  "source_file": "backend/tests/golden_corpus/v1/generated/mixed-pdf-vi.pdf",
+  "source_file_name": "mixed-pdf-vi.pdf",
+  "relative_path": "generated/mixed-pdf-vi.pdf",
+  "file_extension": ".pdf",
+  "mime_type": "application/pdf",
+  "file_size": 86018,
+  "sha256": "d450e6534a119f2120234f186d1417c0f2b3b98d869ea7f2ef3cbf0d5d67f4dc",
+  "language_detected": "vi",
+  "document_category": "pdf_mixed",
+  "page_count": 2,
+  "source_unit_count": null,
+  "has_text_layer": true,
+  "is_scanned": true,
+  "is_mixed": true,
+  "expected_content_types": [
+    "prose",
+    "code",
+    "table",
+    "formula",
+    "image",
+    "diagram",
+    "caption"
+  ],
+  "detected_code_locations": [
+    {
+      "page_number": 1,
+      "truth_page_number": 7,
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "detected_table_locations": [
+    {
+      "page_number": 1,
+      "truth_page_number": 7,
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "detected_formula_locations": [
+    {
+      "page_number": 1,
+      "truth_page_number": 7,
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "detected_image_or_diagram_locations": [
+    {
+      "page_number": 1,
+      "truth_page_number": 7,
+      "detected_type": "image",
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    },
+    {
+      "page_number": 2,
+      "truth_page_number": 8,
+      "detected_type": "diagram",
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "ground_truth_available": true,
+  "ground_truth_independent": true,
+  "ground_truth_references": [
+    {
+      "relative_path": "truth/pages.json",
+      "sha256": "7fd36173bc9630a1c36f604d17140cf8ab6431a5bd5cb0228a6ce9fa0a647968",
+      "status": "author_before_render_needs_second_reviewer",
+      "evidence": null,
+      "truth_page_numbers": [
+        7,
+        8
+      ],
+      "local_page_mapping": {
+        "1": 7,
+        "2": 8
+      },
+      "case_ids": null
+    }
+  ],
+  "rag_questions_available": true,
+  "rag_question_references": [
+    {
+      "relative_path": "truth/retrieval_cases.json",
+      "sha256": "ad2b3a4cfb83b155c827c6b97228781c973e3bea8abcb4354bf0772b266f01a3",
+      "status": "author_defined",
+      "evidence": null,
+      "truth_page_numbers": null,
+      "local_page_mapping": null,
+      "case_ids": [
+        "bfs"
+      ]
+    }
+  ],
+  "parser_selected": "PdfParser",
+  "extractor_strategy": "pdf_page_selective_text_layer_plus_docling_ocr_layout",
+  "detection_confidence": 0.99,
+  "generator_version": "qbank-raw-manifest/2026-09-04.1",
+  "generation_timestamp": "2026-09-04T00:00:00Z",
+  "eligible_for_cer_wer": true,
+  "detection_evidence": {
+    "initial_manifest": "manifest.json#cases[id=mixed-pdf-vi]",
+    "ground_truth_method": "author_before_render",
+    "pdf_probe": {
+      "usable_text_layer_pages": [
+        1
+      ],
+      "ocr_required_pages": [
+        2
+      ],
+      "image_xobject_pages": [
+        1,
+        2
+      ]
+    }
+  },
+  "warnings": [
+    "Raw supplement; manifest.json không bị sửa hoặc ghi đè.",
+    "Ground truth độc lập nhưng corpus còn ở trạng thái needs_second_reviewer; không dùng để tuyên bố production-ready."
+  ]
+}

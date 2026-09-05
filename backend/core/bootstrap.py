@@ -21,6 +21,7 @@ RAG_COLLECTIONS = (
     "document_chunks",
     "vector_collections",
     "chunk_embeddings",
+    "pipeline_lineage_events",
     "keywords",
     "ai_models",
     "prompt_templates",
@@ -153,6 +154,7 @@ VALIDATORS = {
                 "current_version": {"bsonType": "int", "minimum": 1},
                 "artifacts": {"bsonType": "array"},
                 "current_processing": {"bsonType": "object"},
+                "pending_processing": {"bsonType": "object"},
                 "pipeline_summary": {"bsonType": "object"},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
@@ -465,6 +467,7 @@ def _ensure_indexes() -> None:
     rag_db.document_pages.create_indexes(
         [
             IndexModel([("ocr_job_id", ASCENDING), ("page_number", ASCENDING)], unique=True, name="uq_ocr_job_page"),
+            IndexModel([("ocr_job_id", ASCENDING), ("unit_number", ASCENDING)], name="ix_ocr_job_unit"),
             IndexModel(
                 [("document_id", ASCENDING), ("document_version", ASCENDING), ("page_number", ASCENDING)],
                 name="ix_document_pages_version",
@@ -500,6 +503,13 @@ def _ensure_indexes() -> None:
                 unique=True,
                 name="uq_external_vector",
             ),
+        ]
+    )
+    rag_db.pipeline_lineage_events.create_indexes(
+        [
+            IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_lineage_document"),
+            IndexModel([("event_type", ASCENDING), ("created_at", DESCENDING)], name="ix_lineage_event_type"),
+            IndexModel([("operation_id", ASCENDING)], unique=True, name="uq_lineage_operation"),
         ]
     )
     rag_db.generation_jobs.create_indexes(

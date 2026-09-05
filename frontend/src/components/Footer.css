@@ -12,7 +12,7 @@
 /* Kế thừa class container nếu dùng chung toàn layout, định nghĩa thêm nếu cần */
 .container {
   width: 100%;
-  max-width: 1160px;
+  max-width: var(--content-max, 1160px);
   margin: 0 auto;
 }
 
@@ -134,11 +134,11 @@
 }
 
 @media (max-width: 640px) {
-  .footer { padding: 48px 0 0; }
+  .footer { padding: 44px 0 0; }
   .footer-grid {
     grid-template-columns: 1fr;
     gap: 28px;
-    padding-bottom: 32px;
+    padding: 0 16px 36px;
   }
   .footer-logo-row { gap: 10px; }
   .footer-logo { height: 38px; }
@@ -147,5 +147,11 @@
   .footer-col-title { font-size: 0.75rem; margin-top: 8px; }
   .footer-col-text { font-size: 0.75rem; }
   .footer-link { font-size: 0.75rem; }
-  .footer-bottom { padding: 18px 24px; font-size: 0.7rem; }
+  .footer-bottom {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 18px 16px;
+    font-size: 0.7rem;
+  }
 }

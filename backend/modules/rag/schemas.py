@@ -27,6 +27,11 @@ class ChunkingStats(BaseModel):
     min_chunk_size: int
     max_chunk_size: int
     content_type_distribution: Dict[str, int]
+    avg_embedding_tokens: float = 0
+    max_embedding_tokens: int = 0
+    timings_ms: Dict[str, float] = Field(default_factory=dict)
+    embedding_metrics: Dict[str, Any] = Field(default_factory=dict)
+    quality: Dict[str, Any] = Field(default_factory=dict)
 
 class ChunkingResponse(BaseModel):
     document_id: str
