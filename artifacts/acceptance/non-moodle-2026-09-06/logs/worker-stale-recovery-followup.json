@@ -1,0 +1,31 @@
+{
+  "job_id": "6a9d48ba1769b5566855bdbf",
+  "document_id": "6a9d48ba1769b5566855bdbc",
+  "checks": {
+    "job_completed": true,
+    "retried_after_crash": true,
+    "fencing_advanced": true,
+    "document_ready_for_next_stage": true,
+    "pages_persisted": true,
+    "page_numbers_unique": true,
+    "page_numbers_contiguous": true,
+    "page_count_matches_document": true
+  },
+  "passed": true,
+  "job": {
+    "job_id": "6a9d48ba1769b5566855bdbf",
+    "status": "COMPLETED",
+    "progress": 100,
+    "worker_id": "59e40c6135a6-1",
+    "fencing_token": 2,
+    "run_attempt": 2,
+    "checkpoint": {
+      "stage": "PAGE_SET_SAVED",
+      "page_number": 1,
+      "total_pages": 1
+    },
+    "updated_at": "2026-09-06 11:04:54.864000+00:00",
+    "error": null
+  },
+  "page_count": 300
+}

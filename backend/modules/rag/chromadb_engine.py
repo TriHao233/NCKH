@@ -37,7 +37,10 @@ def _get_embedding_model() -> SentenceTransformer:
     with _model_lock:
         if _embedding_model is None:
             logger.info("Loading embedding model: %s", settings.embedding_model_name)
-            _embedding_model = SentenceTransformer(settings.embedding_model_name)
+            _embedding_model = SentenceTransformer(
+                settings.embedding_model_name,
+                revision=settings.embedding_model_revision or None,
+            )
     return _embedding_model
 
 

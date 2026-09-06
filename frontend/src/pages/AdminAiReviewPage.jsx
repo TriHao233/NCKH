@@ -341,6 +341,14 @@ function AdminAiReviewPage() {
             passed: true,
             note: '',
           })),
+          criterion_assessments: SCORE_COMPONENTS.map((component) => ({
+            key: component.key,
+            label: component.label,
+            rating: 'PASS',
+            note: '',
+            source_chunk_id: null,
+            page_number: null,
+          })),
           overall_note: needsOverride
             ? 'Admin quyết định duyệt sau khi cân nhắc kết quả kiểm thử chất lượng của AI.'
             : 'Đạt thẩm định AI và sẵn sàng sử dụng trong ngân hàng câu hỏi.',

@@ -2,6 +2,7 @@ import hashlib
 import inspect
 import json
 import re
+import base64
 import unittest
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
@@ -47,7 +48,7 @@ from modules.documents.repository import MongoDocumentRepository
 from modules.documents.schemas import DocumentPageUpdateRequest, DocumentSharingRequest, DocumentStatus
 from modules.documents.service import DocumentService
 from modules.exams.service import ExamService, ExamVariantService
-from modules.exams.pdf_service import render_exam_docx
+from modules.exams.pdf_service import render_exam_docx, render_exam_html
 from modules.ocr.ocr import extract_docx_pages
 from modules.exams.schemas import (
     AddQuestionsManualRequest,
@@ -116,6 +117,21 @@ def _current_user(role="Teacher", user_id=None, permissions=None):
         permissions=tuple(permissions or ()),
         display_name=f"{role} User",
     )
+
+
+def _approved_review_form():
+    return {
+        "criterion_assessments": [
+            {"key": key, "label": key, "rating": "PASS"}
+            for key in (
+                "faithfulness",
+                "contextual_relevancy",
+                "answer_relevancy",
+                "bloom_alignment",
+                "clo_alignment",
+            )
+        ]
+    }
 
 
 def _exam_doc(owner_id):
@@ -1520,13 +1536,21 @@ class SchemaV2Tests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 service.review(
                     str(question_id),
-                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    ReviewCreateRequest(
+                        expected_version=1,
+                        decision="APPROVED",
+                        review_form=_approved_review_form(),
+                    ),
                     other_reviewer,
                 )
 
             review = service.review(
                 str(question_id),
-                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    review_form=_approved_review_form(),
+                ),
                 reviewer,
             )
         finally:
@@ -1634,6 +1658,7 @@ class SchemaV2Tests(unittest.TestCase):
                 ReviewCreateRequest(
                     expected_version=1,
                     decision="APPROVED",
+                    review_form=_approved_review_form(),
                     secondary_required=True,
                     secondary_reason="Câu quan trọng",
                 ),
@@ -1644,14 +1669,22 @@ class SchemaV2Tests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 service.review(
                     str(question_id),
-                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    ReviewCreateRequest(
+                        expected_version=1,
+                        decision="APPROVED",
+                        review_form=_approved_review_form(),
+                    ),
                     reviewer,
                 )
             service.release_review(str(question_id), reviewer)
             service.claim_review(str(question_id), second_reviewer)
             secondary = service.review(
                 str(question_id),
-                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    review_form=_approved_review_form(),
+                ),
                 second_reviewer,
             )
             comment = service.add_comment(
@@ -2346,7 +2379,11 @@ class SchemaV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "đang chờ duyệt"):
             service.review(
                 str(ObjectId()),
-                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    review_form=_approved_review_form(),
+                ),
                 _current_user("Admin"),
             )
 
@@ -3498,6 +3535,50 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(document["pipeline_summary"]["chunk_status"], "CANCELLED")
         self.assertEqual(document["status"], "FAILED")
 
+    def test_completed_recovered_document_job_clears_stale_errors(self):
+        document_id = ObjectId()
+        job_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        stale_error = {"message": "Worker lease expired", "at": now}
+
+        class FakeDocumentDatabase:
+            def __init__(self):
+                self.documents = InMemoryCollection(
+                    [
+                        {
+                            "_id": document_id,
+                            "archived_at": None,
+                            "status": "PROCESSING",
+                            "pipeline_summary": {"ocr_status": "PROCESSING"},
+                            "latest_error": stale_error,
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.document_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": job_id,
+                            "document_id": document_id,
+                            "job_type": "OCR",
+                            "status": "PROCESSING",
+                            "error": stale_error,
+                            "queued_at": now,
+                            "started_at": now,
+                        }
+                    ]
+                )
+                self.chunk_sets = InMemoryCollection([])
+                self.chunk_embeddings = InMemoryCollection([])
+                self.document_processing_revisions = InMemoryCollection([])
+
+        db = FakeDocumentDatabase()
+        updated = MongoDocumentRepository(db).update_job(str(job_id), "COMPLETED")
+
+        self.assertEqual(updated["status"], "COMPLETED")
+        self.assertIsNone(updated["error"])
+        self.assertIsNone(db.documents.find_one({"_id": document_id})["latest_error"])
+
     def test_document_reindex_requires_owner_and_completed_chunks(self):
         owner = _current_user("Teacher")
         other_teacher = _current_user("Teacher")
@@ -3641,6 +3722,53 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("Queue uses which policy?", paragraph_text)
         self.assertIn("FIFO", paragraph_text)
         self.assertIn("A", table_text)
+
+    def test_exam_exports_render_safe_rich_content(self):
+        image_source = (
+            "data:image/png;base64,"
+            + base64.b64encode(
+                base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
+                    "x8AAusB9WlQn1sAAAAASUVORK5CYII="
+                )
+            ).decode("ascii")
+        )
+        content = (
+            "Dùng `enqueue(x)` và <script>alert('x')</script>.\n\n"
+            "```cpp\nqueue.push(x);\n```\n\n"
+            "$$\\alpha = \\frac{n}{m}$$\n\n"
+            "| n | m | α |\n|---|---|---|\n| 8 | 16 | 0.5 |\n\n"
+            f"![Sơ đồ hàng đợi]({image_source})"
+        )
+        questions = [
+            {
+                "order": 1,
+                "content_snapshot": {
+                    "content": content,
+                    "question_data": {"options": {"A": "**FIFO**"}, "correct_answer": "A"},
+                },
+            }
+        ]
+        header = {"exam_name": "Rich", "subject_name": "CTDL", "duration_minutes": 30}
+
+        rendered_html = render_exam_html(header, "R01", questions, "de_dapan")
+        docx_bytes = render_exam_docx(header, "R01", questions, "de_dapan")
+        document = Document(BytesIO(docx_bytes))
+        xml = document._element.xml
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+
+        self.assertIn('<table class="rich-table">', rendered_html)
+        self.assertIn('<pre class="code-block"', rendered_html)
+        self.assertIn('<math display="block">', rendered_html)
+        self.assertIn('<img class="inline-image"', rendered_html)
+        self.assertNotIn("<script>alert", rendered_html)
+        self.assertIn("&lt;script&gt;", rendered_html)
+        self.assertNotIn("```", text)
+        self.assertIn("queue.push(x);", text)
+        self.assertIn("α = (n)/(m)", xml)
+        self.assertGreaterEqual(len(document.tables), 2)
+        self.assertEqual(len(document.inline_shapes), 1)
+        self.assertIn("<m:oMath>", xml)
 
     def test_exam_lifecycle_requires_exact_current_approved_questions(self):
         owner = _current_user("Teacher")

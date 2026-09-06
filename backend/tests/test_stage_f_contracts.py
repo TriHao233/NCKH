@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from core.dependencies import CurrentUser
-from modules.exams.pdf_service import render_exam_html
+from modules.exams.pdf_service import _build_context, render_exam_html
 from modules.exams.schemas import ExamVariantCreateRequest, MatrixCell
 from modules.exams.service import ExamService, ExamVariantService
 
@@ -156,3 +156,26 @@ def test_student_export_contains_no_answer_or_explanation():
     assert "SECRET EXPLANATION" not in html
     assert 'class="answer-table"' not in html
     assert "public option" in html
+
+
+def test_ordering_answer_table_preserves_sequence():
+    context = _build_context(
+        {},
+        "101",
+        [
+            {
+                "order": 1,
+                "content_snapshot": {
+                    "content": "Sắp xếp",
+                    "classification": {"assessment_type": "SAP_XEP"},
+                    "question_data": {
+                        "options": {"A": "a", "B": "b", "C": "c", "D": "d"},
+                        "correct_answer": "B,A,D,C",
+                    },
+                },
+            }
+        ],
+        "dapan",
+    )
+
+    assert context["answer_rows"][0]["answer"] == "B, A, D, C"

@@ -147,6 +147,25 @@ class StageDContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "STRUCTURED_OUTPUT_SCHEMA_ERROR"):
             extract_question_candidates(parse_structured_json('{"questions": {}}'))
 
+    def test_model_artifact_digest_is_distinct_from_config_digest(self):
+        base = {
+            "model_code": "qwen",
+            "model_name": "qwen2.5:7b",
+            "runtime": "OLLAMA",
+            "revision": "release-1",
+            "quantization": "Q4_K_M",
+            "parameters": {"temperature": 0},
+        }
+        first = bind_model_role(
+            {**base, "artifact_digest": "sha256:weights-a"}, GENERAL_GENERATION_ROLE
+        )
+        second = bind_model_role(
+            {**base, "artifact_digest": "sha256:weights-b"}, GENERAL_GENERATION_ROLE
+        )
+
+        self.assertEqual(first["config_digest"], second["config_digest"])
+        self.assertNotEqual(first["model_digest"], second["model_digest"])
+
     def test_generation_request_normalizes_clos_and_retrieval_contract(self):
         request = QuestionGenerateRequest(
             document_id="document-1",
@@ -160,6 +179,27 @@ class StageDContractTests(unittest.TestCase):
 
     def test_retrieval_benchmark_recall(self):
         self.assertEqual(recall_at_k(["a", "b"], ["b", "c"]), 0.5)
+
+    def test_context_budget_never_accepts_oversized_first_chunk(self):
+        with (
+            patch("modules.rag.search._active_vector_snapshot", return_value=("set-1", "vector-1")),
+            patch(
+                "modules.rag.search._mongo_lexical_candidates",
+                return_value=[
+                    (
+                        "oversized evidence",
+                        {"chunk_id": "large", "chunk_set_id": "set-1", "token_count": 200},
+                    )
+                ],
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "token budget"):
+                get_context_snapshot(
+                    document_id="document-1",
+                    collection_name="chunks",
+                    retrieval_mode="lexical",
+                    context_token_budget=128,
+                )
 
 
 if __name__ == "__main__":

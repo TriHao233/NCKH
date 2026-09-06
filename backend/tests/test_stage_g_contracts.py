@@ -1,8 +1,13 @@
 from bson import ObjectId
 import httpx
 import pytest
+from pathlib import Path
+from unittest.mock import MagicMock
 
+from modules.admin.moodle_schemas import MoodleSyncPageRequest
 from modules.moodle.adapter import MoodleQuestionBankAdapter, MoodleRemoteUncertain
+from modules.moodle.identity_service import MoodleIdentitySyncService
+from modules.moodle.publication_worker import MoodlePublicationWorker
 from modules.moodle.serializer import (
     QTYPE_CAPABILITIES,
     serialize_question,
@@ -119,3 +124,130 @@ def test_adapter_marks_network_confirmation_loss_as_unknown(monkeypatch):
         adapter.publish(
             _serialized("trac_nghiem", {"A": "a", "B": "b"}, "A"), course_id="1", category_id="2", idempotency_key="key"
         )
+
+
+class _MalformedResponse:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def json(self):
+        raise ValueError("not json")
+
+
+class _MalformedClient:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def post(self, *_args, **_kwargs):
+        return _MalformedResponse(self.status_code)
+
+
+@pytest.mark.parametrize("status_code", [200, 502])
+def test_adapter_treats_malformed_or_5xx_confirmation_as_uncertain(monkeypatch, status_code):
+    monkeypatch.setenv("TEST_MOODLE_TOKEN", "secret")
+    adapter = MoodleQuestionBankAdapter(
+        {
+            "base_url": "https://moodle.invalid",
+            "token_env_var": "TEST_MOODLE_TOKEN",
+            "capabilities": {"local_nckh_questionbank": True},
+        },
+        client=_MalformedClient(status_code),
+    )
+    with pytest.raises(MoodleRemoteUncertain):
+        adapter._call("local_nckh_upsert_question", {})
+
+
+def test_publication_worker_does_not_send_stale_unapproved_version():
+    database = MagicMock()
+    question_id, old_version_id, current_version_id = ObjectId(), ObjectId(), ObjectId()
+    publication = {
+        "_id": ObjectId(),
+        "question_id": question_id,
+        "question_version_id": old_version_id,
+        "target": {"target_id": ObjectId(), "course_id": "1", "category_id": "2"},
+        "idempotency_key": "key",
+    }
+    database.moodle_targets.find_one.return_value = {"mode": "REST_API", "is_active": True}
+    database.questions.find_one.return_value = {
+        "_id": question_id,
+        "lifecycle_status": "ACTIVE",
+        "review_status": "DRAFT",
+        "current_version_id": current_version_id,
+        "approved_version_id": None,
+    }
+    database.question_versions.find_one.return_value = {
+        "_id": old_version_id,
+        "question_id": question_id,
+    }
+    database.moodle_publications.find_one.return_value = {**publication, "status": "FAILED"}
+    adapter = MagicMock()
+
+    result = MoodlePublicationWorker(database, adapter_factory=lambda _target: adapter)._process(publication)
+
+    adapter.publish.assert_not_called()
+    assert result["status"] == "FAILED"
+    updates = database.moodle_publications.update_one.call_args.args[1]["$set"]
+    assert updates["status"] == "FAILED"
+
+
+def test_identity_sync_rejects_missing_first_page():
+    database = MagicMock()
+    database.moodle_sync_pages.find_one.return_value = None
+    database.moodle_sync_runs.find_one.return_value = None
+    payload = MoodleSyncPageRequest(
+        site_key="ctu",
+        sync_id="sync-1",
+        page_number=99,
+        checkpoint="page-99",
+        is_last_page=True,
+    )
+
+    with pytest.raises(ValueError, match="trang 1"):
+        MoodleIdentitySyncService(database).sync_page(payload)
+    database.subject_memberships.update_many.assert_not_called()
+
+
+def test_inactive_external_identity_cannot_create_active_membership():
+    database = MagicMock()
+    internal_user_id = ObjectId()
+    database.moodle_sync_pages.find_one.return_value = None
+    database.moodle_sync_runs.find_one.return_value = None
+    database.external_identities.find_one.return_value = {"internal_user_id": internal_user_id}
+    database.external_identities.find_one_and_update.return_value = {
+        "internal_user_id": internal_user_id,
+        "is_active": False,
+    }
+    payload = MoodleSyncPageRequest(
+        site_key="ctu",
+        sync_id="sync-1",
+        page_number=1,
+        checkpoint="page-1",
+        next_checkpoint="page-2",
+        identities=[{"external_user_id": "moodle-user", "is_active": False}],
+        memberships=[
+            {
+                "external_user_id": "moodle-user",
+                "external_course_id": "course-1",
+                "subject_id": str(ObjectId()),
+                "external_role": "student",
+                "is_active": True,
+            }
+        ],
+    )
+
+    MoodleIdentitySyncService(database).sync_page(payload)
+
+    membership_update = database.subject_memberships.find_one_and_update.call_args.args[1]["$set"]
+    assert membership_update["status"] == "REVOKED"
+
+
+def test_versioned_moodle_plugin_declares_all_adapter_functions():
+    plugin_root = Path(__file__).resolve().parents[2] / "moodle" / "local" / "nckh"
+    services = (plugin_root / "db" / "services.php").read_text(encoding="utf-8")
+    for function_name in (
+        "local_nckh_upsert_question",
+        "local_nckh_get_question",
+        "local_nckh_find_question",
+    ):
+        assert function_name in services
+    assert (plugin_root / "db" / "install.xml").is_file()

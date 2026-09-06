@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from pymongo import ReturnDocument
 
+from core.access_policy import has_subject_access, subject_id_from_record
 from modules.moodle.adapter import MoodleQuestionBankAdapter, MoodleRemoteUncertain
 from modules.moodle.serializer import serialize_question
 
@@ -67,6 +68,30 @@ class MoodlePublicationWorker:
             version = self.db.question_versions.find_one({"_id": publication["question_version_id"]})
             if not question or not version:
                 raise ValueError("Question/version của publication không còn tồn tại")
+            if (
+                question.get("lifecycle_status") != "ACTIVE"
+                or question.get("review_status") != "APPROVED"
+                or question.get("current_version_id") != version.get("_id")
+                or question.get("approved_version_id") != version.get("_id")
+            ):
+                raise ValueError("Phiên bản publication không còn là phiên bản được duyệt hiện hành")
+            publisher_user_id = publication.get("publisher_user_id")
+            if publisher_user_id is not None:
+                publisher = self.db.users.find_one(
+                    {"_id": publisher_user_id, "is_active": True}
+                )
+                if not publisher:
+                    raise PermissionError("Tài khoản publish đã bị khóa hoặc không còn tồn tại")
+                allowed_roles = target.get("allowed_roles") or ["Admin", "Reviewer"]
+                if publisher.get("role") not in allowed_roles:
+                    raise PermissionError("Role publish không còn được Moodle target cho phép")
+                subject_id = subject_id_from_record(question, version)
+                if (
+                    publisher.get("role") != "Admin"
+                    and subject_id is not None
+                    and not has_subject_access(self.db, publisher_user_id, subject_id)
+                ):
+                    raise PermissionError("Quyền học phần của người publish đã bị thu hồi")
             serialized = serialize_question(question, version)
             target_ref = publication["target"]
             result = self.adapter_factory(target).publish(

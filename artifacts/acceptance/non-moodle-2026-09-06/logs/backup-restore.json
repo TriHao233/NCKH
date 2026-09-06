@@ -1,0 +1,472 @@
+{
+  "observed_at": "2026-09-06T08:26:42.749186+00:00",
+  "rpo_seconds": 0,
+  "rto_seconds": 4.422,
+  "databases": [
+    {
+      "source": "rag_acceptance",
+      "restored": "rag_acceptance_restore_drill",
+      "source_manifest": {
+        "ai_models": {
+          "count": 3,
+          "sha256": "7e677439e23c817a7085bb840852085c1f86979716c7476f995ea311a2f13f06"
+        },
+        "audit_logs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "chunk_embeddings": {
+          "count": 48,
+          "sha256": "42d7183478f608be403ef0d582cd82381de284a5dea7a17c2e268e8b82e9b283"
+        },
+        "chunk_sets": {
+          "count": 1,
+          "sha256": "58c66e0aca07517d7e73871bb2a9f9c44082f3a98d58b346407885d3823df132"
+        },
+        "dictionaries": {
+          "count": 1,
+          "sha256": "e172d9114dc8a3f316f518f3eebe3e1f675e33905d5a42c1eb4995830ee7079b"
+        },
+        "document_chunks": {
+          "count": 48,
+          "sha256": "ddc568795a31b3b82144a9ed3092b9168bd872617183f6f212a4ff844d95e62f"
+        },
+        "document_jobs": {
+          "count": 3,
+          "sha256": "bdb9866cb49de8367d4be27f98a90dac6012cb1d3362b1f349b61abe5b6aebea"
+        },
+        "document_pages": {
+          "count": 315,
+          "sha256": "76642d5dd9eea2324af22a06cb54041571852358389d04a54382e38d06c2aee2"
+        },
+        "document_processing_revisions": {
+          "count": 2,
+          "sha256": "bd65e78ec7549ac234c09cdfacc3610a3e3bda682e88f04db686849c07f556aa"
+        },
+        "documents": {
+          "count": 2,
+          "sha256": "74c2bba999dfb0c3c9b639ecfb598846e0fc6340fd56123319c8af9ada29c01c"
+        },
+        "evaluation_jobs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "evaluation_policies": {
+          "count": 1,
+          "sha256": "652a85f4f8d843adc4bd13bd3d0108b4d352f7d32191904a04d3b468bea14a8e"
+        },
+        "exam_variants": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "exams": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "external_identities": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "external_identity_link_tokens": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "generation_jobs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "generation_runs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "index_manifests": {
+          "count": 1,
+          "sha256": "3eb3605168dbba2190ea4ea42ac926c009a1134d666622b79735bd1dcca221dd"
+        },
+        "keywords": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "llm_slots": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "migration_id_map": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_publications": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_sync_pages": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_sync_runs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_targets": {
+          "count": 1,
+          "sha256": "d52212074c69e0a2a74d985801466293b23c70311a2452fa5bfb5ed34950bc88"
+        },
+        "notifications": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "prompt_templates": {
+          "count": 35,
+          "sha256": "cd53d42f8257bf5b601fde77dd6fa105a487c528012118cac49ace2d4f4e5bbe"
+        },
+        "question_comments": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_evaluations": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_review_drafts": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_reviews": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_versions": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "questions": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "retrieval_benchmarks": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "schema_meta": {
+          "count": 1,
+          "sha256": "a5bf2778d0ccc769bfc4b50af0487726b807c0e7150319d59c25a37c413da498"
+        },
+        "subject_memberships": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "subjects": {
+          "count": 1,
+          "sha256": "fae7ace03a545e33c7d3a75263a1669d08bbc6429fb2850073aa8e59b63fbdca"
+        },
+        "users": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "vector_collections": {
+          "count": 1,
+          "sha256": "3cf14a54ff45517440cdd0ccf7c0639b80cd13346421223ad6965fdea8fd15cd"
+        }
+      },
+      "restored_manifest": {
+        "ai_models": {
+          "count": 3,
+          "sha256": "7e677439e23c817a7085bb840852085c1f86979716c7476f995ea311a2f13f06"
+        },
+        "audit_logs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "chunk_embeddings": {
+          "count": 48,
+          "sha256": "42d7183478f608be403ef0d582cd82381de284a5dea7a17c2e268e8b82e9b283"
+        },
+        "chunk_sets": {
+          "count": 1,
+          "sha256": "58c66e0aca07517d7e73871bb2a9f9c44082f3a98d58b346407885d3823df132"
+        },
+        "dictionaries": {
+          "count": 1,
+          "sha256": "e172d9114dc8a3f316f518f3eebe3e1f675e33905d5a42c1eb4995830ee7079b"
+        },
+        "document_chunks": {
+          "count": 48,
+          "sha256": "ddc568795a31b3b82144a9ed3092b9168bd872617183f6f212a4ff844d95e62f"
+        },
+        "document_jobs": {
+          "count": 3,
+          "sha256": "bdb9866cb49de8367d4be27f98a90dac6012cb1d3362b1f349b61abe5b6aebea"
+        },
+        "document_pages": {
+          "count": 315,
+          "sha256": "76642d5dd9eea2324af22a06cb54041571852358389d04a54382e38d06c2aee2"
+        },
+        "document_processing_revisions": {
+          "count": 2,
+          "sha256": "bd65e78ec7549ac234c09cdfacc3610a3e3bda682e88f04db686849c07f556aa"
+        },
+        "documents": {
+          "count": 2,
+          "sha256": "74c2bba999dfb0c3c9b639ecfb598846e0fc6340fd56123319c8af9ada29c01c"
+        },
+        "evaluation_jobs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "evaluation_policies": {
+          "count": 1,
+          "sha256": "652a85f4f8d843adc4bd13bd3d0108b4d352f7d32191904a04d3b468bea14a8e"
+        },
+        "exam_variants": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "exams": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "external_identities": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "external_identity_link_tokens": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "generation_jobs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "generation_runs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "index_manifests": {
+          "count": 1,
+          "sha256": "3eb3605168dbba2190ea4ea42ac926c009a1134d666622b79735bd1dcca221dd"
+        },
+        "keywords": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "llm_slots": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "migration_id_map": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_publications": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_sync_pages": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_sync_runs": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "moodle_targets": {
+          "count": 1,
+          "sha256": "d52212074c69e0a2a74d985801466293b23c70311a2452fa5bfb5ed34950bc88"
+        },
+        "notifications": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "prompt_templates": {
+          "count": 35,
+          "sha256": "cd53d42f8257bf5b601fde77dd6fa105a487c528012118cac49ace2d4f4e5bbe"
+        },
+        "question_comments": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_evaluations": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_review_drafts": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_reviews": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "question_versions": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "questions": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "retrieval_benchmarks": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "schema_meta": {
+          "count": 1,
+          "sha256": "a5bf2778d0ccc769bfc4b50af0487726b807c0e7150319d59c25a37c413da498"
+        },
+        "subject_memberships": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "subjects": {
+          "count": 1,
+          "sha256": "fae7ace03a545e33c7d3a75263a1669d08bbc6429fb2850073aa8e59b63fbdca"
+        },
+        "users": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "vector_collections": {
+          "count": 1,
+          "sha256": "3cf14a54ff45517440cdd0ccf7c0639b80cd13346421223ad6965fdea8fd15cd"
+        }
+      },
+      "passed": true
+    },
+    {
+      "source": "NCKH_acceptance",
+      "restored": "NCKH_acceptance_restore_drill",
+      "source_manifest": {
+        "User": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "restored_manifest": {
+        "User": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "passed": true
+    }
+  ],
+  "artifact_storage": {
+    "source_file_count": 11,
+    "restored_file_count": 11,
+    "source_manifest": {
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/data_level0.bin": {
+        "bytes": 1676000,
+        "sha256": "8ef477fcf5f44e8d2274af430acebe5aaec7916d5c67e532a8ca422f97be9f57"
+      },
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/header.bin": {
+        "bytes": 100,
+        "sha256": "e87a1dc8bcae6f2c4bea6d5dd5005454d4dace8637dae29bff3c037ea771411e"
+      },
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/length.bin": {
+        "bytes": 4000,
+        "sha256": "d389a0b6e9b14151750477b8081d3a78bb06029c352f9ad6654827ec497f12c8"
+      },
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/link_lists.bin": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "chroma_data/chroma.sqlite3": {
+        "bytes": 708608,
+        "sha256": "5481e271f8808f402861e4bb89d919bf4ae2f4ce35cc4c4cca92aac93ae9e73d"
+      },
+      "chunk_outputs/6a9d225466c0cdc808c36e49_chunks_6a9d23040ad24b173c1a43d4_20260906_082347_624335.md": {
+        "bytes": 48170,
+        "sha256": "64f611c9116bbbe6b7b6b1b4c18b23ee63db7335dda13a5d2c4e38d95f6208a7"
+      },
+      "metadata/6a9d225466c0cdc808c36e49_chunks_6a9d23040ad24b173c1a43d4_20260906_082347_624335.json": {
+        "bytes": 129172,
+        "sha256": "705cc79f19104447435b67afaec3a8c6fde1741fe222f7e5b00742d1d3ee9e3f"
+      },
+      "ocr_outputs/acceptance-source-large.json": {
+        "bytes": 594214,
+        "sha256": "e91ea0fd90fbc19e874d33bc7785d1715811ef47c0e72e13d52cacfc0a679cd2"
+      },
+      "ocr_outputs/acceptance-source.json": {
+        "bytes": 29739,
+        "sha256": "eaa24a292f7b91b533cdfc64f5c2ec5478fe2fcced8e990e645882e798ba2c7a"
+      },
+      "uploads/acceptance-source-large.pdf": {
+        "bytes": 4908013,
+        "sha256": "e3fd5efd2b4c6f2a9e574fe586caf28d3b8c5c621de143ce4f2660cfd45fbf0d"
+      },
+      "uploads/acceptance-source.pdf": {
+        "bytes": 280549,
+        "sha256": "dda778de05d71583010429f7107ea2f1499131339a554dfed6d4172c36cbeaba"
+      }
+    },
+    "restored_manifest": {
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/data_level0.bin": {
+        "bytes": 1676000,
+        "sha256": "8ef477fcf5f44e8d2274af430acebe5aaec7916d5c67e532a8ca422f97be9f57"
+      },
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/header.bin": {
+        "bytes": 100,
+        "sha256": "e87a1dc8bcae6f2c4bea6d5dd5005454d4dace8637dae29bff3c037ea771411e"
+      },
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/length.bin": {
+        "bytes": 4000,
+        "sha256": "d389a0b6e9b14151750477b8081d3a78bb06029c352f9ad6654827ec497f12c8"
+      },
+      "chroma_data/2146fe86-843e-47db-8cb1-f9e47929a977/link_lists.bin": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "chroma_data/chroma.sqlite3": {
+        "bytes": 708608,
+        "sha256": "5481e271f8808f402861e4bb89d919bf4ae2f4ce35cc4c4cca92aac93ae9e73d"
+      },
+      "chunk_outputs/6a9d225466c0cdc808c36e49_chunks_6a9d23040ad24b173c1a43d4_20260906_082347_624335.md": {
+        "bytes": 48170,
+        "sha256": "64f611c9116bbbe6b7b6b1b4c18b23ee63db7335dda13a5d2c4e38d95f6208a7"
+      },
+      "metadata/6a9d225466c0cdc808c36e49_chunks_6a9d23040ad24b173c1a43d4_20260906_082347_624335.json": {
+        "bytes": 129172,
+        "sha256": "705cc79f19104447435b67afaec3a8c6fde1741fe222f7e5b00742d1d3ee9e3f"
+      },
+      "ocr_outputs/acceptance-source-large.json": {
+        "bytes": 594214,
+        "sha256": "e91ea0fd90fbc19e874d33bc7785d1715811ef47c0e72e13d52cacfc0a679cd2"
+      },
+      "ocr_outputs/acceptance-source.json": {
+        "bytes": 29739,
+        "sha256": "eaa24a292f7b91b533cdfc64f5c2ec5478fe2fcced8e990e645882e798ba2c7a"
+      },
+      "uploads/acceptance-source-large.pdf": {
+        "bytes": 4908013,
+        "sha256": "e3fd5efd2b4c6f2a9e574fe586caf28d3b8c5c621de143ce4f2660cfd45fbf0d"
+      },
+      "uploads/acceptance-source.pdf": {
+        "bytes": 280549,
+        "sha256": "dda778de05d71583010429f7107ea2f1499131339a554dfed6d4172c36cbeaba"
+      }
+    }
+  },
+  "dump_files": [
+    {
+      "path": "/workspace/artifacts/acceptance/non-moodle-2026-09-06/backup/rag_acceptance.archive",
+      "bytes": 524648,
+      "sha256": "110b0d5eb9fcf9e5160f6df0ea19c27da86235ee1ef9a8005051c1d55d34d260"
+    },
+    {
+      "path": "/workspace/artifacts/acceptance/non-moodle-2026-09-06/backup/NCKH_acceptance.archive",
+      "bytes": 498,
+      "sha256": "01eba2efe7804db3e77a221eb48696ed17c928a045c042f8c1a8c4913cf6a48b"
+    },
+    {
+      "path": "/workspace/artifacts/acceptance/non-moodle-2026-09-06/backup/artifact-storage.tar.gz",
+      "bytes": 5739488,
+      "sha256": "a3205869e9dd0a5efcb057323ff44ee8cec77c4d5a053c55b08471c7108464f0"
+    }
+  ],
+  "checks": {
+    "all_databases_match": true,
+    "artifact_storage_matches": true,
+    "dump_files_non_empty": true
+  },
+  "passed": true
+}

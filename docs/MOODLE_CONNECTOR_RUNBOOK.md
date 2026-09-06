@@ -8,6 +8,10 @@ mới là publication Moodle thật.
 
 ## Moodle-side adapter contract
 
+Implementation được version-control tại `moodle/local/nckh` (plugin release `1.0.0`). Chép thư mục
+`nckh` vào `<moodle-root>/local/nckh`, chạy nâng cấp Moodle, thêm service `local_nckh_questionbank`
+cho service account và chỉ cấp capability `local/nckh:publishquestion` tại question-bank context cần dùng.
+
 Service account cần web service REST và đúng course/category scope. Plugin/adapter phải cung cấp:
 
 - `local_nckh_upsert_question`: nhận `courseid`, `categoryid`, `idempotencykey`, `payloadjson`;
@@ -31,8 +35,9 @@ Không cấp capability tạo Quiz, sửa course hoặc quản trị user nếu 
 
 ## Identity and membership sync
 
-Gửi từng trang tới `POST /api/v1/admin/moodle/identity-sync` với `site_key`, `sync_id`, `checkpoint`,
-`next_checkpoint`. Identity key luôn là `(site_key, external_user_id)`; email chỉ là metadata.
+Gửi từng trang tới `POST /api/v1/admin/moodle/identity-sync` với `site_key`, `sync_id`, `page_number`,
+`checkpoint`, `next_checkpoint`. `page_number` bắt đầu từ 1 và tăng liên tục; checkpoint của trang sau
+phải đúng bằng `next_checkpoint` của trang trước. Identity key luôn là `(site_key, external_user_id)`; email chỉ là metadata.
 Link mới tới internal user phải dùng link token một lần đã băm SHA-256, còn hạn và đúng cả ba identity.
 Membership Moodle được upsert idempotent theo site/course/user/subject. Trang cuối (`is_last_page=true`)
 revoke membership Moodle không xuất hiện trong cùng `sync_id`; không xóa lịch sử tác giả/reviewer.

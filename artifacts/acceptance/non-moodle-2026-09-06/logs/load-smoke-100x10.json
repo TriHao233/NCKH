@@ -1,0 +1,18 @@
+{
+  "created_at": "2026-09-06T08:18:48.817647+00:00",
+  "base_url": "http://nckh-acceptance-backend:8000",
+  "requests": 100,
+  "concurrency": 10,
+  "successes": 100,
+  "errors": 0,
+  "status_counts": {
+    "200": 100
+  },
+  "elapsed_seconds": 0.264,
+  "requests_per_second": 378.17,
+  "latency_ms": {
+    "mean": 20.62,
+    "p95": 34.17,
+    "max": 47.19
+  }
+}

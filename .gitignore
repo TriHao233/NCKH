@@ -25,3 +25,11 @@ IMPLEMENTATION_CHANGES.md
 
 # Local inspection/render artifacts
 /tmp/
+
+# Generated acceptance runtime and intermediate evidence
+/artifacts/**/backup/
+/artifacts/**/runtime-data/
+/artifacts/**/restored-artifacts-*/
+/artifacts/**/qa*/
+/artifacts/**/exports/*.pdf
+/artifacts/**/exports/*.docx

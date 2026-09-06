@@ -21,14 +21,23 @@ def stable_hash(value) -> str:
 
 
 def embedding_model_manifest(collection_name: str) -> dict:
+    if settings.require_model_artifact_digest and not settings.embedding_model_artifact_digest:
+        raise ValueError("Embedding model chưa có EMBEDDING_MODEL_ARTIFACT_DIGEST")
     payload = {
         "provider": "SENTENCE_TRANSFORMERS",
         "model_name": settings.embedding_model_name,
+        "artifact_digest": settings.embedding_model_artifact_digest,
+        "revision": settings.embedding_model_revision,
         "normalize_embeddings": True,
         "distance_metric": "COSINE",
         "collection_name": collection_name,
     }
-    return {**payload, "model_digest": stable_hash(payload)}
+    config_payload = {key: value for key, value in payload.items() if key != "artifact_digest"}
+    return {
+        **payload,
+        "config_digest": stable_hash(config_payload),
+        "model_digest": stable_hash(payload),
+    }
 
 
 def get_document_record(doc_id: str) -> dict | None:

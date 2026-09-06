@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# PDF export runs Playwright inside the backend/worker image.
+RUN python -m playwright install --with-deps chromium
+
 # Copy toàn bộ mã nguồn
 COPY . .
 

@@ -35,9 +35,14 @@ class MoodleQuestionBankAdapter:
             )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise MoodleRemoteUncertain(str(exc)) from exc
-        payload = response.json()
         if response.status_code >= 500:
             raise MoodleRemoteUncertain(f"Moodle HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            if response.status_code >= 400:
+                raise ValueError(f"Moodle HTTP {response.status_code}: response không phải JSON") from exc
+            raise MoodleRemoteUncertain("Moodle trả response không phải JSON") from exc
         if response.status_code >= 400 or payload.get("exception"):
             raise ValueError(payload.get("message") or f"Moodle HTTP {response.status_code}")
         return payload

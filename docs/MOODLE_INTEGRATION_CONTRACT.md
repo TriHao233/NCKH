@@ -43,8 +43,9 @@ repository contains an anonymized round-trip fixture exported from the actual Mo
 Backend serializer supports the seven typed question forms and declares a per-qtype capability
 matrix. REST publication uses an idempotent Question Bank adapter, durable outbox states and a
 verification read before remote `PUBLISHED`. Network ambiguity becomes `UNKNOWN` and requires
-reconciliation. Identity sync is keyed by `(site_key, external_user_id)`, consumes verified link
-tokens, checkpoints pages idempotently and revokes missing Moodle memberships on the final page.
+reconciliation. The versioned Moodle-side plugin is in `moodle/local/nckh`. Identity sync is keyed
+by `(site_key, external_user_id)`, consumes verified link tokens, requires a contiguous numbered
+checkpoint chain and revokes missing Moodle memberships only after an error-free final page.
 See [MOODLE_CONNECTOR_RUNBOOK.md](D:/NCKH/docs/MOODLE_CONNECTOR_RUNBOOK.md).
 
 This does not close the institutional gate: Moodle version/build, installed adapter, least-privilege

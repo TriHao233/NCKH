@@ -1,0 +1,530 @@
+{
+  "created_at": "2026-09-06T08:24:56.117763+00:00",
+  "limit": 5,
+  "embedding_manifests": [
+    {
+      "provider": "SENTENCE_TRANSFORMERS",
+      "model_name": "all-MiniLM-L6-v2",
+      "artifact_digest": "",
+      "revision": "",
+      "normalize_embeddings": true,
+      "distance_metric": "COSINE",
+      "collection_name": "acceptance_chunks",
+      "config_digest": "f9b33072dda5c486b61c8e1297824b37fffb4dbdc38baf9f4383105d1ddea472",
+      "model_digest": "60e6c6a86c61ed9e87f05d7bebfa67ebad7d66116ee5eddadc7278314125ab30"
+    }
+  ],
+  "summary": {
+    "dense": {
+      "query_count": 5,
+      "mean_recall_at_k": 0.2,
+      "p50_latency_ms": 251.15,
+      "p95_latency_ms": 12707.81,
+      "error_count": 0
+    },
+    "lexical": {
+      "query_count": 5,
+      "mean_recall_at_k": 1.0,
+      "p50_latency_ms": 5.55,
+      "p95_latency_ms": 5.75,
+      "error_count": 0
+    },
+    "hybrid": {
+      "query_count": 5,
+      "mean_recall_at_k": 1.0,
+      "p50_latency_ms": 261.74,
+      "p95_latency_ms": 281.98,
+      "error_count": 0
+    }
+  },
+  "rows": [
+    {
+      "query_index": 1,
+      "query_type": "exact-title",
+      "mode": "dense",
+      "recall_at_k": 1.0,
+      "latency_ms": 12707.81,
+      "retrieved_chunk_ids": [
+        "20ddfbf17b5291fb0d27a32e",
+        "b67158f988ae3dac4c4e9024",
+        "e408e1fb27a1748768b29568",
+        "379774b45600668d8216d50e",
+        "fb27eee469d906b7b63fb3ba"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "dense",
+        "query": "Tên đề tài nghiên cứu xây dựng ứng dụng web quản lý ngân hàng câu hỏi sử dụng LLMs",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 0,
+        "fused_candidates": 30,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 684,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 1,
+      "query_type": "exact-title",
+      "mode": "lexical",
+      "recall_at_k": 1.0,
+      "latency_ms": 5.75,
+      "retrieved_chunk_ids": [
+        "fb27eee469d906b7b63fb3ba",
+        "1c77b2f9358ba4861cca60d2",
+        "b67158f988ae3dac4c4e9024",
+        "66e8d570863a8edd616dde91",
+        "20ddfbf17b5291fb0d27a32e"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "lexical",
+        "query": "Tên đề tài nghiên cứu xây dựng ứng dụng web quản lý ngân hàng câu hỏi sử dụng LLMs",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 0,
+        "lexical_candidates": 47,
+        "fused_candidates": 47,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 852,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 1,
+      "query_type": "exact-title",
+      "mode": "hybrid",
+      "recall_at_k": 1.0,
+      "latency_ms": 261.74,
+      "retrieved_chunk_ids": [
+        "b67158f988ae3dac4c4e9024",
+        "20ddfbf17b5291fb0d27a32e",
+        "fb27eee469d906b7b63fb3ba",
+        "addf520d15440667f0db1d9f",
+        "849cce9bd22e54357281c88b"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "hybrid",
+        "query": "Tên đề tài nghiên cứu xây dựng ứng dụng web quản lý ngân hàng câu hỏi sử dụng LLMs",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 47,
+        "fused_candidates": 47,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 771,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 2,
+      "query_type": "rag-hallucination",
+      "mode": "dense",
+      "recall_at_k": 0.0,
+      "latency_ms": 246.62,
+      "retrieved_chunk_ids": [
+        "e299fb7a7485eb505b4474bf",
+        "849cce9bd22e54357281c88b",
+        "1b1fe1677cd90175df31299c",
+        "20ddfbf17b5291fb0d27a32e",
+        "1c77b2f9358ba4861cca60d2"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "dense",
+        "query": "Kỹ thuật nào khắc phục hiện tượng ảo giác và cải thiện độ tin cậy của mô hình ngôn ngữ lớn",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 0,
+        "fused_candidates": 30,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 810,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 2,
+      "query_type": "rag-hallucination",
+      "mode": "lexical",
+      "recall_at_k": 1.0,
+      "latency_ms": 5.3,
+      "retrieved_chunk_ids": [
+        "b2326cf151f4b9462dd47d82",
+        "1c77b2f9358ba4861cca60d2",
+        "433e7df91e497746c9fd22a5",
+        "8ea5252308103ae5fd43d65a",
+        "fb27eee469d906b7b63fb3ba"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "lexical",
+        "query": "Kỹ thuật nào khắc phục hiện tượng ảo giác và cải thiện độ tin cậy của mô hình ngôn ngữ lớn",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 0,
+        "lexical_candidates": 45,
+        "fused_candidates": 45,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 858,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 2,
+      "query_type": "rag-hallucination",
+      "mode": "hybrid",
+      "recall_at_k": 1.0,
+      "latency_ms": 247.08,
+      "retrieved_chunk_ids": [
+        "1c77b2f9358ba4861cca60d2",
+        "b2326cf151f4b9462dd47d82",
+        "1b1fe1677cd90175df31299c",
+        "8ea5252308103ae5fd43d65a",
+        "20ddfbf17b5291fb0d27a32e"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "hybrid",
+        "query": "Kỹ thuật nào khắc phục hiện tượng ảo giác và cải thiện độ tin cậy của mô hình ngôn ngữ lớn",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 45,
+        "fused_candidates": 46,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 790,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 3,
+      "query_type": "llm-vietnamese",
+      "mode": "dense",
+      "recall_at_k": 0.0,
+      "latency_ms": 255.65,
+      "retrieved_chunk_ids": [
+        "33a408f76e043cfd717ff87d",
+        "20ddfbf17b5291fb0d27a32e",
+        "502ca20dcf0e6b96c569aeb5",
+        "849cce9bd22e54357281c88b",
+        "d2003a52e9f4cf84d5a45127"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "dense",
+        "query": "Ứng dụng mô hình ngôn ngữ lớn kết hợp RAG để sinh câu hỏi tiếng Việt chuyên ngành",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 0,
+        "fused_candidates": 30,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 725,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 3,
+      "query_type": "llm-vietnamese",
+      "mode": "lexical",
+      "recall_at_k": 1.0,
+      "latency_ms": 5.55,
+      "retrieved_chunk_ids": [
+        "d2003a52e9f4cf84d5a45127",
+        "1b1fe1677cd90175df31299c",
+        "33a408f76e043cfd717ff87d",
+        "8f1c5e3314ccadbb619f7b03",
+        "fb27eee469d906b7b63fb3ba"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "lexical",
+        "query": "Ứng dụng mô hình ngôn ngữ lớn kết hợp RAG để sinh câu hỏi tiếng Việt chuyên ngành",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 0,
+        "lexical_candidates": 45,
+        "fused_candidates": 45,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 777,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 3,
+      "query_type": "llm-vietnamese",
+      "mode": "hybrid",
+      "recall_at_k": 1.0,
+      "latency_ms": 281.98,
+      "retrieved_chunk_ids": [
+        "33a408f76e043cfd717ff87d",
+        "d2003a52e9f4cf84d5a45127",
+        "20ddfbf17b5291fb0d27a32e",
+        "1b1fe1677cd90175df31299c",
+        "849cce9bd22e54357281c88b"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "hybrid",
+        "query": "Ứng dụng mô hình ngôn ngữ lớn kết hợp RAG để sinh câu hỏi tiếng Việt chuyên ngành",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 45,
+        "fused_candidates": 45,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 745,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 4,
+      "query_type": "lms-manual-authoring",
+      "mode": "dense",
+      "recall_at_k": 0.0,
+      "latency_ms": 245.69,
+      "retrieved_chunk_ids": [
+        "0628de5c9d131854c8c1e6c2",
+        "e299fb7a7485eb505b4474bf",
+        "a99abcda4474ff6f06cf7a04",
+        "addf520d15440667f0db1d9f",
+        "af7441c40cfe05818872731f"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "dense",
+        "query": "Hệ thống LMS lưu trữ tổ chức thi nhưng xây dựng nội dung đánh giá còn thủ công",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 0,
+        "fused_candidates": 30,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 471,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 4,
+      "query_type": "lms-manual-authoring",
+      "mode": "lexical",
+      "recall_at_k": 1.0,
+      "latency_ms": 5.37,
+      "retrieved_chunk_ids": [
+        "502ca20dcf0e6b96c569aeb5",
+        "849cce9bd22e54357281c88b",
+        "d98c1658f995737e372a945e",
+        "8f1c5e3314ccadbb619f7b03",
+        "1f1a765796f5c7e0afed65e7"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "lexical",
+        "query": "Hệ thống LMS lưu trữ tổ chức thi nhưng xây dựng nội dung đánh giá còn thủ công",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 0,
+        "lexical_candidates": 45,
+        "fused_candidates": 45,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 869,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 4,
+      "query_type": "lms-manual-authoring",
+      "mode": "hybrid",
+      "recall_at_k": 1.0,
+      "latency_ms": 263.06,
+      "retrieved_chunk_ids": [
+        "0a9c9a19c35e91d17ac62984",
+        "849cce9bd22e54357281c88b",
+        "502ca20dcf0e6b96c569aeb5",
+        "af7441c40cfe05818872731f",
+        "addf520d15440667f0db1d9f"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "hybrid",
+        "query": "Hệ thống LMS lưu trữ tổ chức thi nhưng xây dựng nội dung đánh giá còn thủ công",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 45,
+        "fused_candidates": 45,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 794,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 5,
+      "query_type": "question-quality",
+      "mode": "dense",
+      "recall_at_k": 0.0,
+      "latency_ms": 251.15,
+      "retrieved_chunk_ids": [
+        "8ea5252308103ae5fd43d65a",
+        "addf520d15440667f0db1d9f",
+        "b23883cb657f778d1a17f96c",
+        "379774b45600668d8216d50e",
+        "66a051e6cf41b9e0fdf179aa"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "dense",
+        "query": "Câu hỏi lập trình do GPT-3.5 tạo có phương án nhiễu và lời giải thích sư phạm",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 0,
+        "fused_candidates": 30,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 684,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 5,
+      "query_type": "question-quality",
+      "mode": "lexical",
+      "recall_at_k": 1.0,
+      "latency_ms": 5.66,
+      "retrieved_chunk_ids": [
+        "433e7df91e497746c9fd22a5",
+        "b23883cb657f778d1a17f96c",
+        "8f1c5e3314ccadbb619f7b03",
+        "1f1a765796f5c7e0afed65e7",
+        "af7441c40cfe05818872731f"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "lexical",
+        "query": "Câu hỏi lập trình do GPT-3.5 tạo có phương án nhiễu và lời giải thích sư phạm",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 0,
+        "lexical_candidates": 43,
+        "fused_candidates": 43,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 837,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    },
+    {
+      "query_index": 5,
+      "query_type": "question-quality",
+      "mode": "hybrid",
+      "recall_at_k": 1.0,
+      "latency_ms": 241.41,
+      "retrieved_chunk_ids": [
+        "b23883cb657f778d1a17f96c",
+        "8ea5252308103ae5fd43d65a",
+        "e299fb7a7485eb505b4474bf",
+        "af7441c40cfe05818872731f",
+        "433e7df91e497746c9fd22a5"
+      ],
+      "error": null,
+      "trace": {
+        "mode": "hybrid",
+        "query": "Câu hỏi lập trình do GPT-3.5 tạo có phương án nhiễu và lời giải thích sư phạm",
+        "target_heading": null,
+        "scope": {
+          "document_id": "6a9d225466c0cdc808c36e49",
+          "chunk_set_id": "6a9d23040ad24b173c1a43d4"
+        },
+        "dense_candidates": 30,
+        "lexical_candidates": 43,
+        "fused_candidates": 43,
+        "selected_count": 5,
+        "context_token_budget": 2200,
+        "context_tokens": 753,
+        "skipped_for_budget": 0,
+        "hard_heading_filter": false
+      }
+    }
+  ],
+  "fixture": {
+    "path": "/workspace/artifacts/acceptance/non-moodle-2026-09-06/fixtures/retrieval-local-fixture.json",
+    "sha256": "387b1e9eea1db3fe7408f2572f896e1180fc5bb648963417fff166ed67c5b3a6"
+  },
+  "gate": {
+    "target_recall_at_k": 0.85,
+    "passed": true
+  }
+}

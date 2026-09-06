@@ -45,6 +45,7 @@ RAG_COLLECTIONS = (
     "moodle_publications",
     "external_identities",
     "external_identity_link_tokens",
+    "moodle_sync_runs",
     "moodle_sync_pages",
     "exams",
     "exam_variants",
@@ -773,6 +774,9 @@ def _ensure_indexes() -> None:
     )
     rag_db.external_identity_link_tokens.create_index(
         [("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_external_link_tokens"
+    )
+    rag_db.moodle_sync_runs.create_index(
+        [("site_key", ASCENDING)], unique=True, name="uq_moodle_sync_run_site"
     )
     rag_db.moodle_sync_pages.create_index([("page_key", ASCENDING)], unique=True, name="uq_moodle_sync_page")
     rag_db.migration_id_map.create_index(

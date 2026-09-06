@@ -103,6 +103,8 @@ class AiModelPayload(BaseModel):
     runtime: str = Field("OLLAMA", min_length=1, max_length=80)
     kind: str = Field("CHAT", min_length=1, max_length=80)
     revision: str = "local"
+    artifact_digest: str = Field("", max_length=200)
+    quantization: str = Field("", max_length=80)
     capabilities: list[str] = Field(default_factory=list)
     priority: int = Field(10, ge=0)
     is_local: bool = True
@@ -115,6 +117,8 @@ class AiModelPayload(BaseModel):
         self.model_name = self.model_name.strip()
         self.display_name = self.display_name.strip()
         self.description = self.description.strip()
+        self.artifact_digest = self.artifact_digest.strip()
+        self.quantization = self.quantization.strip()
         self.runtime = self.runtime.strip().upper()
         if self.runtime not in {"OLLAMA", "GEMINI"}:
             raise ValueError("Nền tảng model phải là Ollama hoặc Gemini")

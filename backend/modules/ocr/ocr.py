@@ -111,7 +111,13 @@ async def process_ocr_background(
                 return
             stats = result["stats"]
             stats["processing_time"] = round(time.time() - started_at, 1)
-            save_document_pages(document_id, job_id, result["pages"])
+            save_document_pages(
+                document_id,
+                job_id,
+                result["pages"],
+                worker_id=worker_id,
+                fencing_token=fencing_token,
+            )
             checkpoint({"stage": "PAGE_SET_SAVED", "page_number": 1, "total_pages": 1})
             if _ocr_job_cancelled(job_id):
                 return
@@ -230,7 +236,13 @@ async def process_docx_background(
             f"# {document_title}\n\n" + "\n\n---\n\n".join(page["text"] for page in pages),
             encoding="utf-8",
         )
-        save_document_pages(document_id, job_id, pages)
+        save_document_pages(
+            document_id,
+            job_id,
+            pages,
+            worker_id=worker_id,
+            fencing_token=fencing_token,
+        )
         if _ocr_job_cancelled(job_id):
             return
         stats["processing_time"] = round(time.time() - started_at, 1)

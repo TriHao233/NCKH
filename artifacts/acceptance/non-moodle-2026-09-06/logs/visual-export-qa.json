@@ -1,0 +1,44 @@
+{
+  "scope": "Four shuffled variants, seven question types, student and answer exports in PDF and DOCX.",
+  "question_types": [
+    "TRAC_NGHIEM",
+    "NHIEU_LUA_CHON",
+    "DUNG_SAI",
+    "DIEN_KHUYET",
+    "GHEP_COT",
+    "SAP_XEP",
+    "TINH_HUONG"
+  ],
+  "export_files": 16,
+  "rendered_pages": {
+    "pdf": 12,
+    "docx": 12,
+    "total": 24
+  },
+  "checks": {
+    "all_pages_rendered": true,
+    "all_pages_visually_inspected": true,
+    "no_clipped_or_overlapping_text": true,
+    "vietnamese_glyphs_readable": true,
+    "answer_keys_match_shuffled_snapshots": true,
+    "ordering_and_matching_sequence_preserved": true,
+    "student_exports_do_not_include_answer_heading_or_explanation": true,
+    "code_blocks_render_semantically": true,
+    "tables_render_semantically": true,
+    "formula_blocks_render_semantically": true,
+    "image_blocks_exercised": true,
+    "unsafe_html_escaped": true,
+    "docx_heading_color_consistent": true
+  },
+  "observations": [
+    "Inline and fenced code render without Markdown delimiters in PDF and DOCX.",
+    "Pipe-delimited Markdown renders as a bordered table in both formats.",
+    "LaTeX input renders as MathML in PDF and native OMML in DOCX.",
+    "A data-URI PNG renders in all four student variants; remote/file URLs remain blocked to prevent SSRF and local-file disclosure.",
+    "Raw HTML is escaped and DOCX heading colors are explicitly black.",
+    "All final pages under qa-rich-final2 were inspected after the final regeneration."
+  ],
+  "basic_layout_passed": true,
+  "rich_content_gate_passed": true,
+  "passed": true
+}

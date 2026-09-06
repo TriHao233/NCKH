@@ -6,6 +6,7 @@ services:
       APP_ENV: production
       DEMO_MODE: "false"
       INFERENCE_POLICY: LOCAL_ONLY
+      REQUIRE_MODEL_ARTIFACT_DIGEST: "true"
       REQUIRE_MONGO_TRANSACTIONS: "true"
     deploy:
       resources:
@@ -19,6 +20,7 @@ services:
       APP_ENV: production
       DEMO_MODE: "false"
       INFERENCE_POLICY: LOCAL_ONLY
+      REQUIRE_MODEL_ARTIFACT_DIGEST: "true"
       REQUIRE_MONGO_TRANSACTIONS: "true"
     deploy:
       resources:
@@ -26,9 +28,9 @@ services:
           memory: 12G
           cpus: "6"
   mongodb:
-    ports: []
+    ports: !reset []
   frontend:
-    ports:
+    ports: !override
       - "127.0.0.1:8080:80"
 
 volumes:

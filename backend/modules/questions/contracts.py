@@ -139,8 +139,12 @@ class MatchingData(BaseQuestionData):
         alpha = {key for key in self.options if key.isalpha()}
         if len(numeric) < 3 or len(alpha) < len(numeric) + 1:
             raise ValueError("Ghép cột cần ít nhất 3 vế số và thêm ít nhất 1 phương án nhiễu chữ")
+        grammar = r"\s*\d+\s*-\s*[A-Za-z](?:\s*[,;|]\s*\d+\s*-\s*[A-Za-z])*\s*"
+        if not re.fullmatch(grammar, self.correct_answer):
+            raise ValueError("Đáp án ghép cột không đúng định dạng 1-A,2-B,...")
         pairs = re.findall(r"(\d+)\s*-\s*([A-Za-z])", self.correct_answer)
-        if {left for left, _ in pairs} != numeric:
+        left_keys = [left for left, _ in pairs]
+        if len(left_keys) != len(set(left_keys)) or set(left_keys) != numeric:
             raise ValueError("Ghép cột phải ánh xạ đủ mọi vế số")
         if any(right.upper() not in alpha for _, right in pairs):
             raise ValueError("Ghép cột có đáp án không tồn tại")

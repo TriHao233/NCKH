@@ -61,12 +61,23 @@ class MoodleMembershipItem(BaseModel):
 class MoodleSyncPageRequest(BaseModel):
     site_key: str = Field(..., min_length=1, max_length=80)
     sync_id: str = Field(..., min_length=1, max_length=160)
+    page_number: int = Field(..., ge=1)
     checkpoint: str = Field(..., min_length=1, max_length=500)
     next_checkpoint: str | None = Field(None, max_length=500)
     is_last_page: bool = False
     identities: list[MoodleIdentityItem] = Field(default_factory=list, max_length=1000)
     memberships: list[MoodleMembershipItem] = Field(default_factory=list, max_length=3000)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_checkpoint_chain(self):
+        if self.is_last_page and self.next_checkpoint:
+            raise ValueError("Trang cuối không được có next_checkpoint")
+        if not self.is_last_page and not self.next_checkpoint:
+            raise ValueError("Trang chưa cuối phải có next_checkpoint")
+        if self.next_checkpoint == self.checkpoint:
+            raise ValueError("next_checkpoint phải khác checkpoint hiện tại")
+        return self
 
 
 class MoodleLinkTokenRequest(BaseModel):

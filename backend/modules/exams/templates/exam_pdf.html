@@ -66,13 +66,56 @@
   .question .q-content {
     font-weight: bold;
   }
+  .rich-paragraph { margin: 0 0 4px 0; }
+  .inline-code, .code-block {
+    font-family: "Courier New", monospace;
+    font-size: 10pt;
+    background: #f1f1f1;
+    border: 1px solid #ccc;
+    border-radius: 2px;
+  }
+  .inline-code { padding: 0 3px; }
+  .code-block {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 6px 8px;
+    margin: 5px 0;
+  }
+  .inline-math, .math-block {
+    font-family: "Cambria Math", "Times New Roman", serif;
+    font-style: italic;
+  }
+  .math-block { text-align: center; margin: 5px 0; }
+  .inline-image {
+    display: block;
+    max-width: 70%;
+    max-height: 7cm;
+    object-fit: contain;
+    margin: 5px auto;
+  }
+  .rich-table {
+    width: auto;
+    max-width: 100%;
+    border-collapse: collapse;
+    margin: 5px 0;
+    font-weight: normal;
+  }
+  .rich-table td, .rich-table th {
+    border: 1px solid #000;
+    padding: 2px 7px;
+    text-align: left;
+  }
   .options {
     margin: 4px 0 0 0;
     padding-left: 18px;
   }
   .options .option {
     display: block;
+    margin-bottom: 2px;
   }
+  .q-content > .rich-paragraph:first-of-type,
+  .option > .rich-paragraph:first-of-type { display: inline; }
+  .option .rich-paragraph { margin: 0; }
   .options .option.correct {
     font-weight: bold;
     text-decoration: underline;
@@ -117,11 +160,11 @@
   {% if show_questions %}
   {% for q in questions %}
   <div class="question">
-    <div class="q-content">Câu {{ q.number }}. {{ q.content }}</div>
+    <div class="q-content"><span>Câu {{ q.number }}. </span>{{ q.content_html }}</div>
     {% if q.options %}
     <div class="options">
       {% for opt in q.options %}
-      <span class="option{% if show_answers and opt.correct %} correct{% endif %}">{{ opt.label }}. {{ opt.text }}</span>
+      <div class="option{% if show_answers and opt.correct %} correct{% endif %}"><span>{{ opt.label }}. </span>{{ opt.html }}</div>
       {% endfor %}
     </div>
     {% endif %}

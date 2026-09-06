@@ -1,0 +1,40 @@
+{
+  "scope": "Multilingual embedding comparison; repository PDF fixture only, not the licensed CTDL corpus.",
+  "queries": [
+    {
+      "document_id": "6a9d225466c0cdc808c36e49",
+      "collection_name": "acceptance_chunks_multilingual",
+      "query_type": "exact-title",
+      "query": "Tên đề tài nghiên cứu xây dựng ứng dụng web quản lý ngân hàng câu hỏi sử dụng LLMs",
+      "expected_chunk_ids": ["fb27eee469d906b7b63fb3ba"]
+    },
+    {
+      "document_id": "6a9d225466c0cdc808c36e49",
+      "collection_name": "acceptance_chunks_multilingual",
+      "query_type": "rag-hallucination",
+      "query": "Kỹ thuật nào khắc phục hiện tượng ảo giác và cải thiện độ tin cậy của mô hình ngôn ngữ lớn",
+      "expected_chunk_ids": ["b2326cf151f4b9462dd47d82"]
+    },
+    {
+      "document_id": "6a9d225466c0cdc808c36e49",
+      "collection_name": "acceptance_chunks_multilingual",
+      "query_type": "llm-vietnamese",
+      "query": "Ứng dụng mô hình ngôn ngữ lớn kết hợp RAG để sinh câu hỏi tiếng Việt chuyên ngành",
+      "expected_chunk_ids": ["1b1fe1677cd90175df31299c"]
+    },
+    {
+      "document_id": "6a9d225466c0cdc808c36e49",
+      "collection_name": "acceptance_chunks_multilingual",
+      "query_type": "lms-manual-authoring",
+      "query": "Hệ thống LMS lưu trữ tổ chức thi nhưng xây dựng nội dung đánh giá còn thủ công",
+      "expected_chunk_ids": ["502ca20dcf0e6b96c569aeb5"]
+    },
+    {
+      "document_id": "6a9d225466c0cdc808c36e49",
+      "collection_name": "acceptance_chunks_multilingual",
+      "query_type": "question-quality",
+      "query": "Câu hỏi lập trình do GPT-3.5 tạo có phương án nhiễu và lời giải thích sư phạm",
+      "expected_chunk_ids": ["433e7df91e497746c9fd22a5"]
+    }
+  ]
+}

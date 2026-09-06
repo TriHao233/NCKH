@@ -162,7 +162,7 @@ def _mongo_lexical_candidates(chunk_set_id: str, normalized_target: str) -> list
             "source_ocr_job_id": 1,
             "source_span": 1,
         },
-    ).sort("chunk_no", 1).limit(max(1, settings.retrieval_lexical_candidate_limit))
+    ).sort("chunk_no", 1)
     candidates = []
     for chunk in cursor:
         heading = chunk.get("heading") or {}
@@ -347,6 +347,9 @@ def get_context_snapshot(
         if retrieval_mode in {"hybrid", "lexical"}:
             lexical_source = _mongo_lexical_candidates(chunk_set_id, normalized_target)
             lexical_candidates = _lexical_rank(lexical_source, query_tokens)
+            lexical_candidates = lexical_candidates[
+                : max(1, settings.retrieval_lexical_candidate_limit)
+            ]
         fused_candidates = _fuse_candidates(
             dense_candidates,
             lexical_candidates,
@@ -365,13 +368,17 @@ def get_context_snapshot(
         skipped_for_budget = 0
         for document, metadata in fused_candidates:
             token_count = int(metadata.get("token_count") or _estimated_tokens(document))
-            if selected_chunks and used_tokens + token_count > resolved_budget:
+            if used_tokens + token_count > resolved_budget:
                 skipped_for_budget += 1
                 continue
             selected_chunks.append((document, metadata, token_count))
             used_tokens += token_count
             if len(selected_chunks) >= max(1, limit):
                 break
+        if not selected_chunks:
+            raise ValueError(
+                "INSUFFICIENT_EVIDENCE: mọi chunk phù hợp đều vượt context token budget"
+            )
 
         assembled_context = []
         retrieval_results = []

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -155,42 +156,64 @@ class ProcessingRevisionPersistenceTests(unittest.TestCase):
         database.document_processing_revisions.find_one.return_value = {
             "_id": revision_id,
             "revision_no": 3,
+            "status": "PROCESSING",
         }
+        database.document_processing_revisions.update_one.return_value.matched_count = 1
+        database.documents.update_one.return_value.matched_count = 1
         repository = MongoDocumentRepository(database)
-        repository.find_job = MagicMock(
-            return_value={
+        database.document_jobs.find_one.return_value = {
                 "_id": job_id,
                 "document_id": document_id,
                 "document_version": 1,
                 "job_type": "OCR",
+                "status": "PROCESSING",
                 "processing_revision_id": revision_id,
                 "config": {},
             }
-        )
 
-        count = repository.save_pages(
-            str(document_id),
-            str(job_id),
-            [
-                {
-                    "page_number": 1,
-                    "text": "cleaned fallback",
-                    "original_text": "",
-                    "extraction_method": "TEXT",
-                    "quality_flags": [],
-                }
-            ],
-        )
+        with patch("modules.documents.repository.mongo_transaction", return_value=nullcontext(None)):
+            count = repository.save_pages(
+                str(document_id),
+                str(job_id),
+                [
+                    {
+                        "page_number": 1,
+                        "text": "cleaned fallback",
+                        "original_text": "",
+                        "extraction_method": "TEXT",
+                        "quality_flags": [],
+                    }
+                ],
+            )
 
         self.assertEqual(count, 1)
         database.document_pages.delete_many.assert_called_once_with(
-            {"processing_revision_id": revision_id}
+            {"processing_revision_id": revision_id}, session=None
         )
         saved = database.document_pages.insert_many.call_args.args[0][0]
         self.assertEqual(saved["raw_text"], "")
         self.assertEqual(saved["cleaned_text"], "cleaned fallback")
         self.assertEqual(saved["processing_revision_id"], revision_id)
         self.assertEqual(saved["revision_no"], 3)
+
+    def test_save_pages_rejects_completed_job_before_any_page_write(self):
+        document_id = ObjectId()
+        database = MagicMock()
+        database.document_jobs.find_one.return_value = None
+        repository = MongoDocumentRepository(database)
+
+        with (
+            patch("modules.documents.repository.mongo_transaction", return_value=nullcontext(None)),
+            self.assertRaisesRegex(RuntimeError, "IMMUTABLE"),
+        ):
+            repository.save_pages(
+                str(document_id),
+                str(ObjectId()),
+                [{"page_number": 1, "text": "late stale overwrite"}],
+            )
+
+        database.document_pages.delete_many.assert_not_called()
+        database.document_pages.insert_many.assert_not_called()
 
 
 class DurableDocumentJobTests(unittest.TestCase):

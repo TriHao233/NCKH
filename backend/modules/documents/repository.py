@@ -713,6 +713,7 @@ class MongoDocumentRepository:
             fields["finished_at"] = now
             if normalized == "COMPLETED":
                 fields["progress"] = 100
+                fields["error"] = None
         job_filter: dict = {"_id": job["_id"]}
         if expected_worker_id is not None:
             job_filter["worker_id"] = expected_worker_id
@@ -734,6 +735,8 @@ class MongoDocumentRepository:
                 "message": message,
                 "at": now,
             }
+        elif normalized == "COMPLETED":
+            document_fields["latest_error"] = None
         if normalized == "CANCELLED" and job.get("job_type") == "CHUNK":
             chunk_sets = list(self.db.chunk_sets.find({"chunk_job_id": job["_id"]}, {"_id": 1}))
             chunk_set_ids = [chunk_set["_id"] for chunk_set in chunk_sets]
@@ -868,72 +871,117 @@ class MongoDocumentRepository:
         )
         return result.matched_count == 1
 
-    def save_pages(self, document_id: str, ocr_job_id: str, pages: list[dict]) -> int:
+    def save_pages(
+        self,
+        document_id: str,
+        ocr_job_id: str,
+        pages: list[dict],
+        *,
+        worker_id: str | None = None,
+        fencing_token: int | None = None,
+    ) -> int:
         document_oid = object_id(document_id, "document_id")
-        job = self.find_job(ocr_job_id)
-        if not job or job["document_id"] != document_oid or job["job_type"] != "OCR":
-            raise ValueError("OCR job không thuộc tài liệu")
-        now = utc_now()
-        revision_id = job.get("processing_revision_id") or job["_id"]
-        revision = self.db.document_processing_revisions.find_one({"_id": revision_id}) or {}
-        revision_no = int(revision.get("revision_no", job.get("attempt_no", 1)))
-        records = [
-            {
-                "schema_version": SCHEMA_VERSION,
-                "document_id": document_oid,
-                "document_version": job["document_version"],
-                "ocr_job_id": job["_id"],
-                "processing_revision_id": revision_id,
-                "revision_no": revision_no,
-                "page_number": int(page["page_number"]),
-                "raw_text": (
-                    page.get("original_text")
-                    if page.get("original_text") is not None
-                    else page.get("text", "")
-                ),
-                "cleaned_text": page.get("text", ""),
-                "formula_blocks": page.get("formula_blocks", []),
-                "layout_blocks": page.get("layout_blocks", []),
-                "visual_blocks": page.get("visual_blocks", []),
-                "extraction_method": page.get("extraction_method", "OCR"),
-                "quality_flags": page.get("quality_flags", []),
-                "created_at": now,
-                "updated_at": now,
-            }
-            for page in pages
-        ]
-        # A retry may rewrite its own unfinished page set, but never deletes a
-        # previous revision that questions or chunks can still reference.
-        self.db.document_pages.delete_many({"processing_revision_id": revision_id})
-        if records:
-            self.db.document_pages.insert_many(records, ordered=True)
-        page_set_hash = self._page_set_hash(records)
-        manifest = {
-            "page_set_hash": page_set_hash,
-            "page_count": len(records),
-            "methods": sorted({record["extraction_method"] for record in records}),
+        job_oid = object_id(ocr_job_id, "ocr_job_id")
+        if (worker_id is None) != (fencing_token is None):
+            raise ValueError("worker_id và fencing_token phải được cung cấp cùng nhau")
+        job_query: dict = {
+            "_id": job_oid,
+            "document_id": document_oid,
+            "job_type": "OCR",
+            "status": {"$in": ["QUEUED", "PROCESSING"]},
         }
-        output_uri = (job.get("config") or {}).get("output_path")
-        if output_uri and Path(output_uri).is_file():
-            manifest["markdown"] = {
-                "uri": output_uri,
-                "sha256": hashlib.sha256(Path(output_uri).read_bytes()).hexdigest(),
-            }
-        self.db.document_processing_revisions.update_one(
-            {"_id": revision_id},
-            {
-                "$set": {
-                    "page_count": len(records),
-                    "page_set_hash": page_set_hash,
-                    "manifest": manifest,
+        if worker_id is not None:
+            job_query.update(
+                {
+                    "status": "PROCESSING",
+                    "worker_id": worker_id,
+                    "fencing_token": fencing_token,
+                }
+            )
+        now = utc_now()
+        with mongo_transaction() as session:
+            job = self.db.document_jobs.find_one(job_query, session=session)
+            if not job:
+                raise RuntimeError("DOCUMENT_JOB_LEASE_LOST_OR_PAGE_SET_IMMUTABLE")
+            revision_id = job.get("processing_revision_id") or job["_id"]
+            revision = self.db.document_processing_revisions.find_one(
+                {
+                    "_id": revision_id,
+                    "status": {"$in": ["QUEUED", "PROCESSING"]},
+                },
+                session=session,
+            )
+            if not revision:
+                raise RuntimeError("DOCUMENT_PROCESSING_REVISION_IMMUTABLE")
+            revision_no = int(revision.get("revision_no", job.get("attempt_no", 1)))
+            records = [
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "document_id": document_oid,
+                    "document_version": job["document_version"],
+                    "ocr_job_id": job["_id"],
+                    "processing_revision_id": revision_id,
+                    "revision_no": revision_no,
+                    "page_number": int(page["page_number"]),
+                    "raw_text": (
+                        page.get("original_text")
+                        if page.get("original_text") is not None
+                        else page.get("text", "")
+                    ),
+                    "cleaned_text": page.get("text", ""),
+                    "formula_blocks": page.get("formula_blocks", []),
+                    "layout_blocks": page.get("layout_blocks", []),
+                    "visual_blocks": page.get("visual_blocks", []),
+                    "extraction_method": page.get("extraction_method", "OCR"),
+                    "quality_flags": page.get("quality_flags", []),
+                    "created_at": now,
                     "updated_at": now,
                 }
-            },
-        )
-        self.collection.update_one(
-            {"_id": document_oid, "archived_at": None},
-            {"$set": {"page_count": len(records), "updated_at": now}},
-        )
+                for page in pages
+            ]
+            page_set_hash = self._page_set_hash(records)
+            manifest = {
+                "page_set_hash": page_set_hash,
+                "page_count": len(records),
+                "methods": sorted({record["extraction_method"] for record in records}),
+            }
+            output_uri = (job.get("config") or {}).get("output_path")
+            if output_uri and Path(output_uri).is_file():
+                manifest["markdown"] = {
+                    "uri": output_uri,
+                    "sha256": hashlib.sha256(Path(output_uri).read_bytes()).hexdigest(),
+                }
+            revision_result = self.db.document_processing_revisions.update_one(
+                {
+                    "_id": revision_id,
+                    "status": {"$in": ["QUEUED", "PROCESSING"]},
+                },
+                {
+                    "$set": {
+                        "page_count": len(records),
+                        "page_set_hash": page_set_hash,
+                        "manifest": manifest,
+                        "updated_at": now,
+                    }
+                },
+                session=session,
+            )
+            if not revision_result.matched_count:
+                raise RuntimeError("DOCUMENT_PROCESSING_REVISION_IMMUTABLE")
+            # Rewrites are allowed only inside the still-owned unfinished
+            # revision; transaction rollback prevents a partial page set.
+            self.db.document_pages.delete_many(
+                {"processing_revision_id": revision_id}, session=session
+            )
+            if records:
+                self.db.document_pages.insert_many(records, ordered=True, session=session)
+            document_result = self.collection.update_one(
+                {"_id": document_oid, "archived_at": None},
+                {"$set": {"page_count": len(records), "updated_at": now}},
+                session=session,
+            )
+            if not document_result.matched_count:
+                raise RuntimeError("DOCUMENT_ARCHIVED")
         return len(records)
 
     @staticmethod

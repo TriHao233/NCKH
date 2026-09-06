@@ -22,6 +22,26 @@ VALID_OPTIONS = {"A": "Một", "B": "Hai", "C": "Ba", "D": "Bốn"}
 
 
 class StageEContractTests(unittest.IsolatedAsyncioTestCase):
+    def test_matching_rejects_duplicate_left_and_trailing_garbage(self):
+        base = {
+            "options": {
+                "1": "Một",
+                "2": "Hai",
+                "3": "Ba",
+                "A": "A",
+                "B": "B",
+                "C": "C",
+                "D": "Nhiễu",
+            }
+        }
+        for answer in ("1-A,1-B,2-B,3-C", "1-A,2-B,3-C,garbage"):
+            with self.assertRaisesRegex(ValueError, "QUESTION_DATA_INVALID"):
+                validate_question_contract(
+                    "Ghép các phần tử",
+                    "ghep_cot",
+                    {**base, "correct_answer": answer},
+                )
+
     def test_shared_typed_contract_covers_all_question_types(self):
         valid = {
             "trac_nghiem": ("Chọn đáp án", {"options": VALID_OPTIONS, "correct_answer": "A"}),

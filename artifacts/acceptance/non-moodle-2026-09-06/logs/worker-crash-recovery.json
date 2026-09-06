@@ -1,0 +1,34 @@
+{
+  "job_id": "6a9d22a3e4e72b9b7018b44e",
+  "document_id": "6a9d22a3e4e72b9b7018b44b",
+  "checks": {
+    "job_completed": true,
+    "retried_after_crash": true,
+    "fencing_advanced": true,
+    "document_ready_for_next_stage": true,
+    "pages_persisted": true,
+    "page_numbers_unique": true,
+    "page_numbers_contiguous": true,
+    "page_count_matches_document": true
+  },
+  "passed": true,
+  "job": {
+    "job_id": "6a9d22a3e4e72b9b7018b44e",
+    "status": "COMPLETED",
+    "progress": 100,
+    "worker_id": "c57e2a8b816e-1",
+    "fencing_token": 2,
+    "run_attempt": 2,
+    "checkpoint": {
+      "stage": "PAGE_SET_SAVED",
+      "page_number": 1,
+      "total_pages": 1
+    },
+    "updated_at": "2026-09-06 08:22:40.670000+00:00",
+    "error": {
+      "message": "Job was active before backend startup and exceeded 1 minute recovery timeout",
+      "at": "2026-09-06 08:22:31.229000+00:00"
+    }
+  },
+  "page_count": 300
+}

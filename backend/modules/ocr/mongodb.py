@@ -174,8 +174,21 @@ def update_document_status(
             )
 
 
-def save_document_pages(document_id: str, job_id: str, pages: list):
-    return _repository().save_pages(document_id, job_id, pages)
+def save_document_pages(
+    document_id: str,
+    job_id: str,
+    pages: list,
+    *,
+    worker_id: str | None = None,
+    fencing_token: int | None = None,
+):
+    return _repository().save_pages(
+        document_id,
+        job_id,
+        pages,
+        worker_id=worker_id,
+        fencing_token=fencing_token,
+    )
 
 
 def get_document_status(job_id: str) -> dict | None:

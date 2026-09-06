@@ -24,13 +24,31 @@ def _finalize_snapshot(snapshot: dict) -> dict:
         "scheduler": settings.gpu_scheduling_profile,
         "group": "gpu:local_inference" if runtime == "OLLAMA" else f"runtime:{runtime.lower()}",
     }
-    digest_payload = {
+    config_payload = {
         key: value
         for key, value in finalized.items()
-        if key not in {"catalog_id", "display_name", "description", "model_digest"}
+        if key not in {
+            "catalog_id",
+            "display_name",
+            "description",
+            "model_digest",
+            "config_digest",
+            "artifact_digest",
+        }
+    }
+    finalized["config_digest"] = hashlib.sha256(
+        json.dumps(config_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    release_payload = {
+        "artifact_digest": finalized.get("artifact_digest") or "",
+        "config_digest": finalized["config_digest"],
+        "model_name": finalized.get("model_name"),
+        "revision": finalized.get("revision"),
+        "quantization": finalized.get("quantization"),
+        "logical_role": finalized.get("logical_role"),
     }
     finalized["model_digest"] = hashlib.sha256(
-        json.dumps(digest_payload, sort_keys=True, default=str).encode("utf-8")
+        json.dumps(release_payload, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
     return finalized
 
@@ -77,6 +95,10 @@ def enforce_inference_policy(snapshot: dict) -> dict:
         raise ValueError(
             f"Endpoint model '{host or endpoint}' không thuộc LOCAL_INFERENCE_ALLOWED_HOSTS"
         )
+    if settings.require_model_artifact_digest and not str(snapshot.get("artifact_digest") or "").strip():
+        raise ValueError("Model local chưa có artifact_digest của weights đã cài")
+    if settings.require_model_artifact_digest and not str(snapshot.get("quantization") or "").strip():
+        raise ValueError("Model local chưa khai báo quantization của release")
     return _finalize_snapshot(snapshot)
 
 
@@ -140,6 +162,8 @@ def _snapshot_from_record(record: dict, requested_code: str, capability: str | N
         "model_name": model_name,
         "runtime": runtime,
         "revision": str(record.get("revision") or ""),
+        "artifact_digest": str(record.get("artifact_digest") or ""),
+        "quantization": str(record.get("quantization") or ""),
         "capabilities": capabilities,
         "is_local": bool(record.get("is_local", runtime == "OLLAMA")),
         "parameters": _runtime_parameters(runtime, record.get("config") or {}),
@@ -155,9 +179,14 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
     normalized = model_code.strip().lower()
     if normalized == "qwen":
         runtime, model_name, display_name = "OLLAMA", settings.qwen_model_name, "Qwen"
+        artifact_digest, quantization = settings.qwen_model_artifact_digest, settings.qwen_model_quantization
         config: dict[str, Any] = {}
     elif normalized in {"deepseek", "deepseek-r1"}:
         runtime, model_name, display_name = "OLLAMA", settings.deepseek_model_name, "DeepSeek"
+        artifact_digest, quantization = (
+            settings.deepseek_model_artifact_digest,
+            settings.deepseek_model_quantization,
+        )
         config = {
             "timeout_seconds": settings.deepseek_timeout_seconds,
             "num_predict": settings.deepseek_num_predict,
@@ -165,6 +194,10 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
         }
     elif normalized == "deepseek-r1:8b":
         runtime, model_name, display_name = "OLLAMA", model_code, "DeepSeek R1 8B"
+        artifact_digest, quantization = (
+            settings.deepseek_model_artifact_digest,
+            settings.deepseek_model_quantization,
+        )
         config = {
             "timeout_seconds": settings.deepseek_timeout_seconds,
             "num_predict": settings.deepseek_num_predict,
@@ -172,12 +205,15 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
         }
     elif normalized == "gemini":
         runtime, model_name, display_name = "GEMINI", settings.gemini_model_name, "Gemini"
+        artifact_digest, quantization = "managed-api", "managed"
         config = {}
     elif normalized.startswith("ollama:"):
         runtime, model_name, display_name = "OLLAMA", model_code.split(":", 1)[1].strip(), "Ollama"
+        artifact_digest, quantization = "", ""
         config = {}
     elif normalized.startswith("gemini:"):
         runtime, model_name, display_name = "GEMINI", model_code.split(":", 1)[1].strip(), "Gemini"
+        artifact_digest, quantization = "managed-api", "managed"
         config = {}
     else:
         raise ValueError(f"Mô hình AI '{model_code}' chưa được hỗ trợ")
@@ -195,6 +231,8 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
         "model_name": model_name,
         "runtime": runtime,
         "revision": "environment",
+        "artifact_digest": artifact_digest,
+        "quantization": quantization,
         "capabilities": capabilities,
         "is_local": runtime == "OLLAMA",
         "parameters": _runtime_parameters(runtime, config),

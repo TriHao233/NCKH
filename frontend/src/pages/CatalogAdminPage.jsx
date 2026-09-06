@@ -116,6 +116,8 @@ function CatalogAdminPage() {
     runtime: 'OLLAMA',
     kind: 'CHAT',
     revision: 'local',
+    artifact_digest: '',
+    quantization: '',
     capabilities: 'QUESTION_GENERATION,QUESTION_EVALUATION',
     priority: 10,
     is_active: true,
@@ -314,6 +316,8 @@ function CatalogAdminPage() {
       runtime: model.runtime || 'OLLAMA',
       kind: model.kind || 'CHAT',
       revision: model.revision || 'local',
+      artifact_digest: model.artifact_digest || '',
+      quantization: model.quantization || '',
       capabilities: (model.capabilities || []).join(','),
       priority: model.priority ?? 10,
       is_active: model.is_active !== false,
@@ -657,6 +661,14 @@ function CatalogAdminPage() {
                 </label>
                 {modelForm.runtime === 'OLLAMA' ? (
                   <>
+                    <label className="catalog-model-field">
+                      <span>Digest artifact weights</span>
+                      <input placeholder="sha256:..." value={modelForm.artifact_digest} onChange={(e) => setModelForm({ ...modelForm, artifact_digest: e.target.value })} />
+                    </label>
+                    <label className="catalog-model-field">
+                      <span>Quantization</span>
+                      <input placeholder="Ví dụ: Q4_K_M" value={modelForm.quantization} onChange={(e) => setModelForm({ ...modelForm, quantization: e.target.value })} />
+                    </label>
                     <label className="catalog-model-field">
                       <span>Số token tối đa</span>
                       <input type="number" min="1" max="32768" value={modelForm.config.num_predict} onChange={(e) => setModelForm({ ...modelForm, config: { ...modelForm.config, num_predict: e.target.value } })} />

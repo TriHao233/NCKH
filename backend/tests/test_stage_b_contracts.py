@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 from bson import ObjectId
 from core.access_policy import has_subject_access
@@ -63,6 +64,62 @@ class Collection:
 
 
 class StageBContractTests(unittest.TestCase):
+    @staticmethod
+    def _review_service_for_form_validation():
+        question_id, version_id = ObjectId(), ObjectId()
+        question = {
+            "_id": question_id,
+            "current_version": 1,
+            "current_version_id": version_id,
+            "review_status": "PENDING",
+            "evaluation_status": "PASSED",
+            "created_by_user_id": ObjectId(),
+        }
+        version = {
+            "_id": version_id,
+            "question_id": question_id,
+            "version": 1,
+            "created_by_user_id": ObjectId(),
+        }
+        service = QuestionWorkflowService(MagicMock())
+        service._pair = MagicMock(return_value=(question, version))
+        service._has_review_scope = MagicMock(return_value=True)
+        service._owns_question = MagicMock(return_value=False)
+        return service, str(question_id)
+
+    @staticmethod
+    def _criteria(failing_key=None):
+        return [
+            {
+                "key": key,
+                "label": key,
+                "rating": "FAIL" if key == failing_key else "PASS",
+            }
+            for key in (
+                "faithfulness",
+                "contextual_relevancy",
+                "answer_relevancy",
+                "bloom_alignment",
+                "clo_alignment",
+            )
+        ]
+
+    def test_approval_requires_complete_unique_passing_criteria(self):
+        reviewer = current_user()
+        for criteria, message in (
+            ([], "đủ và duy nhất"),
+            (self._criteria()[:-1] + [self._criteria()[0]], "đủ và duy nhất"),
+            (self._criteria("faithfulness"), "tiêu chí FAIL"),
+        ):
+            service, question_id = self._review_service_for_form_validation()
+            payload = ReviewCreateRequest(
+                expected_version=1,
+                decision="APPROVED",
+                review_form={"criterion_assessments": criteria},
+            )
+            with self.assertRaisesRegex(ValueError, message):
+                service.review(question_id, payload, reviewer)
+
     def test_subject_scope_is_deny_by_default_and_allows_active_membership(self):
         user_id = ObjectId()
         subject_id = ObjectId()
@@ -192,6 +249,21 @@ class StageBContractTests(unittest.TestCase):
         finally:
             settings.inference_policy = old_policy
             settings.gemini_api_key = old_key
+            settings.ollama_generate_url = old_url
+
+    def test_release_gate_rejects_unpinned_local_model(self):
+        old_policy = settings.inference_policy
+        old_required = settings.require_model_artifact_digest
+        old_url = settings.ollama_generate_url
+        try:
+            settings.inference_policy = "LOCAL_ONLY"
+            settings.require_model_artifact_digest = True
+            settings.ollama_generate_url = "http://localhost:11434/api/generate"
+            with self.assertRaisesRegex(ValueError, "artifact_digest"):
+                resolve_direct_model_snapshot("ollama:never-installed-audit-model:latest")
+        finally:
+            settings.inference_policy = old_policy
+            settings.require_model_artifact_digest = old_required
             settings.ollama_generate_url = old_url
 
     def test_session_repository_discards_raw_bearer(self):

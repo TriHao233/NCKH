@@ -2351,6 +2351,14 @@ class QuestionWorkflowService:
             and not payload.override.applied
         ):
             raise ValueError("Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override")
+        if payload.decision == "APPROVED":
+            assessments = payload.review_form.criterion_assessments
+            keys = [item.key for item in assessments]
+            required_keys = set(DEFAULT_WEIGHTS)
+            if len(keys) != len(required_keys) or set(keys) != required_keys:
+                raise ValueError("Duyệt câu hỏi cần đánh giá đủ và duy nhất 5 tiêu chí")
+            if any(item.rating == "FAIL" for item in assessments):
+                raise ValueError("Không thể duyệt câu hỏi khi còn tiêu chí FAIL")
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
         secondary = question.get("secondary_review") or {}

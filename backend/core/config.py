@@ -92,6 +92,7 @@ class Settings(BaseModel):
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
     inference_policy: str = os.getenv("INFERENCE_POLICY", "LOCAL_ONLY").strip().upper()
+    require_model_artifact_digest: bool = _env_bool("REQUIRE_MODEL_ARTIFACT_DIGEST", False)
     local_inference_allowed_hosts: list[str] = [
         host.strip().lower()
         for host in os.getenv(
@@ -130,7 +131,11 @@ class Settings(BaseModel):
     ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "900"))
     ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
     qwen_model_name: str = os.getenv("QWEN_MODEL_NAME", "qwen2.5:7b").strip()
+    qwen_model_artifact_digest: str = os.getenv("QWEN_MODEL_ARTIFACT_DIGEST", "").strip()
+    qwen_model_quantization: str = os.getenv("QWEN_MODEL_QUANTIZATION", "").strip()
     deepseek_model_name: str = _env_first(("DEEPSEEK_MODEL_NAME",), "deepseek-r1")
+    deepseek_model_artifact_digest: str = os.getenv("DEEPSEEK_MODEL_ARTIFACT_DIGEST", "").strip()
+    deepseek_model_quantization: str = os.getenv("DEEPSEEK_MODEL_QUANTIZATION", "").strip()
     deepseek_timeout_seconds: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "180"))
     deepseek_num_predict: int = int(os.getenv("DEEPSEEK_NUM_PREDICT", "900"))
     deepseek_temperature: float = float(os.getenv("DEEPSEEK_TEMPERATURE", "0"))
@@ -174,7 +179,12 @@ class Settings(BaseModel):
 
     chromadb_collection_name: str = os.getenv("CHROMADB_COLLECTION_NAME", "chunks")
     chromadb_batch_size: int = int(os.getenv("CHROMADB_BATCH_SIZE", "50"))
-    embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+    embedding_model_name: str = os.getenv(
+        "EMBEDDING_MODEL_NAME",
+        "bkai-foundation-models/vietnamese-bi-encoder",
+    )
+    embedding_model_artifact_digest: str = os.getenv("EMBEDDING_MODEL_ARTIFACT_DIGEST", "").strip()
+    embedding_model_revision: str = os.getenv("EMBEDDING_MODEL_REVISION", "").strip()
     gpu_scheduling_profile: str = os.getenv(
         "GPU_SCHEDULING_PROFILE", "single_local_inference"
     ).strip()
