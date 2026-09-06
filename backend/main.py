@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import RedirectResponse
@@ -53,33 +53,38 @@ app = FastAPI(
 import time
 from fastapi import Request
 
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
     response = await call_next(request)
     process_time = (time.time() - start_time) * 1000
-    
+
     status = response.status_code
-    
+
     # Add colors to status codes
     if 200 <= status < 300:
-        color = "\033[92m" # Green
+        color = "\033[92m"  # Green
     elif 300 <= status < 400:
-        color = "\033[96m" # Cyan
+        color = "\033[96m"  # Cyan
     elif 400 <= status < 500:
-        color = "\033[93m" # Yellow
+        color = "\033[93m"  # Yellow
     else:
-        color = "\033[91m" # Red
+        color = "\033[91m"  # Red
     reset = "\033[0m"
-    
+
     client_ip = request.client.host if request.client else "unknown"
-    
+
     if request.url.path not in ["/health", "/api/v1/notifications/unread-count"]:
-        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         method = f"\033[1m{request.method}\033[0m"
-        print(f"\033[90m{timestamp}\033[0m | \033[92m  INFO  \033[0m | [{client_ip}] {method:^16} {request.url.path} - {color}{status}{reset} - {process_time:.1f}ms", flush=True)
-        
+        print(
+            f"\033[90m{timestamp}\033[0m | \033[92m  INFO  \033[0m | [{client_ip}] {method:^16} {request.url.path} - {color}{status}{reset} - {process_time:.1f}ms",
+            flush=True,
+        )
+
     return response
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -116,6 +121,21 @@ app.include_router(generation_router, dependencies=firebase_guard)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "message": "Hệ thống đang hoạt động!"}
+
+
+@app.get("/health/live")
+def liveness() -> dict:
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+def readiness(response: Response) -> dict:
+    from core.health import readiness_report
+
+    ready, report = readiness_report()
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return report
 
 
 @app.get("/", include_in_schema=False)

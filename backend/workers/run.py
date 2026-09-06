@@ -3,14 +3,29 @@ import logging
 import signal
 
 from core.bootstrap import bootstrap_database
-from core.database import close_database, ping_database
+from core.database import close_database, get_database, ping_database
 from core.job_recovery import recover_stale_jobs
 from core.job_worker import run_job_worker
 from core.logging import setup_logging
 from core.config import settings
 from modules.generation.llm.ollama import close_ollama_client
+from modules.moodle.publication_worker import MoodlePublicationWorker
 
 logger = logging.getLogger(__name__)
+
+
+async def run_moodle_worker(stop_event: asyncio.Event) -> None:
+    worker = MoodlePublicationWorker(get_database())
+    recovered = await asyncio.to_thread(worker.recover_stale)
+    if recovered:
+        logger.warning("Moved %s stale Moodle publications to UNKNOWN", recovered)
+    while not stop_event.is_set():
+        result = await asyncio.to_thread(worker.process_next, "moodle-worker")
+        if result is None:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                pass
 
 
 async def run() -> None:
@@ -27,7 +42,10 @@ async def run() -> None:
         except NotImplementedError:
             signal.signal(signum, lambda *_args: loop.call_soon_threadsafe(stop_event.set))
 
-    worker_task = asyncio.create_task(run_job_worker(stop_event))
+    worker_task = asyncio.gather(
+        run_job_worker(stop_event),
+        run_moodle_worker(stop_event),
+    )
     stop_task = asyncio.create_task(stop_event.wait())
     try:
         done, _pending = await asyncio.wait(

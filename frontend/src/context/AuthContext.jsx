@@ -54,6 +54,10 @@ export const AuthProvider = ({ children }) => {
     };
 
     useEffect(() => {
+        if (import.meta.env.DEV && import.meta.env.VITE_E2E_AUTH === 'true') {
+            setLoading(false);
+            return undefined;
+        }
         // Firebase is the source of truth for session persistence and token refresh.
         let active = true;
         const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {

@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "test": "node --test",
+    "test:e2e": "playwright test",
     "lint": "eslint src --max-warnings=0",
     "build": "vite build",
     "preview": "vite preview"
@@ -28,6 +29,7 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@vitejs/plugin-react": "^6.1.1",
     "eslint": "^9.39.0",
     "eslint-plugin-react-hooks": "^5.0.0",

@@ -36,6 +36,22 @@ class MoodlePublicationWorker:
             return None
         return self._process(publication)
 
+    def recover_stale(self) -> int:
+        now = _now()
+        result = self.db.moodle_publications.update_many(
+            {"status": "PUBLISHING", "lease_expires_at": {"$lte": now}},
+            {
+                "$set": {
+                    "status": "UNKNOWN",
+                    "external_sync": False,
+                    "status_detail": "WORKER_LEASE_EXPIRED_RECONCILE_REQUIRED",
+                    "error": {"code": "WORKER_LOST", "message": "Worker lease expired during remote publication"},
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.modified_count
+
     def _target(self, publication):
         target_id = (publication.get("target") or {}).get("target_id")
         target = self.db.moodle_targets.find_one({"_id": target_id, "is_active": True})

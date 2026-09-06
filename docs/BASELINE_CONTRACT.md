@@ -103,6 +103,12 @@ These cannot be inferred from source code and block only the dependent stage, no
   reconciliation and admin controls are covered by 222 backend tests; frontend passed 47 tests,
   lint and build. No remote success is claimed until the institution supplies the Moodle build,
   plugin, scoped service account/course/category and round-trip fixtures and verify-read succeeds.
+- Gate H — release and acceptance harness: **IMPLEMENTED, pending executed external acceptance on
+  2026-09-06**. CI profiles, three-role Chromium E2E, dependency readiness, queue/Moodle alerts,
+  production compose, bounded load and isolated restore drills, denominator-preserving holdout reports
+  and UAT scripts are present. Backend passed 225 tests; frontend passed 47 tests, lint/build and 3
+  browser E2E cases locally. Production-like recovery/load/restore measurements, licensed holdout and
+  independent human/UAT/Moodle/PDF evidence remain required before the overall gate can close.
 - Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
   produced one membership on first apply and zero changes on the second apply, with no
   duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.

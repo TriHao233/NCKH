@@ -1,0 +1,35 @@
+services:
+  backend:
+    volumes:
+      - nckh_artifacts:/app/data
+    environment:
+      APP_ENV: production
+      DEMO_MODE: "false"
+      INFERENCE_POLICY: LOCAL_ONLY
+      REQUIRE_MONGO_TRANSACTIONS: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+  worker:
+    volumes:
+      - nckh_artifacts:/app/data
+    environment:
+      APP_ENV: production
+      DEMO_MODE: "false"
+      INFERENCE_POLICY: LOCAL_ONLY
+      REQUIRE_MONGO_TRANSACTIONS: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: "6"
+  mongodb:
+    ports: []
+  frontend:
+    ports:
+      - "127.0.0.1:8080:80"
+
+volumes:
+  nckh_artifacts:

@@ -1078,7 +1078,7 @@ thật do đơn vị cung cấp, nên không tuyên bố câu đã xuất hiện
 
 **Gate G:** Moodle identity được đồng bộ đáng tin và câu thật xuất hiện, xem/chấm đúng trong Question Bank. **SSO hoàn chỉnh** nếu yêu cầu thêm dự kiến 3–6 ngày công sau khi chốt protocol/IdP. **Moodle Quiz delivery** dự kiến thêm 4–8 ngày công tùy phiên bản và qtypes; không tính ngầm vào G01–G05.
 
-### H — Nghiệm thu, vận hành và báo cáo, 9–15 ngày công
+### H — Nghiệm thu, vận hành và báo cáo, 9–15 ngày công — **IMPLEMENTED (technical harness), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -1086,6 +1086,20 @@ thật do đơn vị cung cấp, nên không tuyên bố câu đã xuất hiện
 | H02 | Crash/recovery/load/backup-restore drill, readiness/metrics/alerts, deployment profile production | BE + QA | C04/C05/G04 | T23/T25, G10; runbook có thời gian restore đo được | 2–3 |
 | H03 | Thực nghiệm holdout, human review study, phân tích lỗi và báo cáo giới hạn | AI + GV | A03, D/E/F | Báo số liệu có denominator/split/model digest; không cherry-pick | 3–5 |
 | H04 | UAT giảng viên/reviewer/admin, manual hướng dẫn, bộ dữ liệu demo đã duyệt và video | FE + QA + GV | H01–H03 | Người ngoài nhóm dev hoàn tất kịch bản chính theo tài liệu | 2–3 |
+
+Trạng thái kỹ thuật 06/09/2026: CI có backend regression, Mongo replica-set bắt buộc, Moodle
+contract profile, frontend test/lint/build và Chromium E2E ba vai trò. API có liveness/readiness cho
+Mongo, transaction, storage và local inference policy; operational metrics sinh alert lease/dead-letter,
+queue age và Moodle UNKNOWN. Production compose khóa Mongo khỏi host, dùng persistent artifact volume,
+health dependency và resource limits. Repository có bounded load smoke, backup/restore drill chỉ cho DB
+`*_restore_drill`, holdout report giữ denominator/exclusion/model digest/hash, cùng runbook recovery và
+UAT ba vai trò.
+
+Bằng chứng code-level: backend đạt **225 passed** (9 Mongo integration tests tách profile), frontend
+đạt **47/47**, ESLint và production build; Chromium role-access E2E đạt **3/3** cục bộ. **Gate H và
+nghiệm thu tổng thể chưa CLOSED ở bằng chứng ngoài**: chưa chạy CI mới trên remote, crash/load/restore
+trên production-like host, holdout corpus được cấp phép, human study, UAT ngoài nhóm, video, visual PDF
+QA hoặc Moodle round-trip thật. Các harness/checklist không được tính thay kết quả đo và chữ ký thật.
 
 Phân bổ công sức H: H01 2–4 ngày, H02 2–3 ngày, H03 3–5 ngày kỹ thuật cộng thời gian chuyên gia, H04 2–3 ngày. Các buổi gán nhãn/đánh giá cần đặt lịch từ A03, không đợi tới cuối dự án.
 

@@ -42,6 +42,9 @@ jobs:
       - name: Run backend test suite including golden evaluation cases
         run: python -m pytest tests -q
 
+      - name: Run Moodle adapter contract profile
+        run: python -m pytest tests/test_stage_g_contracts.py -q
+
       - name: Start MongoDB replica set
         run: docker run --name nckh-ci-mongo -d -p 27017:27017 mongo:7.0 mongod --replSet rs0 --bind_ip_all
 
@@ -95,3 +98,9 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Install Chromium for browser E2E
+        run: npx playwright install --with-deps chromium
+
+      - name: Run three-role browser E2E
+        run: npm run test:e2e
