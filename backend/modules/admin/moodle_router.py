@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from core.config import settings
 from core.database import get_database
 from core.dependencies import CurrentUser, require_permissions
-from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.admin.moodle_schemas import MoodleLinkTokenRequest, MoodleSyncPageRequest, MoodleTargetPayload
 from modules.admin.moodle_service import MoodleTargetService
 
 router = APIRouter(prefix=f"{settings.api_prefix}/admin/moodle", tags=["Admin Moodle"])
@@ -97,5 +97,60 @@ def retry_publication(
 ):
     try:
         return service.retry_publication(publication_id, current_user)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.get("/capabilities")
+def capability_matrix(
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
+    service: MoodleTargetService = Depends(get_moodle_target_service),
+):
+    return service.capability_matrix()
+
+
+@router.post("/identity-sync")
+def sync_identities(
+    payload: MoodleSyncPageRequest,
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
+    service: MoodleTargetService = Depends(get_moodle_target_service),
+):
+    try:
+        return service.sync_identities(payload)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/identity-link-token")
+def issue_identity_link_token(
+    payload: MoodleLinkTokenRequest,
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
+    service: MoodleTargetService = Depends(get_moodle_target_service),
+):
+    try:
+        return service.issue_link_token(payload)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/publications/process-next")
+def process_next_publication(
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
+    service: MoodleTargetService = Depends(get_moodle_target_service),
+):
+    try:
+        return {"publication": service.process_next_publication()}
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/publications/{publication_id}/reconcile")
+def reconcile_publication(
+    publication_id: str,
+    _admin: CurrentUser = Depends(require_permissions("admin.moodle")),
+    service: MoodleTargetService = Depends(get_moodle_target_service),
+):
+    try:
+        return service.reconcile_publication(publication_id)
     except Exception as exc:
         _translate(exc)

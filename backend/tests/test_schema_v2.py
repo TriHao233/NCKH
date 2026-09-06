@@ -2492,7 +2492,7 @@ class SchemaV2Tests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             service.publish_to_moodle(str(ObjectId()), payload, ObjectId())
 
-        self.assertIn("chưa được cấu hình", str(ctx.exception))
+        self.assertIn("REST_API target", str(ctx.exception))
 
     def test_moodle_mock_publish_is_disabled_in_production_non_demo(self):
         original_app_env = settings.app_env
@@ -2726,7 +2726,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(len(db.moodle_publications.records), 1)
         self.assertEqual(first["_id"], second["_id"])
         self.assertEqual(first["idempotency_key"], second["idempotency_key"])
-        self.assertEqual(db.questions.find_one({"_id": question_id})["publication_status"], "PUBLISHED")
+        self.assertEqual(db.questions.find_one({"_id": question_id})["publication_status"], "NOT_PUBLISHED")
         publication = db.moodle_publications.records[0]
         self.assertEqual(publication["publication_mode"], "MOCK")
         self.assertFalse(publication["external_sync"])
@@ -2847,7 +2847,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIsNone(db.moodle_publications.records[0]["error"])
         self.assertEqual(
             db.questions.find_one({"_id": question_id})["publication_status"],
-            "PUBLISHED",
+            "FAILED",
         )
 
     def test_admin_moodle_retry_rejects_changed_question_version(self):

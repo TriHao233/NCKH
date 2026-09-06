@@ -1053,7 +1053,7 @@ từng trang PDF/DOCX có code, công thức, ảnh/bảng; không dùng test HT
 
 **Gate F:** giảng viên tạo và sử dụng bộ đề giấy thật được; đây là đầu ra độc lập có giá trị trước khi tạo Moodle Quiz.
 
-### G — Moodle identity và publication thật, 11–20 ngày công
+### G — Moodle identity và publication thật, 11–20 ngày công — **IMPLEMENTED (technical), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -1062,6 +1062,19 @@ từng trang PDF/DOCX có code, công thức, ảnh/bảng; không dùng test HT
 | G03 | Plugin hoặc adapter Question Bank với input/context/capability checks và mapping version | LMS | A04, G01 | Remote write/read thật đúng category và quyền | 3–5 |
 | G04 | Publication worker/outbox, idempotency, UNKNOWN/reconciliation, target secret/health | BE + LMS | G03, B03 | T20/T21; simulation không là remote PUBLISHED | 2–4 |
 | G05 | UI target/course chọn đúng quyền, trạng thái từng item, retry/đối soát; vận hành plugin | FE + LMS | G02/G04 | G9 và runbook cài đặt/upgrade/check connector | 1–3 |
+
+Trạng thái kỹ thuật 06/09/2026: serializer backend và capability matrix bao phủ bảy dạng typed;
+ordering yêu cầu capability plugin rõ ràng. Identity sync dùng `(site_key, external_user_id)`, link
+token xác minh một lần, checkpoint trang idempotent và revoke membership Moodle ở trang cuối, không
+merge theo email. Question Bank adapter kiểm role/course/qtype, resolve secret runtime, upsert theo
+idempotency key và verify-read version/content hash. Publication đi qua `QUEUED/PUBLISHING`, chỉ ghi
+remote `PUBLISHED` khi verify thành công; mất xác nhận thành `UNKNOWN` và phải reconcile. Admin UI có
+Moodle version, course allowlist, qtype capability, chạy worker, retry confirmed failure và đối soát.
+
+Bằng chứng code-level: backend đạt **222 passed** (9 Mongo integration tests tách profile), gồm mười
+Stage-G contract cases; frontend đạt **47/47**, ESLint và production build. **Gate G chưa CLOSED
+ở hệ thống ngoài**: chưa có Moodle version/plugin/service account/course/category và fixture round-trip
+thật do đơn vị cung cấp, nên không tuyên bố câu đã xuất hiện hoặc chấm đúng trong Moodle thật.
 
 **Gate G:** Moodle identity được đồng bộ đáng tin và câu thật xuất hiện, xem/chấm đúng trong Question Bank. **SSO hoàn chỉnh** nếu yêu cầu thêm dự kiến 3–6 ngày công sau khi chốt protocol/IdP. **Moodle Quiz delivery** dự kiến thêm 4–8 ngày công tùy phiên bản và qtypes; không tính ngầm vào G01–G05.
 

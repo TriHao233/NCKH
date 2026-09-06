@@ -43,6 +43,9 @@ RAG_COLLECTIONS = (
     "notifications",
     "moodle_targets",
     "moodle_publications",
+    "external_identities",
+    "external_identity_link_tokens",
+    "moodle_sync_pages",
     "exams",
     "exam_variants",
     "schema_meta",
@@ -95,8 +98,15 @@ VALIDATORS = {
         "$jsonSchema": {
             "bsonType": "object",
             "required": [
-                "schema_version", "user_id", "subject_id", "roles",
-                "capabilities", "status", "origin", "created_at", "updated_at",
+                "schema_version",
+                "user_id",
+                "subject_id",
+                "roles",
+                "capabilities",
+                "status",
+                "origin",
+                "created_at",
+                "updated_at",
             ],
             "properties": {
                 "schema_version": {"bsonType": "int", "minimum": 2},
@@ -125,9 +135,7 @@ VALIDATORS = {
             "properties": {
                 "request": {"bsonType": "object"},
                 "requested_by_user_id": {"bsonType": ["objectId", "null"]},
-                "status": {
-                    "enum": ["queued", "processing", "completed", "failed"]
-                },
+                "status": {"enum": ["queued", "processing", "completed", "failed"]},
                 "result": {"bsonType": ["object", "null"]},
                 "metrics": {"bsonType": ["object", "null"]},
                 "error_message": {"bsonType": ["string", "null"]},
@@ -230,9 +238,7 @@ VALIDATORS = {
                         "NEEDS_REVISION",
                     ]
                 },
-                "publication_status": {
-                    "enum": ["NOT_PUBLISHED", "PUBLISHED", "STALE", "FAILED"]
-                },
+                "publication_status": {"enum": ["NOT_PUBLISHED", "PUBLISHED", "STALE", "FAILED"]},
                 "review_assignment": {"bsonType": "object"},
                 "created_at": {"bsonType": "date"},
                 "updated_at": {"bsonType": "date"},
@@ -578,7 +584,9 @@ def _ensure_indexes() -> None:
     rag_db.generation_jobs.create_indexes(
         [
             IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
-            IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_jobs_requester"),
+            IndexModel(
+                [("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_jobs_requester"
+            ),
             IndexModel(
                 [("requested_by_user_id", ASCENDING), ("idempotency_key", ASCENDING)],
                 unique=True,
@@ -605,7 +613,9 @@ def _ensure_indexes() -> None:
     rag_db.generation_runs.create_indexes(
         [
             IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
-            IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"),
+            IndexModel(
+                [("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"
+            ),
         ]
     )
     rag_db.retrieval_benchmarks.create_index(
@@ -666,7 +676,9 @@ def _ensure_indexes() -> None:
             IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_evaluation_jobs_queue"),
             IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_evaluation_jobs_lease"),
             IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_evaluation_jobs"),
-            IndexModel([("question_version_id", ASCENDING), ("created_at", DESCENDING)], name="ix_evaluation_jobs_version"),
+            IndexModel(
+                [("question_version_id", ASCENDING), ("created_at", DESCENDING)], name="ix_evaluation_jobs_version"
+            ),
             IndexModel(
                 [("dedupe_key", ASCENDING)],
                 unique=True,
@@ -747,10 +759,22 @@ def _ensure_indexes() -> None:
     rag_db.moodle_publications.create_indexes(
         [
             IndexModel([("idempotency_key", ASCENDING)], unique=True, name="uq_publication_idempotency"),
-            IndexModel([("target.moodle_site_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_target_status"),
+            IndexModel(
+                [("target.moodle_site_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_publications_target_status",
+            ),
             IndexModel([("question_id", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_question"),
         ]
     )
+    rag_db.external_identities.create_index(
+        [("site_key", ASCENDING), ("external_user_id", ASCENDING)],
+        unique=True,
+        name="uq_external_identity_site_user",
+    )
+    rag_db.external_identity_link_tokens.create_index(
+        [("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_external_link_tokens"
+    )
+    rag_db.moodle_sync_pages.create_index([("page_key", ASCENDING)], unique=True, name="uq_moodle_sync_page")
     rag_db.migration_id_map.create_index(
         [("source_collection", ASCENDING), ("source_id", ASCENDING)],
         unique=True,

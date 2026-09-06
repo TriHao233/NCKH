@@ -97,6 +97,12 @@ These cannot be inferred from source code and block only the dependent stage, no
   snapshots, typed deterministic shuffling and export manifests are covered by 212 backend tests.
   Frontend passed 47 tests, lint and build. G8 remains external until an educator uses a real bank and
   every PDF/DOCX page containing code, formulas, images and tables is visually inspected.
+- Gate G — Moodle identity and verified Question Bank publication: **IMPLEMENTED, pending real
+  institutional target on 2026-09-06**. The seven-type serializer/capability matrix, external-ID
+  sync with verified links/checkpoints/revocation, REST adapter, idempotent outbox, UNKNOWN
+  reconciliation and admin controls are covered by 222 backend tests; frontend passed 47 tests,
+  lint and build. No remote success is claimed until the institution supplies the Moodle build,
+  plugin, scoped service account/course/category and round-trip fixtures and verify-read succeeds.
 - Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
   produced one membership on first apply and zero changes on the second apply, with no
   duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.

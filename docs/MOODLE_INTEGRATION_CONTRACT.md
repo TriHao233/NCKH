@@ -37,3 +37,15 @@ variables at execution time and are never returned by APIs or written to publica
 
 The stage-A spike completes only when an administrator supplies the pending facts and the
 repository contains an anonymized round-trip fixture exported from the actual Moodle target.
+
+## Implemented technical contract (2026-09-06)
+
+Backend serializer supports the seven typed question forms and declares a per-qtype capability
+matrix. REST publication uses an idempotent Question Bank adapter, durable outbox states and a
+verification read before remote `PUBLISHED`. Network ambiguity becomes `UNKNOWN` and requires
+reconciliation. Identity sync is keyed by `(site_key, external_user_id)`, consumes verified link
+tokens, checkpoints pages idempotently and revokes missing Moodle memberships on the final page.
+See [MOODLE_CONNECTOR_RUNBOOK.md](D:/NCKH/docs/MOODLE_CONNECTOR_RUNBOOK.md).
+
+This does not close the institutional gate: Moodle version/build, installed adapter, least-privilege
+service account, real course/category and anonymized round-trip fixtures remain pending.

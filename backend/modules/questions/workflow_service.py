@@ -23,6 +23,11 @@ from core.config import settings
 from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser, has_permission
 from modules.admin.moodle_service import MoodleTargetService
+from modules.moodle.serializer import (
+    serialize_question as serialize_moodle_question,
+    to_moodle_xml,
+    validate_target_capabilities,
+)
 from modules.generation.llm.factory import get_llm_execution_snapshot, get_llm_service
 from modules.generation.llm.model_registry import (
     EVALUATION_CAPABILITY,
@@ -112,15 +117,12 @@ def build_evaluation_fingerprint(
     model_record: dict,
     policy_record: dict,
 ) -> tuple[str, str]:
-    policy_hash = hashlib.sha256(
-        json.dumps(policy_record, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
+    policy_hash = hashlib.sha256(json.dumps(policy_record, sort_keys=True, default=str).encode("utf-8")).hexdigest()
     input_hash = hashlib.sha256(
         json.dumps(
             {
                 "question_snapshot_hash": question_snapshot_hash,
-                "model_digest": model_record.get("model_digest")
-                or model_record.get("model_code"),
+                "model_digest": model_record.get("model_digest") or model_record.get("model_code"),
                 "policy_hash": policy_hash,
             },
             sort_keys=True,
@@ -258,8 +260,10 @@ class QuestionWorkflowService:
         version: dict,
         current_user: CurrentUser | None,
     ) -> None:
-        if not current_user or self._can_manage_all(current_user) or self._has_review_scope(
-            question, version, current_user
+        if (
+            not current_user
+            or self._can_manage_all(current_user)
+            or self._has_review_scope(question, version, current_user)
         ):
             return
         if not self._owns_question(question, version, current_user.id) and not self._is_shared_question(
@@ -309,11 +313,7 @@ class QuestionWorkflowService:
     @staticmethod
     def _tokens(text: str) -> set[str]:
         normalized = (text or "").lower()
-        return {
-            token
-            for token in re.findall(r"[\wÀ-ỹ]+", normalized, flags=re.UNICODE)
-            if len(token) >= 3
-        }
+        return {token for token in re.findall(r"[\wÀ-ỹ]+", normalized, flags=re.UNICODE) if len(token) >= 3}
 
     @classmethod
     def _overlap_score(cls, text: str, context: str) -> float:
@@ -369,17 +369,11 @@ class QuestionWorkflowService:
         used_tokens = 0
         for source in sources:
             evidence = source.get("evidence") or {}
-            excerpt = str(
-                evidence.get("quote") or source.get("context_excerpt") or ""
-            ).strip()
+            excerpt = str(evidence.get("quote") or source.get("context_excerpt") or "").strip()
             token_count = int(
-                evidence.get("token_count")
-                or len(re.findall(r"[^\W_]+|[^\s\w]", excerpt, flags=re.UNICODE))
+                evidence.get("token_count") or len(re.findall(r"[^\W_]+|[^\s\w]", excerpt, flags=re.UNICODE))
             )
-            if (
-                compacted
-                and used_tokens + token_count > settings.evaluation_source_token_budget
-            ):
+            if compacted and used_tokens + token_count > settings.evaluation_source_token_budget:
                 continue
             index = len(compacted) + 1
             compacted.append(
@@ -387,9 +381,7 @@ class QuestionWorkflowService:
                     "label": f"S{index}",
                     "chunk_id": source.get("chunk_id"),
                     "content_hash": source.get("chunk_content_hash"),
-                    "processing_revision_id": source.get(
-                        "source_processing_revision_id"
-                    ),
+                    "processing_revision_id": source.get("source_processing_revision_id"),
                     "ocr_job_id": source.get("source_ocr_job_id"),
                     "citation_order": source.get("citation_order") or index,
                     "is_primary": bool(source.get("is_primary")),
@@ -526,9 +518,7 @@ class QuestionWorkflowService:
             "source_limit": EVALUATION_SOURCE_LIMIT,
             "source_excerpt_chars": EVALUATION_SOURCE_EXCERPT_CHARS,
             "source_token_budget": settings.evaluation_source_token_budget,
-            "source_token_count": sum(
-                item.get("token_count", 0) for item in source_chunks
-            ),
+            "source_token_count": sum(item.get("token_count", 0) for item in source_chunks),
         }
         return prompt, prompt_snapshot, source_chunks
 
@@ -626,10 +616,7 @@ class QuestionWorkflowService:
     def _declared_answer_keys(cls, version: dict, options: dict[str, str]) -> set[str]:
         raw_answer = (version.get("question_data") or {}).get("correct_answer")
         values = raw_answer if isinstance(raw_answer, list) else re.split(r"[;,|]", str(raw_answer or ""))
-        normalized_options = {
-            cls._compact_text(value, 500).casefold(): key
-            for key, value in options.items()
-        }
+        normalized_options = {cls._compact_text(value, 500).casefold(): key for key, value in options.items()}
         answer_keys = set()
         for value in values:
             normalized = str(value or "").strip()
@@ -651,23 +638,29 @@ class QuestionWorkflowService:
         version: dict,
     ) -> tuple[EvaluationScores, dict, dict]:
         options = cls._question_options(version)
-        question_type = str(
-            (version.get("classification") or {}).get("assessment_type") or ""
-        ).strip().upper()
+        question_type = str((version.get("classification") or {}).get("assessment_type") or "").strip().upper()
         if question_type in NON_OPTION_ANSWER_TYPES:
-            return scores, feedback, {
-                **evidence,
-                "answer_guardrail": {
-                    "applied": False,
-                    "reason": "QUESTION_TYPE_NOT_OPTION_BASED",
-                    "question_type": question_type,
+            return (
+                scores,
+                feedback,
+                {
+                    **evidence,
+                    "answer_guardrail": {
+                        "applied": False,
+                        "reason": "QUESTION_TYPE_NOT_OPTION_BASED",
+                        "question_type": question_type,
+                    },
                 },
-            }
+            )
         if len(options) < 2:
-            return scores, feedback, {
-                **evidence,
-                "answer_guardrail": {"applied": False, "reason": "NO_OPTION_SET"},
-            }
+            return (
+                scores,
+                feedback,
+                {
+                    **evidence,
+                    "answer_guardrail": {"applied": False, "reason": "NO_OPTION_SET"},
+                },
+            )
 
         question = str(version.get("content") or "")
         # With true/false items the stem is a proposition; words such as "không"
@@ -682,10 +675,7 @@ class QuestionWorkflowService:
             if isinstance(check, dict) and str(check.get("key") or "").strip()
         }
         if question_type == "DUNG_SAI" and len(options) == 2 and len(checks_by_key) == 1:
-            normalized_values = {
-                key: re.sub(r"\s+", " ", value).strip().casefold()
-                for key, value in options.items()
-            }
+            normalized_values = {key: re.sub(r"\s+", " ", value).strip().casefold() for key, value in options.items()}
             truth_key = next(
                 (key for key, value in normalized_values.items() if value in {"đúng", "dung", "true"}),
                 None,
@@ -704,11 +694,7 @@ class QuestionWorkflowService:
                 inferred_key = false_key if checked_key == truth_key else truth_key
                 inferred = {
                     "key": inferred_key,
-                    "verdict": (
-                        "CONTRADICTED"
-                        if checked.get("verdict") == "SUPPORTED"
-                        else "SUPPORTED"
-                    ),
+                    "verdict": ("CONTRADICTED" if checked.get("verdict") == "SUPPORTED" else "SUPPORTED"),
                     "source_label": checked.get("source_label") or "",
                     "supporting_excerpt": checked.get("supporting_excerpt") or "",
                     "inferred_from_complement": checked_key,
@@ -720,9 +706,7 @@ class QuestionWorkflowService:
         reported_polarity = str(evidence.get("question_polarity") or "").strip().upper()
         detected_polarity = "NEGATIVE" if negative else "POSITIVE"
         if reported_polarity and reported_polarity != detected_polarity:
-            issues.append(
-                f"AI nhận diện sai dạng câu: báo {reported_polarity}, thực tế {detected_polarity}"
-            )
+            issues.append(f"AI nhận diện sai dạng câu: báo {reported_polarity}, thực tế {detected_polarity}")
         missing_keys = [key for key in options if key not in checks_by_key]
         if missing_keys:
             issues.append(f"AI chưa kiểm tra phương án: {', '.join(missing_keys)}")
@@ -736,9 +720,7 @@ class QuestionWorkflowService:
             issues.append(f"option_checks không hợp lệ: {', '.join(sorted(invalid_keys))}")
 
         supported = {
-            key
-            for key, check in checks_by_key.items()
-            if key in options and check.get("verdict") == "SUPPORTED"
+            key for key, check in checks_by_key.items() if key in options and check.get("verdict") == "SUPPORTED"
         }
         unsupported = {
             key
@@ -746,18 +728,13 @@ class QuestionWorkflowService:
             if key in options and check.get("verdict") in {"CONTRADICTED", "NOT_IN_SOURCE"}
         }
         ambiguous = {
-            key
-            for key, check in checks_by_key.items()
-            if key in options and check.get("verdict") == "AMBIGUOUS"
+            key for key, check in checks_by_key.items() if key in options and check.get("verdict") == "AMBIGUOUS"
         }
         if not declared_keys:
             issues.append("Không xác định được đáp án đã khai báo")
 
         source_context = cls._source_context(version)
-        lexical_support = {
-            key: round(cls._overlap_score(text, source_context), 4)
-            for key, text in options.items()
-        }
+        lexical_support = {key: round(cls._overlap_score(text, source_context), 4) for key, text in options.items()}
         answer_mode = (
             "SINGLE"
             if question_type in SINGLE_ANSWER_TYPES
@@ -769,15 +746,11 @@ class QuestionWorkflowService:
         )
         if negative:
             if len(unsupported) != 1:
-                issues.append(
-                    "Câu phủ định phải có đúng một phương án không được nguồn hỗ trợ"
-                )
+                issues.append("Câu phủ định phải có đúng một phương án không được nguồn hỗ trợ")
             elif declared_keys != unsupported:
                 issues.append("Đáp án khai báo không khớp phương án phủ định duy nhất")
             if options and all(score >= 0.8 for score in lexical_support.values()):
-                issues.append(
-                    "Tất cả phương án đều xuất hiện rõ trong nguồn; không được tự động duyệt câu phủ định"
-                )
+                issues.append("Tất cả phương án đều xuất hiện rõ trong nguồn; không được tự động duyệt câu phủ định")
         else:
             if answer_mode == "SINGLE":
                 if not declared_keys.issubset(supported):
@@ -791,8 +764,7 @@ class QuestionWorkflowService:
             issues.append(f"Phương án còn mơ hồ: {', '.join(sorted(ambiguous))}")
         compact_sources = cls._compact_sources(version)
         source_by_label = {
-            str(source.get("label") or "").upper(): str(source.get("excerpt") or "")
-            for source in compact_sources
+            str(source.get("label") or "").upper(): str(source.get("excerpt") or "") for source in compact_sources
         }
         for key in supported:
             check = checks_by_key[key]
@@ -833,9 +805,7 @@ class QuestionWorkflowService:
             "action": "NEEDS_REVISION",
             "severity": "HIGH",
             "summary": "Guardrail đáp án chặn tự động duyệt: " + guardrail["issues"][0],
-            "missing": list(
-                dict.fromkeys([*(feedback.get("missing") or []), *guardrail["issues"]])
-            ),
+            "missing": list(dict.fromkeys([*(feedback.get("missing") or []), *guardrail["issues"]])),
         }
         guarded_evidence = {
             **evidence,
@@ -902,9 +872,7 @@ class QuestionWorkflowService:
                 if current_action in {"NEEDS_REVISION", "REJECT"}
                 else "Guardrail metadata yêu cầu bổ sung Bloom/CLO trước khi duyệt."
             ),
-            "missing": list(
-                dict.fromkeys([*(feedback.get("missing") or []), *issues])
-            ),
+            "missing": list(dict.fromkeys([*(feedback.get("missing") or []), *issues])),
         }
         guarded_evidence = {
             **evidence,
@@ -960,9 +928,7 @@ class QuestionWorkflowService:
         code_guardrail = validate_code_question(code_material)
         code_guardrail = {
             **code_guardrail,
-            "question_type": (version.get("classification") or {}).get(
-                "assessment_type"
-            ),
+            "question_type": (version.get("classification") or {}).get("assessment_type"),
             "question_contract": "typed-question-v1",
         }
         evidence = {**evidence, "code_guardrail": code_guardrail}
@@ -989,9 +955,7 @@ class QuestionWorkflowService:
     def _evaluation_hard_failures(version: dict, evidence: dict) -> list[dict]:
         failures = []
         if not version.get("sources"):
-            failures.append(
-                {"code": "SOURCE_MISSING", "message": "Câu hỏi không có nguồn kiểm chứng"}
-            )
+            failures.append({"code": "SOURCE_MISSING", "message": "Câu hỏi không có nguồn kiểm chứng"})
         try:
             validate_question_contract(
                 version.get("content") or "",
@@ -1053,11 +1017,7 @@ class QuestionWorkflowService:
             "calculated_overall": overall,
             "score_spread": score_spread,
             "uniform_scores": score_spread <= 0.02,
-            "weak_criteria": [
-                key
-                for key, value in score_values.items()
-                if value < pass_min
-            ],
+            "weak_criteria": [key for key, value in score_values.items() if value < pass_min],
         }
 
     def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
@@ -1079,8 +1039,15 @@ class QuestionWorkflowService:
 
         scores = EvaluationScores(
             faithfulness=self._clamp(0.50 + 0.50 * answer_overlap if has_context else 0.45),
-            contextual_relevancy=self._clamp(0.45 + 0.45 * question_overlap + min(len(sources), 3) * 0.03 if has_context else 0.35),
-            answer_relevancy=self._clamp(0.50 + (0.25 if has_answer else 0.0) + (0.20 if has_explanation else 0.0) + 0.05 * min(len(answer), 40) / 40),
+            contextual_relevancy=self._clamp(
+                0.45 + 0.45 * question_overlap + min(len(sources), 3) * 0.03 if has_context else 0.35
+            ),
+            answer_relevancy=self._clamp(
+                0.50
+                + (0.25 if has_answer else 0.0)
+                + (0.20 if has_explanation else 0.0)
+                + 0.05 * min(len(answer), 40) / 40
+            ),
             bloom_alignment=0.86 if has_bloom else 0.50,
             clo_alignment=0.86 if has_clo else 0.62,
         )
@@ -1105,9 +1072,7 @@ class QuestionWorkflowService:
                 else "NEEDS_REVISION"
             ),
             "severity": (
-                "LOW"
-                if has_context and has_answer and has_explanation and has_bloom and has_clo
-                else "MEDIUM"
+                "LOW" if has_context and has_answer and has_explanation and has_bloom and has_clo else "MEDIUM"
             ),
         }
         evidence = {
@@ -1136,48 +1101,35 @@ class QuestionWorkflowService:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
-        policy = (
-            payload.policy_snapshot
-            if trusted_policy_snapshot and payload.policy_snapshot
-            else self._policy()
-        )
+        policy = payload.policy_snapshot if trusted_policy_snapshot and payload.policy_snapshot else self._policy()
         policy = {
             **policy,
             "version": int(policy.get("version") or 1),
             "weights": {**DEFAULT_WEIGHTS, **(policy.get("weights") or {})},
             "thresholds": {**DEFAULT_THRESHOLDS, **(policy.get("thresholds") or {})},
         }
-        if all(
-            key in payload.evidence
-            for key in ("answer_guardrail", "metadata_guardrail", "code_guardrail")
-        ):
+        if all(key in payload.evidence for key in ("answer_guardrail", "metadata_guardrail", "code_guardrail")):
             guarded_scores = payload.scores
             guarded_feedback = dict(payload.feedback)
             guarded_evidence = dict(payload.evidence)
         else:
-            guarded_scores, guarded_feedback, guarded_evidence = (
-                self._apply_evaluation_guardrails(
-                    payload.scores,
-                    dict(payload.feedback),
-                    dict(payload.evidence),
-                    version,
-                )
+            guarded_scores, guarded_feedback, guarded_evidence = self._apply_evaluation_guardrails(
+                payload.scores,
+                dict(payload.feedback),
+                dict(payload.evidence),
+                version,
             )
         scores = guarded_scores.model_dump()
         feedback_action = str(guarded_feedback.get("action") or "").strip().upper()
         feedback_severity = str(guarded_feedback.get("severity") or "").strip().upper()
-        criterion_status = {
-            key: "AVAILABLE" for key in DEFAULT_WEIGHTS
-        }
+        criterion_status = {key: "AVAILABLE" for key in DEFAULT_WEIGHTS}
         if not version.get("sources"):
             criterion_status["faithfulness"] = "NO_DATA"
             criterion_status["contextual_relevancy"] = "NO_DATA"
         if not version.get("clos"):
             criterion_status["clo_alignment"] = "NO_DATA"
         available_weight = sum(
-            float(policy["weights"][key])
-            for key, status in criterion_status.items()
-            if status == "AVAILABLE"
+            float(policy["weights"][key]) for key, status in criterion_status.items() if status == "AVAILABLE"
         )
         overall = round(
             (
@@ -1247,9 +1199,7 @@ class QuestionWorkflowService:
             "weights": policy["weights"],
             "thresholds": thresholds,
         }
-        model_record = payload.model_snapshot or self._model_snapshot(
-            payload.evaluator_model_code
-        )
+        model_record = payload.model_snapshot or self._model_snapshot(payload.evaluator_model_code)
         policy_hash, input_hash = build_evaluation_fingerprint(
             version["content_hash"],
             model_record,
@@ -1266,9 +1216,7 @@ class QuestionWorkflowService:
                 return json_safe(existing)
         now = utc_now()
         evaluation_job_id = (
-            object_id(payload.evaluation_job_id, "evaluation_job_id")
-            if payload.evaluation_job_id
-            else None
+            object_id(payload.evaluation_job_id, "evaluation_job_id") if payload.evaluation_job_id else None
         )
         evaluation = {
             "_id": ObjectId(),
@@ -1431,8 +1379,7 @@ class QuestionWorkflowService:
                 feedback = {
                     **feedback,
                     "summary": (
-                        "Local evaluator không chạy hoặc trả JSON không hợp lệ; "
-                        "đã fallback sang heuristic nội bộ."
+                        "Local evaluator không chạy hoặc trả JSON không hợp lệ; đã fallback sang heuristic nội bộ."
                     ),
                 }
                 evidence = {
@@ -1992,28 +1939,28 @@ class QuestionWorkflowService:
                 "source_snapshot": json_safe(job.get("source_snapshot") or []),
             }
             evaluation_payload = EvaluationCreateRequest(
-                    expected_version=version["version"],
-                    scores=scores,
-                    feedback=feedback,
-                    evidence=evidence,
-                    evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
-                    raw_model_response=raw_model_response,
-                    policy_snapshot=policy_snapshot,
-                    prompt_snapshot=prompt_snapshot,
-                    duration_ms=duration_ms,
-                    evaluation_job_id=str(job["_id"]),
-                    trigger=job.get("trigger"),
-                    model_snapshot=(
-                        {
-                            "model_code": "local-heuristic-evaluator-v1",
-                            "model_name": "Local heuristic evaluator",
-                            "runtime": "INTERNAL",
-                        }
-                        if heuristic_fallback
-                        else effective_model_snapshot or {}
-                    ),
-                    model_execution=get_llm_execution_snapshot(llm),
-                )
+                expected_version=version["version"],
+                scores=scores,
+                feedback=feedback,
+                evidence=evidence,
+                evaluator_model_code=job.get("evaluator_model_code") or DEFAULT_EVALUATOR_MODEL_CODE,
+                raw_model_response=raw_model_response,
+                policy_snapshot=policy_snapshot,
+                prompt_snapshot=prompt_snapshot,
+                duration_ms=duration_ms,
+                evaluation_job_id=str(job["_id"]),
+                trigger=job.get("trigger"),
+                model_snapshot=(
+                    {
+                        "model_code": "local-heuristic-evaluator-v1",
+                        "model_name": "Local heuristic evaluator",
+                        "runtime": "INTERNAL",
+                    }
+                    if heuristic_fallback
+                    else effective_model_snapshot or {}
+                ),
+                model_execution=get_llm_execution_snapshot(llm),
+            )
             evaluation = await asyncio.to_thread(
                 self.evaluate,
                 str(question["_id"]),
@@ -2178,8 +2125,7 @@ class QuestionWorkflowService:
         assignment = {
             "status": "IN_REVIEW",
             "reviewer_user_id": current_user.id,
-            "assigned_by_user_id": previous_assignment.get("assigned_by_user_id")
-            or current_user.id,
+            "assigned_by_user_id": previous_assignment.get("assigned_by_user_id") or current_user.id,
             "assigned_at": previous_assignment.get("assigned_at") or now,
             "claimed_at": now,
             "lock_expires_at": self._lock_expires_at(now),
@@ -2298,9 +2244,7 @@ class QuestionWorkflowService:
             ):
                 path = f"review_assignment.{field}"
                 assignment_query[path] = (
-                    previous_assignment[field]
-                    if field in previous_assignment
-                    else {"$exists": False}
+                    previous_assignment[field] if field in previous_assignment else {"$exists": False}
                 )
         updated = self.db.questions.find_one_and_update(
             assignment_query,
@@ -2406,23 +2350,14 @@ class QuestionWorkflowService:
             and question["evaluation_status"] != "PASSED"
             and not payload.override.applied
         ):
-            raise ValueError(
-                "Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override"
-            )
+            raise ValueError("Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override")
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
         secondary = question.get("secondary_review") or {}
-        awaiting_secondary = (
-            payload.decision == "APPROVED"
-            and secondary.get("status") == "AWAITING_SECONDARY"
-        )
+        awaiting_secondary = payload.decision == "APPROVED" and secondary.get("status") == "AWAITING_SECONDARY"
         if awaiting_secondary and secondary.get("primary_reviewer_user_id") == current_user.id:
             raise ValueError("Reviewer duyệt lần đầu không được tự duyệt lần hai")
-        request_secondary = (
-            payload.decision == "APPROVED"
-            and payload.secondary_required
-            and not awaiting_secondary
-        )
+        request_secondary = payload.decision == "APPROVED" and payload.secondary_required and not awaiting_secondary
         review_form = payload.review_form.model_dump()
         review_note = payload.note or payload.review_form.overall_note
         review = {
@@ -2487,11 +2422,7 @@ class QuestionWorkflowService:
                 "status": "CANCELLED" if secondary else "NOT_REQUIRED",
                 "completed_at": now if secondary else None,
             }
-        audit_action = (
-            "QUESTION_SECONDARY_REVIEW_REQUESTED"
-            if request_secondary
-            else f"QUESTION_{payload.decision}"
-        )
+        audit_action = "QUESTION_SECONDARY_REVIEW_REQUESTED" if request_secondary else f"QUESTION_{payload.decision}"
         audit = {
             "schema_version": SCHEMA_VERSION,
             "actor": {
@@ -2570,8 +2501,7 @@ class QuestionWorkflowService:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
         comments = list(
-            self.db.question_comments.find({"question_id": question["_id"], "deleted_at": None})
-            .sort("created_at", 1)
+            self.db.question_comments.find({"question_id": question["_id"], "deleted_at": None}).sort("created_at", 1)
         )
         return {"items": [json_safe(comment) for comment in comments]}
 
@@ -2583,16 +2513,17 @@ class QuestionWorkflowService:
     ) -> dict:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
-        mention_ids = [
-            object_id(user_id, "mention_user_id")
-            for user_id in dict.fromkeys(payload.mention_user_ids)
-        ]
-        mentioned_users = list(
-            self.db.users.find(
-                {"_id": {"$in": mention_ids}, "is_active": True},
-                {"_id": 1, "role": 1},
+        mention_ids = [object_id(user_id, "mention_user_id") for user_id in dict.fromkeys(payload.mention_user_ids)]
+        mentioned_users = (
+            list(
+                self.db.users.find(
+                    {"_id": {"$in": mention_ids}, "is_active": True},
+                    {"_id": 1, "role": 1},
+                )
             )
-        ) if mention_ids else []
+            if mention_ids
+            else []
+        )
         if len(mentioned_users) != len(mention_ids):
             raise ValueError("Một hoặc nhiều người được mention không hợp lệ")
         now = utc_now()
@@ -2830,11 +2761,7 @@ class QuestionWorkflowService:
 
     @staticmethod
     def _answer_keys(correct_answer: str) -> list[str]:
-        return [
-            item.strip().upper()
-            for item in str(correct_answer or "").split(",")
-            if item.strip()
-        ]
+        return [item.strip().upper() for item in str(correct_answer or "").split(",") if item.strip()]
 
     @staticmethod
     def _gift_escape(value) -> str:
@@ -3000,7 +2927,9 @@ class QuestionWorkflowService:
         return exports
 
     @staticmethod
-    def _moodle_export_error(question: dict, version: dict, expected_version: int | None = None) -> tuple[str, str] | None:
+    def _moodle_export_error(
+        question: dict, version: dict, expected_version: int | None = None
+    ) -> tuple[str, str] | None:
         if expected_version is not None and question["current_version"] != expected_version:
             return "VERSION_CONFLICT", "Phiên bản câu hỏi đã thay đổi"
         if question["review_status"] != "APPROVED":
@@ -3041,9 +2970,7 @@ class QuestionWorkflowService:
             try:
                 question, version = self._pair(item.question_id)
                 self._ensure_read_access(question, version, current_user)
-                eligibility_error = self._moodle_export_error(
-                    question, version, item.expected_version
-                )
+                eligibility_error = self._moodle_export_error(question, version, item.expected_version)
                 if eligibility_error:
                     errors.append(
                         {
@@ -3110,9 +3037,9 @@ class QuestionWorkflowService:
         user_id,
         publisher_role: str | None = None,
     ) -> dict:
-        if not payload.mock:
-            raise ValueError("Tích hợp Moodle thật chưa được cấu hình; hãy dùng export GIFT/XML")
-        if settings.app_env == "production" and not settings.demo_mode:
+        if not payload.mock and getattr(self.db, "moodle_targets", None) is None:
+            raise ValueError("Publication thật cần Moodle REST_API target đang hoạt động")
+        if payload.mock and settings.app_env == "production" and not settings.demo_mode:
             raise ValueError("Mô phỏng Moodle bị tắt trong production; hãy dùng export GIFT/XML")
         question, version = self._pair(question_id)
         current_user = user_id if isinstance(user_id, CurrentUser) else None
@@ -3132,6 +3059,8 @@ class QuestionWorkflowService:
         target_config = target_service.find_target(payload.target_id or payload.moodle_site_id)
         if payload.target_id and not target_config:
             raise LookupError("Không tìm thấy Moodle target")
+        if not payload.mock and (not target_config or target_config.get("mode") != "REST_API"):
+            raise ValueError("Publication thật cần Moodle REST_API target đang hoạt động")
         if target_config and not target_config.get("is_active", True):
             raise ValueError("Moodle target đang bị khóa")
         allowed_roles = (target_config or {}).get("allowed_roles") or ["Admin", "Reviewer"]
@@ -3171,6 +3100,11 @@ class QuestionWorkflowService:
         idempotency_key = hashlib.sha256(idempotency_material.encode("utf-8")).hexdigest()
         now = utc_now()
         exports = self._moodle_exports(question, version, payload.export_format)
+        serialized_payload = serialize_moodle_question(question, version)
+        if not payload.mock:
+            validate_target_capabilities(serialized_payload, target_config.get("capabilities") or {})
+            exports["xml"] = to_moodle_xml(serialized_payload)
+        is_mock = publication_mode == "MOCK"
         publication = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
@@ -3181,12 +3115,12 @@ class QuestionWorkflowService:
             "target": target,
             "publication_mode": publication_mode,
             "external_sync": False,
-            "status_detail": MOODLE_MOCK_STATUS_DETAIL,
+            "status_detail": MOODLE_MOCK_STATUS_DETAIL if is_mock else "PENDING_REMOTE",
             "published_content_hash": published_content_hash,
             "idempotency_key": idempotency_key,
-            "status": "PUBLISHED",
+            "status": "PUBLISHED" if is_mock else "QUEUED",
             "attempt_no": 1,
-            "moodle_question_ref_id": f"mock-{moodle_site_id}-{str(version['_id'])}",
+            "moodle_question_ref_id": f"mock-{moodle_site_id}-{str(version['_id'])}" if is_mock else None,
             "request_payload": {
                 "question_code": question["question_code"],
                 "content": version["content"],
@@ -3198,19 +3132,20 @@ class QuestionWorkflowService:
                 "publication_mode": publication_mode,
                 "external_sync": False,
                 "target": json_safe(target),
+                "serialized_payload": serialized_payload,
             },
             "response_payload": {
                 "mock": payload.mock,
                 "publication_mode": publication_mode,
                 "external_sync": False,
-                "status_detail": MOODLE_MOCK_STATUS_DETAIL,
-                "message": MOODLE_MOCK_MESSAGE,
+                "status_detail": MOODLE_MOCK_STATUS_DETAIL if is_mock else "PENDING_REMOTE",
+                "message": MOODLE_MOCK_MESSAGE if is_mock else "Đã xếp hàng chờ Moodle worker gửi và verify.",
                 "export_formats": list(exports.keys()),
             },
             "error": None,
             "created_at": now,
             "updated_at": now,
-            "published_at": now,
+            "published_at": now if is_mock else None,
         }
         with mongo_transaction() as session:
             existing = self.db.moodle_publications.find_one(
@@ -3244,7 +3179,7 @@ class QuestionWorkflowService:
                     {"idempotency_key": idempotency_key},
                     session=session,
                 )
-            if (saved or publication).get("status") == "PUBLISHED":
+            if (saved or publication).get("status") == "PUBLISHED" and (saved or publication).get("external_sync"):
                 self.db.questions.update_one(
                     {
                         "_id": question["_id"],
@@ -3270,17 +3205,11 @@ class QuestionWorkflowService:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
         if kind == "evaluations":
-            cursor = self.db.question_evaluations.find(
-                {"question_id": question["_id"]}
-            ).sort("created_at", -1)
+            cursor = self.db.question_evaluations.find({"question_id": question["_id"]}).sort("created_at", -1)
         elif kind == "publications":
-            cursor = self.db.moodle_publications.find(
-                {"question_id": question["_id"]}
-            ).sort("created_at", -1)
+            cursor = self.db.moodle_publications.find({"question_id": question["_id"]}).sort("created_at", -1)
         else:
-            cursor = self.db.question_reviews.find(
-                {"question_id": question["_id"]}
-            ).sort("reviewed_at", -1)
+            cursor = self.db.question_reviews.find({"question_id": question["_id"]}).sort("reviewed_at", -1)
         return [json_safe(item) for item in cursor]
 
     def review_dashboard(self, current_user: CurrentUser) -> dict:
@@ -3334,9 +3263,7 @@ class QuestionWorkflowService:
         review_match: dict = {"reviewed_at": {"$gte": since_30d}}
         if not is_admin:
             review_match["reviewer_user_id"] = current_user.id
-        reviews = list(
-            self.db.question_reviews.find(review_match).sort("reviewed_at", -1).limit(500)
-        )
+        reviews = list(self.db.question_reviews.find(review_match).sort("reviewed_at", -1).limit(500))
         decision_counts = {"APPROVED": 0, "NEEDS_REVISION": 0, "REJECTED": 0}
         override_count = 0
         revision_issues = 0
@@ -3352,11 +3279,7 @@ class QuestionWorkflowService:
             if reviewed_at and reviewed_at >= since_7d:
                 reviews_last_7d += 1
 
-        version_ids = [
-            review.get("question_version_id")
-            for review in reviews
-            if review.get("question_version_id")
-        ]
+        version_ids = [review.get("question_version_id") for review in reviews if review.get("question_version_id")]
         evaluation_map: dict[ObjectId, dict] = {}
         if version_ids and hasattr(self.db, "question_evaluations"):
             evaluations = list(
@@ -3374,8 +3297,7 @@ class QuestionWorkflowService:
         ai_failed_but_approved = 0
         ai_passed_but_not_approved = 0
         criterion_calibration = {
-            key: {"sample_size": 0, "agreements": 0, "disagreements": 0}
-            for key in REVIEW_CRITERION_KEYS
+            key: {"sample_size": 0, "agreements": 0, "disagreements": 0} for key in REVIEW_CRITERION_KEYS
         }
         for review in reviews:
             evaluation = evaluation_map.get(review.get("question_version_id"))
@@ -3425,26 +3347,26 @@ class QuestionWorkflowService:
             audit_match["actor.user_id"] = current_user.id
         durations: list[float] = []
         for audit in self.db.audit_logs.find(audit_match, {"metadata.review_assignment": 1, "created_at": 1}):
-            assignment = ((audit.get("metadata") or {}).get("review_assignment") or {})
+            assignment = (audit.get("metadata") or {}).get("review_assignment") or {}
             start = _as_aware_utc(assignment.get("claimed_at") or assignment.get("assigned_at"))
             end = _as_aware_utc(audit.get("created_at"))
             if start and end and end >= start:
                 durations.append((end - start).total_seconds() / 3600)
-        average_review_hours = (
-            round(sum(durations) / len(durations), 2)
-            if durations
-            else None
-        )
+        average_review_hours = round(sum(durations) / len(durations), 2) if durations else None
 
-        versions = list(
-            self.db.question_versions.find(
-                {"_id": {"$in": version_ids}},
-                {"classification.subject": 1},
+        versions = (
+            list(
+                self.db.question_versions.find(
+                    {"_id": {"$in": version_ids}},
+                    {"classification.subject": 1},
+                )
             )
-        ) if version_ids else []
+            if version_ids
+            else []
+        )
         subject_counts: dict[str, int] = {}
         for version in versions:
-            subject = ((version.get("classification") or {}).get("subject") or {})
+            subject = (version.get("classification") or {}).get("subject") or {}
             subject_id = subject.get("id") if isinstance(subject, dict) else None
             key = str(subject_id) if subject_id else "unknown"
             subject_counts[key] = subject_counts.get(key, 0) + 1
@@ -3453,18 +3375,18 @@ class QuestionWorkflowService:
             for subject_id in subject_counts
             if subject_id != "unknown" and ObjectId.is_valid(subject_id)
         ]
-        subject_records = list(
-            self.db.subjects.find(
-                {"_id": {"$in": subject_oids}},
-                {"subject_code": 1, "subject_name": 1},
+        subject_records = (
+            list(
+                self.db.subjects.find(
+                    {"_id": {"$in": subject_oids}},
+                    {"subject_code": 1, "subject_name": 1},
+                )
             )
-        ) if subject_oids else []
+            if subject_oids
+            else []
+        )
         subject_labels = {
-            str(record["_id"]): (
-                record.get("subject_code")
-                or record.get("subject_name")
-                or str(record["_id"])
-            )
+            str(record["_id"]): (record.get("subject_code") or record.get("subject_name") or str(record["_id"]))
             for record in subject_records
         }
         subjects = [
@@ -3489,11 +3411,7 @@ class QuestionWorkflowService:
         }
         calibration = {
             "sample_size": calibration_sample,
-            "agreement_rate": (
-                round(calibration_agreements / calibration_sample, 3)
-                if calibration_sample
-                else None
-            ),
+            "agreement_rate": (round(calibration_agreements / calibration_sample, 3) if calibration_sample else None),
             "agreements": calibration_agreements,
             "disagreements": calibration_disagreements,
             "ai_failed_but_approved": ai_failed_but_approved,
@@ -3502,9 +3420,7 @@ class QuestionWorkflowService:
                 key: {
                     **value,
                     "agreement_rate": (
-                        round(value["agreements"] / value["sample_size"], 3)
-                        if value["sample_size"]
-                        else None
+                        round(value["agreements"] / value["sample_size"], 3) if value["sample_size"] else None
                     ),
                 }
                 for key, value in criterion_calibration.items()
@@ -3577,11 +3493,7 @@ async def process_evaluation_job_background(job_id: str, worker_id: str) -> None
                 {processing_task, superseded_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            superseded = (
-                superseded_task in done
-                and superseded_task.result()
-                and not processing_task.done()
-            )
+            superseded = superseded_task in done and superseded_task.result() and not processing_task.done()
             if superseded:
                 processing_task.cancel()
                 try:

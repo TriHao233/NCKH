@@ -14,6 +14,8 @@ import {
   deactivateMoodleTarget,
   listMoodlePublications,
   listMoodleTargets,
+  processNextMoodlePublication,
+  reconcileMoodlePublication,
   retryMoodlePublication,
   saveMoodleTarget,
 } from '../api/adminMoodle';
@@ -29,6 +31,9 @@ const emptyForm = {
   default_category_id: '',
   allowed_roles: ['Admin', 'Reviewer'],
   is_active: true,
+  moodle_version: '',
+  capabilities: { local_nckh_questionbank: false, qtype_ordering: false },
+  allowed_course_ids: [],
 };
 
 const PUBLISH_ROLES = [
@@ -42,6 +47,8 @@ const STATUS_LABEL = {
   FAILED: 'Lỗi',
   QUEUED: 'Đang chờ',
   PROCESSING: 'Đang xử lý',
+  PUBLISHING: 'Đang gửi',
+  UNKNOWN: 'Chờ đối soát',
 };
 
 function formatDateTime(value) {
@@ -66,7 +73,8 @@ function checkText(target) {
 function publicationStatusClass(status) {
   if (status === 'PUBLISHED') return 'success';
   if (status === 'FAILED') return 'danger';
-  if (['QUEUED', 'PROCESSING'].includes(status)) return 'active';
+  if (['QUEUED', 'PROCESSING', 'PUBLISHING'].includes(status)) return 'active';
+  if (status === 'UNKNOWN') return 'warning';
   return 'muted';
 }
 
@@ -96,6 +104,7 @@ function AdminMoodlePage() {
   const [saving, setSaving] = useState(false);
   const [checkingKey, setCheckingKey] = useState('');
   const [retryingId, setRetryingId] = useState('');
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
     const handle = setTimeout(() => setSearchTerm(searchInput.trim()), 350);
@@ -253,6 +262,30 @@ function AdminMoodlePage() {
     }
   };
 
+  const handleProcessNext = async () => {
+    setProcessing(true);
+    try {
+      await processNextMoodlePublication();
+      await loadPublications();
+    } catch (err) {
+      setError(err.message || 'Moodle worker thất bại');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleReconcile = async (item) => {
+    setRetryingId(item.id);
+    try {
+      await reconcileMoodlePublication(item.id);
+      await loadPublications();
+    } catch (err) {
+      setError(err.message || 'Đối soát Moodle thất bại');
+    } finally {
+      setRetryingId('');
+    }
+  };
+
   return (
     <main className="admin-moodle-page">
       <section className="moodle-header">
@@ -400,6 +433,22 @@ function AdminMoodlePage() {
               Category ID
               <input value={form.default_category_id} onChange={(event) => updateForm('default_category_id', event.target.value)} />
             </label>
+            <label>
+              Moodle version/build
+              <input value={form.moodle_version || ''} onChange={(event) => updateForm('moodle_version', event.target.value)} placeholder="4.5.x" />
+            </label>
+            <label className="form-span">
+              Course allowlist (phân cách dấu phẩy)
+              <input value={(form.allowed_course_ids || []).join(', ')} onChange={(event) => updateForm('allowed_course_ids', event.target.value.split(',').map((value) => value.trim()).filter(Boolean))} />
+            </label>
+            <label className="form-span">
+              <input type="checkbox" checked={Boolean(form.capabilities?.local_nckh_questionbank)} onChange={(event) => updateForm('capabilities', { ...form.capabilities, local_nckh_questionbank: event.target.checked })} />
+              Target có adapter local_nckh Question Bank
+            </label>
+            <label className="form-span">
+              <input type="checkbox" checked={Boolean(form.capabilities?.qtype_ordering)} onChange={(event) => updateForm('capabilities', { ...form.capabilities, qtype_ordering: event.target.checked })} />
+              Target có plugin qtype_ordering
+            </label>
             <div className="form-span role-toggle-group">
               <span>Được publish</span>
               <div>
@@ -438,6 +487,7 @@ function AdminMoodlePage() {
             <span>{publicationTotal} kết quả</span>
           </div>
           <div className="publication-filters">
+            <button type="button" onClick={handleProcessNext} disabled={processing}>{processing ? 'Đang chạy worker' : 'Xử lý job kế tiếp'}</button>
             <select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)}>
               <option value="all">Tất cả site</option>
               {targets.map((target) => (
@@ -503,6 +553,10 @@ function AdminMoodlePage() {
                         onClick={() => handleRetryPublication(item)}
                       >
                         <FontAwesomeIcon icon={faRotateRight} />
+                      </button>
+                    ) : item.status === 'UNKNOWN' ? (
+                      <button type="button" className="publication-retry-button" disabled={retryingId === item.id} onClick={() => handleReconcile(item)} title="Đối soát remote trước khi retry">
+                        <FontAwesomeIcon icon={faSearch} />
                       </button>
                     ) : (
                       <span className="publication-no-action">-</span>

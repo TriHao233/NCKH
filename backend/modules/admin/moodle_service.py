@@ -14,6 +14,9 @@ from core.audit import record_audit_event
 from core.bootstrap import SCHEMA_VERSION
 from core.dependencies import CurrentUser
 from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.moodle.identity_service import MoodleIdentitySyncService
+from modules.moodle.publication_worker import MoodlePublicationWorker
+from modules.moodle.serializer import QTYPE_CAPABILITIES
 from modules.questions.repository import json_safe
 from modules.questions.workflow_schemas import MoodlePublicationRequest
 
@@ -48,8 +51,10 @@ def _publication_status_label(status: str | None, publication_mode: str | None, 
         return "Đã đồng bộ"
     if status == "FAILED":
         return "Lỗi"
-    if status in {"QUEUED", "PROCESSING"}:
+    if status in {"QUEUED", "PROCESSING", "PUBLISHING"}:
         return "Đang xử lý"
+    if status == "UNKNOWN":
+        return "Chờ đối soát"
     return status or "Chưa rõ"
 
 
@@ -115,10 +120,7 @@ class MoodleTargetService:
 
     def list_targets(self, *, include_inactive: bool = True) -> dict:
         query = {} if include_inactive else {"is_active": True}
-        targets = [
-            _target_public(item)
-            for item in self.db.moodle_targets.find(query).sort("site_key", 1)
-        ]
+        targets = [_target_public(item) for item in self.db.moodle_targets.find(query).sort("site_key", 1)]
         return {"items": targets}
 
     def find_target(self, identifier: str | ObjectId, *, active_only: bool = False) -> dict | None:
@@ -206,10 +208,7 @@ class MoodleTargetService:
             ]
         total = self.db.moodle_publications.count_documents(query)
         items = list(
-            self.db.moodle_publications.find(query)
-            .sort("created_at", -1)
-            .skip((page - 1) * page_size)
-            .limit(page_size)
+            self.db.moodle_publications.find(query).sort("created_at", -1).skip((page - 1) * page_size).limit(page_size)
         )
         return {
             "items": [_safe_publication_item(item) for item in items],
@@ -220,9 +219,7 @@ class MoodleTargetService:
         }
 
     def retry_publication(self, publication_id: str, current_user: CurrentUser) -> dict:
-        publication = self.db.moodle_publications.find_one(
-            {"_id": object_id(publication_id, "publication_id")}
-        )
+        publication = self.db.moodle_publications.find_one({"_id": object_id(publication_id, "publication_id")})
         if not publication:
             raise LookupError("Không tìm thấy Moodle publication")
         if publication.get("status") != "FAILED":
@@ -256,9 +253,7 @@ class MoodleTargetService:
         )
         saved_id = result.get("_id") or result.get("id")
         saved = (
-            self.db.moodle_publications.find_one({"_id": object_id(saved_id, "publication_id")})
-            if saved_id
-            else None
+            self.db.moodle_publications.find_one({"_id": object_id(saved_id, "publication_id")}) if saved_id else None
         )
         safe_item = _safe_publication_item(saved or result)
         self._audit(
@@ -270,6 +265,29 @@ class MoodleTargetService:
             entity_type="moodle_publication",
         )
         return safe_item
+
+    def sync_identities(self, payload) -> dict:
+        target = self.find_target(payload.site_key, active_only=True)
+        if not target:
+            raise LookupError("Không tìm thấy Moodle target đang hoạt động")
+        return MoodleIdentitySyncService(self.db).sync_page(payload)
+
+    def issue_link_token(self, payload) -> dict:
+        if not self.find_target(payload.site_key, active_only=True):
+            raise LookupError("Không tìm thấy Moodle target đang hoạt động")
+        return MoodleIdentitySyncService(self.db).issue_link_token(payload)
+
+    def process_next_publication(self) -> dict | None:
+        result = MoodlePublicationWorker(self.db).process_next()
+        return _safe_publication_item(result) if result else None
+
+    def reconcile_publication(self, publication_id: str) -> dict:
+        result = MoodlePublicationWorker(self.db).reconcile(object_id(publication_id, "publication_id"))
+        return _safe_publication_item(result)
+
+    @staticmethod
+    def capability_matrix() -> dict:
+        return {"question_types": QTYPE_CAPABILITIES}
 
     def _run_check(self, target: dict, started: float) -> dict:
         now = utc_now()
@@ -343,7 +361,9 @@ class MoodleTargetService:
             "published": self.db.moodle_publications.count_documents({**match, "status": "PUBLISHED"}),
             "simulated": self.db.moodle_publications.count_documents(simulated_match),
             "failed": self.db.moodle_publications.count_documents({**match, "status": "FAILED"}),
-            "pending": self.db.moodle_publications.count_documents({**match, "status": {"$in": ["QUEUED", "PROCESSING"]}}),
+            "pending": self.db.moodle_publications.count_documents(
+                {**match, "status": {"$in": ["QUEUED", "PROCESSING", "PUBLISHING", "UNKNOWN"]}}
+            ),
         }
 
     @staticmethod

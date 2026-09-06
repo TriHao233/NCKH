@@ -37,3 +37,11 @@ export function listMoodlePublications({
 export function retryMoodlePublication(publicationId) {
   return apiRequest(`/admin/moodle/publications/${publicationId}/retry`, { method: 'POST' });
 }
+
+export function processNextMoodlePublication() {
+  return apiRequest('/admin/moodle/publications/process-next', { method: 'POST' });
+}
+
+export function reconcileMoodlePublication(publicationId) {
+  return apiRequest(`/admin/moodle/publications/${publicationId}/reconcile`, { method: 'POST' });
+}
