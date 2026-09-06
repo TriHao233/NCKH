@@ -3799,7 +3799,11 @@ class SchemaV2Tests(unittest.TestCase):
                 "document_id": None,
                 "content": "Queue uses FIFO",
                 "question_data": {"options": {"A": "FIFO"}, "correct_answer": "A"},
-                "classification": {"subject": {"id": exam["subject_id"]}},
+                "classification": {
+                    "subject": {"id": exam["subject_id"]},
+                    "bloom": {"level": 1},
+                    "difficulty": "de",
+                },
                 "clos": [],
                 "sources": [],
                 "content_hash": "hash",
@@ -3997,7 +4001,8 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(call["filters"]["subject_id"], str(exam["subject_id"]))
         self.assertEqual(call["filters"]["chapter_id"], str(chapter_id))
         self.assertEqual(call["filters"]["difficulty"], "de")
-        self.assertEqual(call["filters"]["owner_user_id"], owner.id)
+        self.assertEqual(call["filters"]["visible_to_user_id"], owner.id)
+        self.assertNotIn("owner_user_id", call["filters"])
         self.assertTrue(call["filters"]["approved_current_only"])
 
     def test_exam_question_pool_hides_stale_approved_versions(self):

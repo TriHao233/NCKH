@@ -91,6 +91,12 @@ These cannot be inferred from source code and block only the dependent stage, no
   per-plan checkpoints and expose partial results. The code-level suite passed 208 tests and the
   frontend passed 47 tests, lint and build. G5/G6/G7 remain external until the licensed CTDL
   golden set and independent reviewers produce grounding, Bloom/CLO and inter-rater evidence.
+- Gate F — blueprint, finalized exams and paper variants: **IMPLEMENTED, pending educator and
+  rendered-artifact QA on 2026-09-06**. Blueprint V2 preserves Bloom 1–6 and adds CLO/type/marks;
+  shared eligibility, overlap allocation, coverage validation, CAS finalization, immutable checksummed
+  snapshots, typed deterministic shuffling and export manifests are covered by 212 backend tests.
+  Frontend passed 47 tests, lint and build. G8 remains external until an educator uses a real bank and
+  every PDF/DOCX page containing code, formulas, images and tables is visually inspected.
 - Migration rehearsal: **PASSED** on isolated Mongo database copies. Membership backfill
   produced one membership on first apply and zero changes on the second apply, with no
   duplicates; bearer sanitization reduced persisted raw bearer records from one to zero.

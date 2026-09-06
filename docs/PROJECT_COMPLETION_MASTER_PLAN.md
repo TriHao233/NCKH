@@ -1028,7 +1028,7 @@ Stage-E contract/sandbox/checkpoint tests; frontend đạt **47/47**, ESLint và
 golden cases và reviewer độc lập để đo grounding/Bloom/CLO, inter-rater agreement và hiệu chuẩn.
 Không dùng điểm heuristic hoặc fixture tổng hợp để tự tuyên bố đạt chuẩn.
 
-### F — Bộ đề dùng được, 8–13 ngày công
+### F — Bộ đề dùng được, 8–13 ngày công — **IMPLEMENTED (technical), 06/09/2026**
 
 | ID | Việc cụ thể | Chủ trì | Phụ thuộc | Đầu ra/nghiệm thu | Công sức |
 |---|---|---|---|---|---|
@@ -1036,6 +1036,20 @@ Không dùng điểm heuristic hoặc fixture tổng hợp để tự tuyên b�
 | F02 | Eligible pool thống nhất share scope; overlap allocation, shortage explanation, coverage validator | BE | F01, B03 | T16/T17; manual và auto cùng eligibility | 2–3 |
 | F03 | Finalization CAS/snapshot, shuffler theo dạng, stable answer IDs/permutation | BE | F02 | T18/T19; bốn mã đề có answer mapping đúng | 2–3 |
 | F04 | Preview/PDF đề và đáp án tách riêng, code/formula/image layout QA, export manifest | FE + BE + QA | F03 | G8; xem file render từng trang, không lộ lời giải ở bản sinh viên | 2–4 |
+
+Trạng thái kỹ thuật 06/09/2026: blueprint V2 lưu tập Bloom 1–6, CLO, dạng câu,
+điểm/câu và migration bốn mức (vận dụng cao thành `{4,5,6}`); manual/auto dùng chung eligible
+pool theo approved-current và share scope. Bộ chọn có seed, cấp phát ô ít ứng viên trước bằng
+backtracking, báo shortage/conflict và kiểm coverage lại trước READY/FINALIZED. Finalization dùng
+optimistic CAS, snapshot có checksum; mã đề lưu seed/permutation/stable answer mapping và shuffler
+riêng cho choice/multi-answer/matching/ordering, không xáo Đúng/Sai hoặc phương án phụ thuộc vị trí.
+Preview tách bản sinh viên/đáp án; export lưu manifest revision/variant/snapshot checksum và trả
+checksum artifact trong response header.
+
+Bằng chứng code-level: backend đạt **212 passed** (9 Mongo integration tests tách profile), gồm
+4 Stage-F contract tests; frontend đạt **47/47**, ESLint và production build. **Gate F chưa CLOSED
+về nghiệm thu sử dụng thực tế**: vẫn cần giảng viên tạo bộ đề giấy từ ngân hàng thật và QA thị giác
+từng trang PDF/DOCX có code, công thức, ảnh/bảng; không dùng test HTML/fixture để tự tuyên bố G8.
 
 **Gate F:** giảng viên tạo và sử dụng bộ đề giấy thật được; đây là đầu ra độc lập có giá trị trước khi tạo Moodle Quiz.
 

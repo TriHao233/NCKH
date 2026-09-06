@@ -47,6 +47,8 @@ class ExamRepository(Protocol):
 
     def count_variants(self, exam_id: str | ObjectId) -> int: ...
 
+    def finalize(self, exam_id: str | ObjectId, expected_updated_at: datetime, updates: dict) -> dict | None: ...
+
 
 class ExamVariantRepository(Protocol):
     def create(self, variant: dict) -> dict: ...
@@ -67,9 +69,7 @@ class MongoExamRepository:
         return exam
 
     def find(self, exam_id: str | ObjectId) -> dict | None:
-        return self.db.exams.find_one(
-            {"_id": object_id(exam_id, "exam_id"), "schema_version": SCHEMA_VERSION}
-        )
+        return self.db.exams.find_one({"_id": object_id(exam_id, "exam_id"), "schema_version": SCHEMA_VERSION})
 
     def list(
         self,
@@ -81,12 +81,7 @@ class MongoExamRepository:
         if created_by_user_id is not None:
             match["created_by_user_id"] = created_by_user_id
         total = self.db.exams.count_documents(match)
-        items = list(
-            self.db.exams.find(match)
-            .sort("updated_at", -1)
-            .skip((page - 1) * page_size)
-            .limit(page_size)
-        )
+        items = list(self.db.exams.find(match).sort("updated_at", -1).skip((page - 1) * page_size).limit(page_size))
         return items, total
 
     def update(self, exam_id: str | ObjectId, updates: dict) -> dict | None:
@@ -100,14 +95,23 @@ class MongoExamRepository:
         return result
 
     def delete(self, exam_id: str | ObjectId) -> bool:
-        result = self.db.exams.delete_one(
-            {"_id": object_id(exam_id, "exam_id"), "schema_version": SCHEMA_VERSION}
-        )
+        result = self.db.exams.delete_one({"_id": object_id(exam_id, "exam_id"), "schema_version": SCHEMA_VERSION})
         return result.deleted_count == 1
 
     def count_variants(self, exam_id: str | ObjectId) -> int:
-        return self.db.exam_variants.count_documents(
-            {"exam_id": object_id(exam_id, "exam_id")}
+        return self.db.exam_variants.count_documents({"exam_id": object_id(exam_id, "exam_id")})
+
+    def finalize(self, exam_id: str | ObjectId, expected_updated_at: datetime, updates: dict) -> dict | None:
+        fields = {**updates, "updated_at": utc_now()}
+        return self.db.exams.find_one_and_update(
+            {
+                "_id": object_id(exam_id, "exam_id"),
+                "schema_version": SCHEMA_VERSION,
+                "status": "READY",
+                "updated_at": expected_updated_at,
+            },
+            {"$set": fields},
+            return_document=True,
         )
 
 
@@ -118,13 +122,9 @@ class MongoExamVariantRepository:
     def create(self, variant: dict) -> dict:
         exam_id = variant["exam_id"]
         with mongo_transaction() as session:
-            existing = self.db.exam_variants.count_documents(
-                {"exam_id": exam_id}, session=session
-            )
+            existing = self.db.exam_variants.count_documents({"exam_id": exam_id}, session=session)
             if existing >= MAX_VARIANTS_PER_EXAM:
-                raise ValueError(
-                    f"Đã đạt tối đa {MAX_VARIANTS_PER_EXAM} mã đề cho kỳ thi này"
-                )
+                raise ValueError(f"Đã đạt tối đa {MAX_VARIANTS_PER_EXAM} mã đề cho kỳ thi này")
             duplicate = self.db.exam_variants.find_one(
                 {"exam_id": exam_id, "exam_code": variant["exam_code"]},
                 session=session,
@@ -135,19 +135,11 @@ class MongoExamVariantRepository:
         return variant
 
     def find(self, variant_id: str | ObjectId) -> dict | None:
-        return self.db.exam_variants.find_one(
-            {"_id": object_id(variant_id, "variant_id")}
-        )
+        return self.db.exam_variants.find_one({"_id": object_id(variant_id, "variant_id")})
 
     def list_by_exam(self, exam_id: str | ObjectId) -> list[dict]:
-        return list(
-            self.db.exam_variants.find(
-                {"exam_id": object_id(exam_id, "exam_id")}
-            ).sort("created_at", 1)
-        )
+        return list(self.db.exam_variants.find({"exam_id": object_id(exam_id, "exam_id")}).sort("created_at", 1))
 
     def delete(self, variant_id: str | ObjectId) -> bool:
-        result = self.db.exam_variants.delete_one(
-            {"_id": object_id(variant_id, "variant_id")}
-        )
+        result = self.db.exam_variants.delete_one({"_id": object_id(variant_id, "variant_id")})
         return result.deleted_count == 1

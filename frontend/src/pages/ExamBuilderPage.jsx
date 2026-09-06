@@ -18,7 +18,7 @@ import {
   updateExam,
 } from '../api/exams';
 import { listSubjects } from '../api/catalog';
-import { difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import '../css/ExamBuilderPage.css';
 
 function refId(value) {
@@ -86,7 +86,13 @@ const STEPS = [
 ];
 
 function emptyCell() {
-  return { chapter_id: '', cognitive_level: 'nhan_biet', difficulty: 'de', count: 1 };
+  return { chapter_id: '', bloom_levels: [1], clo_ids: [], question_types: [], difficulty: 'de', count: 1, marks_per_question: 1 };
+}
+
+function cellBloomLevels(cell) {
+  if (cell.bloom_levels?.length) return cell.bloom_levels.map(Number);
+  if (cell.cognitive_level === 'van_dung_cao') return [4, 5, 6];
+  return [COGNITIVE_TO_BLOOM[cell.cognitive_level] || 1];
 }
 
 function ExamBuilderPage() {
@@ -183,7 +189,7 @@ function ExamBuilderPage() {
             )}
             {step === 'info' && <InfoStep exam={exam} onSaved={setExam} readOnly={locked} />}
             {step === 'header' && <HeaderStep exam={exam} onSaved={setExam} readOnly={locked} />}
-            {step === 'matrix' && <MatrixStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} />}
+            {step === 'matrix' && <MatrixStep exam={exam} chapters={chapters} clos={subject?.learning_outcomes || []} onSaved={setExam} readOnly={locked} />}
             {step === 'questions' && <QuestionsStep exam={exam} chapters={chapters} onSaved={setExam} readOnly={locked} />}
             {step === 'variants' && <VariantsStep exam={exam} />}
             {step === 'preview' && <PreviewStep exam={exam} />}
@@ -343,7 +349,7 @@ function HeaderStep({ exam, onSaved, readOnly }) {
   );
 }
 
-function MatrixStep({ exam, chapters, onSaved, readOnly }) {
+function MatrixStep({ exam, chapters, clos, onSaved, readOnly }) {
   const [cells, setCells] = useState(exam.matrix?.length ? exam.matrix : [emptyCell()]);
   const [saving, setSaving] = useState(false);
   const [availability, setAvailability] = useState(null);
@@ -356,6 +362,12 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
   const removeRow = (index) => setCells((current) => current.filter((_, i) => i !== index));
 
   const totalCount = cells.reduce((sum, cell) => sum + Number(cell.count || 0), 0);
+  const totalMarks = cells.reduce((sum, cell) => sum + Number(cell.count || 0) * Number(cell.marks_per_question || 0), 0);
+
+  const toggleArrayValue = (index, field, value) => {
+    const current = field === 'bloom_levels' ? cellBloomLevels(cells[index]) : (cells[index][field] || []);
+    updateCell(index, { [field]: current.includes(value) ? current.filter((item) => item !== value) : [...current, value] });
+  };
 
   const handleSave = async () => {
     if (readOnly) return;
@@ -364,7 +376,10 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
       const payload = cells.map((cell) => ({
         ...cell,
         chapter_id: cell.chapter_id || null,
+        cognitive_level: null,
+        bloom_levels: cellBloomLevels(cell),
         count: Number(cell.count),
+        marks_per_question: Number(cell.marks_per_question),
       }));
       const updated = await saveMatrix(exam.id, payload);
       onSaved(updated);
@@ -392,7 +407,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
     <div>
       <h3 className="step-title">Ma trận đề thi</h3>
       <p className="step-desc">
-        Tổng số câu trong ma trận: <b>{totalCount}</b> / Số câu đề thi yêu cầu: <b>{exam.question_count}</b>
+        Tổng: <b>{totalCount}</b> câu / <b>{totalMarks}</b> điểm · yêu cầu <b>{exam.question_count}</b> câu
         {totalCount > exam.question_count && (
           <span className="matrix-warning"> — Vượt quá số câu đã khai báo!</span>
         )}
@@ -401,9 +416,12 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
         <thead>
           <tr>
             <th>Chương</th>
-            <th>Mức nhận thức</th>
+            <th>Bloom 1–6</th>
+            <th>CLO</th>
+            <th>Dạng câu</th>
             <th>Độ khó</th>
             <th>Số câu</th>
+            <th>Điểm/câu</th>
             <th />
           </tr>
         </thead>
@@ -421,8 +439,16 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
                 </select>
               </td>
               <td>
-                <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly}>
-                  {COGNITIVE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+                <div className="matrix-checks">{BLOOM_LEVELS.map((level) => <label key={level.level}><input type="checkbox" checked={cellBloomLevels(cell).includes(level.level)} onChange={() => toggleArrayValue(index, 'bloom_levels', level.level)} disabled={readOnly} />{level.level}</label>)}</div>
+              </td>
+              <td>
+                <select multiple className="field-select" value={(cell.clo_ids || []).map(String)} onChange={(e) => updateCell(index, { clo_ids: [...e.target.selectedOptions].map((option) => option.value) })} disabled={readOnly}>
+                  {clos.map((clo) => <option key={refId(clo)} value={refId(clo)}>{clo.clo_code || clo.code || clo.name}</option>)}
+                </select>
+              </td>
+              <td>
+                <select multiple className="field-select" value={cell.question_types || []} onChange={(e) => updateCell(index, { question_types: [...e.target.selectedOptions].map((option) => option.value) })} disabled={readOnly}>
+                  {QUESTION_TYPES.map((type) => <option key={type.backend} value={type.backend}>{type.label}</option>)}
                 </select>
               </td>
               <td>
@@ -433,6 +459,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
               <td>
                 <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly} />
               </td>
+              <td><input type="number" min="0.25" step="0.25" className="field-input matrix-count" value={cell.marks_per_question || 1} onChange={(e) => updateCell(index, { marks_per_question: e.target.value })} disabled={readOnly} /></td>
               <td>
                 <button type="button" className="icon-btn icon-btn--danger" onClick={() => removeRow(index)} disabled={readOnly}>×</button>
               </td>
@@ -453,7 +480,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
         <div className="availability-list">
           {availability.map((item, index) => (
             <div key={index} className={`availability-item ${item.sufficient ? 'availability-ok' : 'availability-warn'}`}>
-              {COGNITIVE_LEVELS.find((l) => l.value === item.cognitive_level)?.label} · {DIFFICULTIES.find((d) => d.value === item.difficulty)?.label}:
+              Bloom {item.bloom_levels.join(', ')} · {DIFFICULTIES.find((d) => d.value === item.difficulty)?.label}:
               {' '}{item.available}/{item.requested} câu {item.sufficient ? '(đủ)' : '(thiếu)'}
             </div>
           ))}
@@ -756,6 +783,7 @@ function PreviewStep({ exam }) {
   const [variantId, setVariantId] = useState('');
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [previewMode, setPreviewMode] = useState('de');
 
   useEffect(() => {
     listVariants(exam.id).then((result) => {
@@ -776,6 +804,10 @@ function PreviewStep({ exam }) {
   return (
     <div>
       <h3 className="step-title">Xem trước đề thi</h3>
+      <div className="step-tabs">
+        <button type="button" className={`step-tab ${previewMode === 'de' ? 'step-tab--active' : ''}`} onClick={() => setPreviewMode('de')}>Bản sinh viên</button>
+        <button type="button" className={`step-tab ${previewMode === 'dapan' ? 'step-tab--active' : ''}`} onClick={() => setPreviewMode('dapan')}>Đáp án</button>
+      </div>
       <div className="field-group">
         <label className="field-label">Chọn mã đề</label>
         <select className="field-select" value={variantId} onChange={(e) => setVariantId(e.target.value)}>
@@ -797,7 +829,7 @@ function PreviewStep({ exam }) {
             </div>
           </div>
           <h4 className="preview-title">Môn: {preview.header.subject_name}</h4>
-          {preview.questions.map((q) => (
+          {previewMode === 'de' && preview.questions.map((q) => (
             <div className="preview-question" key={q.number}>
               <p><b>Câu {q.number}.</b> {q.content}</p>
               {q.options.map((opt) => (
@@ -805,6 +837,12 @@ function PreviewStep({ exam }) {
               ))}
             </div>
           ))}
+          {previewMode === 'dapan' && (
+            <div className="availability-list">
+              {(preview.answers || []).map((row) => <div className="availability-item availability-ok" key={row.number}>Câu {row.number}: <b>{row.answer}</b></div>)}
+            </div>
+          )}
+          <p className="step-desc">Revision {preview.export_manifest?.exam_revision || exam.revision} · checksum {preview.export_manifest?.snapshot_sha256?.slice(0, 12) || '—'}</p>
         </div>
       )}
     </div>

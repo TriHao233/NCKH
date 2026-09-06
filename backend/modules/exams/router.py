@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.config import settings
@@ -28,6 +30,8 @@ router = APIRouter(prefix=f"{settings.api_prefix}/exams", tags=["Exams"])
 
 
 def _translate(exc: Exception):
+    if isinstance(exc, RuntimeError) and str(exc) == "EXAM_REVISION_CONFLICT":
+        raise HTTPException(status_code=409, detail="Đề thi vừa được thay đổi; hãy tải lại trước khi chốt") from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, PermissionError):
@@ -259,9 +263,7 @@ def get_variant(
         _translate(exc)
 
 
-@router.delete(
-    "/{exam_id}/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/{exam_id}/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_variant(
     exam_id: str,
     variant_id: str,
@@ -303,14 +305,17 @@ async def export_variant_pdf(
         _translate(exc)
     if not variant["questions"]:
         raise HTTPException(status_code=400, detail="Mã đề chưa có câu hỏi, không thể xuất PDF")
-    pdf_bytes = await render_exam_pdf(
-        exam["header"], variant["exam_code"], variant["questions"], export_type
-    )
+    pdf_bytes = await render_exam_pdf(exam["header"], variant["exam_code"], variant["questions"], export_type)
     filename = f"{variant['exam_code']}_{export_type}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Artifact-SHA256": hashlib.sha256(pdf_bytes).hexdigest(),
+            "X-Exam-Revision": str(variant.get("exam_revision", 1)),
+            "X-Variant-Code": variant["exam_code"],
+        },
     )
 
 
@@ -330,12 +335,15 @@ def export_variant_docx(
         _translate(exc)
     if not variant["questions"]:
         raise HTTPException(status_code=400, detail="Mã đề chưa có câu hỏi, không thể xuất DOCX")
-    docx_bytes = render_exam_docx(
-        exam["header"], variant["exam_code"], variant["questions"], export_type
-    )
+    docx_bytes = render_exam_docx(exam["header"], variant["exam_code"], variant["questions"], export_type)
     filename = f"{variant['exam_code']}_{export_type}.docx"
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Artifact-SHA256": hashlib.sha256(docx_bytes).hexdigest(),
+            "X-Exam-Revision": str(variant.get("exam_revision", 1)),
+            "X-Variant-Code": variant["exam_code"],
+        },
     )

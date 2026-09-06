@@ -85,6 +85,8 @@
 .exam-builder-page .matrix-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
 .exam-builder-page .matrix-table th, .exam-builder-page .matrix-table td { padding: 6px 8px; text-align: left; }
 .exam-builder-page .matrix-table th { font-size: 0.78rem; color: var(--text-muted, #5c6f89); }
+.exam-builder-page .matrix-checks { display: grid; grid-template-columns: repeat(3, minmax(2.4rem, 1fr)); gap: 4px; min-width: 8rem; }
+.exam-builder-page .matrix-checks label { display: flex; align-items: center; gap: 3px; font-size: 0.8rem; }
 .exam-builder-page .matrix-count { width: 70px; }
 .exam-builder-page .matrix-warning { color: #DC2626; font-weight: 700; }
 
