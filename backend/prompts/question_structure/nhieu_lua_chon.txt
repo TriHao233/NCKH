@@ -4,3 +4,7 @@ CẤU TRÚC: nhieu_lua_chon
 3. Có ít nhất 2 đáp án đúng nhưng không đúng tất cả phương án.
 4. `correct_answer` liệt kê mọi khóa đúng, cách nhau bằng dấu phẩy và khoảng trắng, ví dụ "A, C, E".
 5. Mỗi phương án đúng phải đúng độc lập; tránh phương án bao hàm nhau gây mơ hồ.
+6. `question` phải chứa nguyên văn chỉ dẫn "Chọn tất cả đáp án đúng". Mẫu hình dạng bắt buộc (thay toàn bộ nội dung mẫu bằng dữ kiện từ nguồn):
+`{"question":"Chọn tất cả đáp án đúng: ...?","options":{"A":"...","B":"...","C":"...","D":"..."},"correct_answer":"A, C"}`
+7. `question` chỉ chứa câu dẫn, không liệt kê hoặc chép lại bất kỳ nội dung A/B/C/D nào; các lựa chọn chỉ xuất hiện trong `options`.
+8. Mỗi phương án đúng phải là một mệnh đề đủ nghĩa có ít nhất 4 từ và xuất hiện nguyên văn trong `source_context`; không dùng riêng tên đặc trưng/thuật ngữ ngắn làm phương án đúng. `source_context` phải là một đoạn liên tục đủ chứa mọi phương án đúng.

@@ -4,3 +4,8 @@ CẤU TRÚC: ghep_cot
 3. Tạo 3-4 mục nhóm số; nhóm chữ phải nhiều hơn nhóm số đúng 1 mục để làm nhiễu.
 4. `correct_answer` liệt kê đủ cặp đúng theo dạng "1-b, 2-a, 3-c"; không đưa mục nhiễu vào đáp án.
 5. Nhóm số gồm các mục cùng loại; nhóm chữ ghép bằng ý nghĩa, tránh lặp nguyên từ khóa.
+6. Giá trị của khóa số chỉ là thuật ngữ/tên mục ngắn; không chép mô tả hay đáp án vào đó. Giá trị của khóa chữ là mô tả để ghép.
+7. Dùng đúng một object phẳng, không dùng mảng và không tạo object con `left`/`right`. Mẫu hình dạng bắt buộc (thay toàn bộ nội dung mẫu bằng dữ kiện từ nguồn):
+`{"question":"Ghép mỗi mục ở nhóm số với mô tả phù hợp ở nhóm chữ.","options":{"1":"Thuật ngữ 1","2":"Thuật ngữ 2","3":"Thuật ngữ 3","A":"Mô tả của thuật ngữ 1","B":"Mô tả của thuật ngữ 2","C":"Mô tả của thuật ngữ 3","D":"Mô tả nhiễu"},"correct_answer":"1-A,2-B,3-C"}`
+8. `question` phải là chỉ dẫn ghép hai nhóm và chứa từ "Ghép"; không biến thân câu thành câu hỏi chọn một đáp án.
+9. Mỗi mô tả chữ được dùng trong `correct_answer` phải là một mệnh đề liên tục xuất hiện trong `source_context` (có thể thêm tiền tố "Vì"); `source_context` phải đủ chứng minh tất cả cặp đúng.

@@ -134,6 +134,7 @@ class GeneratedQuestion(BaseModel):
     source_keywords: List[str] = Field(default_factory=list)
     clo_codes: List[str] = Field(default_factory=list)
     false_mutation: Optional[dict[str, Any]] = None
+    post_processing: dict[str, Any] = Field(default_factory=dict)
     evidence_spans: List[dict[str, Any]] = Field(default_factory=list)
     question_id: Optional[str] = None
     question_code: Optional[str] = None
@@ -167,6 +168,10 @@ class GenerationPlanSummary(BaseModel):
     clarity_rejected_count: int = 0
     saved_count: int = 0
     skipped_count: int = 0
+    source_status: Literal["selected", "insufficient", "not_evaluated"] = "not_evaluated"
+    source_candidate_count: int = 0
+    source_eligible_count: int = 0
+    source_rejected_count: int = 0
     warnings: List[str] = Field(default_factory=list)
     rejection_reasons: List[GenerationRejection] = Field(default_factory=list)
 

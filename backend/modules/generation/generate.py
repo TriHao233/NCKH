@@ -298,6 +298,7 @@ async def preview_generation_prompt(
             limit=req.retrieval_limit,
             retrieval_mode=req.retrieval_mode,
             context_token_budget=req.context_token_budget,
+            question_type=req.effective_plan()[0].question_type.value,
         )
         outcomes = await asyncio.to_thread(get_document_learning_outcomes, req.document_id)
         if req.clo_codes:

@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -163,6 +164,17 @@ class ConcurrencyLimitedProvider(LLMProvider):
     def __getattr__(self, name: str):
         return getattr(self.wrapped, name)
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(
+        self, prompt: str, response_schema: dict | None = None,
+    ) -> str:
         async with distributed_llm_slot(self.provider_code):
+            if (
+                response_schema is not None
+                and "response_schema" in inspect.signature(
+                    self.wrapped.generate_text
+                ).parameters
+            ):
+                return await self.wrapped.generate_text(
+                    prompt, response_schema=response_schema,
+                )
             return await self.wrapped.generate_text(prompt)

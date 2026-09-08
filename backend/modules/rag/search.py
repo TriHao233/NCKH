@@ -3,6 +3,7 @@ import hashlib
 import logging
 import re
 import unicodedata
+from collections import Counter
 
 from bson import ObjectId
 
@@ -11,6 +12,212 @@ from core.database import get_rag_db
 from modules.rag.chromadb_engine import get_collection
 
 logger = logging.getLogger(__name__)
+
+
+SUPPORTED_QUESTION_TYPES = {
+    "trac_nghiem",
+    "dung_sai",
+    "dien_khuyet",
+    "ghep_cot",
+    "tinh_huong",
+    "sap_xep",
+    "nhieu_lua_chon",
+}
+
+
+class InsufficientSourceError(ValueError):
+    def __init__(self, question_type: str, trace: dict):
+        rejection_counts = trace.get("source_rejections") or {}
+        reason_text = ", ".join(
+            f"{code}={count}" for code, count in sorted(rejection_counts.items())
+        ) or "không có chunk đủ điều kiện"
+        super().__init__(
+            f"INSUFFICIENT_SOURCE_FOR_QUESTION_TYPE: {question_type}; {reason_text}"
+        )
+        self.trace = trace
+
+
+def _source_units(text: str) -> list[str]:
+    """Split prose/list OCR into independently usable evidence units."""
+    normalized = re.sub(r"[ \t]+", " ", text or "").strip()
+    if not normalized:
+        return []
+    units = re.split(r"(?:\r?\n)+|(?<=[.!?;])\s+", normalized)
+    return [unit.strip(" \t-*•o") for unit in units if len(unit.strip(" \t-*•o")) >= 20]
+
+
+def _is_source_boilerplate(unit: str) -> bool:
+    normalized = re.sub(r"\s+", " ", unit or "").strip().casefold()
+    return bool(
+        re.search(r"^trang nguồn\s+\d+$", normalized)
+        or "bản trích nội dung dùng làm nguồn" in normalized
+        or (
+            re.search(r"\b(khoa|trường|đại học|university)\b", normalized)
+            and not re.search(r"\b(là|gồm|bao gồm|được|có|is|are|includes)\b", normalized)
+        )
+    )
+
+
+def assess_source_suitability(text: str, question_type: str) -> dict:
+    """Conservatively decide whether one chunk can support a question type.
+
+    This only checks observable source structure. It does not replace semantic or
+    pedagogical review, and it deliberately returns stable reason codes for traces.
+    """
+    if question_type not in SUPPORTED_QUESTION_TYPES:
+        raise ValueError(f"Question type không được hỗ trợ: {question_type}")
+
+    raw_compact = re.sub(r"\s+", " ", text or "").strip()
+    units = [unit for unit in _source_units(text) if not _is_source_boilerplate(unit)]
+    compact = " ".join(units)
+    reasons: list[str] = []
+    signals: dict[str, int | bool] = {
+        "character_count": len(compact),
+        "raw_character_count": len(raw_compact),
+        "evidence_units": len(units),
+    }
+    score = min(30, len(compact) // 40) + min(20, len(units) * 4)
+
+    if len(compact) < 40:
+        reasons.append("SOURCE_TOO_SHORT")
+    if not units:
+        reasons.append("SOURCE_HAS_NO_COMPLETE_IDEA")
+    if re.search(r"\ufffd|\.{3,}\s*$|(?:^|\n)\s*[^\n]{0,30}[-–]\s*$", text or ""):
+        reasons.append("SOURCE_OCR_INCOMPLETE")
+
+    if question_type == "sap_xep":
+        markers = list(re.finditer(
+            r"(?:(?:(?:^|\n)\s*(?:[-*•o]\s+)?|\b)(?:bước|step)\s+(\d+)\s*[:.)-]"
+            r"|(?:^|\n)\s*(\d+)\s*[.)])\s*",
+            text or "",
+            flags=re.IGNORECASE,
+        ))
+        numbers = [int(match.group(1) or match.group(2)) for match in markers]
+        sequential = len(numbers) >= 4 and numbers == list(range(numbers[0], numbers[0] + len(numbers)))
+        branching = bool(re.search(
+            r"\b(quay lại|lặp lại|ngược lại|nếu|goto|go to|repeat|if|else|otherwise)\b",
+            compact,
+            flags=re.IGNORECASE,
+        ))
+        signals.update({"numbered_steps": len(numbers), "linear_sequence": sequential, "branching": branching})
+        if not sequential:
+            reasons.append("ORDERING_SEQUENCE_MISSING")
+        if branching:
+            reasons.append("ORDERING_NOT_LINEAR")
+        score += 45 if sequential else 0
+        score -= 35 if branching else 0
+
+    elif question_type == "ghep_cot":
+        relation_pattern = re.compile(
+            r"^(?:\d+[.)]\s*)?(?P<subject>[^:;.!?]{2,80}?)(?::\s+|\s+"
+            r"(?:là|gồm|bao gồm|dùng để|được dùng|có chức năng|means|is|includes|is used for)\s+)"
+            r"(?P<detail>.{8,})$",
+            flags=re.IGNORECASE,
+        )
+        relations = []
+        for unit in units:
+            match = relation_pattern.search(unit)
+            if not match:
+                continue
+            subject = re.sub(r"\W+", " ", match.group("subject").casefold()).strip()
+            detail = re.sub(r"\W+", " ", match.group("detail").casefold()).strip()
+            if (
+                re.search(r"\b(?:bước|step|mục|giai đoạn|lần)\s*\d+\b", subject)
+                or subject in {"thí dụ", "ví dụ", "yêu cầu", "đầu vào", "đầu ra", "kết quả", "cụ thể"}
+                or len(subject.split()) > 6
+                or len(detail.split()) < 4
+                or re.search(r"\b(?:là|và|hoặc|có|được|của|trong|với|để|bằng|từ|một|đơn)$", detail)
+            ):
+                continue
+            relations.append((subject, detail))
+        relation_subjects = {subject for subject, _detail in relations}
+        subject_families = Counter(
+            subject.split()[0] for subject, _detail in relations if subject.split()
+        )
+        detail_families = Counter(
+            " ".join(detail.split()[:3]) for _subject, detail in relations if len(detail.split()) >= 3
+        )
+        coherent_relations = max(
+            [0, *subject_families.values(), *detail_families.values()]
+        )
+        usable_relations = min(len(relation_subjects), coherent_relations)
+        signals.update({
+            "explicit_relations": len(relation_subjects),
+            "coherent_relations": coherent_relations,
+            "usable_relations": usable_relations,
+        })
+        if usable_relations < 3:
+            reasons.append("MATCHING_RELATIONS_INSUFFICIENT")
+        score += min(45, usable_relations * 15)
+
+    elif question_type == "nhieu_lua_chon":
+        factual_units = {
+            re.sub(r"\W+", " ", unit.casefold()).strip()
+            for unit in units
+            if re.search(
+                r"\b(là|gồm|bao gồm|có|không|được|dùng|giúp|cho phép|"
+                r"is|are|includes|contains|uses|allows|supports)\b",
+                unit,
+                flags=re.IGNORECASE,
+            )
+        }
+        relation_subjects = []
+        for unit in units:
+            relation = re.match(r"^(?P<subject>[^:;.!?]{2,80}):\s+(?P<detail>.{8,})$", unit)
+            if not relation:
+                continue
+            subject = re.sub(r"\W+", " ", relation.group("subject").casefold()).strip()
+            detail = re.sub(r"\W+", " ", relation.group("detail").casefold()).strip()
+            if (
+                subject in {"thí dụ", "ví dụ", "yêu cầu", "đầu vào", "đầu ra", "kết quả", "cụ thể"}
+                or len(subject.split()) > 6
+                or len(detail.split()) < 4
+            ):
+                continue
+            relation_subjects.append(subject)
+        relation_families = Counter(
+            subject.split()[0] for subject in relation_subjects if subject.split()
+        )
+        coherent_relations = max([0, *relation_families.values()])
+        independent_facts = max(len(factual_units), coherent_relations)
+        signals.update({
+            "independent_facts": independent_facts,
+            "coherent_relations": coherent_relations,
+        })
+        if independent_facts < 3:
+            reasons.append("MULTI_SELECT_FACTS_INSUFFICIENT")
+        score += min(45, independent_facts * 15)
+
+    elif question_type == "tinh_huong":
+        applicable = bool(re.search(
+            r"\b(khi|nếu|trường hợp|để|dùng để|được sử dụng|ứng dụng|giải quyết|"
+            r"thực hiện|xử lý|lựa chọn|when|if|case|used to|in order to|solve|handle)\b",
+            compact,
+            flags=re.IGNORECASE,
+        ))
+        signals["application_evidence"] = applicable
+        if not applicable:
+            reasons.append("SCENARIO_APPLICATION_EVIDENCE_MISSING")
+        score += 35 if applicable else 0
+
+    elif question_type in {"trac_nghiem", "dung_sai", "dien_khuyet"}:
+        relation = bool(re.search(
+            r"\b(là|gồm|bao gồm|có|không|được|dùng|"
+            r"is|are|includes|contains|uses|means)\b",
+            compact,
+            flags=re.IGNORECASE,
+        ))
+        signals["verifiable_relation"] = relation
+        if not relation:
+            reasons.append("VERIFIABLE_RELATION_MISSING")
+        score += 25 if relation else 0
+
+    return {
+        "suitable": not reasons,
+        "score": max(0, min(100, score)),
+        "reasons": reasons,
+        "signals": signals,
+    }
 
 
 def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str, str]:
@@ -268,6 +475,8 @@ def get_context_snapshot(
     limit: int = 5,
     retrieval_mode: str = "hybrid",
     context_token_budget: int | None = None,
+    question_type: str | None = None,
+    source_search_limit: int | None = None,
 ) -> dict:
     """Retrieve independent dense/lexical branches and fuse them without scope fallback."""
     if retrieval_mode not in {"hybrid", "dense", "lexical"}:
@@ -363,6 +572,38 @@ def get_context_snapshot(
             )
             raise ValueError(f"INSUFFICIENT_EVIDENCE: {detail}")
 
+        source_assessments = []
+        source_rejections: Counter[str] = Counter()
+        if question_type:
+            search_limit = max(1, source_search_limit or max(12, limit * 4))
+            searched_candidates = fused_candidates[:search_limit]
+            eligible_candidates = []
+            for document, metadata in searched_candidates:
+                assessment = assess_source_suitability(document, question_type)
+                source_assessments.append({
+                    "chunk_id": metadata.get("chunk_id"),
+                    **assessment,
+                })
+                if assessment["suitable"]:
+                    eligible_candidates.append(
+                        (document, {**metadata, "_source_suitability": assessment})
+                    )
+                else:
+                    source_rejections.update(assessment["reasons"])
+            fused_candidates = eligible_candidates
+            if not fused_candidates:
+                raise InsufficientSourceError(
+                    question_type,
+                    {
+                        "question_type": question_type,
+                        "source_search_limit": search_limit,
+                        "source_candidates_assessed": len(source_assessments),
+                        "source_candidates_eligible": 0,
+                        "source_rejections": dict(sorted(source_rejections.items())),
+                        "source_assessments": source_assessments,
+                    },
+                )
+
         selected_chunks = []
         used_tokens = 0
         skipped_for_budget = 0
@@ -408,6 +649,7 @@ def get_context_snapshot(
                     "lexical_score": meta.get("_lexical_score"),
                     "matched_terms": meta.get("_matched_terms") or [],
                     "heading": heading_label,
+                    "source_suitability": meta.get("_source_suitability"),
                 }
             )
 
@@ -429,12 +671,23 @@ def get_context_snapshot(
                 "context_tokens": used_tokens,
                 "skipped_for_budget": skipped_for_budget,
                 "hard_heading_filter": bool(normalized_target),
+                "question_type": question_type,
+                "source_search_limit": (
+                    max(1, source_search_limit or max(12, limit * 4))
+                    if question_type else None
+                ),
+                "source_candidates_assessed": len(source_assessments),
+                "source_candidates_eligible": sum(
+                    1 for item in source_assessments if item["suitable"]
+                ),
+                "source_rejections": dict(sorted(source_rejections.items())),
+                "source_assessments": source_assessments,
             },
         }
 
     except Exception as e:
         logger.error(f"Lỗi khi truy xuất ChromaDB: {e}")
-        if str(e).startswith("INSUFFICIENT_EVIDENCE:"):
+        if isinstance(e, InsufficientSourceError) or str(e).startswith("INSUFFICIENT_EVIDENCE:"):
             raise
         raise ValueError(f"Lỗi truy xuất hệ thống Vector: {str(e)}")
 
@@ -448,6 +701,7 @@ def get_context_for_generation(
     limit: int = 5,
     retrieval_mode: str = "hybrid",
     context_token_budget: int | None = None,
+    question_type: str | None = None,
 ) -> str:
     """Compatibility wrapper for callers that only need the assembled text."""
     return get_context_snapshot(
@@ -459,4 +713,5 @@ def get_context_for_generation(
         limit=limit,
         retrieval_mode=retrieval_mode,
         context_token_budget=context_token_budget,
+        question_type=question_type,
     )["context_text"]

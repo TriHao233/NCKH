@@ -48,12 +48,16 @@ class OllamaProvider(LLMProvider):
         self.num_predict = num_predict if num_predict is not None else settings.ollama_num_predict
         self.temperature = temperature if temperature is not None else settings.ollama_temperature
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(self, prompt: str, response_schema: dict | None = None) -> str:
         payload = {
             "model": self.model_name,
             "prompt": prompt,
             "stream": False,
-            "format": "json",
+            "format": response_schema or "json",
+            # The application needs the structured answer in `response`.
+            # Reasoning-capable Ollama models can otherwise spend the whole
+            # output budget in `thinking` and return an empty response.
+            "think": False,
             "options": {
                 "temperature": self.temperature,
                 "num_ctx": self.num_ctx,

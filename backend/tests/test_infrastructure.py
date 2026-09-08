@@ -264,14 +264,16 @@ class ModelRegistryTests(unittest.TestCase):
 class _FailingProvider(LLMProvider):
     runtime_snapshot = {"model_code": "primary", "model_name": "primary-v1"}
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(self, prompt: str, response_schema: dict | None = None) -> str:
+        del response_schema
         raise RuntimeError(f"failed: {prompt}")
 
 
 class _WorkingProvider(LLMProvider):
     runtime_snapshot = {"model_code": "fallback", "model_name": "fallback-v2"}
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(self, prompt: str, response_schema: dict | None = None) -> str:
+        self.response_schema = response_schema
         return f"ok: {prompt}"
 
 
@@ -279,12 +281,14 @@ class FallbackSnapshotTests(unittest.IsolatedAsyncioTestCase):
     async def test_fallback_records_the_model_that_served_the_request(self):
         provider = FallbackProvider(_FailingProvider(), _WorkingProvider())
 
-        result = await provider.generate_text("prompt")
+        schema = {"type": "object"}
+        result = await provider.generate_text("prompt", response_schema=schema)
         snapshot = get_llm_execution_snapshot(provider)
 
         self.assertEqual(result, "ok: prompt")
         self.assertTrue(snapshot["fallback_used"])
         self.assertEqual(snapshot["used_model"]["model_code"], "fallback")
+        self.assertEqual(provider.fallback.response_schema, schema)
 
 
 if __name__ == "__main__":

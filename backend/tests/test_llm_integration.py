@@ -56,4 +56,19 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["model_received"], "fake-model")
+        self.assertIs(FakeOllamaHandler.last_payload["think"], False)
         self.assertEqual(FakeOllamaHandler.last_payload["options"]["num_ctx"], 8192)
+        self.assertEqual(FakeOllamaHandler.last_payload["format"], "json")
+
+    async def test_provider_forwards_structured_response_schema(self):
+        provider = OllamaProvider("fake-model", timeout_seconds=2)
+        provider.url = f"http://127.0.0.1:{self.server.server_port}/api/generate"
+        schema = {
+            "type": "object",
+            "required": ["questions"],
+            "properties": {"questions": {"type": "array"}},
+        }
+
+        await provider.generate_text("test prompt", response_schema=schema)
+
+        self.assertEqual(FakeOllamaHandler.last_payload["format"], schema)

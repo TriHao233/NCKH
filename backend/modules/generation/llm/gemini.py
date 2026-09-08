@@ -26,7 +26,13 @@ class GeminiProvider(LLMProvider):
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(
+        self, prompt: str, response_schema: dict | None = None,
+    ) -> str:
+        # Gemini continues to use prompt-level JSON constraints here. The
+        # schema contains Ollama-specific keywords that are not portable to
+        # every configured Gemini model/API revision.
+        del response_schema
         try:
             response = await asyncio.wait_for(
                 asyncio.to_thread(

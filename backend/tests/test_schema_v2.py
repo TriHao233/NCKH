@@ -60,6 +60,7 @@ from modules.exams.schemas import (
 from modules.generation.schemas import (
     BloomLevel,
     GeneratedQuestion,
+    GenerationRejection,
     GenerationPlanSummary,
     QuestionGenerateRequest,
     QuestionType,
@@ -68,7 +69,12 @@ from modules.generation.llm.ollama import OllamaProvider
 from modules.generation.llm.concurrency import ConcurrencyLimitedProvider
 from modules.generation.llm.factory import get_llm_service
 from modules.generation.prompt_builder import PromptBuilder
-from modules.generation.question import _build_retry_prompt, _check_type_format, _normalize_difficulty
+from modules.generation.question import (
+    _build_retry_prompt,
+    _check_type_format,
+    _normalize_difficulty,
+    question_response_schema,
+)
 from modules.questions.schemas import (
     QuestionCreateRequest,
     QuestionResponse,
@@ -6035,8 +6041,9 @@ class SchemaV2Tests(unittest.TestCase):
         )
 
     def test_retry_prompt_reinforces_mcq_option_shape(self):
+        original = "HEADER\nNGỮ CẢNH:\nNội dung: Stack dùng LIFO.\n\nQUY TẮC MINH CHỨNG:\nOLD RULE"
         prompt = _build_retry_prompt(
-            original_prompt="ORIGINAL",
+            original_prompt=original,
             question_type="trac_nghiem",
             bloom_level="2_hieu",
             missing_count=2,
@@ -6045,6 +6052,65 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertIn('đúng các khóa "A", "B", "C", "D"', prompt)
         self.assertIn("Sinh chính xác 2 câu bổ sung", prompt)
+        self.assertIn("Nội dung: Stack dùng LIFO.", prompt)
+        self.assertNotIn("HEADER", prompt)
+        self.assertNotIn("OLD RULE", prompt)
+
+    def test_question_response_schema_is_type_specific(self):
+        matching = question_response_schema("ghep_cot", "2_hieu", 2)
+        matching_items = matching["properties"]["questions"]
+        matching_question = matching_items["items"]
+        multiple = question_response_schema("nhieu_lua_chon", "2_hieu", 1)
+        multiple_question = multiple["properties"]["questions"]["items"]
+
+        self.assertEqual(matching_items["minItems"], 2)
+        self.assertEqual(matching_items["maxItems"], 2)
+        self.assertEqual(matching_question["properties"]["question_type"]["const"], "ghep_cot")
+        self.assertEqual(
+            matching_question["properties"]["options"]["required"],
+            ["1", "2", "3", "A", "B", "C", "D"],
+        )
+        self.assertFalse(
+            matching_question["properties"]["options"]["additionalProperties"]
+        )
+        self.assertEqual(
+            multiple_question["properties"]["options"]["required"],
+            ["A", "B", "C", "D"],
+        )
+        self.assertEqual(
+            multiple_question["properties"]["correct_answer"]["pattern"],
+            "^[A-D](?:, ?[A-D])+$",
+        )
+
+    def test_retry_prompt_reinforces_true_false_grounding_contract(self):
+        prompt = _build_retry_prompt(
+            original_prompt="ORIGINAL",
+            question_type="dung_sai",
+            bloom_level="2_hieu",
+            missing_count=1,
+            validation_errors=["source_context không nằm trong chunk"],
+            avoid_questions=[],
+        )
+        self.assertIn("một khối `Nội dung:` duy nhất", prompt)
+        self.assertIn("false_mutation.replacement", prompt)
+
+    def test_retry_prompt_shows_flat_matching_contract(self):
+        prompt = _build_retry_prompt(
+            original_prompt="Nội dung: Stack dùng LIFO.",
+            question_type="ghep_cot",
+            bloom_level="2_hieu",
+            missing_count=1,
+            validation_errors=[GenerationRejection(
+                code="INVALID_TYPE_FORMAT",
+                message="options ghép cột sai cấu trúc",
+            )],
+            avoid_questions=[],
+        )
+
+        self.assertIn("một object phẳng", prompt)
+        self.assertIn('"1":"Thuật ngữ 1"', prompt)
+        self.assertIn('"D":"Mô tả nhiễu"', prompt)
+        self.assertIn('"correct_answer":"1-A,2-B,3-C"', prompt)
 
     def test_multi_answer_validation_allows_six_options(self):
         self.assertIsNone(
@@ -6082,11 +6148,15 @@ class SchemaV2Tests(unittest.TestCase):
             question_type="nhieu_lua_chon",
             bloom_level="4_phan_tich",
             missing_count=3,
-            validation_errors=["nhieu_lua_chon phải có 4 đến 6 lựa chọn"],
+            validation_errors=[GenerationRejection(
+                code="MULTIPLE_RESPONSE_INSTRUCTION_MISSING",
+                message="thiếu chỉ dẫn chọn nhiều đáp án",
+            )],
             avoid_questions=[],
         )
         self.assertIn("4 đến 6 khóa liên tiếp", prompt)
         self.assertIn("Sinh chính xác 3 câu bổ sung", prompt)
+        self.assertIn('Mở đầu question bằng đúng cụm "Chọn tất cả đáp án đúng:"', prompt)
 
     def test_generation_preset_payload_limits_plan_rows(self):
         payload = GenerationPresetPayload(

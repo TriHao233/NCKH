@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from enum import Enum
 from typing import Any
 
@@ -55,6 +56,15 @@ def _option_map(value: Any) -> dict[str, str] | None:
     return normalized
 
 
+def option_fingerprint(value: str) -> str:
+    """Ignore prose presentation, but retain code/math operators and negation."""
+    text = unicodedata.normalize("NFC", value).casefold()
+    # Do not erase punctuation inside code, numbers or identifiers (C++, a-b, 1.5).
+    text = re.sub(r"[.,;:!?]+(?=\s|$)", " ", text)
+    text = re.sub(r'[“”"‘’]', "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 class BaseQuestionData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -80,6 +90,21 @@ class BaseQuestionData(BaseModel):
     @classmethod
     def normalize_keywords(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+
+    @model_validator(mode="after")
+    def validate_distinct_options(self):
+        # Matching permits a term to recur across columns, not within one column.
+        groups = [list((self.options or {}).values())]
+        if isinstance(self, MatchingData):
+            groups = [
+                [value for key, value in self.options.items() if key.isdigit()],
+                [value for key, value in self.options.items() if key.isalpha()],
+            ]
+        for values in groups:
+            fingerprints = [option_fingerprint(value) for value in values]
+            if len(fingerprints) != len(set(fingerprints)):
+                raise ValueError("Các phương án không được trùng nội dung sau chuẩn hóa")
+        return self
 
 
 class SingleChoiceData(BaseQuestionData):
@@ -119,7 +144,7 @@ class MultipleResponseData(BaseQuestionData):
     @model_validator(mode="after")
     def validate_multiple(self):
         expected = [chr(65 + index) for index in range(len(self.options))]
-        if not 4 <= len(expected) <= 6 or list(self.options) != expected:
+        if not 4 <= len(expected) <= 6 or set(self.options) != set(expected):
             raise ValueError("Nhiều lựa chọn phải có 4–6 options liên tiếp từ A")
         keys = [item.strip().upper() for item in re.split(r"[,;|]", self.correct_answer) if item.strip()]
         if len(set(keys)) < 2 or len(set(keys)) >= len(self.options):

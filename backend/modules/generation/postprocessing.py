@@ -9,7 +9,7 @@ from typing import Iterable
 from modules.generation.schemas import GeneratedQuestion, GenerationRejection
 
 
-POSTPROCESSOR_VERSION = "question-post-v2"
+POSTPROCESSOR_VERSION = "question-post-v7"
 MAX_TRUE_FALSE_LENGTH = 320
 MAX_SOURCE_KEYWORDS = 6
 
@@ -31,20 +31,74 @@ def normalize_exact_text(value: str) -> str:
 
 
 def contains_exact_text(container: str, expected: str) -> bool:
-    normalized_expected = normalize_exact_text(expected)
-    if not normalized_expected:
-        return False
-    normalized_container = normalize_exact_text(container)
-    pattern = rf"(?<!\w){re.escape(normalized_expected)}(?!\w)"
-    if re.search(pattern, normalized_container, flags=re.UNICODE) is not None:
-        return True
+    return find_source_span(container, expected) is not None
 
-    # OCR/PDF extraction can split a Vietnamese word at different positions
-    # (for example ``n ày`` versus ``nà y``). Keep accents and character order
-    # strict while ignoring only separators so grounded quotes still match.
-    compact_expected = re.sub(r"[\W_]+", "", normalized_expected, flags=re.UNICODE)
-    compact_container = re.sub(r"[\W_]+", "", normalized_container, flags=re.UNICODE)
-    return len(compact_expected) >= 12 and compact_expected in compact_container
+
+def find_source_span(container: str, expected: str) -> tuple[int, int] | None:
+    """Locate a quote while retaining offsets into the original OCR text.
+
+    Fold case/Unicode and presentation separators only. Never drop words,
+    negations, numbers, or mathematical operators.
+    """
+    def compact(value: str):
+        chars, offsets = [], []
+        for match in re.finditer(r"[^\u0300-\u036f][\u0300-\u036f]*", value):
+            token = unicodedata.normalize("NFC", match.group()).casefold()
+            for char in token:
+                if char.isspace():
+                    continue
+                if char in "•◦▪●\"'`“”‘’":
+                    continue
+                if char in "-*" and (
+                    not value[:match.start()].rsplit("\n", 1)[-1].strip()
+                    and value[match.end():match.end() + 1].isspace()
+                ):
+                    continue
+                # EasyOCR frequently emits the round list marker as a plain
+                # lowercase `o`. Ignore it only at the beginning of a line;
+                # letters inside prose, identifiers and formulas remain exact.
+                if char == "o" and (
+                    not value[:match.start()].rsplit("\n", 1)[-1].strip()
+                    and value[match.end():match.end() + 1].isspace()
+                ):
+                    continue
+                if char in '.,;:!?' and (match.end() == len(value) or value[match.end()].isspace()):
+                    continue
+                chars.append(char)
+                offsets.append((match.start(), match.end()))
+        return "".join(chars), offsets
+
+    if not expected.strip():
+        return None
+    source, offsets = compact(container)
+    quote, _ = compact(expected)
+    if not quote:
+        return None
+    start = source.find(quote)
+    while start >= 0:
+        left, right = offsets[start][0], offsets[start + len(quote) - 1][1]
+        if (left == 0 or not container[left - 1].isalnum()) and (
+            right == len(container) or not container[right].isalnum()
+        ):
+            # Preserve a terminal full stop when both texts include it.
+            if expected.rstrip().endswith('.') and container[right:right + 1] == '.':
+                right += 1
+            return left, right
+        start = source.find(quote, start + 1)
+    return None
+
+
+def contains_source_keyword(container: str, expected: str) -> bool:
+    def normalized(value: str) -> str:
+        value = normalize_exact_text(value)
+        value = re.sub(r"\bsẽ\b", " ", value)
+        value = re.sub(r"[,.;:()“”\"‘’]", " ", value)
+        return re.sub(r"\s+", " ", value).strip()
+
+    keyword = normalized(expected)
+    return bool(keyword) and re.search(
+        rf"(?<!\w){re.escape(keyword)}(?!\w)", normalized(container)
+    ) is not None
 
 
 def question_fingerprint(question: str) -> str:
@@ -165,7 +219,7 @@ def validate_source_grounding(
             )
         )
         return errors
-    if not contains_exact_text(context_text, source_context):
+    if find_source_span(context_text, source_context) is None:
         errors.append(
             _rejection(
                 "SOURCE_CONTEXT_NOT_FOUND",
@@ -180,6 +234,18 @@ def validate_source_grounding(
     keywords = raw_keywords if isinstance(raw_keywords, list) else []
     invalid_keyword_types = [keyword for keyword in keywords if not isinstance(keyword, str)]
     keywords = [keyword.strip() for keyword in keywords if isinstance(keyword, str) and keyword.strip()]
+    mutation = item.get("false_mutation")
+    if question_type == "dung_sai" and item.get("correct_answer") == "B" and isinstance(mutation, dict):
+        original = str(mutation.get("original") or "")
+        replacement = str(mutation.get("replacement") or "")
+        if contains_exact_text(source_context, original) and contains_exact_text(statement, replacement):
+            # A controlled false mutation necessarily removes its original text.
+            # Such text is not an unchanged anchor; retain the other grounded anchors.
+            keywords = [keyword for keyword in keywords if not (
+                contains_source_keyword(original, keyword)
+                and not contains_source_keyword(statement, keyword)
+            )]
+            item["source_keywords"] = keywords
     if question_type != "dung_sai":
         # Keywords are optional highlighting metadata for non true/false
         # questions. Keep only grounded values instead of rejecting an
@@ -187,7 +253,7 @@ def validate_source_grounding(
         keywords = [
             keyword
             for keyword in keywords
-            if contains_exact_text(source_context, keyword)
+            if contains_source_keyword(source_context, keyword)
         ][:MAX_SOURCE_KEYWORDS]
         item["source_keywords"] = keywords
         invalid_keyword_types = []
@@ -223,21 +289,21 @@ def validate_source_grounding(
         )
 
     for keyword in keywords[:MAX_SOURCE_KEYWORDS]:
-        if not contains_exact_text(source_context, keyword):
+        if not contains_source_keyword(source_context, keyword):
             errors.append(
                 _rejection(
                     "KEYWORD_NOT_IN_EVIDENCE",
-                    f"Keyword '{keyword}' không xuất hiện chính xác trong source_context.",
+                    f"Keyword '{keyword}' không đối chiếu được trong source_context sau chuẩn hóa.",
                     item=item,
                     candidate_index=candidate_index,
                     repairable=False,
                 )
             )
-        elif question_type == "dung_sai" and not contains_exact_text(statement, keyword):
+        elif question_type == "dung_sai" and not contains_source_keyword(statement, keyword):
             errors.append(
                 _rejection(
                     "KEYWORD_NOT_IN_STATEMENT",
-                    f"Keyword '{keyword}' chưa được dùng nguyên dạng trong mệnh đề Đúng/Sai.",
+                    f"Keyword '{keyword}' không đối chiếu được trong mệnh đề Đúng/Sai sau chuẩn hóa.",
                     item=item,
                     candidate_index=candidate_index,
                     repairable=True,
@@ -372,10 +438,206 @@ def validate_true_false_clarity(
     return errors
 
 
+def validate_question_quality(
+    item: dict, *, question_type: str, candidate_index: int,
+) -> list[GenerationRejection]:
+    """Conservative, deterministic guards; pedagogical review remains human-owned."""
+    errors = []
+
+    def reject(code: str, message: str):
+        errors.append(_rejection(
+            code, message, item=item, candidate_index=candidate_index, repairable=True,
+        ))
+
+    statement = normalize_exact_text(item.get("question") or "")
+    if item.get("question_type") not in (None, "", question_type):
+        reject("QUESTION_TYPE_MISMATCH", "question_type phải đúng dạng được yêu cầu; không được đổi dạng.")
+    if re.search(
+        r"\b(theo (?:tài liệu|giáo trình)|(?:trong|ở|theo) ngữ cảnh|"
+        r"(?:theo|trong) văn bản|được nêu trong (?:văn bản|nguồn)|"
+        r"(?:nội dung|đoạn|thông tin) (?:trên|đã nêu)|như đã nêu ở trên)\b",
+        statement,
+    ):
+        reject(
+            "CONTEXT_DEPENDENT_QUESTION",
+            "Câu hỏi phải tự đủ nghĩa, không được tham chiếu 'ngữ cảnh', 'đoạn trên' hoặc tài liệu bên ngoài.",
+        )
+    if question_type != "dien_khuyet" and re.search(r"\.{3,}|…", statement):
+        reject(
+            "QUESTION_PLACEHOLDER_ARTIFACT",
+            "Câu hỏi chứa dấu chấm lửng như placeholder; phải viết câu dẫn hoàn chỉnh.",
+        )
+    if question_type in {"trac_nghiem", "tinh_huong", "nhieu_lua_chon"}:
+        options = item.get("options") or {}
+        correct_keys = [
+            key.strip()
+            for key in str(item.get("correct_answer") or "").split(",")
+            if key.strip()
+        ]
+        for key in correct_keys:
+            option = str(options.get(key) or "") if isinstance(options, dict) else ""
+            if len(normalize_exact_text(option)) >= 20 and contains_source_keyword(statement, option):
+                reject(
+                    "CORRECT_OPTION_REPEATED_IN_STEM",
+                    f"Thân câu đã chép nguyên nội dung đáp án đúng {key}, làm lộ đáp án.",
+                )
+                break
+        if question_type == "nhieu_lua_chon" and isinstance(options, dict):
+            for key, option in options.items():
+                if len(normalize_exact_text(option)) >= 20 and contains_source_keyword(statement, option):
+                    reject(
+                        "OPTION_REPEATED_IN_STEM",
+                        f"Thân câu đã chép nguyên nội dung lựa chọn {key}; các lựa chọn chỉ được đặt trong options.",
+                    )
+                    break
+            source_context = str(item.get("source_context") or "")
+            for key in correct_keys:
+                option = str(options.get(key) or "")
+                if len(re.findall(r"[^\W_]+", option, flags=re.UNICODE)) < 4:
+                    reject(
+                        "MULTIPLE_RESPONSE_CORRECT_OPTION_TOO_SHORT",
+                        f"Phương án đúng {key} phải là một mệnh đề nguồn đủ nghĩa, không chỉ là nhãn/thuật ngữ ngắn.",
+                    )
+                    break
+                if find_source_span(source_context, option) is None:
+                    reject(
+                        "MULTIPLE_RESPONSE_CORRECT_OPTION_UNGROUNDED",
+                        f"Phương án đúng {key} phải xuất hiện nguyên văn trong source_context để kiểm chứng độc lập.",
+                    )
+                    break
+    if question_type == "ghep_cot":
+        options = item.get("options") or {}
+        pairs = re.findall(r"(\d+)\s*-\s*([A-Za-z])", str(item.get("correct_answer") or ""))
+        matched_right_keys = {right_key.upper() for _left_key, right_key in pairs}
+        if not re.search(r"\bghép\b", statement):
+            reject(
+                "MATCHING_INSTRUCTION_MISSING",
+                "Thân câu ghép cột phải yêu cầu người học ghép hai nhóm, không được viết thành câu hỏi một đáp án.",
+            )
+        source_context = str(item.get("source_context") or "")
+        for right_key in matched_right_keys:
+            description = str(options.get(right_key) or "").strip()
+            without_leading_connector = re.sub(
+                r"^(?:vì|do)\s+", "", description, flags=re.IGNORECASE,
+            )
+            if not any(
+                find_source_span(source_context, candidate) is not None
+                for candidate in (description, without_leading_connector)
+                if candidate
+            ):
+                reject(
+                    "MATCHING_DESCRIPTION_UNGROUNDED",
+                    f"Mô tả đúng {right_key} phải xuất hiện nguyên vẹn trong source_context.",
+                )
+                break
+        for left_key, right_key in pairs:
+            left = question_fingerprint(str(options.get(left_key) or ""))
+            right = question_fingerprint(str(options.get(right_key.upper()) or ""))
+            left = re.sub(r"^(?:mục|bước)\s*\d+\s*", "", left).strip()
+            right = re.sub(r"^(?:mục|bước)\s*\d+\s*", "", right).strip()
+            if left and right and _near_duplicate(left, right):
+                reject(
+                    "MATCHING_PAIR_DUPLICATED",
+                    f"Cặp {left_key}-{right_key.upper()} lặp cùng mô tả ở cả hai cột, làm lộ phép ghép.",
+                )
+                break
+        used_descriptions = [
+            question_fingerprint(str(options.get(key) or ""))
+            for key in matched_right_keys
+        ]
+        for distractor_key in (
+            key for key in options if key.isalpha() and key not in matched_right_keys
+        ):
+            distractor_tokens = question_fingerprint(
+                str(options.get(distractor_key) or "")
+            ).split()
+            distractor_ngrams = {
+                tuple(distractor_tokens[index:index + 4])
+                for index in range(max(0, len(distractor_tokens) - 3))
+            }
+            if any(
+                distractor_ngrams
+                & {
+                    tuple(answer_tokens[index:index + 4])
+                    for index in range(max(0, len(answer_tokens) - 3))
+                }
+                for answer in used_descriptions
+                if (answer_tokens := answer.split())
+            ):
+                reject(
+                    "MATCHING_DISTRACTOR_OVERLAPS_ANSWER",
+                    f"Phương án nhiễu {distractor_key} lặp một mệnh đề của mô tả đúng, làm phép ghép mơ hồ.",
+                )
+                break
+    if question_type == "tinh_huong":
+        actor = re.search(
+            r"\b(sinh viên|học sinh|giảng viên|lập trình viên|kỹ sư|nhóm|người dùng|"
+            r"bạn|hệ thống|chương trình|ứng dụng|máy chủ|quản trị viên|nhân viên)\b", statement,
+        )
+        context = re.search(
+            r"\b(đang|cần|muốn|gặp|phải|nhận|yêu cầu|mục tiêu|bị|khi|giả sử)\b", statement,
+        )
+        decision = re.search(
+            r"\b(nên|chọn|xử lý|khắc phục|giải pháp|thao tác|hành động|triển khai|"
+            r"đề xuất|áp dụng|phù hợp|nguyên nhân|kết quả|thay đổi|thiết kế)\b", statement,
+        )
+        if not (actor and context and decision and "?" in statement):
+            reject("SCENARIO_INCOMPLETE", "Tình huống cần chủ thể, bối cảnh cụ thể và câu hỏi quyết định/hành động áp dụng kiến thức.")
+    if question_type == "dien_khuyet":
+        if len(statement) > 320:
+            reject("FILL_BLANK_TOO_LONG", "Thân câu điền khuyết tối đa 320 ký tự; chỉ giữ dữ kiện cần thiết.")
+        answer = str(item.get("correct_answer") or "")
+        if contains_source_keyword(statement.replace("_____", " "), answer):
+            reject("FILL_BLANK_ANSWER_LEAK", "Thân câu điền khuyết đã nêu đáp án ở ngoài chỗ trống.")
+    if question_type == "nhieu_lua_chon" and not re.search(
+        r"\b(chọn\s+(?:tất cả|nhiều|mọi|các)|nhiều đáp án|những\b.+\bnào)\b", statement,
+    ):
+        reject("MULTIPLE_RESPONSE_INSTRUCTION_MISSING", "Câu nhiều lựa chọn phải báo rõ 'Chọn tất cả đáp án đúng' để người học biết cần chọn nhiều phương án.")
+    if question_type == "sap_xep":
+        source = str(item.get("source_context") or "")
+        # Require an explicit source sequence, not merely unrelated mentions.
+        markers = list(re.finditer(
+            r"(?:(?:(?:^|\n)\s*(?:[-*•o]\s+)?|\b)(?:bước|step)\s+(\d+)\s*[:.)-]|(?:^|\n)\s*(\d+)\s*[.)])\s*",
+            source, flags=re.IGNORECASE,
+        ))
+        numbers = [int(match.group(1) or match.group(2)) for match in markers]
+        if len(numbers) < 4 or numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+            reject("ORDERING_SOURCE_UNVERIFIABLE", "Nguồn phải có ít nhất 4 bước đánh số liên tiếp; trích nguyên trình tự, không tự bịa thuật toán.")
+            return errors
+        if re.search(
+            r"\b(quay lại|lặp lại|ngược lại|nếu|go to|goto|repeat|if|else|otherwise)\b",
+            source,
+            flags=re.IGNORECASE,
+        ):
+            reject("ORDERING_SOURCE_UNVERIFIABLE", "Nguồn có vòng lặp/rẽ nhánh, không chứng minh được một thứ tự thực hiện tuyến tính duy nhất.")
+            return errors
+        steps = [
+            source[marker.end():markers[index + 1].start() if index + 1 < len(markers) else len(source)].strip()
+            for index, marker in enumerate(markers)
+        ]
+        positions = {}
+        for key, option in (item.get("options") or {}).items():
+            matches = []
+            for index, step in enumerate(steps):
+                span = find_source_span(step, option)
+                if span is not None and not (step[:span[0]] + step[span[1]:]).strip(" \n\r\t.,;:"):
+                    matches.append(index)
+            if len(matches) != 1:
+                reject("ORDERING_STEP_NOT_GROUNDED", f"Bước {key} phải chép hành động từ đúng một bước trong nguồn, không thêm nội dung ngoài nguồn.")
+            else:
+                positions[key] = matches[0]
+        keys = [key.strip() for key in str(item.get("correct_answer") or "").split(",")]
+        if len(positions) == len(item.get("options") or {}):
+            order = [positions[key] for key in keys if key in positions]
+            if len(order) != len(positions) or len(set(order)) != len(order) or order != sorted(order):
+                reject("ORDERING_INCORRECT", "correct_answer không theo trình tự các bước được đánh số trong source_context.")
+    return errors
+
+
 def rejection_counts(rejections: Iterable[GenerationRejection]) -> dict[str, int]:
     counts = {"format": 0, "grounding": 0, "clarity": 0}
     for rejection in rejections:
-        if rejection.code.startswith(("SOURCE_", "KEYWORD_", "FALSE_", "MUTATION_", "TRUE_STATEMENT_")):
+        if rejection.code.startswith(("SOURCE_", "KEYWORD_", "FALSE_", "MUTATION_", "TRUE_STATEMENT_", "ORDERING_")):
             counts["grounding"] += 1
         elif rejection.code in {
             "STATEMENT_TOO_LONG",
@@ -383,6 +645,16 @@ def rejection_counts(rejections: Iterable[GenerationRejection]) -> dict[str, int
             "MULTIPLE_PROPOSITIONS",
             "DOUBLE_NEGATION",
             "CONTEXT_DEPENDENT_STATEMENT",
+            "SCENARIO_INCOMPLETE",
+            "FILL_BLANK_TOO_LONG",
+            "FILL_BLANK_ANSWER_LEAK",
+            "MULTIPLE_RESPONSE_INSTRUCTION_MISSING",
+            "CONTEXT_DEPENDENT_QUESTION",
+            "QUESTION_PLACEHOLDER_ARTIFACT",
+            "CORRECT_OPTION_REPEATED_IN_STEM",
+            "OPTION_REPEATED_IN_STEM",
+            "MATCHING_PAIR_DUPLICATED",
+            "MULTIPLE_RESPONSE_CORRECT_OPTION_UNGROUNDED",
         }:
             counts["clarity"] += 1
         else:

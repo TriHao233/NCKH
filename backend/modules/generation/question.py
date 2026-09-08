@@ -1,4 +1,5 @@
 import json
+import inspect
 import re
 import logging
 import time
@@ -18,11 +19,13 @@ from modules.generation.postprocessing import (
     POSTPROCESSOR_VERSION,
     DuplicateStats,
     filter_duplicate_questions,
+    find_source_span,
     normalize_exact_text,
     question_fingerprint,
     rejection_counts,
     validate_source_grounding,
     validate_true_false_clarity,
+    validate_question_quality,
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.rag.search import get_context_snapshot
@@ -77,10 +80,144 @@ QUESTION_TYPE_RETRY_RULES = {
     "trac_nghiem": 'options phải có đúng các khóa "A", "B", "C", "D"; correct_answer phải là một khóa.',
     "tinh_huong": 'options phải có đúng các khóa "A", "B", "C", "D"; correct_answer phải là một khóa.',
     "dung_sai": 'options phải đúng bằng {"A": "Đúng", "B": "Sai"}; question phải là một mệnh đề hoàn chỉnh; source_context phải là trích dẫn nguyên văn từ NGỮ CẢNH; source_keywords phải xuất hiện chính xác trong source_context và question; đáp án Sai phải có false_mutation.',
-    "nhieu_lua_chon": 'options phải có từ 4 đến 6 khóa liên tiếp bắt đầu từ "A"; correct_answer phải có ít nhất hai khóa phân cách bằng dấu phẩy nhưng không được chọn tất cả.',
+    "nhieu_lua_chon": 'question chỉ là câu dẫn, phải chứa nguyên văn "Chọn tất cả đáp án đúng" và không chép nội dung lựa chọn vào thân câu; options là object phẳng có 4 đến 6 khóa liên tiếp từ "A"; correct_answer có ít nhất hai khóa phân cách bằng dấu phẩy nhưng không chọn tất cả. Mẫu: {"question":"Chọn tất cả đáp án đúng: ...?","options":{"A":"...","B":"...","C":"...","D":"..."},"correct_answer":"A, C"}.',
     "dien_khuyet": 'options phải là null; question phải chứa "_____".',
-    "ghep_cot": "options phải là object ghép cặp có khóa số và phương án nhiễu bằng chữ.",
+    "ghep_cot": 'options phải là một object phẳng, không dùng mảng/object con: ít nhất 3 khóa số chứa thuật ngữ/tên mục ngắn và số khóa chữ chứa mô tả nhiều hơn đúng 1 để có nhiễu; không chép mô tả vào cả hai cột; correct_answer ánh xạ đủ khóa số. Mẫu: {"question":"Ghép mỗi mục ở nhóm số với mô tả phù hợp ở nhóm chữ.","options":{"1":"Thuật ngữ 1","2":"Thuật ngữ 2","3":"Thuật ngữ 3","A":"Mô tả 1","B":"Mô tả 2","C":"Mô tả 3","D":"Mô tả nhiễu"},"correct_answer":"1-A,2-B,3-C"}.',
     "sap_xep": "options phải chứa các khóa bước; correct_answer phải liệt kê đủ khóa theo đúng thứ tự.",
+}
+
+
+def question_response_schema(
+    question_type: str,
+    bloom_level: str,
+    question_count: int,
+) -> dict:
+    """Strict Ollama-compatible JSON schema for one homogeneous generation call."""
+    option_schema: dict = {"type": ["object", "null"]}
+    answer_schema: dict = {"type": "string", "minLength": 1}
+    if question_type in {"trac_nghiem", "tinh_huong"}:
+        option_schema = {
+            "type": "object",
+            "required": ["A", "B", "C", "D"],
+            "properties": {key: {"type": "string", "minLength": 1} for key in "ABCD"},
+            "additionalProperties": False,
+        }
+        answer_schema["enum"] = list("ABCD")
+    elif question_type == "dung_sai":
+        option_schema = {
+            "type": "object",
+            "required": ["A", "B"],
+            "properties": {"A": {"const": "Đúng"}, "B": {"const": "Sai"}},
+            "additionalProperties": False,
+        }
+        answer_schema["enum"] = ["A", "B"]
+    elif question_type == "dien_khuyet":
+        option_schema = {"type": "null"}
+    elif question_type == "nhieu_lua_chon":
+        option_schema = {
+            "type": "object",
+            "required": ["A", "B", "C", "D"],
+            "properties": {key: {"type": "string", "minLength": 1} for key in "ABCD"},
+            "additionalProperties": False,
+        }
+        answer_schema["pattern"] = "^[A-D](?:, ?[A-D])+$"
+    elif question_type == "ghep_cot":
+        option_schema = {
+            "type": "object",
+            "required": ["1", "2", "3", "A", "B", "C", "D"],
+            "properties": {
+                key: {"type": "string", "minLength": 1}
+                for key in ("1", "2", "3", "A", "B", "C", "D")
+            },
+            "additionalProperties": False,
+        }
+        answer_schema["pattern"] = "^1-[A-D], ?2-[A-D], ?3-[A-D]$"
+    elif question_type == "sap_xep":
+        option_schema = {
+            "type": "object",
+            "minProperties": 4,
+            "additionalProperties": {"type": "string", "minLength": 1},
+        }
+
+    item_schema = {
+        "type": "object",
+        "required": [
+            "question", "options", "correct_answer", "explanation",
+            "question_type", "bloom_level", "difficulty", "source_context",
+            "source_keywords", "clo_codes", "false_mutation",
+        ],
+        "properties": {
+            "question": {"type": "string", "minLength": 1},
+            "options": option_schema,
+            "correct_answer": answer_schema,
+            "explanation": {"type": "string", "minLength": 1},
+            "question_type": {"const": question_type},
+            "bloom_level": {"const": bloom_level},
+            "difficulty": {"enum": ["de", "trung_binh", "kho"]},
+            "source_context": {"type": "string", "minLength": 1},
+            "source_keywords": {
+                "type": "array", "maxItems": 2, "items": {"type": "string"},
+            },
+            "clo_codes": {"type": "array", "items": {"type": "string"}},
+            "false_mutation": (
+                {"type": ["object", "null"]}
+                if question_type == "dung_sai" else {"type": "null"}
+            ),
+        },
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "required": ["questions"],
+        "properties": {
+            "questions": {
+                "type": "array",
+                "minItems": max(1, question_count),
+                "maxItems": max(1, question_count),
+                "items": item_schema,
+            },
+        },
+        "additionalProperties": False,
+    }
+
+
+async def _generate_structured_text(
+    llm,
+    prompt: str,
+    *,
+    question_type: str,
+    bloom_level: str,
+    question_count: int,
+) -> str:
+    """Use native schema decoding when the provider contract supports it."""
+    parameters = inspect.signature(llm.generate_text).parameters
+    if "response_schema" not in parameters:
+        return await llm.generate_text(prompt)
+    return await llm.generate_text(
+        prompt,
+        response_schema=question_response_schema(
+            question_type, bloom_level, question_count,
+        ),
+    )
+
+RETRY_ERROR_RULES = {
+    "INVALID_CANDIDATE_TYPE": "Mỗi phần tử trong questions phải là một JSON object, không phải chuỗi hoặc mảng.",
+    "REQUIRED_FIELD_MISSING": "Điền đủ question, options, correct_answer, explanation và source_context; không để chuỗi rỗng.",
+    "INVALID_TYPE_FORMAT": "Giữ đúng question_type được yêu cầu và sao chép chính xác hình dạng options/correct_answer trong mẫu cấu trúc.",
+    "SOURCE_CONTEXT_NOT_FOUND": "source_context phải là một đoạn liên tục chép nguyên văn từ đúng một khối Nội dung trong ngữ cảnh.",
+    "KEYWORD_NOT_IN_EVIDENCE": "Mỗi source_keyword phải xuất hiện nguyên văn trong source_context; dùng [] nếu không có từ khóa chắc chắn.",
+    "KEYWORD_NOT_IN_STATEMENT": "Mỗi source_keyword phải xuất hiện nguyên văn trong question; dùng [] nếu không có từ khóa chắc chắn.",
+    "MULTIPLE_RESPONSE_INSTRUCTION_MISSING": 'Mở đầu question bằng đúng cụm "Chọn tất cả đáp án đúng:".',
+    "CORRECT_OPTION_REPEATED_IN_STEM": "Không chép nguyên văn nội dung của phương án đúng vào thân câu.",
+    "CONTEXT_DEPENDENT_QUESTION": 'Không viết "theo ngữ cảnh", "theo tài liệu" hoặc "đoạn trên"; câu hỏi phải tự đứng độc lập.',
+    "QUESTION_EVIDENCE_INVALID": "Chỉ dùng một trích dẫn liên tục đủ chứng minh đáp án; không ghép nhiều đoạn nguồn.",
+    "CLO_CODE_NOT_ALLOWED": "Đặt clo_codes thành [] nếu prompt không cung cấp danh sách CLO được phép.",
+    "MATCHING_PAIR_DUPLICATED": "Cột số chỉ chứa thuật ngữ/tên mục ngắn; cột chữ chứa mô tả và không được lặp lại nguyên mô tả ở cột số.",
+    "MATCHING_DISTRACTOR_OVERLAPS_ANSWER": "Viết phương án nhiễu không lặp mệnh đề dài từ bất kỳ mô tả đúng nào và không tạo thêm phép ghép hợp lý.",
+    "MATCHING_INSTRUCTION_MISSING": 'question phải bắt đầu bằng yêu cầu "Ghép" hai nhóm; không viết thành câu hỏi chọn một đáp án.',
+    "MATCHING_DESCRIPTION_UNGROUNDED": "Mỗi mô tả chữ được dùng trong correct_answer phải chép một mệnh đề liên tục từ source_context; chỉ được thêm tiền tố 'Vì'.",
+    "MULTIPLE_RESPONSE_CORRECT_OPTION_TOO_SHORT": "Mỗi phương án đúng phải là mệnh đề nguồn có ít nhất 4 từ, không dùng riêng tên đặc trưng/thuật ngữ làm đáp án đúng.",
+    "MULTIPLE_RESPONSE_CORRECT_OPTION_UNGROUNDED": "Mỗi phương án đúng phải là một trích đoạn ngắn xuất hiện nguyên văn trong cùng source_context liên tục.",
 }
 
 
@@ -107,23 +244,6 @@ async def generate_questions_rag(
         for item in plan
     )
     logger.info("Sinh câu hỏi [Doc: %s | Plan: %s]", req.document_id, plan_log)
-
-    # 1. Truy xuất ngữ cảnh (RAG)
-    context_snapshot = get_context_snapshot(
-        document_id=req.document_id,
-        collection_name=req.collection_name,
-        target_heading=req.target_heading,
-        query_text=" ".join(
-            part for part in (req.topic, req.instruction) if part
-        ),
-        limit=req.retrieval_limit,
-        retrieval_mode=req.retrieval_mode,
-        context_token_budget=req.context_token_budget,
-    )
-    context_text = context_snapshot["context_text"]
-
-    if not context_text:
-        raise ValueError("Không tìm thấy đủ dữ liệu tri thức để sinh câu hỏi.")
 
     prompt_builder = PromptBuilder()
     learning_outcomes = get_document_learning_outcomes(req.document_id)
@@ -162,6 +282,7 @@ async def generate_questions_rag(
         for question in existing_questions
         if (fingerprint := question_fingerprint(question))
     }
+    context_snapshots: dict[str, dict] = {}
 
     if progress_callback:
         await progress_callback({"stage": "generating", "completed": 0, "total": len(plan)})
@@ -169,6 +290,74 @@ async def generate_questions_rag(
     for plan_index, plan_item in enumerate(plan, start=1):
         if plan_index in completed_plan_indexes:
             continue
+        question_type = plan_item.question_type.value
+        try:
+            context_snapshot = context_snapshots.get(question_type)
+            if context_snapshot is None:
+                context_snapshot = get_context_snapshot(
+                    document_id=req.document_id,
+                    collection_name=req.collection_name,
+                    target_heading=req.target_heading,
+                    query_text=" ".join(
+                        part for part in (req.topic, req.instruction) if part
+                    ),
+                    limit=req.retrieval_limit,
+                    retrieval_mode=req.retrieval_mode,
+                    context_token_budget=req.context_token_budget,
+                    question_type=question_type,
+                )
+                context_snapshots[question_type] = context_snapshot
+        except ValueError as exc:
+            if not str(exc).startswith("INSUFFICIENT_SOURCE_FOR_QUESTION_TYPE:"):
+                raise
+            source_trace = getattr(exc, "trace", {})
+            rejection = GenerationRejection(
+                code="INSUFFICIENT_SOURCE_FOR_QUESTION_TYPE",
+                message=str(exc),
+                repairable=False,
+            )
+            summaries.append(GenerationPlanSummary(
+                plan_index=plan_index,
+                question_type=question_type,
+                bloom_level=(plan_item.bloom_level or req.bloom_level).value,
+                requested_count=plan_item.num_questions,
+                skipped_count=plan_item.num_questions,
+                source_status="insufficient",
+                source_candidate_count=int(
+                    source_trace.get("source_candidates_assessed") or 0
+                ),
+                source_eligible_count=int(
+                    source_trace.get("source_candidates_eligible") or 0
+                ),
+                source_rejected_count=max(
+                    0,
+                    int(source_trace.get("source_candidates_assessed") or 0)
+                    - int(source_trace.get("source_candidates_eligible") or 0),
+                ),
+                warnings=[str(exc)],
+                rejection_reasons=[rejection],
+            ))
+            completed_plan_indexes.add(plan_index)
+            if checkpoint_callback:
+                await checkpoint_callback(
+                    {
+                        "version": "generation-checkpoint-v1",
+                        "completed_plan_indexes": sorted(completed_plan_indexes),
+                        "data": [item.model_dump(mode="json") for item in generated_questions],
+                        "summary": [item.model_dump(mode="json") for item in summaries],
+                    }
+                )
+            if progress_callback:
+                await progress_callback(
+                    {
+                        "stage": "generating",
+                        "completed": plan_index,
+                        "total": len(plan),
+                        "generated_questions": len(generated_questions),
+                    }
+                )
+            continue
+        context_text = context_snapshot["context_text"]
         content_mode = _content_mode(plan_item, context_text, req.instruction)
         selected_provider = (
             req.code_model_provider if content_mode == "code" else req.model_provider
@@ -293,7 +482,13 @@ async def _generate_questions_for_plan_item(
     # 3. Gọi LLM
     started_at = time.perf_counter()
     try:
-        raw_response = await llm.generate_text(full_prompt)
+        raw_response = await _generate_structured_text(
+            llm,
+            full_prompt,
+            question_type=plan_item.question_type.value,
+            bloom_level=bloom_level.value,
+            question_count=plan_item.num_questions,
+        )
     except Exception as exc:
         finish_generation_run(
             generation_run_id,
@@ -321,7 +516,13 @@ async def _generate_questions_for_plan_item(
                 validation_errors=[str(initial_parse_error)],
                 avoid_questions=avoid_questions,
             )
-            retry_raw_response = await llm.generate_text(retry_prompt)
+            retry_raw_response = await _generate_structured_text(
+                llm,
+                retry_prompt,
+                question_type=plan_item.question_type.value,
+                bloom_level=bloom_level.value,
+                question_count=plan_item.num_questions,
+            )
             raw_response = f"{raw_response}\n\n--- JSON REPAIR ---\n{retry_raw_response}"
             parsed_data = parse_structured_json(_clean_llm_output(retry_raw_response))
         questions_list = extract_question_candidates(parsed_data)
@@ -333,6 +534,7 @@ async def _generate_questions_for_plan_item(
             question_type=plan_item.question_type.value,
             bloom_level=bloom_level.value,
             context_text=context_text,
+            allowed_clo_codes=[item["clo_code"] for item in learning_outcomes],
         )
         validated_data, evidence_errors = _attach_question_evidence(
             validated_data,
@@ -362,7 +564,13 @@ async def _generate_questions_for_plan_item(
                     ],
                 )
                 try:
-                    retry_raw_response = await llm.generate_text(retry_prompt)
+                    retry_raw_response = await _generate_structured_text(
+                        llm,
+                        retry_prompt,
+                        question_type=plan_item.question_type.value,
+                        bloom_level=bloom_level.value,
+                        question_count=missing_count,
+                    )
                     raw_response = (
                         f"{raw_response}\n\n--- FORMAT RETRY {retry_index} ---\n"
                         f"{retry_raw_response}"
@@ -375,6 +583,7 @@ async def _generate_questions_for_plan_item(
                         question_type=plan_item.question_type.value,
                         bloom_level=bloom_level.value,
                         context_text=context_text,
+                        allowed_clo_codes=[item["clo_code"] for item in learning_outcomes],
                     )
                     retry_validated, retry_evidence_errors = _attach_question_evidence(
                         retry_validated,
@@ -418,6 +627,10 @@ async def _generate_questions_for_plan_item(
             requested_by_user_id=requested_by_user_id,
             learning_outcomes=learning_outcomes,
         )
+        if not saved_data:
+            raise ValueError(
+                "NO_VALID_QUESTIONS: model không tạo được câu hỏi đạt yêu cầu sau hậu kiểm"
+            )
         summary = _build_plan_summary(
             plan_index=plan_index,
             question_type=plan_item.question_type.value,
@@ -430,6 +643,7 @@ async def _generate_questions_for_plan_item(
             validation_errors=validation_errors,
             model_provider=model_provider,
             content_mode=content_mode,
+            source_trace=context_snapshot.get("trace") or {},
         )
         finish_generation_run(
             generation_run_id,
@@ -506,38 +720,65 @@ def _build_retry_prompt(
     question_type: str,
     bloom_level: str,
     missing_count: int,
-    validation_errors: list[str | GenerationRejection],
+    validation_errors: list[str | dict | GenerationRejection],
     avoid_questions: list[str],
 ) -> str:
-    error_messages = [
-        error.message if isinstance(error, GenerationRejection) else str(error)
-        for error in validation_errors[-5:]
-        if error
-    ]
-    errors = "\n".join(f"- {error}" for error in error_messages) or "- Chưa sinh đủ câu hỏi hợp lệ."
+    parsed_errors = []
+    for error in validation_errors[-5:]:
+        if isinstance(error, GenerationRejection):
+            parsed_errors.append((error.code, error.message))
+        elif isinstance(error, dict):
+            parsed_errors.append((str(error.get("code") or ""), str(error.get("message") or error)))
+        elif error:
+            parsed_errors.append(("", str(error)))
+    errors = "\n".join(
+        f"- {code + ': ' if code else ''}{message}" for code, message in parsed_errors
+    ) or "- Chưa sinh đủ câu hỏi hợp lệ."
+    targeted_rules = list(dict.fromkeys(
+        RETRY_ERROR_RULES[code] for code, _message in parsed_errors if code in RETRY_ERROR_RULES
+    ))
+    targeted_block = "\n".join(f"- {rule}" for rule in targeted_rules) or "- Sửa đúng các lỗi được liệt kê bên dưới."
     avoid_list = "\n".join(
         f"- {question.strip()}"
         for question in avoid_questions[-12:]
         if question and question.strip()
     ) or "- Không có"
     type_rule = QUESTION_TYPE_RETRY_RULES.get(question_type, "Tuân thủ chính xác quy tắc của dạng câu hỏi.")
+    context_match = re.search(
+        r"\nNGỮ CẢNH:\s*\n(.*?)\n\s*QUY TẮC MINH CHỨNG:",
+        original_prompt,
+        flags=re.DOTALL,
+    )
+    retry_context = context_match.group(1).strip() if context_match else original_prompt.strip()
+    true_false_rule = ""
+    if question_type == "dung_sai":
+        true_false_rule = (
+            '- Với đáp án "B", `false_mutation.replacement` phải xuất hiện nguyên văn '
+            "trong `question`, còn `false_mutation.original` phải xuất hiện nguyên văn "
+            "trong source_context."
+        )
     return f"""
-{original_prompt}
-
-YÊU CẦU SỬA ĐỊNH DẠNG:
-Phản hồi trước chưa tạo đủ câu hỏi hợp lệ.
-Sinh chính xác {missing_count} câu bổ sung.
+SỬA CÂU HỎI BỊ TỪ CHỐI. Sinh chính xác {missing_count} câu bổ sung; không giải thích ngoài JSON.
 
 MỤC TIÊU BẮT BUỘC:
 - question_type: {question_type}
 - bloom_level: {bloom_level}
 - cấu trúc bắt buộc: {type_rule}
+- source_context phải nằm trọn trong một khối `Nội dung:` duy nhất; chép nguyên văn,
+  không ghép các đoạn ở hai khối khác nhau.
+{true_false_rule}
+
+QUY TẮC SỬA THEO MÃ LỖI:
+{targeted_block}
 
 LỖI KIỂM TRA GẦN NHẤT CẦN SỬA:
 {errors}
 
 KHÔNG TRÙNG CÁC CÂU ĐÃ NHẬN/TRƯỚC ĐÓ:
 {avoid_list}
+
+NGỮ CẢNH ĐƯỢC PHÉP:
+{retry_context}
 
 Chỉ trả về object JSON thô theo đúng cấu trúc sau:
 {{"questions": [{{"question": "...", "options": ..., "correct_answer": "...", "explanation": "...", "question_type": "{question_type}", "bloom_level": "{bloom_level}", "difficulty": "de|trung_binh|kho", "source_context": "...", "source_keywords": ["..."], "false_mutation": null}}]}}
@@ -557,6 +798,7 @@ def _build_plan_summary(
     validation_errors: list[GenerationRejection],
     model_provider: str,
     content_mode: str,
+    source_trace: dict | None = None,
 ) -> GenerationPlanSummary:
     skipped_count = max(0, requested_count - saved_count)
     warnings = []
@@ -592,6 +834,18 @@ def _build_plan_summary(
         clarity_rejected_count=rejection_summary["clarity"],
         saved_count=saved_count,
         skipped_count=skipped_count,
+        source_status="selected",
+        source_candidate_count=int(
+            (source_trace or {}).get("source_candidates_assessed") or 0
+        ),
+        source_eligible_count=int(
+            (source_trace or {}).get("source_candidates_eligible") or 0
+        ),
+        source_rejected_count=max(
+            0,
+            int((source_trace or {}).get("source_candidates_assessed") or 0)
+            - int((source_trace or {}).get("source_candidates_eligible") or 0),
+        ),
         warnings=warnings,
         rejection_reasons=validation_errors,
     )
@@ -628,6 +882,92 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
         return None
     except ValueError as exc:
         return str(exc)
+
+
+def _context_content_blocks(context_text: str) -> list[str]:
+    """Return source content blocks without their generated retrieval labels."""
+    markers = list(re.finditer(r"(?m)^Mục lục:[^\n]*\nNội dung:\s*", context_text or ""))
+    if not markers:
+        return [context_text.strip()] if context_text and context_text.strip() else []
+    blocks = []
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(context_text)
+        block = context_text[marker.end():end]
+        block = re.sub(r"\s*---\s*$", "", block).strip()
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _repair_multiple_response_source_context(item: dict, context_text: str) -> bool:
+    """Attach a verbatim evidence span only when one block contains every correct option."""
+    if str(item.get("question_type") or "") not in {"", "nhieu_lua_chon"}:
+        return False
+    options = item.get("options")
+    if not isinstance(options, dict):
+        return False
+    correct_keys = list(dict.fromkeys(
+        key.strip().upper()
+        for key in re.split(r"[,;|]", str(item.get("correct_answer") or ""))
+        if key.strip()
+    ))
+    if len(correct_keys) < 2 or any(key not in options for key in correct_keys):
+        return False
+    current = str(item.get("source_context") or "").strip()
+    if current and find_source_span(context_text, current) is not None:
+        return False
+
+    candidates = []
+    for block in _context_content_blocks(context_text):
+        spans = [find_source_span(block, str(options[key] or "")) for key in correct_keys]
+        if any(span is None for span in spans):
+            continue
+        start = min(span[0] for span in spans if span is not None)
+        end = max(span[1] for span in spans if span is not None)
+        candidates.append((end - start, block[start:end]))
+    if not candidates:
+        return False
+
+    _, evidence = min(candidates, key=lambda candidate: candidate[0])
+    item["source_context"] = evidence
+    post_processing = item.get("post_processing")
+    if not isinstance(post_processing, dict):
+        post_processing = {}
+    item["post_processing"] = {
+        **post_processing,
+        "source_context_repaired": True,
+        "source_context_repair": "exact_correct_options_single_block",
+    }
+    return True
+
+
+def _repair_multiple_response_context_reference(item: dict) -> bool:
+    """Rewrite one narrow, content-preserving context-reference stem."""
+    if str(item.get("question_type") or "") not in {"", "nhieu_lua_chon"}:
+        return False
+    question = str(item.get("question") or "").strip()
+    match = re.fullmatch(
+        r"(?P<prefix>Chọn tất cả đáp án đúng:\s*)"
+        r"Những đặc trưng nào sau đây của (?P<subject>.+?) "
+        r"được mô tả trong (?:ngữ cảnh|văn bản|nguồn)\?",
+        question,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return False
+    item["question"] = (
+        f"{match.group('prefix')}Những nhận định nào sau đây mô tả đúng "
+        f"các đặc trưng của {match.group('subject')}?"
+    )
+    post_processing = item.get("post_processing")
+    if not isinstance(post_processing, dict):
+        post_processing = {}
+    item["post_processing"] = {
+        **post_processing,
+        "question_repaired": True,
+        "question_repair": "remove_context_reference_from_multiple_response_stem",
+    }
+    return True
 
 
 def _normalize_difficulty(value) -> str | None:
@@ -673,6 +1013,7 @@ def _validate_and_format(
     question_type: str,
     bloom_level: str,
     context_text: str,
+    allowed_clo_codes: list[str] | None = None,
 ) -> tuple[List[GeneratedQuestion], list[GenerationRejection]]:
     """Validate dữ liệu và ép kiểu về model chuẩn. Loại bỏ các câu hỏi không đúng
     cấu trúc bắt buộc của question_structure thay vì lưu dữ liệu hỏng vào ngân hàng câu hỏi."""
@@ -689,6 +1030,9 @@ def _validate_and_format(
                 )
             )
             continue
+        if question_type == "nhieu_lua_chon":
+            _repair_multiple_response_context_reference(item)
+            _repair_multiple_response_source_context(item, context_text)
         missing_field = next(
             (
                 field
@@ -732,6 +1076,24 @@ def _validate_and_format(
             candidate_errors.extend(
                 validate_true_false_clarity(item, candidate_index=candidate_index)
             )
+        candidate_errors.extend(validate_question_quality(
+            item, question_type=question_type, candidate_index=candidate_index,
+        ))
+        if allowed_clo_codes is not None:
+            allowed = {code.strip().upper() for code in allowed_clo_codes}
+            raw_codes = item.get("clo_codes") or []
+            if not isinstance(raw_codes, list) or any(
+                not isinstance(code, str) or code.strip().upper() not in allowed for code in raw_codes
+            ):
+                candidate_errors.append(GenerationRejection(
+                    code="CLO_CODE_NOT_ALLOWED",
+                    message="clo_codes chỉ được chứa mã CLO được phép; dùng [] khi chưa có CLO phù hợp.",
+                    candidate_index=candidate_index,
+                    question_excerpt=item["question"][:180],
+                    repairable=True,
+                ))
+            else:
+                item["clo_codes"] = list(dict.fromkeys(code.strip().upper() for code in raw_codes))
         if candidate_errors:
             for candidate_error in candidate_errors:
                 logger.warning(

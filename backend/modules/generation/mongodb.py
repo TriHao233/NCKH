@@ -12,6 +12,7 @@ from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
 from modules.documents.repository import object_id
+from modules.generation.postprocessing import POSTPROCESSOR_VERSION, find_source_span
 from modules.questions.schemas import QuestionCreateRequest, QuestionDifficulty
 from modules.questions.service import get_question_service
 
@@ -31,15 +32,17 @@ def derive_question_evidence(question: dict, retrieval_results: list[dict]) -> l
         raise ValueError("QUESTION_EVIDENCE_MISSING: source_context rỗng")
     for result in retrieval_results:
         content = str(result.get("content") or "")
-        char_start = content.find(quote)
+        span = find_source_span(content, quote)
         chunk_id = str(result.get("chunk_id") or "")
-        if char_start >= 0 and chunk_id:
+        if span is not None and chunk_id:
+            char_start, char_end = span
+            evidence_quote = content[char_start:char_end]
             return [
                 {
                     "chunk_id": chunk_id,
-                    "quote": quote,
+                    "quote": evidence_quote,
                     "char_start": char_start,
-                    "char_end": char_start + len(quote),
+                    "char_end": char_start + len(evidence_quote),
                 }
             ]
     raise ValueError(
@@ -312,7 +315,7 @@ def save_generated_questions(
                     "false_mutation": question.get("false_mutation"),
                     "post_processing": {
                         "status": "ACCEPTED",
-                        "validator_version": "question-post-v2",
+                        "validator_version": POSTPROCESSOR_VERSION,
                     },
                 },
                 document_id=document_id,

@@ -16,6 +16,7 @@ from modules.questions.workflow_service import (
     QuestionWorkflowService,
     build_evaluation_fingerprint,
 )
+from modules.rag.search import InsufficientSourceError
 
 
 VALID_OPTIONS = {"A": "Một", "B": "Hai", "C": "Ba", "D": "Bốn"}
@@ -90,6 +91,13 @@ class StageEContractTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(evidence[0]["chunk_id"], "queue")
         self.assertEqual(evidence[0]["char_start"], 11)
+        wrapped_evidence = derive_question_evidence(
+            {"source_context": "UCLN giảm đi một đơn vị."},
+            [{"chunk_id": "ucln", "content": "UCLN giảm đi\nmột đơn vị."}],
+        )
+        self.assertEqual(wrapped_evidence[0]["quote"], "UCLN giảm đi\nmột đơn vị.")
+        self.assertEqual(wrapped_evidence[0]["char_start"], 0)
+        self.assertEqual(wrapped_evidence[0]["char_end"], 24)
         with self.assertRaisesRegex(ValueError, "QUESTION_EVIDENCE_NOT_IN_CHUNK"):
             derive_question_evidence(
                 {"source_context": "Không có"},
@@ -271,6 +279,42 @@ class StageEContractTests(unittest.IsolatedAsyncioTestCase):
                 source_chunk_ids=["source-a"],
                 evidence_spans=[{"chunk_id": "source-b", "quote": "Nguồn"}],
             )
+
+    async def test_generation_skips_model_when_source_is_unsuitable(self):
+        request = QuestionGenerateRequest(
+            document_id="document-1",
+            bloom_level="2_hieu",
+            question_type="ghep_cot",
+            num_questions=1,
+        )
+        with (
+            patch(
+                "modules.generation.question.get_context_snapshot",
+                side_effect=InsufficientSourceError(
+                    "ghep_cot",
+                    {
+                        "source_candidates_assessed": 4,
+                        "source_candidates_eligible": 0,
+                        "source_rejections": {"MATCHING_RELATIONS_INSUFFICIENT": 4},
+                    },
+                ),
+            ),
+            patch("modules.generation.question.get_document_learning_outcomes", return_value=[]),
+            patch("modules.generation.question.get_existing_question_texts", return_value=[]),
+            patch("modules.generation.question.get_llm_service") as llm_factory,
+        ):
+            result = await generate_questions_rag(request)
+
+        llm_factory.assert_not_called()
+        self.assertEqual(result.data, [])
+        self.assertEqual(result.summary[0].source_status, "insufficient")
+        self.assertEqual(result.summary[0].skipped_count, 1)
+        self.assertEqual(result.summary[0].source_candidate_count, 4)
+        self.assertEqual(result.summary[0].source_rejected_count, 4)
+        self.assertEqual(
+            result.summary[0].rejection_reasons[0].code,
+            "INSUFFICIENT_SOURCE_FOR_QUESTION_TYPE",
+        )
 
     async def test_generation_resume_checkpoint_skips_completed_plan(self):
         request = QuestionGenerateRequest(

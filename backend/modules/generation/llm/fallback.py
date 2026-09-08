@@ -15,11 +15,15 @@ class FallbackProvider(LLMProvider):
         self.primary_error: str | None = None
         self.fallback_was_used = False
 
-    async def generate_text(self, prompt: str) -> str:
+    async def generate_text(
+        self, prompt: str, response_schema: dict | None = None,
+    ) -> str:
         try:
             self.last_used = "primary"
             self.primary_error = None
-            return await self.primary.generate_text(prompt)
+            return await self.primary.generate_text(
+                prompt, response_schema=response_schema,
+            )
         except (RuntimeError, TimeoutError) as exc:
             self.last_used = "fallback"
             self.primary_error = str(exc)
@@ -29,7 +33,9 @@ class FallbackProvider(LLMProvider):
                 self.fallback_model_name,
                 exc_info=True,
             )
-            return await self.fallback.generate_text(prompt)
+            return await self.fallback.generate_text(
+                prompt, response_schema=response_schema,
+            )
 
     def execution_snapshot(self) -> dict:
         primary = dict(getattr(self.primary, "runtime_snapshot", {}) or {})

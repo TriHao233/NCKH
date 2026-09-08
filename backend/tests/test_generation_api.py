@@ -13,7 +13,13 @@ from modules.generation.mongodb import _resolve_clo_ids
 from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.question import _content_mode
 from modules.generation.schemas import QuestionPlanItem
-from modules.rag.search import _hybrid_score, _keyword_tokens, get_context_snapshot
+from modules.rag.search import (
+    _hybrid_score,
+    _keyword_tokens,
+    assess_source_suitability,
+    get_context_snapshot,
+)
+from scripts.benchmark_questions_local import summarize
 
 
 def user(role: str = "Teacher") -> CurrentUser:
@@ -223,6 +229,182 @@ class GenerationStatusApiTests(unittest.TestCase):
         unrelated = _hybrid_score("Ngăn xếp hoạt động theo LIFO", {}, query_tokens, vector_rank=1)
 
         self.assertGreater(matching, unrelated)
+
+    def test_source_suitability_enforces_type_specific_evidence(self):
+        linear = (
+            "Bước 1: Nhập dữ liệu. Bước 2: Kiểm tra dữ liệu. "
+            "Bước 3: Tính kết quả. Bước 4: Xuất kết quả."
+        )
+        looping = linear + " Nếu chưa đạt thì quay lại bước 2."
+        branching = linear + " Nếu dữ liệu hợp lệ thì thực hiện bước 3."
+        matching = (
+            "Ngăn xếp là cấu trúc dữ liệu LIFO.\n"
+            "Hàng đợi là cấu trúc dữ liệu FIFO.\n"
+            "Cây là cấu trúc dữ liệu phân cấp."
+        )
+        mixed_relations = (
+            "Giải thuật là hệ thống quy tắc.\n"
+            "Ví dụ: Tìm ước số chung lớn nhất.\n"
+            "Đầu ra: Ước số chung lớn nhất.\n"
+            "Tính kết thúc: Giải thuật dừng sau hữu hạn bước.\n"
+            "Tính xác định: Các máy cho cùng kết quả."
+        )
+        multi_select = (
+            "Ngăn xếp có thao tác push để thêm phần tử. "
+            "Ngăn xếp có thao tác pop để loại phần tử. "
+            "Ngăn xếp được dùng để lưu trạng thái xử lý."
+        )
+        multi_select_relations = (
+            "Tính kết thúc: Giải thuật dừng sau hữu hạn bước.\n"
+            "Tính xác định: Các máy cho cùng kết quả.\n"
+            "Tính phổ dụng: Giải thuật áp dụng cho nhiều dữ liệu.\n"
+            "Tính hiệu quả: Giải thuật dùng ít tài nguyên."
+        )
+        repeated_matching = (
+            "Ngăn xếp là cấu trúc dữ liệu LIFO.\n"
+            "Ngăn xếp là cấu trúc dữ liệu vào sau ra trước.\n"
+            "Ngăn xếp là cấu trúc dữ liệu tuyến tính."
+        )
+        concise = "Ngăn xếp là cấu trúc LIFO; push thêm và pop loại phần tử."
+        scenario_source = "Ngăn xếp được sử dụng để hoàn tác thao tác gần nhất trong trình soạn thảo."
+        metadata_only = (
+            "# Chương 1 - Giải thuật và biểu diễn giải thuật\n"
+            "Lâm Hoài Bảo - Dương Văn Hiếu - Nguyễn Văn Linh\n"
+            "Khoa Công nghệ Thông tin và Truyền thông - Đại học Cần Thơ\n"
+            "Bản trích nội dung dùng làm nguồn sinh câu hỏi trong QBankCTU\n"
+            "Trang nguồn 4"
+        )
+
+        self.assertTrue(assess_source_suitability(linear, "sap_xep")["suitable"])
+        self.assertIn("ORDERING_NOT_LINEAR", assess_source_suitability(looping, "sap_xep")["reasons"])
+        self.assertIn("ORDERING_NOT_LINEAR", assess_source_suitability(branching, "sap_xep")["reasons"])
+        self.assertTrue(assess_source_suitability(matching, "ghep_cot")["suitable"])
+        self.assertFalse(assess_source_suitability(mixed_relations, "ghep_cot")["suitable"])
+        self.assertFalse(assess_source_suitability(repeated_matching, "ghep_cot")["suitable"])
+        self.assertFalse(assess_source_suitability(linear, "ghep_cot")["suitable"])
+        self.assertIn(
+            "MATCHING_RELATIONS_INSUFFICIENT",
+            assess_source_suitability(linear, "ghep_cot")["reasons"],
+        )
+        self.assertTrue(assess_source_suitability(multi_select, "nhieu_lua_chon")["suitable"])
+        relation_assessment = assess_source_suitability(
+            multi_select_relations, "nhieu_lua_chon"
+        )
+        self.assertTrue(relation_assessment["suitable"])
+        self.assertEqual(relation_assessment["signals"]["coherent_relations"], 4)
+        self.assertTrue(assess_source_suitability(concise, "trac_nghiem")["suitable"])
+        self.assertTrue(assess_source_suitability(scenario_source, "tinh_huong")["suitable"])
+        self.assertFalse(assess_source_suitability("Mục lục chương một", "trac_nghiem")["suitable"])
+        self.assertFalse(assess_source_suitability(metadata_only, "trac_nghiem")["suitable"])
+        self.assertFalse(assess_source_suitability(metadata_only, "ghep_cot")["suitable"])
+
+    def test_context_snapshot_reselects_source_for_question_type(self):
+        unsuitable = "Khái niệm ngắn không có trình tự đủ bốn bước để sắp xếp trong bài học."
+        suitable = (
+            "Bước 1: Nhập dữ liệu. Bước 2: Kiểm tra dữ liệu. "
+            "Bước 3: Tính kết quả. Bước 4: Xuất kết quả."
+        )
+
+        class CollectionStub:
+            def count(self):
+                return 2
+
+            def get(self, **_kwargs):
+                return {
+                    "documents": [unsuitable, suitable],
+                    "metadatas": [
+                        {"chunk_id": "bad", "chunk_set_id": "set-1"},
+                        {"chunk_id": "good", "chunk_set_id": "set-1"},
+                    ],
+                }
+
+        with (
+            patch("modules.rag.search._active_vector_snapshot", return_value=("set-1", "vector-1")),
+            patch("modules.rag.search.get_collection", return_value=CollectionStub()),
+        ):
+            snapshot = get_context_snapshot(
+                document_id=str(ObjectId()),
+                collection_name="chunks",
+                retrieval_mode="dense",
+                question_type="sap_xep",
+                limit=1,
+            )
+
+        self.assertEqual(snapshot["results"][0]["chunk_id"], "good")
+        self.assertEqual(snapshot["trace"]["source_candidates_assessed"], 2)
+        self.assertEqual(snapshot["trace"]["source_candidates_eligible"], 1)
+        self.assertEqual(snapshot["trace"]["source_rejections"]["ORDERING_SEQUENCE_MISSING"], 1)
+
+    def test_context_snapshot_reports_full_trace_when_no_source_is_eligible(self):
+        unsuitable = "Khái niệm này không trình bày một quy trình tuyến tính có bốn bước."
+
+        class CollectionStub:
+            def count(self):
+                return 1
+
+            def get(self, **_kwargs):
+                return {
+                    "documents": [unsuitable],
+                    "metadatas": [{"chunk_id": "bad", "chunk_set_id": "set-1"}],
+                }
+
+        with (
+            patch("modules.rag.search._active_vector_snapshot", return_value=("set-1", "vector-1")),
+            patch("modules.rag.search.get_collection", return_value=CollectionStub()),
+        ):
+            with self.assertRaisesRegex(ValueError, "INSUFFICIENT_SOURCE_FOR_QUESTION_TYPE") as raised:
+                get_context_snapshot(
+                    document_id=str(ObjectId()),
+                    collection_name="chunks",
+                    retrieval_mode="dense",
+                    question_type="sap_xep",
+                    limit=1,
+                )
+
+        self.assertEqual(raised.exception.trace["source_candidates_assessed"], 1)
+        self.assertEqual(raised.exception.trace["source_candidates_eligible"], 0)
+        self.assertEqual(raised.exception.trace["source_assessments"][0]["chunk_id"], "bad")
+
+    def test_benchmark_summary_keeps_zero_usable_time_undefined(self):
+        records = [{
+            "model": "test-model",
+            "question_type": "trac_nghiem",
+            "source_status": "selected",
+            "source_review_id": "source-1",
+            "elapsed_seconds": 12.0,
+            "accepted": [],
+            "attempts": [
+                {"candidate_count": 1, "rejections": [{"code": "INVALID_TYPE_FORMAT"}]},
+                {"candidate_count": 1, "rejections": []},
+            ],
+        }]
+
+        group = summarize(records)["groups"]["test-model/trac_nghiem"]
+
+        self.assertEqual(group["model_calls"], 2)
+        self.assertEqual(group["candidate_count"], 2)
+        self.assertEqual(group["retry_rate"], 1.0)
+        self.assertIsNone(group["accepted_quality_rate"])
+        self.assertIsNone(group["seconds_per_usable_request"])
+
+    def test_benchmark_quality_rate_uses_only_reviewed_accepted_requests(self):
+        records = [{
+            "model": "test-model",
+            "question_type": "trac_nghiem",
+            "source_status": "selected",
+            "elapsed_seconds": 3.0,
+            "accepted": [{"question": "Q"}],
+            "attempts": [{"candidate_count": 1, "rejections": []}],
+        }]
+        review_key = [{"blind_id": "b1", "record_index": 0, "technically_accepted": True}]
+        ungraded = [{"blind_id": "b1", "grading": {"usable_without_edit": None}}]
+        graded = [{"blind_id": "b1", "grading": {"usable_without_edit": True}}]
+
+        pending = summarize(records, reviews=ungraded, review_key=review_key)["groups"]["test-model/trac_nghiem"]
+        completed = summarize(records, reviews=graded, review_key=review_key)["groups"]["test-model/trac_nghiem"]
+
+        self.assertIsNone(pending["accepted_quality_rate"])
+        self.assertEqual(completed["accepted_quality_rate"], 1.0)
 
     def test_context_snapshot_combines_semantic_and_keyword_ranking(self):
         class CollectionStub:
