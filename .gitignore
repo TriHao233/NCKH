@@ -22,6 +22,18 @@ node_modules/
 __pycache__/
 *.pyc
 IMPLEMENTATION_CHANGES.md
+/MODEL_QUESTION_BENCHMARK_LOCAL.md
+/QUESTION_GENERATION_IMPROVEMENT_PLAN.md
+
+# Generated project documents (2026-09-05 to 2026-09-06)
+/docs/BASELINE_CONTRACT.md
+/docs/baseline_dataset_manifest.json
+/docs/MOODLE_CONNECTOR_RUNBOOK.md
+/docs/MOODLE_INTEGRATION_CONTRACT.md
+/docs/OPERATIONS_ACCEPTANCE_RUNBOOK.md
+/docs/PROJECT_COMPLETION_AUDIT_8_STAGES_2026-09-06.md
+/docs/PROJECT_COMPLETION_MASTER_PLAN.md
+/docs/runtime_manifest.json
 
 # Local inspection/render artifacts
 /tmp/
