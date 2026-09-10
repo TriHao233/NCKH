@@ -5,7 +5,11 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import RedirectResponse
+from secure import Secure
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from core.limiter import limiter
 from core.bootstrap import bootstrap_database
 from core.config import settings
 from core.database import close_database, ping_database
@@ -50,8 +54,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 import time
 from fastapi import Request
+
+secure_headers = Secure.with_default_headers()
+
+@app.middleware("http")
+async def set_secure_headers(request: Request, call_next):
+    response = await call_next(request)
+    secure_headers.set_headers(response)
+    return response
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

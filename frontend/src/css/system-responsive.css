@@ -1,0 +1,660 @@
+/*
+ * Shared workspace alignment and responsive rules.
+ * ManagePage is the visual reference: 1480px workspace, 24/16px gutters,
+ * 16px cards, 8px controls, strong blue borders, and 960/640px breakpoints.
+ * Keep feature-specific layout in each page stylesheet; add rules here only
+ * when the same behavior applies across multiple screens.
+ */
+
+.page-main :is(
+  .manage-page,
+  .generate-page,
+  .exam-list-page,
+  .exam-builder-page,
+  .subject-manage-page,
+  .task-calendar-page,
+  .profile-page
+) .container {
+  max-width: var(--workspace-max);
+  padding-inline: var(--page-gutter);
+}
+
+.page-main .admin-jobs-page :is(.jobs-header, .jobs-summary, .jobs-toolbar, .jobs-layout, .jobs-error),
+.page-main .admin-moodle-page :is(.moodle-header, .moodle-summary, .moodle-layout, .publication-panel, .moodle-error),
+.page-main .admin-overview-page :is(.overview-header, .overview-stats, .overview-grid, .overview-error),
+.page-main .admin-ai-review-page :is(.ai-review-toolbar, .ai-review-summary, .ai-review-layout),
+.page-main .catalog-page :is(.catalog-header, .catalog-grid, .catalog-error),
+.page-main .review-page :is(.review-toolbar, .review-dashboard, .review-summary, .review-layout, .review-workspace-tabs) {
+  width: 100%;
+  max-width: var(--workspace-max);
+}
+
+.page-main :is(
+  .admin-jobs-page,
+  .admin-moodle-page,
+  .admin-overview-page,
+  .admin-ai-review-page,
+  .catalog-page,
+  .review-page
+) {
+  background: #fafcff;
+  padding: 40px var(--page-gutter) 96px;
+}
+
+.page-main :is(
+  .generate-page,
+  .exam-list-page,
+  .subject-manage-page,
+  .task-calendar-page,
+  .profile-page
+) .page-hero {
+  padding: 56px 0 40px;
+  background: linear-gradient(160deg, #f0f8ff 0%, #e8f4fd 55%, #f5faff 100%);
+  border-bottom: 0;
+}
+
+.page-main :is(
+  .manage-page,
+  .generate-page,
+  .exam-list-page,
+  .exam-builder-page,
+  .subject-manage-page,
+  .task-calendar-page,
+  .profile-page
+) .btn {
+  min-height: 38px;
+  border-radius: var(--radius-sm);
+  padding: 9px 16px;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.page-main :is(
+  .generate-page .gen-form-card,
+  .generate-page .gen-preview-card,
+  .exam-list-page .card,
+  .exam-builder-page .card,
+  .exam-builder-page .builder-content,
+  .subject-manage-page .subject-card,
+  .task-calendar-page .card,
+  .profile-page .card,
+  .admin-jobs-page .jobs-toolbar,
+  .admin-jobs-page .jobs-table-panel,
+  .admin-jobs-page .job-detail-panel,
+  .admin-moodle-page .moodle-target-panel,
+  .admin-moodle-page .moodle-form-panel,
+  .admin-moodle-page .publication-panel,
+  .admin-overview-page .overview-stat,
+  .admin-overview-page .overview-panel,
+  .admin-ai-review-page .ai-review-list-panel,
+  .admin-ai-review-page .ai-review-detail-panel,
+  .catalog-page .catalog-card,
+  .review-page .review-dashboard__group,
+  .review-page .review-list-panel,
+  .review-page .review-detail-panel
+) {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--card-shadow);
+}
+
+.page-main :is(
+  .manage-page .stat-card,
+  .task-calendar-page .stat-card,
+  .admin-jobs-page .summary-tile,
+  .admin-moodle-page .moodle-summary button,
+  .admin-ai-review-page .ai-review-summary button,
+  .review-page .review-summary button
+) {
+  border-width: 1.5px;
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+}
+
+.page-main :is(
+  .jobs-table-wrap,
+  .publication-table-wrap,
+  .overview-table-wrap,
+  .matrix-table-wrap
+) {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: #a7c8e6 #f3f8fc;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 1023px) {
+  .page-main .generate-page .gen-grid,
+  .page-main .exam-builder-page .builder-grid,
+  .page-main .profile-page .profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-main .exam-builder-page .builder-steps,
+  .page-main .profile-page .profile-side {
+    position: static;
+  }
+}
+
+@media (max-width: 767px) {
+  .page-main :is(
+    .admin-jobs-page,
+    .admin-moodle-page,
+    .admin-overview-page,
+    .admin-ai-review-page,
+    .catalog-page,
+    .review-page
+  ) {
+    padding: 24px 16px 56px;
+  }
+
+  .page-main :is(
+    .manage-page,
+    .generate-page,
+    .exam-list-page,
+    .exam-builder-page,
+    .subject-manage-page,
+    .task-calendar-page,
+    .profile-page
+  ) .container {
+    padding-inline: 16px;
+  }
+
+  .page-main :is(
+    .manage-page,
+    .generate-page,
+    .exam-list-page,
+    .subject-manage-page,
+    .task-calendar-page,
+    .profile-page
+  ) .page-hero {
+    padding: 40px 0 28px;
+  }
+
+  .page-main :is(
+    .manage-page .manage-hero-row,
+    .exam-list-page .exam-hero-row,
+    .subject-manage-page .subject-hero-row
+  ) {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .page-main :is(
+    .manage-page .manage-hero-actions,
+    .exam-list-page .exam-hero-row > .btn,
+    .subject-manage-page .subject-hero-row > .btn
+  ) {
+    width: 100%;
+  }
+
+  .page-main :is(
+    .manage-page .card,
+    .generate-page .gen-form-card,
+    .generate-page .gen-preview-card,
+    .exam-list-page .card,
+    .exam-builder-page .card,
+    .exam-builder-page .builder-content,
+    .subject-manage-page .subject-card,
+    .task-calendar-page .card,
+    .profile-page .card,
+    .admin-jobs-page .jobs-table-panel,
+    .admin-jobs-page .job-detail-panel,
+    .admin-moodle-page .moodle-target-panel,
+    .admin-moodle-page .moodle-form-panel,
+    .admin-moodle-page .publication-panel,
+    .admin-overview-page .overview-panel,
+    .admin-ai-review-page .ai-review-list-panel,
+    .admin-ai-review-page .ai-review-detail-panel,
+    .catalog-page .catalog-card,
+    .review-page .review-dashboard__group,
+    .review-page .review-list-panel,
+    .review-page .review-detail-panel
+  ) {
+    padding: 16px;
+  }
+
+  .page-main :is(
+    .overview-header,
+    .jobs-header,
+    .moodle-header,
+    .catalog-header,
+    .ai-review-toolbar,
+    .review-toolbar
+  ) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .page-main :is(
+    .jobs-header-actions,
+    .ai-review-actions,
+    .review-actions
+  ) {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .page-main :is(
+    .admin-jobs-page .jobs-summary,
+    .admin-moodle-page .moodle-summary,
+    .admin-overview-page .overview-stats,
+    .admin-ai-review-page .ai-review-summary,
+    .review-page .review-summary
+  ) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .page-main .admin-overview-page .overview-stat--jobs {
+    grid-column: span 2;
+  }
+
+  .page-main .catalog-page .runtime-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .page-main :is(.jobs-table-wrap, .publication-table-wrap, .overview-table-wrap) {
+    padding-inline: 0;
+  }
+
+  .page-main .exam-list-page .exam-grid,
+  .page-main .subject-manage-page .subject-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-main .generate-page .gen-card-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .page-main .generate-page .gen-preview-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .page-main .generate-page :is(.gen-body, .draft-item) {
+    min-width: 0;
+  }
+
+  .page-main .generate-page .gen-body,
+  .page-main :is(.exam-list-page .exam-list-body, .task-calendar-page .calendar-body) {
+    padding-bottom: 56px;
+  }
+
+  .page-main .generate-page .draft-item {
+    padding: 14px;
+  }
+
+  .page-main :is(.manage-page .question-pagination, .generate-page .draft-pagination) {
+    flex-wrap: wrap;
+  }
+
+  .page-main :is(.manage-page .question-pagination-pages, .generate-page .draft-pagination-pages) {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .page-main .manage-page :is(.question-actions--wrap, .manage-notice) {
+    max-width: 100%;
+  }
+
+  .page-main .manage-page .manage-notice {
+    margin-inline: 0;
+  }
+
+  .page-main .manage-page :is(.revision-feedback-head, .version-block-head) {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .page-main .generate-page .field-label-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .page-main .exam-builder-page :is(.builder-steps, .step-tabs) {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .page-main .exam-builder-page :is(.builder-step, .step-tab) {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .page-main .exam-builder-page :is(.question-pool-item, .variant-item, .preview-header) {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .page-main .exam-builder-page .variant-form .field-input {
+    width: 100%;
+  }
+
+  .page-main .exam-builder-page .matrix-table-wrap {
+    margin-inline: -4px;
+    padding: 0 4px 4px;
+  }
+
+  .page-main .exam-builder-page .pool-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .page-main .subject-manage-page :is(.subject-toolbar, .subject-stats) {
+    align-items: stretch;
+  }
+
+  .page-main .subject-manage-page .stat-chip {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+
+  .page-main .subject-manage-page :is(.subject-search, .subject-switch) {
+    width: 100%;
+    max-width: none;
+  }
+
+  .page-main .task-calendar-page :is(.week-view, .month-view) {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .page-main .task-calendar-page :is(.week-grid, .month-grid) {
+    min-width: 700px;
+    grid-template-columns: repeat(7, minmax(90px, 1fr));
+    gap: 6px;
+    font-size: inherit;
+  }
+
+  .page-main .task-calendar-page .week-nav {
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .page-main .task-calendar-page .calendar-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: thin;
+  }
+
+  .page-main .task-calendar-page .calendar-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .page-main .task-calendar-page .list-toolbar {
+    width: 100%;
+  }
+
+  .page-main .task-calendar-page .list-toolbar .field-select {
+    flex: 1 1 180px;
+  }
+
+  .page-main .profile-page .profile-tabs,
+  .page-main .review-page :is(.review-workspace-tabs, .review-detail-tabs, .source-page-tabs) {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .page-main .profile-page .profile-tab,
+  .page-main .review-page :is(.review-workspace-tabs button, .review-detail-tabs button, .source-page-tabs button) {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .page-main .profile-page .profile-actions {
+    flex-wrap: wrap;
+  }
+
+  .page-main .profile-page :is(.info-list li, .side-note, .page-hero-desc) {
+    overflow-wrap: anywhere;
+  }
+
+  .page-main .review-page :is(.review-actions, .detail-actions) {
+    align-items: stretch;
+  }
+
+  .page-main .review-page .review-model-picker select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .page-main .review-page .review-modal-backdrop,
+  .page-main .generate-page .preset-dialog-backdrop,
+  .modal-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .page-main :is(
+    .manage-page .modal-card,
+    .exam-list-page .modal-card,
+    .subject-manage-page .modal-card,
+    .task-calendar-page .modal-card,
+    .users-page .modal-card,
+    .generate-page .preset-dialog,
+    .review-page .review-modal
+  ) {
+    max-height: calc(100dvh - 24px);
+    padding: 20px;
+  }
+
+  .page-main :is(
+    .manage-page .modal-actions,
+    .exam-list-page .modal-actions,
+    .subject-manage-page .modal-actions,
+    .task-calendar-page .modal-actions,
+    .users-page .modal-actions,
+    .generate-page .preset-dialog-actions,
+    .review-page .review-modal__foot
+  ) {
+    position: sticky;
+    bottom: -20px;
+    z-index: 2;
+    margin-inline: -4px;
+    padding: 12px 4px 4px;
+    border-top: 1px solid var(--border-light);
+    background: #fff;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-main .manage-page .manage-hero-actions,
+  .page-main :is(
+    .manage-page .modal-actions,
+    .exam-list-page .modal-actions,
+    .subject-manage-page .modal-actions,
+    .task-calendar-page .modal-actions,
+    .users-page .modal-actions,
+    .generate-page .preset-dialog-actions,
+    .review-page .review-modal__foot
+  ) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .page-main .manage-page .manage-hero-actions .btn,
+  .page-main :is(
+    .manage-page .modal-actions,
+    .exam-list-page .modal-actions,
+    .subject-manage-page .modal-actions,
+    .task-calendar-page .modal-actions,
+    .users-page .modal-actions,
+    .generate-page .preset-dialog-actions,
+    .review-page .review-modal__foot
+  ) button {
+    width: 100%;
+  }
+
+  .page-main .exam-list-page .exam-card-actions,
+  .page-main .subject-manage-page .detail-list li,
+  .page-main .profile-page :is(.profile-actions, .avatar-edit-row) {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .page-main .exam-list-page .exam-card-stats,
+  .page-main .task-calendar-page .calendar-item-side {
+    text-align: left;
+  }
+
+  .page-main .exam-list-page .exam-card-stats {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .page-main .exam-list-page .exam-card-actions .btn {
+    flex: 1 1 100%;
+  }
+
+  .page-main .subject-manage-page .detail-list li,
+  .page-main .profile-page .avatar-edit-row {
+    flex-direction: column;
+  }
+
+  .page-main .subject-manage-page .detail-actions {
+    width: 100%;
+  }
+
+  .page-main .subject-manage-page .detail-actions button {
+    flex: 1;
+  }
+
+  .page-main .profile-page .profile-actions .btn {
+    flex: 1 1 100%;
+  }
+
+  .page-main .generate-page .preset-dialog-summary,
+  .page-main .users-page .permission-grid,
+  .page-main .catalog-page .runtime-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-main .exam-builder-page .export-action-group > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-main .generate-page .draft-status {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .page-main .manage-page .version-select-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-main .manage-page .question-side {
+    align-items: flex-start;
+  }
+
+  .page-main .manage-page .question-actions--wrap {
+    justify-content: flex-start;
+  }
+
+  .page-main .task-calendar-page .week-nav .btn {
+    flex: 1;
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
+  .page-main .task-calendar-page .week-nav > span {
+    order: -1;
+    width: 100%;
+    text-align: center;
+  }
+
+  .page-main .profile-page .profile-hero-row {
+    align-items: center;
+  }
+
+  .page-main .review-page :is(.review-pagination, .review-modal__head) {
+    align-items: stretch;
+  }
+
+  .page-main .review-page .review-pagination div {
+    width: 100%;
+  }
+
+  .page-main .review-page .review-pagination button {
+    flex: 1;
+  }
+
+  .page-main :is(
+    .jobs-header-actions,
+    .ai-review-actions,
+    .review-actions,
+    .catalog-header,
+    .moodle-header
+  ) button,
+  .page-main .catalog-header > button,
+  .page-main .moodle-header > button {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .page-main :is(
+    .admin-jobs-page .jobs-pagination,
+    .admin-moodle-page .form-actions,
+    .admin-moodle-page .target-main,
+    .admin-overview-page .overview-panel-heading,
+    .catalog-page .catalog-form-actions,
+    .users-page .users-result-box-header
+  ) {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .page-main .admin-moodle-page .form-actions,
+  .page-main .admin-moodle-page .target-main {
+    flex-direction: column;
+  }
+
+  .page-main :is(
+    .admin-jobs-page .summary-tile,
+    .admin-moodle-page .moodle-summary button,
+    .admin-overview-page .overview-stat,
+    .admin-ai-review-page .ai-review-summary button,
+    .review-page .review-summary button
+  ) {
+    min-width: 0;
+    padding: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .page-main :is(
+    .manage-page .page-hero-title,
+    .generate-page .page-hero-title,
+    .exam-list-page .page-hero-title,
+    .exam-builder-page .page-hero-title,
+    .subject-manage-page .page-hero-title,
+    .task-calendar-page .page-hero-title,
+    .profile-page .page-hero-title,
+    .overview-header h1,
+    .jobs-header h1,
+    .moodle-header h1,
+    .catalog-header h1,
+    .ai-review-toolbar__title h1,
+    .review-toolbar__title h1
+  ) {
+    overflow-wrap: anywhere;
+  }
+}

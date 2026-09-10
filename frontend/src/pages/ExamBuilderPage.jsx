@@ -397,49 +397,51 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
           <span className="matrix-warning"> — Vượt quá số câu đã khai báo!</span>
         )}
       </p>
-      <table className="matrix-table">
-        <thead>
-          <tr>
-            <th>Chương</th>
-            <th>Mức nhận thức</th>
-            <th>Độ khó</th>
-            <th>Số câu</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {cells.map((cell, index) => (
-            <tr key={index}>
-              <td>
-                <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly}>
-                  <option value="">Tất cả chương</option>
-                  {chapters.map((chapter) => (
-                    <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
-                      {chapter.chapter_name}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly}>
-                  {COGNITIVE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
-                </select>
-              </td>
-              <td>
-                <select className="field-select" value={cell.difficulty} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly}>
-                  {DIFFICULTIES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-                </select>
-              </td>
-              <td>
-                <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly} />
-              </td>
-              <td>
-                <button type="button" className="icon-btn icon-btn--danger" onClick={() => removeRow(index)} disabled={readOnly}>×</button>
-              </td>
+      <div className="matrix-table-wrap" role="region" aria-label="Ma trận đề thi" tabIndex={0}>
+        <table className="matrix-table">
+          <thead>
+            <tr>
+              <th>Chương</th>
+              <th>Mức nhận thức</th>
+              <th>Độ khó</th>
+              <th>Số câu</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {cells.map((cell, index) => (
+              <tr key={index}>
+                <td>
+                  <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly}>
+                    <option value="">Tất cả chương</option>
+                    {chapters.map((chapter) => (
+                      <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
+                        {chapter.chapter_name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly}>
+                    {COGNITIVE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
+                  </select>
+                </td>
+                <td>
+                  <select className="field-select" value={cell.difficulty} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly}>
+                    {DIFFICULTIES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                  </select>
+                </td>
+                <td>
+                  <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly} />
+                </td>
+                <td>
+                  <button type="button" className="icon-btn icon-btn--danger" onClick={() => removeRow(index)} disabled={readOnly}>×</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <div className="step-actions">
         <button type="button" className="btn btn--outline" onClick={addRow} disabled={readOnly}>+ Thêm nhóm</button>
         <button type="button" className="btn btn--outline" onClick={handleCheck} disabled={checking}>

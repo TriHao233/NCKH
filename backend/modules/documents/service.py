@@ -237,21 +237,28 @@ class DocumentService:
 
         artifact = self._original_source_artifact(document)
         upload_path = ((artifact.get("storage") or {}).get("uri"))
-        source_format = "docx" if artifact.get("type") == "ORIGINAL_DOCX" else "pdf"
+        source_format = {
+            "ORIGINAL_PDF": "pdf",
+            "ORIGINAL_DOCX": "docx",
+            "ORIGINAL_DOC": "doc",
+            "ORIGINAL_MARKDOWN": "md",
+            "ORIGINAL_TEXT": "txt",
+        }.get(artifact.get("type"), Path(upload_path).suffix.lower().lstrip("."))
         config = {**(job.get("config") or {}), "source_format": source_format}
         new_job = self.repository.create_job(document["_id"], "OCR", config=config)
 
-        from modules.ocr.ocr import process_docx_background, process_ocr_background
+        from modules.ocr.ocr import process_ocr_background
 
-        output_path = resolve_path(settings.ocr_output_dir) / f"{document['_id']}_result.md"
-        processor = process_docx_background if source_format == "docx" else process_ocr_background
+        output_path = resolve_path(settings.ocr_output_dir) / f"{document['_id']}_{new_job['_id']}_result.md"
         background_tasks.add_task(
-            processor,
+            process_ocr_background,
             document_id=str(document["_id"]),
             job_id=str(new_job["_id"]),
             upload_path=str(Path(upload_path)),
             output_path=str(output_path),
             document_title=document.get("title") or document.get("original_filename") or "Document",
+            source_file_name=document.get("original_filename") or Path(upload_path).name,
+            mime_type=artifact.get("mime_type"),
         )
         return {"job": serialize_document_job(new_job)}
 
@@ -318,7 +325,14 @@ class DocumentService:
         artifact = next(
             (
                 item for item in document.get("artifacts", [])
-                if item.get("type") in {"ORIGINAL_PDF", "ORIGINAL_DOCX"} and item.get("is_current", True)
+                if item.get("type") in {
+                    "ORIGINAL_PDF",
+                    "ORIGINAL_DOCX",
+                    "ORIGINAL_DOC",
+                    "ORIGINAL_MARKDOWN",
+                    "ORIGINAL_TEXT",
+                }
+                and item.get("is_current", True)
             ),
             None,
         )

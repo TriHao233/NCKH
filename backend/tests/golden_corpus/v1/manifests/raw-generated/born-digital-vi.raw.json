@@ -1,0 +1,91 @@
+{
+  "manifest_version": "1.0.0",
+  "manifest_status": "raw_generated",
+  "requires_human_review": true,
+  "fixture_id": "born-digital-vi",
+  "source_file": "backend/tests/golden_corpus/v1/generated/born-digital-vi.pdf",
+  "source_file_name": "born-digital-vi.pdf",
+  "relative_path": "generated/born-digital-vi.pdf",
+  "file_extension": ".pdf",
+  "mime_type": "application/pdf",
+  "file_size": 22267,
+  "sha256": "4db58fd6c7423fa3687d096f35aa1d5741b3c61e40bf1c73bb10cc4e6c22afa9",
+  "language_detected": "vi",
+  "document_category": "pdf_born_digital",
+  "page_count": 2,
+  "source_unit_count": null,
+  "has_text_layer": true,
+  "is_scanned": false,
+  "is_mixed": false,
+  "expected_content_types": [
+    "prose",
+    "heading",
+    "table"
+  ],
+  "detected_code_locations": [],
+  "detected_table_locations": [
+    {
+      "page_number": 2,
+      "truth_page_number": 2,
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "detected_formula_locations": [],
+  "detected_image_or_diagram_locations": [],
+  "ground_truth_available": true,
+  "ground_truth_independent": true,
+  "ground_truth_references": [
+    {
+      "relative_path": "truth/pages.json",
+      "sha256": "7fd36173bc9630a1c36f604d17140cf8ab6431a5bd5cb0228a6ce9fa0a647968",
+      "status": "author_before_render_needs_second_reviewer",
+      "evidence": null,
+      "truth_page_numbers": [
+        1,
+        2
+      ],
+      "local_page_mapping": {
+        "1": 1,
+        "2": 2
+      },
+      "case_ids": null
+    }
+  ],
+  "rag_questions_available": true,
+  "rag_question_references": [
+    {
+      "relative_path": "truth/retrieval_cases.json",
+      "sha256": "ad2b3a4cfb83b155c827c6b97228781c973e3bea8abcb4354bf0772b266f01a3",
+      "status": "author_defined",
+      "evidence": null,
+      "truth_page_numbers": null,
+      "local_page_mapping": null,
+      "case_ids": [
+        "fifo",
+        "complexity"
+      ]
+    }
+  ],
+  "parser_selected": "PdfParser",
+  "extractor_strategy": "pdf_text_layer_fast_path",
+  "detection_confidence": 0.99,
+  "generator_version": "qbank-raw-manifest/2026-09-04.1",
+  "generation_timestamp": "2026-09-04T00:00:00Z",
+  "eligible_for_cer_wer": true,
+  "detection_evidence": {
+    "initial_manifest": "manifest.json#cases[id=born-digital-vi]",
+    "ground_truth_method": "author_before_render",
+    "pdf_probe": {
+      "usable_text_layer_pages": [
+        1,
+        2
+      ],
+      "ocr_required_pages": []
+    }
+  },
+  "warnings": [
+    "Raw supplement; manifest.json không bị sửa hoặc ghi đè.",
+    "Ground truth độc lập nhưng corpus còn ở trạng thái needs_second_reviewer; không dùng để tuyên bố production-ready."
+  ]
+}

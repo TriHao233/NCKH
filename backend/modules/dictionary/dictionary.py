@@ -18,7 +18,7 @@ def _document_page_query(document_id: str) -> dict:
         return {"document_id": document_id}
 
 
-def run_dictionary_auto_learning(document_id: str, course_id: str = "it_fundamentals"):
+async def run_dictionary_auto_learning(document_id: str, course_id: str = "it_fundamentals"):
     """
     Hàm phân tích tài liệu ngầm: Trích xuất các đoạn văn đặc sắc,
     gọi AI để học từ khóa mới và đưa vào vùng chờ duyệt.
@@ -65,47 +65,48 @@ JSON KẾT QUẢ ĐÚNG FORMAT MẪU:
 ["từ khóa 1", "từ khóa 2", "từ khóa 3"]
 """
 
-    # 3. Thực hiện gọi API trực tiếp tới Gemini 1.5 Flash (Nhanh, rẻ, chuẩn xác cho Task Extraction)
-    api_key = settings.gemini_api_key.strip() if settings.gemini_api_key else ""
-
-    if not api_key:
-        logger.error("Thiếu cấu hình GEMINI_API_KEY trong file .env")
-        return
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": prompt
-            }]
-        }],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.1
-        }
-    }
 
     try:
-        with httpx.Client(timeout=45.0) as client:
-            response = client.post(url, headers=headers, json=payload)
-            if response.status_code != 200:
-                logger.error(f"Gemini API phản hồi lỗi: {response.text}")
-                return
+        # 3. Sử dụng factory chung của hệ thống để gọi LLM
+        from modules.generation.llm.factory import get_llm_service
+        llm = get_llm_service()
 
-            res_json = response.json()
-            raw_ai_text = res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        raw_ai_text = await llm.generate_text(prompt)
 
-            # Parse mảng từ khóa từ AI
-            extracted_keywords = json.loads(raw_ai_text)
-            if isinstance(extracted_keywords, list):
-                logger.info(f"AI đã học được {len(extracted_keywords)} từ khóa tiềm năng: {extracted_keywords}")
+        # Làm sạch chuỗi trả về để tránh lỗi parse JSON do dính markdown
+        cleaned_text = raw_ai_text.strip()
+        if cleaned_text.startswith("```json"):
+            cleaned_text = cleaned_text[7:]
+        elif cleaned_text.startswith("```"):
+            cleaned_text = cleaned_text[3:]
+        if cleaned_text.endswith("```"):
+            cleaned_text = cleaned_text[:-3]
+        cleaned_text = cleaned_text.strip()
 
-                # 4. Đẩy vào MongoDB vùng chờ duyệt (Pending)
-                add_pending_keywords(course_id=course_id, keywords=extracted_keywords)
-                logger.info("Đã cập nhật bộ từ khóa vào trạng thái Chờ duyệt (Pending) thành công!")
-            else:
-                logger.error("Đầu ra của AI không phải định dạng List chuẩn.")
+        # Parse mảng từ khóa từ AI
+        parsed_data = json.loads(cleaned_text)
 
+        # Nếu AI trả về dict dạng {"keywords": [...]}, ta trích xuất mảng bên trong
+        if isinstance(parsed_data, dict):
+            for key, val in parsed_data.items():
+                if isinstance(val, list):
+                    parsed_data = val
+                    break
+
+        extracted_keywords = parsed_data
+
+        if isinstance(extracted_keywords, list):
+            # Lọc bỏ những thứ không phải string
+            extracted_keywords = [str(k) for k in extracted_keywords if isinstance(k, str) or isinstance(k, int)]
+            logger.info(f"AI đã học được {len(extracted_keywords)} từ khóa tiềm năng: {extracted_keywords}")
+
+            # 4. Đẩy vào MongoDB vùng chờ duyệt (Pending)
+            add_pending_keywords(course_id=course_id, keywords=extracted_keywords)
+            logger.info("Đã cập nhật bộ từ khóa vào trạng thái Chờ duyệt (Pending) thành công!")
+        else:
+            logger.error("Đầu ra của AI không phải định dạng List chuẩn.")
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Lỗi parse JSON đầu ra của AI: {raw_ai_text} - {str(e)}")
     except Exception as e:
         logger.exception(f"Tiến trình Auto-Learning thất bại do sự cố: {str(e)}")

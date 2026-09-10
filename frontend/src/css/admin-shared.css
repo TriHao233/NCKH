@@ -46,7 +46,8 @@
 .ai-review-toolbar__title h1,
 .review-toolbar__title h1 {
   color: #003a75;
-  font-size: 1.8rem;
+  font-family: var(--font-display, 'Fraunces', serif);
+  font-size: clamp(1.55rem, 3vw, 2rem);
   font-weight: 800;
   margin-bottom: 6px;
 }
@@ -71,4 +72,23 @@
   justify-content: center;
   padding: 24px;
   z-index: 100;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 767px) {
+  .overview-header,
+  .jobs-header,
+  .moodle-header,
+  .catalog-header,
+  .ai-review-toolbar,
+  .review-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .modal-overlay {
+    align-items: flex-start;
+    padding: 12px;
+  }
 }

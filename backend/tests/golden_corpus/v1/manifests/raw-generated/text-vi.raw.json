@@ -1,0 +1,61 @@
+{
+  "manifest_version": "1.0.0",
+  "manifest_status": "raw_generated",
+  "requires_human_review": true,
+  "fixture_id": "text-vi",
+  "source_file": "backend/tests/golden_corpus/v1/sources/text-vi.txt",
+  "source_file_name": "text-vi.txt",
+  "relative_path": "sources/text-vi.txt",
+  "file_extension": ".txt",
+  "mime_type": "text/plain",
+  "file_size": 73,
+  "sha256": "ffe6a69db10ab999a05a889ccbfeee7ce01bcbe01e52e6af57fdd286156de1d7",
+  "language_detected": "vi",
+  "document_category": "plain_text_utf8",
+  "page_count": null,
+  "source_unit_count": 1,
+  "has_text_layer": null,
+  "is_scanned": false,
+  "is_mixed": false,
+  "expected_content_types": [
+    "prose"
+  ],
+  "detected_code_locations": [],
+  "detected_table_locations": [],
+  "detected_formula_locations": [],
+  "detected_image_or_diagram_locations": [],
+  "ground_truth_available": true,
+  "ground_truth_independent": true,
+  "ground_truth_references": [
+    {
+      "relative_path": "truth/pages.json",
+      "sha256": "7fd36173bc9630a1c36f604d17140cf8ab6431a5bd5cb0228a6ce9fa0a647968",
+      "status": "author_before_render_needs_second_reviewer",
+      "evidence": null,
+      "truth_page_numbers": [
+        12
+      ],
+      "local_page_mapping": {
+        "1": 12
+      },
+      "case_ids": null
+    }
+  ],
+  "rag_questions_available": false,
+  "rag_question_references": [],
+  "parser_selected": "TextParser",
+  "extractor_strategy": "utf8_sig_decode",
+  "detection_confidence": 0.99,
+  "generator_version": "qbank-raw-manifest/2026-09-04.1",
+  "generation_timestamp": "2026-09-04T00:00:00Z",
+  "eligible_for_cer_wer": true,
+  "detection_evidence": {
+    "initial_manifest": "manifest.json#cases[id=text-vi]",
+    "ground_truth_method": "author_before_render",
+    "encoding_probe": "utf-8-sig_success"
+  },
+  "warnings": [
+    "Raw supplement; manifest.json không bị sửa hoặc ghi đè.",
+    "Ground truth độc lập nhưng corpus còn ở trạng thái needs_second_reviewer; không dùng để tuyên bố production-ready."
+  ]
+}

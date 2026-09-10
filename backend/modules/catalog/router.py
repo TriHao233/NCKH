@@ -24,12 +24,14 @@ from modules.catalog.schemas import (
     SubjectResponse,
     SubjectUpdatePayload,
 )
-from modules.catalog.service import CatalogService, get_catalog_service
+from modules.catalog.service import CatalogConflictError, CatalogService, get_catalog_service
 
 router = APIRouter(prefix=f"{settings.api_prefix}/catalog", tags=["Catalog"])
 
 
 def _translate(exc: Exception):
+    if isinstance(exc, CatalogConflictError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, LookupError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, PermissionError):
@@ -71,13 +73,13 @@ def list_subjects(
 
 
 @router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
-def upsert_subject(
+def create_subject(
     payload: SubjectPayload,
-    user: CurrentUser = Depends(require_subject_manager),
+    user: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.upsert_subject(payload, user)
+        return service.create_subject(payload, user)
     except Exception as exc:
         _translate(exc)
 

@@ -14,7 +14,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 # Keep in sync with modules/auth/login.py's TOKEN_CLOCK_SKEW_SECONDS.
-TOKEN_CLOCK_SKEW_SECONDS = 10
+TOKEN_CLOCK_SKEW_SECONDS = 60
 
 DEFAULT_ROLE_PERMISSIONS = {
     "Admin": {

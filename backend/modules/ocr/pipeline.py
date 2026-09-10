@@ -1,16 +1,30 @@
 import os
 import re
 import logging
+import json
+import gzip
+import mimetypes
 from collections import Counter
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
-from modules.ocr.easyocr_engine import is_easyocr_available, stream_and_ocr_pdf
-from modules.ocr.formula_processor import process_pages_with_formula_blocks
+from core.config import settings
+from core.gpu_coordination import gpu_operation
+from modules.documents.ingest import ParseContext, build_default_registry
+from modules.documents.ingest.quality import validate_parsed_document
+from modules.ocr.docling_engine import is_docling_available, ocr_pdf
+from modules.ocr.pdf_text_extractor import extract_pdf_text_layer
 from modules.ocr.text_cleaner import clean_ocr_pages
-from modules.ocr.formula_detector import mark_formulas_in_pages
 
 logger = logging.getLogger(__name__)
+
+
+class DocumentQualityError(ValueError):
+    def __init__(self, report: dict):
+        self.report = report
+        message = "; ".join(report.get("errors") or []) or "Document extraction quality failed"
+        super().__init__(message)
 
 def remove_headers_footers(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
@@ -90,44 +104,6 @@ def remove_headers_footers(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return cleaned_pages
 
 
-def clean_text_basic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Làm sạch văn bản OCR cơ bản trước khi chạy text cleaner nâng cao.
-    Xóa bớt các dấu lạ hoặc format rác sinh ra từ OCR.
-    """
-    cleaned_pages: list[dict[str, Any]] = []
-
-    for page in pages:
-        lines = page["text"].split("\n")
-        processed_lines = []
-
-        for line in lines:
-            stripped = line.strip()
-
-            # Bỏ qua công thức toán học đã bọc
-            if stripped.startswith("$$") and stripped.endswith("$$"):
-                processed_lines.append(stripped)
-                continue
-
-            cleaned = re.sub(r"\*\*+|###+|@@+|~~+", "", line)
-            # Chỉ giữ lại chữ cái, số, và các dấu câu thông dụng
-            cleaned = re.sub(
-                r"[^\w\s\.,;:!?\-—–\(\)\[\]\{\}\'\"\/\\+*=<>%^&|~àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ$±×÷∑∫√∞≤≥≠≈∝∈∉⊂⊃∩∪∀∃∄∅∇∂αβγδεζηθικλμνξπρσςτυφχψωΓΔΘΛΞΠΣΦΨΩ]",
-                " ",
-                cleaned,
-            )
-            cleaned = re.sub(r"[ \t]+", " ", cleaned).strip()
-
-            if len(cleaned) > 2 or cleaned == "":
-                processed_lines.append(cleaned)
-
-        text = "\n".join(processed_lines)
-        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-        cleaned_pages.append({"page_number": page["page_number"], "text": text.strip()})
-
-    return cleaned_pages
-
-
 def save_markdown(pages: list[dict[str, Any]], output_path: str, document_title: str) -> None:
     """Lưu kết quả cuối cùng ra file Markdown để dùng cho Chunking hoặc người dùng đọc"""
     out_path = Path(output_path)
@@ -152,6 +128,113 @@ def save_markdown(pages: list[dict[str, Any]], output_path: str, document_title:
             f.write("---\n\n")
 
 
+def _save_parsed_markdown(pages: list[dict[str, Any]], output_path: str, document_title: str) -> None:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as destination:
+        destination.write(f"# Extraction Result - {document_title}\n\n")
+        for unit in pages:
+            location = (
+                f"Page {unit['page_number']}"
+                if unit.get("page_number") is not None
+                else f"Source Unit {unit.get('unit_number', 1)}"
+            )
+            destination.write(f"## {location}\n\n")
+            for block in unit.get("content_blocks") or []:
+                content = block.get("content") or ""
+                if not content:
+                    continue
+                destination.write(f"<!-- BLOCK:{block.get('block_type', 'prose')}:{block.get('block_id')} -->\n")
+                destination.write(content)
+                destination.write("\n\n")
+            destination.write("---\n\n")
+
+
+def run_document_pipeline(
+    source_path: str,
+    output_path: str,
+    document_title: str | None = None,
+    *,
+    document_id: str = "standalone",
+    source_file_name: str | None = None,
+    source_uri: str | None = None,
+    mime_type: str | None = None,
+    pdf_ocr_enabled: bool = True,
+) -> dict[str, Any]:
+    pipeline_started_at = perf_counter()
+    path = Path(source_path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {source_path}")
+    title = document_title or path.stem.replace("_", " ")
+    resolved_mime = mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    document_type = path.suffix.lower().lstrip(".") or "unknown"
+    context = ParseContext(
+        document_id=document_id,
+        source_file_name=source_file_name or path.name,
+        source_uri=source_uri or str(path),
+        mime_type=resolved_mime,
+        document_type=document_type,
+    )
+    logger.info("Starting structured extraction: %s (%s)", title, document_type)
+    registry = build_default_registry(pdf_ocr_enabled=pdf_ocr_enabled)
+    parser = registry.resolve(path, resolved_mime)
+    parsed = parser.parse(path, context)
+    report = validate_parsed_document(parsed)
+    if not report.passed:
+        raise DocumentQualityError(report.to_dict())
+
+    pages = parsed.to_page_records()
+    total_chars = sum(len(page.get("text") or "") for page in pages)
+    write_started_at = perf_counter()
+    _save_parsed_markdown(pages, output_path, title)
+    markdown_ms = (perf_counter() - write_started_at) * 1000
+
+    raw_write_started_at = perf_counter()
+    raw_payload = json.dumps(parsed.model_dump(mode="json"), ensure_ascii=False, indent=2).encode("utf-8")
+    if settings.raw_artifact_compression == "gzip":
+        raw_path = Path(output_path).with_suffix(".raw.json.gz")
+        with gzip.open(raw_path, "wb", compresslevel=6) as destination:
+            destination.write(raw_payload)
+        raw_mime_type = "application/gzip"
+    elif settings.raw_artifact_compression in {"", "none"}:
+        raw_path = Path(output_path).with_suffix(".raw.json")
+        raw_path.write_bytes(raw_payload)
+        raw_mime_type = "application/json"
+    else:
+        raise ValueError("RAW_ARTIFACT_COMPRESSION must be 'gzip' or 'none'")
+    raw_write_ms = (perf_counter() - raw_write_started_at) * 1000
+    raw_physical_bytes = raw_path.stat().st_size
+    timings_ms = {
+        "markdown_write": round(markdown_ms, 2),
+        "raw_serialize_compress_write": round(raw_write_ms, 2),
+        "pipeline_total": round((perf_counter() - pipeline_started_at) * 1000, 2),
+    }
+    stats_data = {
+        **parsed.stats,
+        "total_pages": sum(page.get("page_number") is not None for page in pages),
+        "total_units": len(pages),
+        "total_chars": total_chars,
+        "avg_chars_per_page": round(total_chars / max(len(pages), 1)),
+        "parser": type(parser).__name__,
+        "storage": {
+            "raw_uncompressed_bytes": len(raw_payload),
+            "raw_physical_bytes": raw_physical_bytes,
+            "raw_compression": settings.raw_artifact_compression or "none",
+            "raw_compression_ratio": round(raw_physical_bytes / max(len(raw_payload), 1), 6),
+        },
+        "quality": report.to_dict(),
+        "timings_ms": timings_ms,
+    }
+    return {
+        "pages": pages,
+        "assets": [asset.model_dump(mode="json") for asset in parsed.assets],
+        "output_file": output_path,
+        "raw_extraction_file": str(raw_path),
+        "raw_extraction_mime_type": raw_mime_type,
+        "stats": stats_data,
+    }
+
+
 def run_ocr_pipeline(
     pdf_path: str,
     output_path: str,
@@ -159,54 +242,17 @@ def run_ocr_pipeline(
     languages: list[str] | None = None,
     gpu: bool | None = None,
     poppler_path: str | None = None,
+    document_id: str = "standalone",
+    source_file_name: str | None = None,
+    source_uri: str | None = None,
+    mime_type: str | None = None,
 ) -> dict[str, Any]:
-    if languages is None:
-        languages = ["vi", "en"]
-
-    if not is_easyocr_available():
-        raise RuntimeError("EasyOCR is not installed")
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"File not found: {pdf_path}")
-
-    logger.info(f"====== BẮT ĐẦU TIẾN TRÌNH OCR: {document_title or pdf_path} ======")
-
-    raw_pages = stream_and_ocr_pdf(
-        pdf_path=pdf_path,
-        languages=languages,
-        gpu=gpu,
-        poppler_path=poppler_path
+    return run_document_pipeline(
+        source_path=pdf_path,
+        output_path=output_path,
+        document_title=document_title,
+        document_id=document_id,
+        source_file_name=source_file_name,
+        source_uri=source_uri,
+        mime_type=mime_type,
     )
-    logger.info("[Filter 0/4] Đang nhận diện và gắn thẻ Công thức Toán học...")
-    pages_with_formulas = mark_formulas_in_pages(raw_pages)
-
-    logger.info("[Filter 1/4] Đang xóa Header/Footer trùng lặp...")
-    no_header_footer_pages = remove_headers_footers(pages_with_formulas)
-
-    logger.info("[Filter 2/4] Đang làm sạch các ký tự rác cơ bản...")
-    basic_cleaned_pages = clean_text_basic(no_header_footer_pages)
-
-    logger.info("[Filter 3/4] Đang dọn rác nâng cao và định dạng Code Block...")
-    cleaned_pages = clean_ocr_pages(basic_cleaned_pages)
-
-    logger.info("[Filter 4/4] Đang bóc tách và đóng gói Công thức Toán học (LaTeX)...")
-    final_pages = process_pages_with_formula_blocks(cleaned_pages)
-
-    title = document_title or Path(pdf_path).stem.replace("_", " ")
-    total_chars = sum(len(p["text"]) for p in final_pages)
-
-    stats_data = {
-        "total_pages": len(final_pages),
-        "total_chars": total_chars,
-        "avg_chars_per_page": round(total_chars / max(len(final_pages), 1)),
-    }
-
-    logger.info(f"Đang lưu kết quả Markdown tại: {output_path}")
-    save_markdown(final_pages, output_path=output_path, document_title=title)
-
-    logger.info(f"====== HOÀN TẤT OCR: {len(final_pages)} trang, {total_chars} ký tự ======")
-
-    return {
-        "pages": final_pages,
-        "output_file": output_path,
-        "stats": stats_data,
-    }

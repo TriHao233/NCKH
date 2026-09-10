@@ -1,20 +1,53 @@
+# ===========================
+# Secrets & credentials
+# ===========================
+.env
+.env.local
+.env.*
+!.env.example
+.env.*.local
 firebase-service-account.json
-source_dump.txt
+
+# ===========================
+# IDE & tools
+# ===========================
 .claude/launch.json
 .claude/settings.local.json
 frontend/.claude/launch.json
-/rag-ocr-pipeline/
-/docs/
+source_dump.txt
 
-# Sensitive files
-.env
-backend/.env
+# ===========================
+# Python (backend)
+# ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.log
 
-# Data directories (uploads, OCR outputs, ChromaDB, etc.)
+# ===========================
+# Node.js (frontend)
+# ===========================
+node_modules/
+/frontend/dist/
+
+# ===========================
+# Data (uploads, OCR, ChromaDB)
+# ===========================
 backend/data/
 
-# Node modules
-node_modules/
+# ===========================
+# OS files
+# ===========================
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Legacy / unused
+# ===========================
+/rag-ocr-pipeline/
+/docs/
 
 # Python
 __pycache__/
@@ -23,3 +56,9 @@ IMPLEMENTATION_CHANGES.md
 
 # Local inspection/render artifacts
 /tmp/
+Prompt/
+
+# Local-only development files
+AGENTS.md
+note.txt
+prompts/

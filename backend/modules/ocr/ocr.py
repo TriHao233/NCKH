@@ -17,15 +17,18 @@ from fastapi.concurrency import run_in_threadpool
 from core.config import resolve_path, settings
 from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.service import DocumentService, get_document_service
+from modules.documents.retention import deduplicate_artifact_file
+from modules.documents.ingest.base import UnsupportedDocumentError
 from modules.ocr.mongodb import (
     attach_original_artifact,
+    attach_processing_artifact,
     create_document_record,
     create_ocr_job,
     get_document_status,
     save_document_pages,
     update_document_status,
 )
-from modules.ocr.pipeline import run_ocr_pipeline
+from modules.ocr.pipeline import DocumentQualityError, run_ocr_pipeline
 
 router = APIRouter(prefix=f"{settings.api_prefix}/ocr", tags=["OCR"])
 logger = logging.getLogger(__name__)
@@ -48,6 +51,26 @@ SUPPORTED_UPLOAD_TYPES = {
         "mime_type": DOCX_MIME_TYPE,
         "source_format": "docx",
     },
+    ".doc": {
+        "artifact_type": "ORIGINAL_DOC",
+        "mime_type": "application/msword",
+        "source_format": "doc",
+    },
+    ".md": {
+        "artifact_type": "ORIGINAL_MARKDOWN",
+        "mime_type": "text/markdown",
+        "source_format": "md",
+    },
+    ".markdown": {
+        "artifact_type": "ORIGINAL_MARKDOWN",
+        "mime_type": "text/markdown",
+        "source_format": "md",
+    },
+    ".txt": {
+        "artifact_type": "ORIGINAL_TEXT",
+        "mime_type": "text/plain",
+        "source_format": "txt",
+    },
 }
 DOCX_PAGE_CHAR_LIMIT = 12_000
 
@@ -63,6 +86,8 @@ async def process_ocr_background(
     upload_path: str,
     output_path: str,
     document_title: str,
+    source_file_name: str | None = None,
+    mime_type: str | None = None,
 ):
     try:
         async with gpu_semaphore:
@@ -70,20 +95,72 @@ async def process_ocr_background(
                 return
             update_document_status(document_id, job_id, status="processing")
             started_at = time.time()
+            started_perf = time.perf_counter()
             result = await run_in_threadpool(
                 run_ocr_pipeline,
                 pdf_path=upload_path,
                 output_path=output_path,
                 document_title=document_title,
+                document_id=document_id,
+                source_file_name=source_file_name or Path(upload_path).name,
+                source_uri=upload_path,
+                mime_type=mime_type,
             )
             if _ocr_job_cancelled(job_id):
                 return
             stats = result["stats"]
-            stats["processing_time"] = round(time.time() - started_at, 1)
+            persist_started = time.perf_counter()
             save_document_pages(document_id, job_id, result["pages"])
+            for artifact_type, artifact_path, artifact_mime in (
+                (
+                    "RAW_EXTRACTION_JSON",
+                    result.get("raw_extraction_file"),
+                    result.get("raw_extraction_mime_type") or "application/json",
+                ),
+                ("EXTRACTION_MARKDOWN", result.get("output_file"), "text/markdown"),
+            ):
+                if not artifact_path:
+                    continue
+                artifact = Path(artifact_path)
+                blob = deduplicate_artifact_file(artifact, resolve_path(settings.artifact_blob_dir))
+                attach_processing_artifact(
+                    document_id,
+                    job_id,
+                    uri=blob["uri"],
+                    size_bytes=blob["size_bytes"],
+                    sha256=blob["sha256"],
+                    artifact_type=artifact_type,
+                    mime_type=artifact_mime,
+                )
+            timings_ms = stats.setdefault("timings_ms", {})
+            timings_ms["mongo_page_persist"] = round((time.perf_counter() - persist_started) * 1000, 2)
+            timings_ms["background_total"] = round((time.perf_counter() - started_perf) * 1000, 2)
+            stats["processing_time"] = round(time.time() - started_at, 1)
             if _ocr_job_cancelled(job_id):
                 return
             update_document_status(document_id, job_id, status="completed", stats=stats)
+    except DocumentQualityError as exc:
+        logger.error("OCR job %s failed quality gate: %s", job_id, exc)
+        if _ocr_job_cancelled(job_id):
+            return
+        update_document_status(
+            document_id,
+            job_id,
+            status="failed",
+            stats={"quality_status": "quality_failed", "quality": exc.report},
+            error_message=str(exc),
+        )
+    except UnsupportedDocumentError as exc:
+        logger.error("OCR job %s failed closed at document adapter: %s", job_id, exc)
+        if _ocr_job_cancelled(job_id):
+            return
+        update_document_status(
+            document_id,
+            job_id,
+            status="failed",
+            stats={"quality_status": "quality_failed", "adapter_error": exc.to_dict()},
+            error_message=str(exc),
+        )
     except Exception as exc:
         logger.exception("OCR job %s failed", job_id)
         if _ocr_job_cancelled(job_id):
@@ -167,38 +244,21 @@ async def process_docx_background(
     upload_path: str,
     output_path: str,
     document_title: str,
+    source_file_name: str | None = None,
+    mime_type: str | None = DOCX_MIME_TYPE,
 ):
-    try:
-        if _ocr_job_cancelled(job_id):
-            return
-        update_document_status(document_id, job_id, status="processing")
-        started_at = time.time()
-        pages, stats = await run_in_threadpool(extract_docx_pages, upload_path)
-        if _ocr_job_cancelled(job_id):
-            return
-        output = Path(output_path)
-        output.write_text(
-            f"# {document_title}\n\n" + "\n\n---\n\n".join(page["text"] for page in pages),
-            encoding="utf-8",
-        )
-        save_document_pages(document_id, job_id, pages)
-        if _ocr_job_cancelled(job_id):
-            return
-        stats["processing_time"] = round(time.time() - started_at, 1)
-        update_document_status(document_id, job_id, status="completed", stats=stats)
-    except Exception as exc:
-        logger.exception("DOCX extraction job %s failed", job_id)
-        if _ocr_job_cancelled(job_id):
-            return
-        update_document_status(
-            document_id,
-            job_id,
-            status="failed",
-            error_message=str(exc),
-        )
+    await process_ocr_background(
+        document_id=document_id,
+        job_id=job_id,
+        upload_path=upload_path,
+        output_path=output_path,
+        document_title=document_title,
+        source_file_name=source_file_name,
+        mime_type=mime_type,
+    )
 
 
-async def queue_pdf_ocr_upload(
+async def queue_document_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile,
     current_user: CurrentUser,
@@ -210,7 +270,7 @@ async def queue_pdf_ocr_upload(
     extension = Path(safe_filename).suffix.lower()
     upload_type = SUPPORTED_UPLOAD_TYPES.get(extension)
     if not safe_filename or not upload_type:
-        raise HTTPException(status_code=400, detail="Chỉ chấp nhận file PDF hoặc DOCX")
+        raise HTTPException(status_code=400, detail="Chỉ chấp nhận file PDF, DOC, DOCX, Markdown hoặc TXT")
 
     file.file.seek(0, os.SEEK_END)
     file_size = file.file.tell()
@@ -228,7 +288,7 @@ async def queue_pdf_ocr_upload(
     )
     job_id = create_ocr_job(document_id, config={"source_format": upload_type["source_format"]})
     upload_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
-    output_path = _OUTPUT_DIR / f"{document_id}_result.md"
+    output_path = _OUTPUT_DIR / f"{document_id}_{job_id}_result.md"
 
     try:
         with upload_path.open("wb") as destination:
@@ -256,14 +316,15 @@ async def queue_pdf_ocr_upload(
     finally:
         file.file.close()
 
-    processor = process_docx_background if upload_type["source_format"] == "docx" else process_ocr_background
     background_tasks.add_task(
-        processor,
+        process_ocr_background,
         document_id=document_id,
         job_id=job_id,
         upload_path=str(upload_path),
         output_path=str(output_path),
         document_title=title,
+        source_file_name=safe_filename,
+        mime_type=upload_type["mime_type"],
     )
     return {
         "message": "File đã được tiếp nhận và đang xử lý nền",
@@ -271,6 +332,24 @@ async def queue_pdf_ocr_upload(
         "job_id": job_id,
         "status": "QUEUED",
     }
+
+
+async def queue_pdf_ocr_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile,
+    current_user: CurrentUser,
+    *,
+    subject_id: str | None = None,
+    chapter_id: str | None = None,
+) -> dict:
+    """Compatibility alias for the format-independent upload pipeline."""
+    return await queue_document_upload(
+        background_tasks,
+        file,
+        current_user,
+        subject_id=subject_id,
+        chapter_id=chapter_id,
+    )
 
 @router.post("/upload", summary="Compatibility upload route; prefer /documents/upload")
 async def upload_pdf(

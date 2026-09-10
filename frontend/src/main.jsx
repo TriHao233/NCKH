@@ -5,6 +5,7 @@ import App from './App';
 import './index.css';
 import './css/shared.css';
 import './css/admin-shared.css';
+import './css/system-responsive.css';
 
 import { AuthProvider } from './context/AuthContext';
 

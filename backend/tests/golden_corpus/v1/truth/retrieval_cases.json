@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "cases": [
+    {"id": "fifo", "query": "FIFO có nghĩa là gì?", "answerable": true, "relevant_truth_pages": [1], "required_evidence": ["vào trước", "ra trước"]},
+    {"id": "complexity", "query": "Độ phức tạp của Push và Pop là bao nhiêu?", "answerable": true, "relevant_truth_pages": [2], "required_block_types": ["table"], "required_evidence": ["O(1)"]},
+    {"id": "diagram-edge", "query": "Sơ đồ mô tả quan hệ nào giữa u và v?", "answerable": true, "relevant_truth_pages": [4], "required_asset_types": ["diagram"], "required_evidence": ["cạnh", "trọng số"]},
+    {"id": "recurrence", "query": "Công thức truy hồi T(n) là gì?", "answerable": true, "relevant_truth_pages": [6], "required_block_types": ["formula"], "required_evidence": ["2T(n/2)"]},
+    {"id": "bfs", "query": "Định danh BFS xuất hiện ở đâu?", "answerable": true, "relevant_truth_pages": [8], "required_evidence": ["chiều rộng", "BFS"]},
+    {"id": "code-indent", "query": "Đoạn code in biến nào?", "answerable": true, "relevant_truth_pages": [9], "required_block_types": ["code"], "required_evidence": ["print(x)"]},
+    {"id": "unsupported-dijkstra", "query": "Theo tài liệu, Dijkstra bắt đầu từ đỉnh nào?", "answerable": false, "relevant_truth_pages": [], "required_abstention": true},
+    {"id": "unsupported-diagram-color", "query": "Cạnh trong sơ đồ có màu gì?", "answerable": false, "relevant_truth_pages": [4], "required_asset_types": ["diagram"], "required_abstention": true}
+  ]
+}

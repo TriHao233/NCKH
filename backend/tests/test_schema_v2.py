@@ -38,6 +38,7 @@ from modules.catalog.schemas import (
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
     PromptTemplateActivationPayload,
+    SubjectPayload,
     SubjectUpdatePayload,
 )
 from modules.catalog.service import CatalogService
@@ -3469,6 +3470,59 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(document["pipeline_summary"]["chunk_status"], "CANCELLED")
         self.assertEqual(document["status"], "FAILED")
 
+    def test_failed_replacement_chunk_job_preserves_active_ready_pipeline(self):
+        document_id = ObjectId()
+        active_chunk_set_id = ObjectId()
+        replacement_job_id = ObjectId()
+        replacement_chunk_set_id = ObjectId()
+        now = datetime.now(timezone.utc)
+
+        class FakeDocumentDatabase:
+            def __init__(self):
+                self.documents = InMemoryCollection(
+                    [
+                        {
+                            "_id": document_id,
+                            "archived_at": None,
+                            "status": "READY",
+                            "current_processing": {"chunk_set_id": active_chunk_set_id},
+                            "pipeline_summary": {"chunk_status": "COMPLETED", "index_status": "COMPLETED"},
+                            "updated_at": now,
+                        }
+                    ]
+                )
+                self.document_jobs = InMemoryCollection(
+                    [
+                        {
+                            "_id": replacement_job_id,
+                            "document_id": document_id,
+                            "job_type": "CHUNK",
+                            "status": "PROCESSING",
+                            "preserves_active_pipeline": True,
+                            "previous_document_state": {"status": "READY", "pipeline_status": "COMPLETED"},
+                            "queued_at": now,
+                            "started_at": now,
+                        }
+                    ]
+                )
+                self.chunk_sets = InMemoryCollection(
+                    [{"_id": replacement_chunk_set_id, "chunk_job_id": replacement_job_id, "status": "PROCESSING"}]
+                )
+                self.chunk_embeddings = InMemoryCollection([])
+
+        db = FakeDocumentDatabase()
+        MongoDocumentRepository(db).update_job(
+            replacement_job_id,
+            "CANCELLED",
+            error_message="Replacement cancelled",
+        )
+
+        document = db.documents.find_one({"_id": document_id})
+        self.assertEqual(document["status"], "READY")
+        self.assertEqual(document["current_processing"]["chunk_set_id"], active_chunk_set_id)
+        self.assertEqual(document["pipeline_summary"]["chunk_status"], "COMPLETED")
+        self.assertEqual(document["pipeline_attempts"]["chunk"]["status"], "CANCELLED")
+
     def test_document_reindex_requires_owner_and_completed_chunks(self):
         owner = _current_user("Teacher")
         other_teacher = _current_user("Teacher")
@@ -4315,6 +4369,23 @@ class SchemaV2Tests(unittest.TestCase):
             exams=[{"subject_id": subject_id, "matrix": [{"chapter_id": chapter_id}]}],
         )
         service = CatalogService(db)
+
+        created = service.create_subject(
+            SubjectPayload(
+                subject_code="  HDH  ",
+                subject_name="  Hệ điều hành  ",
+                description="  Môn cơ sở ngành  ",
+            ),
+            _current_user("Admin"),
+        )
+        self.assertEqual(created["subject_code"], "HDH")
+        self.assertEqual(created["subject_name"], "Hệ điều hành")
+        self.assertIsNotNone(db.subjects.find_one({"subject_code": "HDH"}))
+        with self.assertRaises(ValueError):
+            service.create_subject(
+                SubjectPayload(subject_code="hdh", subject_name="Mã bị trùng"),
+                _current_user("Admin"),
+            )
 
         result = service.list_subjects()[0]
         self.assertEqual(result["usage_counts"]["documents"], 1)

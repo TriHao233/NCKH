@@ -1,0 +1,17 @@
+{
+  "corpus_version": "1.0.0",
+  "ground_truth": "truth/pages.json",
+  "ground_truth_method": "author_before_render",
+  "human_review_status": "needs_second_reviewer",
+  "retrieval_ground_truth": "truth/retrieval_cases.json",
+  "cases": [
+    {"id": "born-digital-vi", "input": "generated/born-digital-vi.pdf", "document_type": "pdf", "fixture_version": "1.0.0", "profile": "born_digital", "pages": [1, 2], "important_pages": [1, 2], "content_labels": ["vietnamese", "heading", "table"], "expected_provenance": ["page_number", "source_uri", "block_id"], "quality_threshold": {"cer_max": 0.01, "missing_nonempty_pages_max": 0}},
+    {"id": "scan-standard-vi", "input": "generated/scan-standard-vi.pdf", "document_type": "pdf", "fixture_version": "1.0.0", "profile": "standard_scan", "pages": [3, 4], "important_pages": [1, 2], "content_labels": ["scan", "vietnamese", "diagram", "caption"], "expected_provenance": ["page_number", "source_uri", "asset_id"], "quality_threshold": {"cer_max": 0.03, "missing_nonempty_pages_max": 0}},
+    {"id": "scan-degraded-vi", "input": "generated/scan-degraded-vi.pdf", "document_type": "pdf", "fixture_version": "1.0.0", "profile": "degraded_scan", "pages": [5, 6], "important_pages": [1, 2], "content_labels": ["blur", "skew", "noise", "formula"], "expected_provenance": ["page_number", "source_uri", "block_id"], "quality_threshold": {"cer_max": 0.03, "missing_nonempty_pages_max": 0, "allow_status": ["passed", "needs_review"]}},
+    {"id": "mixed-pdf-vi", "input": "generated/mixed-pdf-vi.pdf", "document_type": "pdf", "fixture_version": "1.0.0", "profile": "standard_scan", "pages": [7, 8], "important_pages": [1, 2], "content_labels": ["mixed", "text_layer", "scan", "table", "image", "diagram", "code", "formula", "technical_identifier"], "expected_provenance": ["page_number", "source_uri", "block_id", "asset_id"], "quality_threshold": {"cer_max": 0.03, "missing_nonempty_pages_max": 0}},
+    {"id": "docx-vi", "input": "generated/docx-vi.docx", "document_type": "docx", "fixture_version": "1.0.0", "profile": "structured_document", "pages": [9], "important_pages": [1], "content_labels": ["vietnamese", "code", "indentation"], "expected_provenance": ["source_location", "source_uri", "block_id"], "quality_threshold": {"cer_max": 0.01, "missing_nonempty_pages_max": 0}},
+    {"id": "doc-vi", "input": "generated/doc-vi.doc", "document_type": "doc", "fixture_version": "1.0.0", "profile": "structured_document", "pages": [10], "important_pages": [1], "content_labels": ["legacy", "vietnamese", "table", "image"], "expected_provenance": ["source_location", "source_uri", "asset_id"], "quality_threshold": {"cer_max": 0.01, "missing_nonempty_pages_max": 0}},
+    {"id": "markdown-vi", "input": "sources/markdown-vi.md", "document_type": "md", "fixture_version": "1.0.0", "profile": "structured_document", "pages": [11], "important_pages": [1], "content_labels": ["heading", "code", "indentation"], "expected_provenance": ["line_start", "line_end", "source_uri"], "quality_threshold": {"cer_max": 0.01, "missing_nonempty_pages_max": 0}},
+    {"id": "text-vi", "input": "sources/text-vi.txt", "document_type": "txt", "fixture_version": "1.0.0", "profile": "structured_document", "pages": [12], "important_pages": [1], "content_labels": ["utf8", "vietnamese"], "expected_provenance": ["character_start", "character_end", "source_uri"], "quality_threshold": {"cer_max": 0.01, "missing_nonempty_pages_max": 0}}
+  ]
+}

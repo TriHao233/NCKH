@@ -7,10 +7,23 @@
     --line: #d9e6f2;
     --text: #13253f;
     --muted: #5c6f89;
+    --text-muted: #5c6f89;
     --primary: #0c78d4;
     --primary-strong: #03539a;
+    --secondary: #005bac;
+    --navy: #003a75;
     --accent: #12b886;
+    --border: #a7c8e6;
+    --border-light: #eaf3fc;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --content-max: 1160px;
+    --workspace-max: 1480px;
+    --page-gutter: clamp(16px, 2vw, 24px);
+    --font-display: 'Fraunces', Georgia, serif;
     --shadow: 0 10px 30px rgba(5, 40, 90, 0.1);
+    --card-shadow: 0 6px 24px rgba(5, 40, 90, 0.04);
 }
 
 /* ==========================================================================
@@ -35,6 +48,10 @@ body,
     overflow-x: hidden; /* Chặn hoàn toàn cuộn ngang */
 }
 
+html {
+    scroll-behavior: smooth;
+}
+
 /* ==========================================================================
    4. Typography & Base Elements
    ========================================================================== */
@@ -44,6 +61,51 @@ body {
     background-color: var(--bg);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+    min-width: 0;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+img,
+svg,
+video,
+canvas {
+    max-width: 100%;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+    outline: 3px solid rgba(12, 120, 212, 0.28);
+    outline-offset: 2px;
+}
+
+.app-shell {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.page-main {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
 }
 
 a {

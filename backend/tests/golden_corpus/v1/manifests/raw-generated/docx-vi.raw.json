@@ -1,0 +1,86 @@
+{
+  "manifest_version": "1.0.0",
+  "manifest_status": "raw_generated",
+  "requires_human_review": true,
+  "fixture_id": "docx-vi",
+  "source_file": "backend/tests/golden_corpus/v1/generated/docx-vi.docx",
+  "source_file_name": "docx-vi.docx",
+  "relative_path": "generated/docx-vi.docx",
+  "file_extension": ".docx",
+  "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "file_size": 36747,
+  "sha256": "c3307938ad935570dbe6277b0d5a796ee3e23ecab2eec48e5e489737c7ab6eae",
+  "language_detected": "vi",
+  "document_category": "structured_docx",
+  "page_count": null,
+  "source_unit_count": 1,
+  "has_text_layer": null,
+  "is_scanned": false,
+  "is_mixed": false,
+  "expected_content_types": [
+    "prose",
+    "code"
+  ],
+  "detected_code_locations": [
+    {
+      "source_unit": 1,
+      "truth_page_number": 9,
+      "detector": "author_before_render_truth",
+      "confidence": 1.0
+    }
+  ],
+  "detected_table_locations": [],
+  "detected_formula_locations": [],
+  "detected_image_or_diagram_locations": [],
+  "ground_truth_available": true,
+  "ground_truth_independent": true,
+  "ground_truth_references": [
+    {
+      "relative_path": "truth/pages.json",
+      "sha256": "7fd36173bc9630a1c36f604d17140cf8ab6431a5bd5cb0228a6ce9fa0a647968",
+      "status": "author_before_render_needs_second_reviewer",
+      "evidence": null,
+      "truth_page_numbers": [
+        9
+      ],
+      "local_page_mapping": {
+        "1": 9
+      },
+      "case_ids": null
+    }
+  ],
+  "rag_questions_available": true,
+  "rag_question_references": [
+    {
+      "relative_path": "truth/retrieval_cases.json",
+      "sha256": "ad2b3a4cfb83b155c827c6b97228781c973e3bea8abcb4354bf0772b266f01a3",
+      "status": "author_defined",
+      "evidence": null,
+      "truth_page_numbers": null,
+      "local_page_mapping": null,
+      "case_ids": [
+        "code-indent"
+      ]
+    }
+  ],
+  "parser_selected": "DocxParser",
+  "extractor_strategy": "python_docx_structured_relationship_and_table_extraction",
+  "detection_confidence": 0.99,
+  "generator_version": "qbank-raw-manifest/2026-09-04.1",
+  "generation_timestamp": "2026-09-04T00:00:00Z",
+  "eligible_for_cer_wer": true,
+  "detection_evidence": {
+    "initial_manifest": "manifest.json#cases[id=docx-vi]",
+    "ground_truth_method": "author_before_render",
+    "parser_probe": {
+      "paragraph_count": 4,
+      "table_count": 0,
+      "asset_count": 0
+    }
+  },
+  "warnings": [
+    "Raw supplement; manifest.json không bị sửa hoặc ghi đè.",
+    "Ground truth độc lập nhưng corpus còn ở trạng thái needs_second_reviewer; không dùng để tuyên bố production-ready.",
+    "DOCX parser biểu diễn fixture bằng source unit thay vì số trang vật lý."
+  ]
+}

@@ -30,11 +30,36 @@ def object_id(value: str | ObjectId, field_name: str = "id") -> ObjectId:
 def json_safe(value):
     if isinstance(value, ObjectId):
         return str(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value if -(2**63) <= value < 2**63 else str(value)
     if isinstance(value, dict):
-        return {key: json_safe(item) for key, item in value.items()}
-    if isinstance(value, list):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
         return [json_safe(item) for item in value]
     return value
+
+
+def compact_raw_extraction(value: dict | None) -> dict:
+    """Keep Mongo audit metadata small; the full response lives in RAW_EXTRACTION_JSON."""
+    raw = value or {}
+    compact = {key: item for key, item in raw.items() if key not in {"candidates", "docling"}}
+    if isinstance(raw.get("candidates"), list):
+        compact["candidates"] = [
+            {
+                **{key: item for key, item in candidate.items() if key != "text"},
+                "text_length": len(candidate.get("text") or ""),
+            }
+            for candidate in raw["candidates"]
+            if isinstance(candidate, dict)
+        ]
+    if isinstance(raw.get("docling"), dict):
+        compact["docling"] = {
+            key: item
+            for key, item in raw["docling"].items()
+            if key not in {"text", "original_text", "raw_document", "structured_blocks"}
+        }
+        compact["docling"]["structured_block_count"] = len(raw["docling"].get("structured_blocks") or [])
+    return json_safe(compact)
 
 
 def serialize_document(document: dict) -> dict:
@@ -53,6 +78,7 @@ def serialize_document(document: dict) -> dict:
             "page_count": document.get("page_count"),
             "artifacts": document.get("artifacts") or [],
             "current_processing": document.get("current_processing") or {},
+            "pending_processing": document.get("pending_processing") or {},
             "pipeline_summary": document.get("pipeline_summary") or {},
             "latest_error": document.get("latest_error"),
             "created_at": document["created_at"],
@@ -92,8 +118,14 @@ def serialize_document_page(page: dict) -> dict:
             "document_version": page.get("document_version"),
             "ocr_job_id": page.get("ocr_job_id"),
             "page_number": page.get("page_number"),
+            "unit_number": page.get("unit_number"),
+            "source_location": page.get("source_location") or {},
             "raw_text": page.get("raw_text"),
             "cleaned_text": page.get("cleaned_text"),
+            "content_blocks": page.get("content_blocks") or [],
+            "assets": page.get("assets") or [],
+            "raw_extraction": page.get("raw_extraction") or {},
+            "quality": page.get("quality") or {},
             "formula_blocks": page.get("formula_blocks") or [],
             "created_at": page.get("created_at"),
         }
@@ -138,6 +170,18 @@ class DocumentRepository(Protocol):
         document_version: int,
         cleaned_text: str,
     ) -> dict | None: ...
+
+    def attach_processing_artifact(
+        self,
+        document_id: str | ObjectId,
+        *,
+        job_id: str | ObjectId,
+        uri: str,
+        size_bytes: int,
+        sha256: str,
+        artifact_type: str,
+        mime_type: str,
+    ) -> None: ...
 
     def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict: ...
 
@@ -227,6 +271,7 @@ class MongoDocumentRepository:
                 "chunk_set_id": None,
                 "vector_collection_id": None,
             },
+            "pending_processing": {},
             "pipeline_summary": {
                 "ocr_status": "NOT_STARTED",
                 "chunk_status": "NOT_STARTED",
@@ -362,7 +407,7 @@ class MongoDocumentRepository:
             query["document_version"] = document_version
         return list(
             self.db.document_pages.find(query)
-            .sort("page_number", 1)
+            .sort([("unit_number", 1), ("page_number", 1)])
             .limit(limit)
         )
 
@@ -432,6 +477,43 @@ class MongoDocumentRepository:
             },
         )
 
+    def attach_processing_artifact(
+        self,
+        document_id: str | ObjectId,
+        *,
+        job_id: str | ObjectId,
+        uri: str,
+        size_bytes: int,
+        sha256: str,
+        artifact_type: str,
+        mime_type: str,
+    ) -> None:
+        document = self.find_by_id(document_id)
+        job = self.find_job(job_id)
+        if not document or not job or job.get("document_id") != document["_id"]:
+            raise ValueError("Processing artifact không thuộc tài liệu/job")
+        now = utc_now()
+        self.collection.update_one(
+            {"_id": document["_id"], "archived_at": None},
+            {
+                "$push": {
+                    "artifacts": {
+                        "_id": ObjectId(),
+                        "type": artifact_type,
+                        "document_version": job["document_version"],
+                        "job_id": job["_id"],
+                        "storage": {"provider": "LOCAL", "uri": uri, "gridfs_file_id": None},
+                        "mime_type": mime_type,
+                        "size_bytes": size_bytes,
+                        "sha256": sha256,
+                        "is_current": True,
+                        "created_at": now,
+                    }
+                },
+                "$set": {"updated_at": now},
+            },
+        )
+
     def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict:
         document = self.find_by_id(document_id)
         if not document:
@@ -446,6 +528,12 @@ class MongoDocumentRepository:
             sort=[("attempt_no", -1)],
         )
         now = utc_now()
+        current_processing = document.get("current_processing") or {}
+        active_pointer = (
+            current_processing.get("ocr_job_id")
+            if normalized_type == "OCR"
+            else current_processing.get("chunk_set_id") if normalized_type == "CHUNK" else None
+        )
         record = {
             "_id": ObjectId(),
             "schema_version": SCHEMA_VERSION,
@@ -461,23 +549,31 @@ class MongoDocumentRepository:
             "queued_at": now,
             "started_at": None,
             "finished_at": None,
+            "preserves_active_pipeline": bool(active_pointer),
+            "previous_document_state": {
+                "status": document.get("status"),
+                "pipeline_status": (document.get("pipeline_summary") or {}).get(
+                    normalized_type.lower() + "_status"
+                ),
+            },
         }
         self.db.document_jobs.insert_one(record)
-        self.collection.update_one(
-            {"_id": document["_id"]},
-            {
-                "$set": {
+        document_fields = {
+            f"pipeline_attempts.{normalized_type.lower()}.status": "QUEUED",
+            f"pipeline_attempts.{normalized_type.lower()}.job_id": record["_id"],
+            "latest_error": None,
+            "updated_at": now,
+        }
+        if not active_pointer:
+            document_fields.update(
+                {
                     "status": "PROCESSING",
                     f"pipeline_summary.{normalized_type.lower()}_status": "QUEUED",
-                    "latest_error": None,
-                    "updated_at": now,
-                    **(
-                        {"current_processing.ocr_job_id": record["_id"]}
-                        if normalized_type == "OCR"
-                        else {}
-                    ),
                 }
-            },
+            )
+        self.collection.update_one(
+            {"_id": document["_id"]},
+            {"$set": document_fields},
         )
         return record
 
@@ -514,19 +610,36 @@ class MongoDocumentRepository:
             if normalized == "COMPLETED":
                 fields["progress"] = 100
         self.db.document_jobs.update_one({"_id": job["_id"]}, {"$set": fields})
+        job_type_key = job["job_type"].lower()
+        preserves_active = bool(job.get("preserves_active_pipeline"))
         document_fields: dict = {
-            f"pipeline_summary.{job['job_type'].lower()}_status": normalized,
+            f"pipeline_attempts.{job_type_key}.status": normalized,
+            f"pipeline_attempts.{job_type_key}.job_id": job["_id"],
             "updated_at": now,
         }
+        if not preserves_active:
+            document_fields[f"pipeline_summary.{job_type_key}_status"] = normalized
         if normalized in {"FAILED", "CANCELLED"}:
             message = error_message or ("Job đã bị hủy" if normalized == "CANCELLED" else None)
-            document_fields["status"] = "FAILED"
+            if preserves_active:
+                previous = job.get("previous_document_state") or {}
+                document_fields["status"] = previous.get("status") or "READY"
+                if previous.get("pipeline_status"):
+                    document_fields[f"pipeline_summary.{job_type_key}_status"] = previous["pipeline_status"]
+            else:
+                document_fields["status"] = "FAILED"
             document_fields["latest_error"] = {
                 "job_id": job["_id"],
                 "job_type": job["job_type"],
                 "message": message,
                 "at": now,
             }
+        if normalized == "COMPLETED" and job.get("job_type") == "OCR":
+            document = self.find_by_id(job["document_id"]) or {}
+            if (document.get("current_processing") or {}).get("chunk_set_id"):
+                document_fields["pending_processing.ocr_job_id"] = job["_id"]
+            else:
+                document_fields["current_processing.ocr_job_id"] = job["_id"]
         if normalized == "CANCELLED" and job.get("job_type") == "CHUNK":
             chunk_sets = list(self.db.chunk_sets.find({"chunk_job_id": job["_id"]}, {"_id": 1}))
             chunk_set_ids = [chunk_set["_id"] for chunk_set in chunk_sets]
@@ -569,16 +682,22 @@ class MongoDocumentRepository:
                 "document_id": document_oid,
                 "document_version": job["document_version"],
                 "ocr_job_id": job["_id"],
-                "page_number": int(page["page_number"]),
+                "unit_number": int(page.get("unit_number") or index),
+                "page_number": int(page["page_number"]) if page.get("page_number") is not None else None,
+                "source_location": json_safe(page.get("source_location") or {}),
                 "raw_text": page.get("original_text") or page.get("text", ""),
                 "cleaned_text": page.get("text", ""),
-                "formula_blocks": page.get("formula_blocks", []),
+                "content_blocks": json_safe(page.get("content_blocks") or []),
+                "assets": json_safe(page.get("assets") or []),
+                "raw_extraction": compact_raw_extraction(page.get("raw_extraction")),
+                "quality": json_safe(page.get("quality") or {}),
+                "formula_blocks": json_safe(page.get("formula_blocks", [])),
                 "created_at": now,
             }
-            for page in pages
+            for index, page in enumerate(pages, start=1)
         ]
         self.db.document_pages.delete_many(
-            {"document_id": document_oid, "document_version": job["document_version"]}
+            {"document_id": document_oid, "ocr_job_id": job["_id"]}
         )
         if records:
             self.db.document_pages.insert_many(records, ordered=True)

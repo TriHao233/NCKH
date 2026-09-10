@@ -45,7 +45,7 @@ const PHASE_LABELS = {
 
 const MAX_TOTAL_QUESTIONS = 20;
 const DRAFTS_PER_PAGE = 3;
-const SUPPORTED_SOURCE_EXTENSIONS = ['.pdf', '.docx'];
+const SUPPORTED_SOURCE_EXTENSIONS = ['.pdf', '.doc', '.docx', '.md', '.markdown', '.txt'];
 const PRESET_STORAGE_KEY = 'qbank_generation_presets';
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
 
@@ -454,19 +454,22 @@ function GeneratePage() {
     syncGenerationPresets();
   }, []);
 
-  const validateForm = () => {
+  const validateForm = (processDocumentOnly = false) => {
     if (sourceMode === 'upload') {
-      if (!file) return 'Vui lòng chọn file PDF hoặc DOCX';
-      if (!isSupportedSourceFile(file)) return 'Chỉ hỗ trợ file PDF hoặc DOCX';
+      if (!file) return 'Vui lòng chọn file PDF, DOC/DOCX, Markdown hoặc TXT';
+      if (!isSupportedSourceFile(file)) return 'Chỉ hỗ trợ file PDF, DOC/DOCX, Markdown hoặc TXT';
       if (!selectedSubjectId) return 'Vui lòng chọn học phần';
     } else {
       if (!selectedDocumentId) return 'Vui lòng chọn tài liệu đã xử lý';
       if (!selectedDocument) return 'Không tìm thấy tài liệu đã chọn';
       if (!isDocumentOcrReady(selectedDocument)) return 'Tài liệu này chưa xử lý xong';
     }
-    if (questionPlan.length === 0) return 'Vui lòng thêm ít nhất một dòng cấu hình câu hỏi';
-    if (totalQuestions < 1 || totalQuestions > MAX_TOTAL_QUESTIONS) {
-      return `Tổng số câu hỏi phải từ 1 đến ${MAX_TOTAL_QUESTIONS}`;
+
+    if (!processDocumentOnly) {
+      if (questionPlan.length === 0) return 'Vui lòng thêm ít nhất một dòng cấu hình câu hỏi';
+      if (totalQuestions < 1 || totalQuestions > MAX_TOTAL_QUESTIONS) {
+        return `Tổng số câu hỏi phải từ 1 đến ${MAX_TOTAL_QUESTIONS}`;
+      }
     }
     return null;
   };
@@ -994,8 +997,8 @@ function GeneratePage() {
     );
   };
 
-  const runPipeline = async ({ fromGenerateOnly = false } = {}) => {
-    const validationError = validateForm();
+  const runPipeline = async ({ fromGenerateOnly = false, processDocumentOnly = false } = {}) => {
+    const validationError = validateForm(processDocumentOnly);
     if (validationError) {
       setError(validationError);
       return;
@@ -1046,6 +1049,12 @@ function GeneratePage() {
         }
       }
 
+      if (processDocumentOnly) {
+        setPhase('idle');
+        setStatusDetail('Tài liệu đã được xử lý xong. Hãy cấu hình và bấm Sinh câu hỏi bằng AI.');
+        return;
+      }
+
       await runGenerate(docId, signal, pipelineStartedAt);
       markTiming('totalMs', pipelineStartedAt);
     } catch (err) {
@@ -1056,9 +1065,14 @@ function GeneratePage() {
     }
   };
 
+  const handleProcessDocument = async (e) => {
+    e.preventDefault();
+    await runPipeline({ processDocumentOnly: true });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await runPipeline({ fromGenerateOnly: false });
+    await runPipeline({ fromGenerateOnly: true });
   };
 
   const handleRetry = async () => {
@@ -1211,7 +1225,7 @@ function GeneratePage() {
                 <label className={`upload-drop ${isBusy ? 'upload-drop--disabled' : ''}`}>
                   <input
                     type="file"
-                    accept=".pdf,.docx"
+                    accept=".pdf,.doc,.docx,.md,.markdown,.txt"
                     disabled={isBusy}
                     onChange={(e) => {
                       const nextFile = e.target.files?.[0] || null;
@@ -1231,8 +1245,8 @@ function GeneratePage() {
                     hidden
                   />
                   <FontAwesomeIcon icon={faUpload} className="upload-dropzone-icon" />
-                  <span>{fileName || 'Kéo thả hoặc chọn file PDF/DOCX'}</span>
-                  <span className="upload-hint">PDF scan sẽ OCR · DOCX được trích xuất text trực tiếp</span>
+                  <span>{fileName || 'Kéo thả hoặc chọn PDF, DOC/DOCX, Markdown, TXT'}</span>
+                  <span className="upload-hint">PDF được định tuyến theo từng trang · định dạng văn bản giữ cấu trúc nguồn</span>
                 </label>
               ) : (
                 <div className="existing-doc-panel">
@@ -1266,7 +1280,7 @@ function GeneratePage() {
                   </div>
                   {documentsError && <p className="source-note source-note--error">{documentsError}</p>}
                   {!documentsLoading && reusableDocuments.length === 0 && !documentsError && (
-                    <p className="source-note">Chưa có tài liệu sẵn sàng. Hãy tải PDF hoặc DOCX mới trước.</p>
+                    <p className="source-note">Chưa có tài liệu sẵn sàng. Hãy tải tài liệu mới trước.</p>
                   )}
                   {selectedDocument && (
                     <p className="source-note">
@@ -1312,6 +1326,24 @@ function GeneratePage() {
                     : 'Chọn một tài liệu đã xử lý để xem học phần tương ứng.'}
                 </p>
               )}
+            </div>
+
+            <div className="field-group" style={{ marginBottom: '32px', marginTop: '16px' }}>
+              <button
+                className="btn btn--secondary gen-submit"
+                type="button"
+                disabled={isBusy || chunkReady}
+                onClick={handleProcessDocument}
+              >
+                {isBusy && !chunkReady ? (
+                  <>
+                    <span className="gen-status-spinner gen-status-spinner--inline" aria-hidden="true" />
+                    Đang xử lý...
+                  </>
+                ) : (
+                  'Xử lý tài liệu'
+                )}
+              </button>
             </div>
 
             <div className="field-group preset-section">
@@ -1377,6 +1409,8 @@ function GeneratePage() {
                 </div>
               )}
             </div>
+
+
 
             <div className="field-group">
               <div className="field-label-row">
@@ -1524,11 +1558,15 @@ function GeneratePage() {
               />
             </div>
 
-            <button className="btn btn--primary gen-submit" type="submit" disabled={isBusy}>
-              {isBusy ? (
+            <button
+              className="btn btn--primary gen-submit"
+              type="submit"
+              disabled={isBusy || !chunkReady}
+            >
+              {isBusy && chunkReady ? (
                 <>
                   <span className="gen-status-spinner gen-status-spinner--inline" aria-hidden="true" />
-                  Đang xử lý...
+                  Đang sinh câu hỏi...
                 </>
               ) : (
                 <>
@@ -1607,7 +1645,7 @@ function GeneratePage() {
                     ? 'Các ứng viên AI sinh ra đã bị loại ở bước sàng lọc sau sinh. Xem lý do ở phần cảnh báo phía trên.'
                     : isBusy
                       ? 'Đang chờ câu hỏi hợp lệ đầu tiên...'
-                    : 'Tải PDF/DOCX, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.'}
+                    : 'Tải tài liệu, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.'}
                 </span>
               </div>
             ) : (

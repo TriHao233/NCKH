@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faBell, faCheckDouble, faRightToBracket } from '@fortawesome/free-solid-svg-icons';
+import { faBars, faBell, faCheckDouble, faRightToBracket, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { canAccessPath } from '../auth/permissions';
 import {
@@ -24,6 +24,7 @@ const Header = () => {
   const role = user?.role;
   const signedIn = Boolean(user);
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -177,7 +178,17 @@ const Header = () => {
   useEffect(() => {
     const activeLink = navMenuRef.current?.querySelector('.nav-link--active');
     activeLink?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    setMobileNavOpen(false);
   }, [location.pathname, role, signedIn]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setMobileNavOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [mobileNavOpen]);
 
   return (
     <header className="navbar" id="navbar">
@@ -276,14 +287,58 @@ const Header = () => {
             <Link
               to="/dang-nhap"
               className={`btn btn--login ${loading ? 'btn--login-pending' : ''}`}
+              aria-label="Đăng nhập"
               aria-busy={loading}
             >
               <FontAwesomeIcon icon={faRightToBracket} className="btn-icon" />
               <span>Đăng nhập</span>
             </Link>
           )}
+          <button
+            type="button"
+            className="mobile-nav-toggle"
+            aria-label={mobileNavOpen ? 'Đóng menu điều hướng' : 'Mở menu điều hướng'}
+            aria-expanded={mobileNavOpen}
+            aria-controls="mobile-navigation"
+            onClick={() => setMobileNavOpen((current) => !current)}
+          >
+            <FontAwesomeIcon icon={mobileNavOpen ? faXmark : faBars} />
+          </button>
         </div>
       </div>
+
+      {mobileNavOpen && (
+        <div className="mobile-nav-backdrop" onClick={() => setMobileNavOpen(false)}>
+          <nav
+            className="mobile-nav-panel"
+            id="mobile-navigation"
+            aria-label="Điều hướng di động"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {visibleNavGroups.map((group) => (
+              <section className="mobile-nav-section" key={group.id}>
+                <span className="mobile-nav-section-label">{group.label}</span>
+                <div className="mobile-nav-links">
+                  {group.items.map((link) => {
+                    const isActive = location.pathname === link.path
+                      || location.pathname.startsWith(`${link.path}/`);
+                    return (
+                      <Link
+                        key={link.path}
+                        to={link.path}
+                        className={`mobile-nav-link ${isActive ? 'mobile-nav-link--active' : ''}`}
+                        onClick={() => setMobileNavOpen(false)}
+                      >
+                        {link.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </nav>
+        </div>
+      )}
     </header>
   );
 };

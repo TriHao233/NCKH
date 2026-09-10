@@ -142,3 +142,23 @@
   background: #fff5f5;
   color: #dc3545;
 }
+
+@media (max-width: 420px) {
+  .user-menu-trigger {
+    padding: 3px;
+  }
+
+  .user-menu-trigger .user-name,
+  .user-menu-trigger .user-chevron {
+    display: none;
+  }
+
+  .user-dropdown {
+    position: fixed;
+    top: 68px;
+    right: 12px;
+    width: min(260px, calc(100vw - 24px));
+    max-height: calc(100dvh - 80px);
+    overflow-y: auto;
+  }
+}

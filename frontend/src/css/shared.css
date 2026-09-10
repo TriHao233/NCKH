@@ -7,9 +7,9 @@
 
 .container {
   width: 100%;
-  max-width: 1160px;
+  max-width: var(--content-max, 1160px);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--page-gutter, 24px);
 }
 
 /* ─── Buttons ────────────────────────────────────────────────── */
@@ -20,13 +20,21 @@
   gap: 8px;
   font-family: inherit;
   font-weight: 600;
-  font-size: 0.95rem;
+  min-height: 38px;
+  font-size: 0.88rem;
   border-radius: var(--radius-sm, 8px);
-  padding: 11px 24px;
+  padding: 9px 16px;
   border: none;
   transition: all 0.25s;
   cursor: pointer;
   text-decoration: none;
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .btn--primary {
@@ -51,6 +59,23 @@
   background: #f0f8ff;
 }
 
+.btn--secondary {
+  color: var(--primary, #0c78d4);
+  border: 1.5px solid var(--border, #a7c8e6);
+  background: #eaf4ff;
+}
+
+.btn--danger {
+  color: #dc2626;
+  border: 1.5px solid #fecaca;
+  background: #fff;
+}
+
+.btn--danger:hover {
+  border-color: #dc2626;
+  background: #fff0f0;
+}
+
 /* ─── Section header ─────────────────────────────────────────── */
 .section-header { text-align: center; margin-bottom: 48px; }
 .section-title {
@@ -71,7 +96,7 @@
 
 /* ─── Page hero ──────────────────────────────────────────────── */
 .page-hero {
-  padding: 76px 0 56px;
+  padding: 56px 0 40px;
   text-align: center;
   background: linear-gradient(160deg, #F0F8FF 0%, #E8F4FD 55%, #F5FAFF 100%);
 }
@@ -88,7 +113,7 @@
 }
 .page-hero-title {
   font-family: 'Fraunces', serif;
-  font-size: clamp(1.9rem, 3.4vw, 2.7rem);
+  font-size: clamp(1.7rem, 3vw, 2.3rem);
   font-weight: 700;
   color: var(--navy, #003a75);
   margin-bottom: 18px;
@@ -106,5 +131,9 @@
 }
 
 @media (max-width: 640px) {
-  .page-hero { padding: 56px 0 40px; }
+  .container { padding-inline: 16px; }
+  .page-hero { padding: 40px 0 28px; }
+  .section-header { margin-bottom: 32px; }
+  .section-desc,
+  .page-hero-desc { font-size: 0.92rem; }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
   addSubjectChapter,
   addSubjectLearningOutcome,
@@ -9,6 +9,8 @@ import {
   updateSubjectChapter,
   updateSubjectLearningOutcome,
 } from '../api/catalog';
+import { permissionsForUser } from '../auth/permissions';
+import { AuthContext } from '../context/AuthContext';
 import '../css/SubjectManage.css';
 
 const EMPTY_SUBJECT = { subject_code: '', subject_name: '', description: '', is_active: true };
@@ -27,6 +29,8 @@ function usageTotal(counts) {
 }
 
 function SubjectManage() {
+  const { user } = useContext(AuthContext);
+  const canCreateSubjects = permissionsForUser(user).includes('admin.catalog');
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -277,9 +281,11 @@ function SubjectManage() {
               Đây là nền tảng phân loại cho toàn bộ tài liệu, câu hỏi và đề thi.
             </p>
           </div>
-          <button type="button" className="btn btn--primary" onClick={openCreateSubject}>
-            + Thêm học phần
-          </button>
+          {canCreateSubjects && (
+            <button type="button" className="btn btn--primary" onClick={openCreateSubject}>
+              + Thêm học phần
+            </button>
+          )}
         </div>
       </section>
 
@@ -315,7 +321,11 @@ function SubjectManage() {
             <p className="empty-note">Đang tải danh sách học phần...</p>
           ) : visibleSubjects.length === 0 ? (
             <p className="empty-note">
-              {keyword ? 'Không tìm thấy học phần phù hợp.' : 'Chưa có học phần nào. Bấm "Thêm học phần" để bắt đầu.'}
+              {keyword
+                ? 'Không tìm thấy học phần phù hợp.'
+                : canCreateSubjects
+                  ? 'Chưa có học phần nào. Bấm "Thêm học phần" để bắt đầu.'
+                  : 'Chưa có học phần nào được phân quyền cho bạn.'}
             </p>
           ) : (
             <div className="subject-list">
