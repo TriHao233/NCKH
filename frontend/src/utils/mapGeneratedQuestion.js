@@ -55,6 +55,10 @@ export function mapGeneratedQuestions(questions = []) {
     explanation: question.explanation,
     sourceContext: question.source_context,
     sourceKeywords: question.source_keywords || [],
+    validationWarnings: question.validation_warnings
+      || question.question_data?.validation_warnings
+      || question.question_data?.post_processing?.warnings
+      || [],
     falseMutation: question.false_mutation || null,
   }));
 }

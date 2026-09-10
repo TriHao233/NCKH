@@ -1,4 +1,20 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faBriefcase,
+  faChartSimple,
+  faCircleCheck,
+  faEnvelope,
+  faFileLines,
+  faLocationDot,
+  faPen,
+  faRotateRight,
+  faShieldHalved,
+  faTrashCan,
+  faUpload,
+  faUser,
+  faUserGroup,
+} from '@fortawesome/free-solid-svg-icons';
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,
@@ -6,11 +22,12 @@ import {
 } from 'firebase/auth';
 import { AuthContext } from '../context/AuthContext';
 import { auth } from '../firebase';
-import { getMe, getMyStats, updateMe } from '../api/users';
+import { getMe, getMyStats, updateMe, uploadMyAvatar } from '../api/users';
 import '../css/UserProfile.css';
 
 const MAX_SCHOOL_LENGTH = 200;
 const MAX_ADDRESS_LENGTH = 300;
+const MAX_AVATAR_FILE_SIZE = 2 * 1024 * 1024;
 const URL_PATTERN = /^https?:\/\/[^\s]+$/i;
 
 function buildFallbackAvatar(name) {
@@ -61,11 +78,13 @@ function mapFirebaseAuthError(error) {
 }
 
 function InfoTab({ user, onProfileUpdated }) {
+  const avatarInputRef = useRef(null);
   const [initialForm, setInitialForm] = useState(() => toFormState(user));
   const [form, setForm] = useState(() => toFormState(user));
   const [fieldErrors, setFieldErrors] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [banner, setBanner] = useState(null); // { type: 'success' | 'error', message }
 
   useEffect(() => {
@@ -106,6 +125,38 @@ function InfoTab({ user, onProfileUpdated }) {
 
   const handleUseDefaultAvatar = () => {
     setForm((prev) => ({ ...prev, avatar: '' }));
+    setFieldErrors((prev) => ({ ...prev, avatar: undefined }));
+  };
+
+  const handleAvatarFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setFieldErrors((prev) => ({ ...prev, avatar: 'Vui lòng chọn file ảnh hợp lệ.' }));
+      return;
+    }
+    if (file.size > MAX_AVATAR_FILE_SIZE) {
+      setFieldErrors((prev) => ({ ...prev, avatar: 'Ảnh đại diện không vượt quá 2MB.' }));
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    setBanner(null);
+    setFieldErrors((prev) => ({ ...prev, avatar: undefined }));
+    try {
+      const result = await uploadMyAvatar(file);
+      setForm((prev) => ({ ...prev, avatar: result.avatar_url || '' }));
+      setBanner({ type: 'success', message: 'Đã tải ảnh lên. Bấm Lưu thay đổi để cập nhật hồ sơ.' });
+    } catch (error) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        avatar: error.message || 'Tải ảnh đại diện thất bại.',
+      }));
+    } finally {
+      setIsUploadingAvatar(false);
+    }
   };
 
   const handleReset = () => {
@@ -149,103 +200,142 @@ function InfoTab({ user, onProfileUpdated }) {
 
   return (
     <form className="card profile-card" onSubmit={handleSubmit}>
-      <h3 className="profile-card-title">Thông tin cá nhân</h3>
+      <div className="profile-card-heading">
+        <span className="profile-section-icon"><FontAwesomeIcon icon={faUser} /></span>
+        <div>
+          <h3 className="profile-card-title">Thông tin cá nhân</h3>
+          <p>Cập nhật thông tin để hoàn thiện hồ sơ của bạn.</p>
+        </div>
+      </div>
 
       {banner && (
         <div className={`profile-banner profile-banner--${banner.type}`}>{banner.message}</div>
       )}
 
-      <div className="field-group">
-        <label className="field-label">Ảnh đại diện</label>
-        <div className="avatar-edit-row">
-          <img src={avatarPreview} alt="Xem trước ảnh đại diện" className="avatar-preview" referrerPolicy="no-referrer" />
-          <div className="avatar-edit-controls">
-            <input
-              className="field-input"
-              placeholder="Dán URL ảnh (https://...)"
-              value={form.avatar}
-              onChange={handleChange('avatar')}
-              disabled={isLoading}
-            />
-            <button
-              type="button"
-              className="btn btn--outline btn--small"
-              onClick={handleUseDefaultAvatar}
-              disabled={isLoading}
-            >
-              Dùng avatar mặc định
-            </button>
+      <div className="profile-form-section profile-form-section--avatar">
+        <h4><FontAwesomeIcon icon={faUser} /> Ảnh đại diện</h4>
+        <div className="field-group">
+          <label className="field-label">Ảnh đại diện</label>
+          <div className="avatar-edit-row">
+            <img src={avatarPreview} alt="Xem trước ảnh đại diện" className="avatar-preview" referrerPolicy="no-referrer" />
+            <div className="avatar-edit-controls">
+              <input
+                className="field-input"
+                placeholder="Dán URL ảnh (https://...)"
+                value={form.avatar}
+                onChange={handleChange('avatar')}
+                disabled={isLoading || isUploadingAvatar}
+              />
+              <div className="avatar-button-row">
+                <input
+                  ref={avatarInputRef}
+                  className="avatar-file-input"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={handleAvatarFileChange}
+                  disabled={isLoading || isUploadingAvatar}
+                />
+                <button
+                  type="button"
+                  className="btn btn--primary btn--small"
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={isLoading || isUploadingAvatar}
+                >
+                  <FontAwesomeIcon icon={faUpload} />
+                  {isUploadingAvatar ? 'Đang tải...' : 'Tải ảnh từ thiết bị'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--outline btn--small"
+                  onClick={handleUseDefaultAvatar}
+                  disabled={isLoading || isUploadingAvatar}
+                >
+                  <FontAwesomeIcon icon={faTrashCan} />
+                  Dùng avatar mặc định
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-        {fieldErrors.avatar && <span className="field-error">{fieldErrors.avatar}</span>}
-      </div>
-
-      <div className="field-group">
-        <label className="field-label">Họ và tên</label>
-        <input
-          className="field-input"
-          value={form.displayName}
-          onChange={handleChange('displayName')}
-          disabled={isLoading}
-        />
-        {fieldErrors.displayName && <span className="field-error">{fieldErrors.displayName}</span>}
-      </div>
-
-      <div className="field-row-2">
-        <div className="field-group">
-          <label className="field-label">Email</label>
-          <input className="field-input" value={user?.email || ''} disabled />
-          <span className="field-hint">Không thể thay đổi email tại đây.</span>
-        </div>
-        <div className="field-group">
-          <label className="field-label">Vai trò</label>
-          <input className="field-input" value={user?.role || ''} disabled />
-          <span className="field-hint">Chỉ quản trị viên mới thay đổi được vai trò.</span>
+          {fieldErrors.avatar && <span className="field-error">{fieldErrors.avatar}</span>}
         </div>
       </div>
 
-      <div className="field-group">
-        <label className="field-label">Đơn vị công tác</label>
-        <input
-          className="field-input"
-          value={form.school}
-          onChange={handleChange('school')}
-          maxLength={MAX_SCHOOL_LENGTH}
-          disabled={isLoading}
-        />
-        {fieldErrors.school && <span className="field-error">{fieldErrors.school}</span>}
-      </div>
-
-      <div className="field-group">
-        <label className="field-label">Địa chỉ</label>
-        <input
-          className="field-input"
-          placeholder="Chưa cập nhật"
-          value={form.address}
-          onChange={handleChange('address')}
-          maxLength={MAX_ADDRESS_LENGTH}
-          disabled={isLoading}
-        />
-        {fieldErrors.address && <span className="field-error">{fieldErrors.address}</span>}
-      </div>
-
-      <div className="field-row-2">
+      <div className="profile-form-section">
+        <h4><FontAwesomeIcon icon={faUser} /> Thông tin cơ bản</h4>
         <div className="field-group">
-          <label className="field-label">Trạng thái tài khoản</label>
-          <input className="field-input" value={user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động'} disabled />
-        </div>
-        <div className="field-group">
-          <label className="field-label">Ngày tham gia</label>
+          <label className="field-label">Họ và tên</label>
           <input
             className="field-input"
-            value={user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—'}
-            disabled
+            value={form.displayName}
+            onChange={handleChange('displayName')}
+            disabled={isLoading}
           />
+          {fieldErrors.displayName && <span className="field-error">{fieldErrors.displayName}</span>}
+        </div>
+
+        <div className="field-row-2">
+          <div className="field-group">
+            <label className="field-label">Email</label>
+            <input className="field-input" value={user?.email || ''} disabled />
+            <span className="field-hint">Không thể thay đổi email tại đây.</span>
+          </div>
+          <div className="field-group">
+            <label className="field-label">Vai trò</label>
+            <input className="field-input" value={user?.role || ''} disabled />
+            <span className="field-hint">Chỉ quản trị viên mới thay đổi được vai trò.</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="profile-form-section">
+        <h4><FontAwesomeIcon icon={faBriefcase} /> Thông tin công tác</h4>
+        <div className="field-group">
+          <label className="field-label">Đơn vị công tác</label>
+          <input
+            className="field-input"
+            value={form.school}
+            onChange={handleChange('school')}
+            maxLength={MAX_SCHOOL_LENGTH}
+            disabled={isLoading}
+          />
+          {fieldErrors.school && <span className="field-error">{fieldErrors.school}</span>}
+        </div>
+
+        <div className="field-group">
+          <label className="field-label">Địa chỉ</label>
+          <input
+            className="field-input"
+            placeholder="Chưa cập nhật"
+            value={form.address}
+            onChange={handleChange('address')}
+            maxLength={MAX_ADDRESS_LENGTH}
+            disabled={isLoading}
+          />
+          {fieldErrors.address && <span className="field-error">{fieldErrors.address}</span>}
+        </div>
+      </div>
+
+      <div className="profile-form-section">
+        <h4><FontAwesomeIcon icon={faFileLines} /> Thông tin khác</h4>
+        <div className="field-row-2">
+          <div className="field-group">
+            <label className="field-label">Trạng thái tài khoản</label>
+            <input className="field-input" value={user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động'} disabled />
+          </div>
+          <div className="field-group">
+            <label className="field-label">Ngày tham gia</label>
+            <input
+              className="field-input"
+              value={user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—'}
+              disabled
+            />
+          </div>
         </div>
       </div>
 
       <div className="profile-actions">
         <button className="btn btn--primary" type="submit" disabled={isSaving || isLoading || !isDirty}>
+          <FontAwesomeIcon icon={faUpload} />
           {isSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
         </button>
         <button
@@ -254,6 +344,7 @@ function InfoTab({ user, onProfileUpdated }) {
           onClick={handleReset}
           disabled={isSaving || isLoading || !isDirty}
         >
+          <FontAwesomeIcon icon={faRotateRight} />
           Khôi phục
         </button>
       </div>
@@ -392,25 +483,25 @@ function ProfileSidebar({ user }) {
   return (
     <aside className="profile-side">
       <div className="card side-card">
-        <h3>Trạng thái tài khoản</h3>
+        <h3><FontAwesomeIcon icon={faCircleCheck} /> Trạng thái tài khoản</h3>
         <div className="status-row">
           <span className={`status-dot ${user?.is_active ? '' : 'status-dot--inactive'}`} />
           {displayStatus}
         </div>
         <ul className="info-list">
           <li>
-            <span className="info-list-label">Vai trò</span>
+            <span className="info-list-label"><FontAwesomeIcon icon={faUserGroup} /> Vai trò</span>
             <span>{user?.role || '—'}</span>
           </li>
           <li>
-            <span className="info-list-label">Ngày tham gia</span>
+            <span className="info-list-label"><FontAwesomeIcon icon={faFileLines} /> Ngày tham gia</span>
             <span>{joinedAt}</span>
           </li>
         </ul>
       </div>
 
       <div className="card side-card">
-        <h3>Thống kê cá nhân</h3>
+        <h3><FontAwesomeIcon icon={faChartSimple} /> Thống kê cá nhân</h3>
         {statsError && <p className="side-note">{statsError}</p>}
         {!statsError && !stats && <p className="side-note">Đang tải...</p>}
         {stats && (
@@ -447,12 +538,25 @@ function UserProfile() {
     <main className="profile-page">
       <section className="page-hero">
         <div className="container profile-hero-row">
-          <img src={avatarUrl} alt="Ảnh đại diện" className="profile-avatar" referrerPolicy="no-referrer" />
+          <div className="profile-avatar-wrap">
+            <img src={avatarUrl} alt="Ảnh đại diện" className="profile-avatar" referrerPolicy="no-referrer" />
+            <span className="profile-avatar-action"><FontAwesomeIcon icon={faPen} /></span>
+          </div>
           <div className="profile-hero-text">
             <span className="profile-role-badge">{displayRole}</span>
             <h1 className="page-hero-title">{displayName}</h1>
-            <p className="page-hero-desc">{displayEmail}</p>
+            <p className="page-hero-desc"><FontAwesomeIcon icon={faEnvelope} /> {displayEmail}</p>
+            {user?.profile?.address && (
+              <p className="profile-hero-meta"><FontAwesomeIcon icon={faLocationDot} /> {user.profile.address}</p>
+            )}
           </div>
+          <button
+            type="button"
+            className="btn profile-edit-button"
+          >
+            <FontAwesomeIcon icon={faPen} />
+            Chỉnh sửa hồ sơ
+          </button>
         </div>
       </section>
 
@@ -467,6 +571,7 @@ function UserProfile() {
                 className={`profile-tab ${activeTab === 'info' ? 'profile-tab--active' : ''}`}
                 onClick={() => setActiveTab('info')}
               >
+                <FontAwesomeIcon icon={faUser} />
                 Thông tin cá nhân
               </button>
               <button
@@ -476,6 +581,7 @@ function UserProfile() {
                 className={`profile-tab ${activeTab === 'security' ? 'profile-tab--active' : ''}`}
                 onClick={() => setActiveTab('security')}
               >
+                <FontAwesomeIcon icon={faShieldHalved} />
                 Bảo mật
               </button>
             </div>

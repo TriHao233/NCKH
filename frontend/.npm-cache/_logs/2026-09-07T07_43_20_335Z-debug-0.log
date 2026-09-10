@@ -1,0 +1,909 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.9.7
+2 info using node@v22.22.2
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:D:\CodeProject\NCKH\frontend\.npmrc
+5 silly config load:file:C:\Users\admin\.npmrc
+6 silly config load:file:C:\Users\admin\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm install
+8 verbose argv "install" "--cache" ".\\.npm-cache" "--no-audit"
+9 verbose logfile logs-max:10 dir:D:\CodeProject\NCKH\frontend\.npm-cache\_logs\2026-09-07T07_43_20_335Z-
+10 verbose logfile D:\CodeProject\NCKH\frontend\.npm-cache\_logs\2026-09-07T07_43_20_335Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368
+13 silly idealTree buildDeps
+14 verbose shrinkwrap failed to load node_modules/.package-lock.json out of date, updated: node_modules
+15 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\acorn' ]
+16 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\acorn-jsx' ]
+17 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\ajv' ]
+18 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\argparse' ]
+19 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\balanced-match' ]
+20 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\brace-expansion' ]
+21 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\callsites' ]
+22 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\chalk' ]
+23 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\concat-map' ]
+24 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\cookie' ]
+25 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\cross-spawn' ]
+26 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\deep-is' ]
+27 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\detect-libc' ]
+28 silly reify mark retired [
+28 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\escape-string-regexp'
+28 silly reify ]
+29 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint' ]
+30 silly reify mark retired [
+30 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint-plugin-react-hooks'
+30 silly reify ]
+31 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint-scope' ]
+32 silly reify mark retired [
+32 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint-visitor-keys'
+32 silly reify ]
+33 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\espree' ]
+34 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\esquery' ]
+35 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\esrecurse' ]
+36 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\estraverse' ]
+37 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\esutils' ]
+38 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fast-deep-equal' ]
+39 silly reify mark retired [
+39 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fast-json-stable-stringify'
+39 silly reify ]
+40 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fast-levenshtein' ]
+41 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fdir' ]
+42 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\file-entry-cache' ]
+43 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\find-up' ]
+44 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\flatted' ]
+45 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\flat-cache' ]
+46 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fsevents' ]
+47 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\glob-parent' ]
+48 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\globals' ]
+49 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\has-flag' ]
+50 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\ignore' ]
+51 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\import-fresh' ]
+52 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\imurmurhash' ]
+53 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\is-extglob' ]
+54 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\is-glob' ]
+55 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\isexe' ]
+56 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\js-yaml' ]
+57 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\json-buffer' ]
+58 silly reify mark retired [
+58 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\json-stable-stringify-without-jsonify'
+58 silly reify ]
+59 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\keyv' ]
+60 silly reify mark retired [
+60 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\json-schema-traverse'
+60 silly reify ]
+61 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\levn' ]
+62 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss' ]
+63 silly reify mark retired [
+63 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-android-arm64'
+63 silly reify ]
+64 silly reify mark retired [
+64 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-darwin-arm64'
+64 silly reify ]
+65 silly reify mark retired [
+65 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-darwin-x64'
+65 silly reify ]
+66 silly reify mark retired [
+66 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-freebsd-x64'
+66 silly reify ]
+67 silly reify mark retired [
+67 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm-gnueabihf'
+67 silly reify ]
+68 silly reify mark retired [
+68 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm64-gnu'
+68 silly reify ]
+69 silly reify mark retired [
+69 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm64-musl'
+69 silly reify ]
+70 silly reify mark retired [
+70 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-x64-gnu'
+70 silly reify ]
+71 silly reify mark retired [
+71 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-x64-musl'
+71 silly reify ]
+72 silly reify mark retired [
+72 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-win32-arm64-msvc'
+72 silly reify ]
+73 silly reify mark retired [
+73 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-win32-x64-msvc'
+73 silly reify ]
+74 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\locate-path' ]
+75 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lodash.merge' ]
+76 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\minimatch' ]
+77 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\nanoid' ]
+78 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\natural-compare' ]
+79 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\optionator' ]
+80 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\p-limit' ]
+81 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\p-locate' ]
+82 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\parent-module' ]
+83 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\path-exists' ]
+84 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\path-key' ]
+85 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\picomatch' ]
+86 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\postcss' ]
+87 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\prelude-ls' ]
+88 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\protobufjs' ]
+89 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\punycode' ]
+90 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\react-router' ]
+91 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\react-router-dom' ]
+92 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\react-use-measure' ]
+93 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\resolve-from' ]
+94 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\rolldown' ]
+95 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\set-cookie-parser' ]
+96 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\shebang-command' ]
+97 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\shebang-regex' ]
+98 silly reify mark retired [
+98 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\strip-json-comments'
+98 silly reify ]
+99 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\supports-color' ]
+100 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\tinyglobby' ]
+101 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\type-check' ]
+102 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\uri-js' ]
+103 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\vite' ]
+104 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\which' ]
+105 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\word-wrap' ]
+106 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\yocto-queue' ]
+107 silly reify mark retired [
+107 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\config-array'
+107 silly reify ]
+108 silly reify mark retired [
+108 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\config-helpers'
+108 silly reify ]
+109 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\core' ]
+110 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\eslintrc' ]
+111 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\js' ]
+112 silly reify mark retired [
+112 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\object-schema'
+112 silly reify ]
+113 silly reify mark retired [
+113 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\plugin-kit'
+113 silly reify ]
+114 silly reify mark retired [
+114 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint-community\\eslint-utils'
+114 silly reify ]
+115 silly reify mark retired [
+115 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint-community\\regexpp'
+115 silly reify ]
+116 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\core' ]
+117 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\node' ]
+118 silly reify mark retired [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\types' ]
+119 silly reify mark retired [
+119 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanwhocodes\\module-importer'
+119 silly reify ]
+120 silly reify mark retired [
+120 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanwhocodes\\retry'
+120 silly reify ]
+121 silly reify mark retired [
+121 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@oxc-project\\types'
+121 silly reify ]
+122 silly reify mark retired [
+122 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-android-arm-eabi'
+122 silly reify ]
+123 silly reify mark retired [
+123 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-android-arm64'
+123 silly reify ]
+124 silly reify mark retired [
+124 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-darwin-arm64'
+124 silly reify ]
+125 silly reify mark retired [
+125 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-darwin-x64'
+125 silly reify ]
+126 silly reify mark retired [
+126 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-freebsd-x64'
+126 silly reify ]
+127 silly reify mark retired [
+127 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm-gnueabihf'
+127 silly reify ]
+128 silly reify mark retired [
+128 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm64-gnu'
+128 silly reify ]
+129 silly reify mark retired [
+129 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm64-musl'
+129 silly reify ]
+130 silly reify mark retired [
+130 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-ppc64-gnu'
+130 silly reify ]
+131 silly reify mark retired [
+131 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-s390x-gnu'
+131 silly reify ]
+132 silly reify mark retired [
+132 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-x64-gnu'
+132 silly reify ]
+133 silly reify mark retired [
+133 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-x64-musl'
+133 silly reify ]
+134 silly reify mark retired [
+134 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-openharmony-arm64'
+134 silly reify ]
+135 silly reify mark retired [
+135 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-win32-arm64-msvc'
+135 silly reify ]
+136 silly reify mark retired [
+136 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-win32-x64-msvc'
+136 silly reify ]
+137 silly reify mark retired [
+137 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\pluginutils'
+137 silly reify ]
+138 silly reify mark retired [
+138 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@react-three\\fiber'
+138 silly reify ]
+139 silly reify mark retired [
+139 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@types\\json-schema'
+139 silly reify ]
+140 silly reify mark retired [
+140 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@vitejs\\plugin-react'
+140 silly reify ]
+141 silly reify moves {
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\acorn': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.acorn-EH5hlxqx',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\acorn-jsx': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.acorn-jsx-hq0JO2MQ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\ajv': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.ajv-FtnSTlW0',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\argparse': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.argparse-qlLecVgp',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\balanced-match': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.balanced-match-xYnyeFW5',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\brace-expansion': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.brace-expansion-D41jyOvN',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\callsites': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.callsites-lzvZCUg1',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\chalk': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.chalk-3WOpWD67',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\concat-map': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.concat-map-W7mzwmZs',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\cookie': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.cookie-HNL37vRD',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\cross-spawn': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.cross-spawn-9NEH02rn',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\deep-is': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.deep-is-i2dt2Q7y',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\detect-libc': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.detect-libc-7xFTMcAU',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\escape-string-regexp': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.escape-string-regexp-hKEYGTGg',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.eslint-Ixh8qK05',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint-plugin-react-hooks': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.eslint-plugin-react-hooks-7sZJyFOG',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint-scope': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.eslint-scope-3Em5552P',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\eslint-visitor-keys': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.eslint-visitor-keys-sDFFpOyj',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\espree': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.espree-zTYBW3UE',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\esquery': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.esquery-Ua7K8emE',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\esrecurse': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.esrecurse-Lrp19WV4',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\estraverse': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.estraverse-xKMb0zF5',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\esutils': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.esutils-yV6NKzek',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fast-deep-equal': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.fast-deep-equal-Xz4cQ0De',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fast-json-stable-stringify': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.fast-json-stable-stringify-F0GqjmBd',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fast-levenshtein': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.fast-levenshtein-tpftacRP',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fdir': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.fdir-cC8ylhcW',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\file-entry-cache': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.file-entry-cache-XD8AjrNY',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\find-up': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.find-up-2VXuH4w7',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\flatted': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.flatted-K8ToMYeo',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\flat-cache': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.flat-cache-tjQVv3Rk',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fsevents': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.fsevents-gfKCYFte',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\glob-parent': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.glob-parent-FtPI0YBB',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\globals': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.globals-RFndfhkf',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\has-flag': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.has-flag-FqD3izg4',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\ignore': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.ignore-Gh9llUeH',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\import-fresh': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.import-fresh-8FAIEcHQ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\imurmurhash': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.imurmurhash-UEurOV8g',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\is-extglob': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.is-extglob-ACLZZFaS',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\is-glob': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.is-glob-FfSA4tji',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\isexe': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.isexe-gifzNB6P',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\js-yaml': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.js-yaml-eZj3lET7',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\json-buffer': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.json-buffer-2h10dn8c',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\json-stable-stringify-without-jsonify': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.json-stable-stringify-without-jsonify-8c99H7zE',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\keyv': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.keyv-ZjUpHlk0',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\json-schema-traverse': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.json-schema-traverse-EODdLjo6',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\levn': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.levn-3UzT3ACu',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-m1Pv80F8',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-android-arm64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-android-arm64-DKTRt7J1',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-darwin-arm64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-darwin-arm64-1F4QcQkD',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-darwin-x64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-darwin-x64-O5fakSRf',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-freebsd-x64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-freebsd-x64-AirBw7Yn',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm-gnueabihf': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-linux-arm-gnueabihf-aTAvCAOg',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm64-gnu': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-linux-arm64-gnu-H7hiBsJg',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm64-musl': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-linux-arm64-musl-Z4DxFcyP',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-x64-gnu': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-linux-x64-gnu-jzZrArjz',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-x64-musl': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-linux-x64-musl-Z4IAup34',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-win32-arm64-msvc': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-win32-arm64-msvc-h4yRUjXz',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-win32-x64-msvc': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lightningcss-win32-x64-msvc-fJySAQHR',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\locate-path': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.locate-path-G6hNJPFS',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lodash.merge': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.lodash.merge-svhcHpK1',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\minimatch': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.minimatch-tStCtALW',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\nanoid': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.nanoid-zdvyK1QR',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\natural-compare': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.natural-compare-xw5cK8tz',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\optionator': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.optionator-XCTgRgrf',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\p-limit': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.p-limit-7lInkohQ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\p-locate': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.p-locate-Q8t8qWJY',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\parent-module': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.parent-module-3v0LWwgj',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\path-exists': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.path-exists-G5vVR3m2',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\path-key': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.path-key-j8Xkkq3v',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\picomatch': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.picomatch-kH5bS14u',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\postcss': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.postcss-QSKtm82D',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\prelude-ls': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.prelude-ls-8FBgfDH4',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\protobufjs': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.protobufjs-LtrSSNXA',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\punycode': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.punycode-b813aokW',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\react-router': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.react-router-Z53rGmII',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\react-router-dom': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.react-router-dom-tbzhYQSg',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\react-use-measure': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.react-use-measure-VQ0llAIq',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\resolve-from': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.resolve-from-ZoKcLxfE',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\rolldown': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.rolldown-v5767CZg',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\set-cookie-parser': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.set-cookie-parser-DK599kOb',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\shebang-command': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.shebang-command-2ZBRPK16',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\shebang-regex': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.shebang-regex-aBR1Bs2U',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\strip-json-comments': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.strip-json-comments-buv6GqNZ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\supports-color': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.supports-color-OoZd7P49',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\tinyglobby': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.tinyglobby-K9EYbwik',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\type-check': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.type-check-i6Y80XRK',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\uri-js': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.uri-js-Z071R4fg',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\vite': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.vite-SaA0DfuR',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\which': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.which-CPaPY7dP',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\word-wrap': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.word-wrap-RK07gcer',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\yocto-queue': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\.yocto-queue-bCMJbgFn',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\config-array': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.config-array-rFurt46h',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\config-helpers': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.config-helpers-rBIfceY2',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\core': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.core-duNLRzS0',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\eslintrc': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.eslintrc-yPWNjePe',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\js': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.js-A4lado6O',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\object-schema': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.object-schema-JSiwKCWI',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\plugin-kit': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint\\.plugin-kit-sd0o4TGZ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint-community\\eslint-utils': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint-community\\.eslint-utils-0Y5piVhc',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint-community\\regexpp': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@eslint-community\\.regexpp-cshED3YY',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\core': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\.core-Vz6mUn0h',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\node': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\.node-nlPYLuZj',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\types': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanfs\\.types-KgklTQnu',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanwhocodes\\module-importer': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanwhocodes\\.module-importer-7G2WOxfZ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanwhocodes\\retry': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@humanwhocodes\\.retry-D8PCRjoc',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@oxc-project\\types': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@oxc-project\\.types-IjYnv1WN',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-android-arm-eabi': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-android-arm-eabi-ufS1LqR8',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-android-arm64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-android-arm64-rr18JKdC',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-darwin-arm64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-darwin-arm64-DK5w9HfT',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-darwin-x64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-darwin-x64-HvF5YJAE',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-freebsd-x64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-freebsd-x64-WZiMPArX',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm-gnueabihf': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-arm-gnueabihf-poRuG7ys',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm64-gnu': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-arm64-gnu-G5iK1dRZ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm64-musl': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-arm64-musl-23CJM6vt',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-ppc64-gnu': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-ppc64-gnu-FDzsmjpZ',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-s390x-gnu': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-s390x-gnu-Zm69JrdL',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-x64-gnu': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-x64-gnu-0HpmjjaO',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-x64-musl': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-linux-x64-musl-icBtmii7',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-openharmony-arm64': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-openharmony-arm64-fvy6vi9D',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-win32-arm64-msvc': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-win32-arm64-msvc-EC8gNIaz',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-win32-x64-msvc': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.binding-win32-x64-msvc-haCm71m5',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\pluginutils': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\.pluginutils-rNLxeOrc',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@react-three\\fiber': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@react-three\\.fiber-3IvHwO2S',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@types\\json-schema': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@types\\.json-schema-9gNDzScF',
+141 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@vitejs\\plugin-react': 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@vitejs\\.plugin-react-UJfQ8u2m'
+141 silly reify }
+142 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-win32-arm64-msvc
+143 silly reify mark deleted [
+143 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-win32-arm64-msvc'
+143 silly reify ]
+144 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-openharmony-arm64
+145 silly reify mark deleted [
+145 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-openharmony-arm64'
+145 silly reify ]
+146 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-x64-musl
+147 silly reify mark deleted [
+147 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-x64-musl'
+147 silly reify ]
+148 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-x64-gnu
+149 silly reify mark deleted [
+149 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-x64-gnu'
+149 silly reify ]
+150 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-s390x-gnu
+151 silly reify mark deleted [
+151 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-s390x-gnu'
+151 silly reify ]
+152 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-ppc64-gnu
+153 silly reify mark deleted [
+153 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-ppc64-gnu'
+153 silly reify ]
+154 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-arm64-musl
+155 silly reify mark deleted [
+155 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm64-musl'
+155 silly reify ]
+156 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-arm64-gnu
+157 silly reify mark deleted [
+157 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm64-gnu'
+157 silly reify ]
+158 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-linux-arm-gnueabihf
+159 silly reify mark deleted [
+159 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-linux-arm-gnueabihf'
+159 silly reify ]
+160 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-freebsd-x64
+161 silly reify mark deleted [
+161 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-freebsd-x64'
+161 silly reify ]
+162 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-darwin-x64
+163 silly reify mark deleted [
+163 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-darwin-x64'
+163 silly reify ]
+164 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-darwin-arm64
+165 silly reify mark deleted [
+165 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-darwin-arm64'
+165 silly reify ]
+166 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-android-arm64
+167 silly reify mark deleted [
+167 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-android-arm64'
+167 silly reify ]
+168 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\@rolldown\binding-android-arm-eabi
+169 silly reify mark deleted [
+169 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\@rolldown\\binding-android-arm-eabi'
+169 silly reify ]
+170 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-win32-arm64-msvc
+171 silly reify mark deleted [
+171 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-win32-arm64-msvc'
+171 silly reify ]
+172 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-linux-x64-musl
+173 silly reify mark deleted [
+173 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-x64-musl'
+173 silly reify ]
+174 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-linux-x64-gnu
+175 silly reify mark deleted [
+175 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-x64-gnu'
+175 silly reify ]
+176 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-linux-arm64-musl
+177 silly reify mark deleted [
+177 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm64-musl'
+177 silly reify ]
+178 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-linux-arm64-gnu
+179 silly reify mark deleted [
+179 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm64-gnu'
+179 silly reify ]
+180 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-linux-arm-gnueabihf
+181 silly reify mark deleted [
+181 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-linux-arm-gnueabihf'
+181 silly reify ]
+182 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-freebsd-x64
+183 silly reify mark deleted [
+183 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-freebsd-x64'
+183 silly reify ]
+184 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-darwin-x64
+185 silly reify mark deleted [
+185 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-darwin-x64'
+185 silly reify ]
+186 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-darwin-arm64
+187 silly reify mark deleted [
+187 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-darwin-arm64'
+187 silly reify ]
+188 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\lightningcss-android-arm64
+189 silly reify mark deleted [
+189 silly reify   'D:\\CodeProject\\NCKH\\frontend\\node_modules\\lightningcss-android-arm64'
+189 silly reify ]
+190 verbose reify failed optional dependency D:\CodeProject\NCKH\frontend\node_modules\fsevents
+191 silly reify mark deleted [ 'D:\\CodeProject\\NCKH\\frontend\\node_modules\\fsevents' ]
+192 http cache @vitejs/plugin-react@https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.1.1.tgz 0ms (cache hit)
+193 http cache @types/json-schema@https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz 0ms (cache hit)
+194 http cache @react-three/fiber@https://registry.npmjs.org/@react-three/fiber/-/fiber-8.18.0.tgz 0ms (cache hit)
+195 http cache @rolldown/binding-win32-x64-msvc@https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.6.tgz 0ms (cache hit)
+196 http cache @rolldown/pluginutils@https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz 0ms (cache hit)
+197 http cache @oxc-project/types@https://registry.npmjs.org/@oxc-project/types/-/types-0.147.0.tgz 0ms (cache hit)
+198 http cache @humanfs/types@https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz 0ms (cache hit)
+199 http cache @humanwhocodes/module-importer@https://registry.npmjs.org/@humanwhocodes/module-importer/-/module-importer-1.0.1.tgz 0ms (cache hit)
+200 http cache @humanwhocodes/retry@https://registry.npmjs.org/@humanwhocodes/retry/-/retry-0.4.3.tgz 0ms (cache hit)
+201 http cache @eslint-community/regexpp@https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.2.tgz 0ms (cache hit)
+202 http cache @eslint-community/eslint-utils@https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.10.1.tgz 0ms (cache hit)
+203 http cache @humanfs/node@https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz 0ms (cache hit)
+204 http cache @eslint/plugin-kit@https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.4.1.tgz 0ms (cache hit)
+205 http cache @humanfs/core@https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz 0ms (cache hit)
+206 http cache @eslint/js@https://registry.npmjs.org/@eslint/js/-/js-9.39.0.tgz 0ms (cache hit)
+207 http cache @eslint/eslintrc@https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.6.tgz 0ms (cache hit)
+208 http cache @eslint/object-schema@https://registry.npmjs.org/@eslint/object-schema/-/object-schema-2.1.7.tgz 0ms (cache hit)
+209 http cache yocto-queue@https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz 0ms (cache hit)
+210 http cache @eslint/core@https://registry.npmjs.org/@eslint/core/-/core-0.17.0.tgz 0ms (cache hit)
+211 http cache word-wrap@https://registry.npmjs.org/word-wrap/-/word-wrap-1.2.5.tgz 0ms (cache hit)
+212 http cache which@https://registry.npmjs.org/which/-/which-2.0.2.tgz 0ms (cache hit)
+213 http cache @eslint/config-helpers@https://registry.npmjs.org/@eslint/config-helpers/-/config-helpers-0.4.2.tgz 0ms (cache hit)
+214 http cache @eslint/config-array@https://registry.npmjs.org/@eslint/config-array/-/config-array-0.21.2.tgz 0ms (cache hit)
+215 http cache type-check@https://registry.npmjs.org/type-check/-/type-check-0.4.0.tgz 0ms (cache hit)
+216 http cache tinyglobby@https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz 0ms (cache hit)
+217 http cache uri-js@https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz 0ms (cache hit)
+218 http cache vite@https://registry.npmjs.org/vite/-/vite-8.2.2.tgz 0ms (cache hit)
+219 http cache shebang-regex@https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz 0ms (cache hit)
+220 http cache strip-json-comments@https://registry.npmjs.org/strip-json-comments/-/strip-json-comments-3.1.1.tgz 0ms (cache hit)
+221 http cache shebang-command@https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz 0ms (cache hit)
+222 http cache supports-color@https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz 0ms (cache hit)
+223 http cache rolldown@https://registry.npmjs.org/rolldown/-/rolldown-1.2.6.tgz 0ms (cache hit)
+224 http cache react-use-measure@https://registry.npmjs.org/react-use-measure/-/react-use-measure-2.1.7.tgz 0ms (cache hit)
+225 http cache resolve-from@https://registry.npmjs.org/resolve-from/-/resolve-from-4.0.0.tgz 0ms (cache hit)
+226 http cache react-router-dom@https://registry.npmjs.org/react-router-dom/-/react-router-dom-7.18.3.tgz 0ms (cache hit)
+227 http cache react-router@https://registry.npmjs.org/react-router/-/react-router-7.18.3.tgz 1ms (cache hit)
+228 http cache protobufjs@https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.6.tgz 0ms (cache hit)
+229 http cache punycode@https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz 0ms (cache hit)
+230 http cache set-cookie-parser@https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-2.7.2.tgz 0ms (cache hit)
+231 http cache postcss@https://registry.npmjs.org/postcss/-/postcss-8.5.26.tgz 0ms (cache hit)
+232 http cache picomatch@https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz 0ms (cache hit)
+233 http cache path-exists@https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz 0ms (cache hit)
+234 http cache prelude-ls@https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz 0ms (cache hit)
+235 http cache p-locate@https://registry.npmjs.org/p-locate/-/p-locate-5.0.0.tgz 0ms (cache hit)
+236 http cache path-key@https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz 0ms (cache hit)
+237 http cache parent-module@https://registry.npmjs.org/parent-module/-/parent-module-1.0.1.tgz 0ms (cache hit)
+238 http cache p-limit@https://registry.npmjs.org/p-limit/-/p-limit-3.1.0.tgz 0ms (cache hit)
+239 http cache optionator@https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz 0ms (cache hit)
+240 http cache natural-compare@https://registry.npmjs.org/natural-compare/-/natural-compare-1.4.0.tgz 0ms (cache hit)
+241 http cache minimatch@https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz 0ms (cache hit)
+242 http cache nanoid@https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz 0ms (cache hit)
+243 http cache lodash.merge@https://registry.npmjs.org/lodash.merge/-/lodash.merge-4.6.2.tgz 0ms (cache hit)
+244 http cache lightningcss-win32-x64-msvc@https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz 0ms (cache hit)
+245 http cache locate-path@https://registry.npmjs.org/locate-path/-/locate-path-6.0.0.tgz 0ms (cache hit)
+246 http cache lightningcss@https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz 0ms (cache hit)
+247 http cache levn@https://registry.npmjs.org/levn/-/levn-0.4.1.tgz 0ms (cache hit)
+248 http cache keyv@https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz 0ms (cache hit)
+249 http cache js-yaml@https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz 0ms (cache hit)
+250 http cache json-buffer@https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz 0ms (cache hit)
+251 http cache json-schema-traverse@https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz 0ms (cache hit)
+252 http cache isexe@https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz 0ms (cache hit)
+253 http cache json-stable-stringify-without-jsonify@https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz 0ms (cache hit)
+254 http cache imurmurhash@https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz 0ms (cache hit)
+255 http cache is-glob@https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz 0ms (cache hit)
+256 http cache has-flag@https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz 0ms (cache hit)
+257 http cache ignore@https://registry.npmjs.org/ignore/-/ignore-5.3.2.tgz 0ms (cache hit)
+258 http cache is-extglob@https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz 0ms (cache hit)
+259 http cache import-fresh@https://registry.npmjs.org/import-fresh/-/import-fresh-3.3.1.tgz 0ms (cache hit)
+260 http cache flatted@https://registry.npmjs.org/flatted/-/flatted-3.4.4.tgz 0ms (cache hit)
+261 http cache globals@https://registry.npmjs.org/globals/-/globals-15.0.0.tgz 0ms (cache hit)
+262 http cache flat-cache@https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz 0ms (cache hit)
+263 http cache fast-levenshtein@https://registry.npmjs.org/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz 0ms (cache hit)
+264 http cache find-up@https://registry.npmjs.org/find-up/-/find-up-5.0.0.tgz 0ms (cache hit)
+265 http cache glob-parent@https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz 0ms (cache hit)
+266 http cache fdir@https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz 0ms (cache hit)
+267 http cache fast-json-stable-stringify@https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz 0ms (cache hit)
+268 http cache file-entry-cache@https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz 0ms (cache hit)
+269 http cache fast-deep-equal@https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz 0ms (cache hit)
+270 http cache esutils@https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz 0ms (cache hit)
+271 http cache estraverse@https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz 0ms (cache hit)
+272 http cache esrecurse@https://registry.npmjs.org/esrecurse/-/esrecurse-4.3.0.tgz 0ms (cache hit)
+273 http cache eslint-visitor-keys@https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-4.2.1.tgz 0ms (cache hit)
+274 http cache esquery@https://registry.npmjs.org/esquery/-/esquery-1.7.0.tgz 0ms (cache hit)
+275 http cache espree@https://registry.npmjs.org/espree/-/espree-10.4.0.tgz 0ms (cache hit)
+276 http cache eslint-plugin-react-hooks@https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-5.0.0.tgz 0ms (cache hit)
+277 http cache eslint-scope@https://registry.npmjs.org/eslint-scope/-/eslint-scope-8.4.0.tgz 0ms (cache hit)
+278 http cache eslint@https://registry.npmjs.org/eslint/-/eslint-9.39.0.tgz 0ms (cache hit)
+279 http cache detect-libc@https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz 0ms (cache hit)
+280 http cache escape-string-regexp@https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz 0ms (cache hit)
+281 http cache deep-is@https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz 0ms (cache hit)
+282 http cache cookie@https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz 0ms (cache hit)
+283 http cache cross-spawn@https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz 0ms (cache hit)
+284 http cache concat-map@https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz 0ms (cache hit)
+285 http cache brace-expansion@https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.18.tgz 0ms (cache hit)
+286 http cache balanced-match@https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz 0ms (cache hit)
+287 http cache chalk@https://registry.npmjs.org/chalk/-/chalk-4.1.2.tgz 0ms (cache hit)
+288 http cache callsites@https://registry.npmjs.org/callsites/-/callsites-3.1.0.tgz 0ms (cache hit)
+289 http cache argparse@https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz 0ms (cache hit)
+290 http cache ajv@https://registry.npmjs.org/ajv/-/ajv-6.15.0.tgz 0ms (cache hit)
+291 http cache acorn@https://registry.npmjs.org/acorn/-/acorn-8.18.0.tgz 0ms (cache hit)
+292 http cache acorn-jsx@https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz 0ms (cache hit)
+293 silly tarball no local data for @vitejs/plugin-react@https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.1.1.tgz. Extracting by manifest.
+294 silly tarball no local data for @types/json-schema@https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz. Extracting by manifest.
+295 silly tarball no local data for @react-three/fiber@https://registry.npmjs.org/@react-three/fiber/-/fiber-8.18.0.tgz. Extracting by manifest.
+296 http cache scheduler@https://registry.npmjs.org/scheduler/-/scheduler-0.21.0.tgz 0ms (cache hit)
+297 silly tarball no local data for @rolldown/binding-win32-x64-msvc@https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.6.tgz. Extracting by manifest.
+298 silly tarball no local data for @rolldown/pluginutils@https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz. Extracting by manifest.
+299 http cache eslint-visitor-keys@https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz 0ms (cache hit)
+300 silly tarball no local data for @oxc-project/types@https://registry.npmjs.org/@oxc-project/types/-/types-0.147.0.tgz. Extracting by manifest.
+301 http cache globals@https://registry.npmjs.org/globals/-/globals-14.0.0.tgz 0ms (cache hit)
+302 silly tarball no local data for @humanfs/types@https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz. Extracting by manifest.
+303 silly tarball no local data for @humanwhocodes/module-importer@https://registry.npmjs.org/@humanwhocodes/module-importer/-/module-importer-1.0.1.tgz. Extracting by manifest.
+304 silly tarball no local data for @humanwhocodes/retry@https://registry.npmjs.org/@humanwhocodes/retry/-/retry-0.4.3.tgz. Extracting by manifest.
+305 silly tarball no local data for @eslint-community/regexpp@https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.2.tgz. Extracting by manifest.
+306 silly tarball no local data for @eslint-community/eslint-utils@https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.10.1.tgz. Extracting by manifest.
+307 silly tarball no local data for @humanfs/node@https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz. Extracting by manifest.
+308 silly tarball no local data for @eslint/plugin-kit@https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.4.1.tgz. Extracting by manifest.
+309 silly tarball no local data for @humanfs/core@https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz. Extracting by manifest.
+310 silly tarball no local data for @eslint/js@https://registry.npmjs.org/@eslint/js/-/js-9.39.0.tgz. Extracting by manifest.
+311 silly tarball no local data for @eslint/eslintrc@https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.6.tgz. Extracting by manifest.
+312 silly tarball no local data for @eslint/object-schema@https://registry.npmjs.org/@eslint/object-schema/-/object-schema-2.1.7.tgz. Extracting by manifest.
+313 silly tarball no local data for yocto-queue@https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz. Extracting by manifest.
+314 silly tarball no local data for @eslint/core@https://registry.npmjs.org/@eslint/core/-/core-0.17.0.tgz. Extracting by manifest.
+315 silly tarball no local data for word-wrap@https://registry.npmjs.org/word-wrap/-/word-wrap-1.2.5.tgz. Extracting by manifest.
+316 silly tarball no local data for which@https://registry.npmjs.org/which/-/which-2.0.2.tgz. Extracting by manifest.
+317 silly tarball no local data for @eslint/config-helpers@https://registry.npmjs.org/@eslint/config-helpers/-/config-helpers-0.4.2.tgz. Extracting by manifest.
+318 silly tarball no local data for @eslint/config-array@https://registry.npmjs.org/@eslint/config-array/-/config-array-0.21.2.tgz. Extracting by manifest.
+319 silly tarball no local data for type-check@https://registry.npmjs.org/type-check/-/type-check-0.4.0.tgz. Extracting by manifest.
+320 silly tarball no local data for tinyglobby@https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz. Extracting by manifest.
+321 silly tarball no local data for uri-js@https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz. Extracting by manifest.
+322 silly tarball no local data for vite@https://registry.npmjs.org/vite/-/vite-8.2.2.tgz. Extracting by manifest.
+323 silly tarball no local data for shebang-regex@https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz. Extracting by manifest.
+324 silly tarball no local data for strip-json-comments@https://registry.npmjs.org/strip-json-comments/-/strip-json-comments-3.1.1.tgz. Extracting by manifest.
+325 silly tarball no local data for shebang-command@https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz. Extracting by manifest.
+326 silly tarball no local data for supports-color@https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz. Extracting by manifest.
+327 silly tarball no local data for rolldown@https://registry.npmjs.org/rolldown/-/rolldown-1.2.6.tgz. Extracting by manifest.
+328 silly tarball no local data for react-use-measure@https://registry.npmjs.org/react-use-measure/-/react-use-measure-2.1.7.tgz. Extracting by manifest.
+329 silly tarball no local data for resolve-from@https://registry.npmjs.org/resolve-from/-/resolve-from-4.0.0.tgz. Extracting by manifest.
+330 silly tarball no local data for react-router-dom@https://registry.npmjs.org/react-router-dom/-/react-router-dom-7.18.3.tgz. Extracting by manifest.
+331 silly tarball no local data for react-router@https://registry.npmjs.org/react-router/-/react-router-7.18.3.tgz. Extracting by manifest.
+332 silly tarball no local data for protobufjs@https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.6.tgz. Extracting by manifest.
+333 silly tarball no local data for punycode@https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz. Extracting by manifest.
+334 silly tarball no local data for set-cookie-parser@https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-2.7.2.tgz. Extracting by manifest.
+335 silly tarball no local data for postcss@https://registry.npmjs.org/postcss/-/postcss-8.5.26.tgz. Extracting by manifest.
+336 silly tarball no local data for picomatch@https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz. Extracting by manifest.
+337 silly tarball no local data for path-exists@https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz. Extracting by manifest.
+338 silly tarball no local data for prelude-ls@https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz. Extracting by manifest.
+339 silly tarball no local data for p-locate@https://registry.npmjs.org/p-locate/-/p-locate-5.0.0.tgz. Extracting by manifest.
+340 silly tarball no local data for path-key@https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz. Extracting by manifest.
+341 silly tarball no local data for parent-module@https://registry.npmjs.org/parent-module/-/parent-module-1.0.1.tgz. Extracting by manifest.
+342 silly tarball no local data for p-limit@https://registry.npmjs.org/p-limit/-/p-limit-3.1.0.tgz. Extracting by manifest.
+343 silly tarball no local data for optionator@https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz. Extracting by manifest.
+344 silly tarball no local data for natural-compare@https://registry.npmjs.org/natural-compare/-/natural-compare-1.4.0.tgz. Extracting by manifest.
+345 silly tarball no local data for minimatch@https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz. Extracting by manifest.
+346 silly tarball no local data for nanoid@https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz. Extracting by manifest.
+347 silly tarball no local data for lodash.merge@https://registry.npmjs.org/lodash.merge/-/lodash.merge-4.6.2.tgz. Extracting by manifest.
+348 silly tarball no local data for lightningcss-win32-x64-msvc@https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz. Extracting by manifest.
+349 silly tarball no local data for locate-path@https://registry.npmjs.org/locate-path/-/locate-path-6.0.0.tgz. Extracting by manifest.
+350 silly tarball no local data for lightningcss@https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz. Extracting by manifest.
+351 silly tarball no local data for levn@https://registry.npmjs.org/levn/-/levn-0.4.1.tgz. Extracting by manifest.
+352 silly tarball no local data for keyv@https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz. Extracting by manifest.
+353 silly tarball no local data for js-yaml@https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz. Extracting by manifest.
+354 silly tarball no local data for json-buffer@https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz. Extracting by manifest.
+355 silly tarball no local data for json-schema-traverse@https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz. Extracting by manifest.
+356 silly tarball no local data for isexe@https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz. Extracting by manifest.
+357 silly tarball no local data for json-stable-stringify-without-jsonify@https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz. Extracting by manifest.
+358 silly tarball no local data for imurmurhash@https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz. Extracting by manifest.
+359 silly tarball no local data for is-glob@https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz. Extracting by manifest.
+360 silly tarball no local data for has-flag@https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz. Extracting by manifest.
+361 silly tarball no local data for ignore@https://registry.npmjs.org/ignore/-/ignore-5.3.2.tgz. Extracting by manifest.
+362 silly tarball no local data for is-extglob@https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz. Extracting by manifest.
+363 silly tarball no local data for import-fresh@https://registry.npmjs.org/import-fresh/-/import-fresh-3.3.1.tgz. Extracting by manifest.
+364 silly tarball no local data for flatted@https://registry.npmjs.org/flatted/-/flatted-3.4.4.tgz. Extracting by manifest.
+365 silly tarball no local data for globals@https://registry.npmjs.org/globals/-/globals-15.0.0.tgz. Extracting by manifest.
+366 silly tarball no local data for flat-cache@https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz. Extracting by manifest.
+367 silly tarball no local data for fast-levenshtein@https://registry.npmjs.org/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz. Extracting by manifest.
+368 silly tarball no local data for find-up@https://registry.npmjs.org/find-up/-/find-up-5.0.0.tgz. Extracting by manifest.
+369 silly tarball no local data for glob-parent@https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz. Extracting by manifest.
+370 silly tarball no local data for fdir@https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz. Extracting by manifest.
+371 silly tarball no local data for fast-json-stable-stringify@https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz. Extracting by manifest.
+372 silly tarball no local data for file-entry-cache@https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz. Extracting by manifest.
+373 silly tarball no local data for fast-deep-equal@https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz. Extracting by manifest.
+374 silly tarball no local data for esutils@https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz. Extracting by manifest.
+375 silly tarball no local data for estraverse@https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz. Extracting by manifest.
+376 silly tarball no local data for esrecurse@https://registry.npmjs.org/esrecurse/-/esrecurse-4.3.0.tgz. Extracting by manifest.
+377 silly tarball no local data for eslint-visitor-keys@https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-4.2.1.tgz. Extracting by manifest.
+378 silly tarball no local data for esquery@https://registry.npmjs.org/esquery/-/esquery-1.7.0.tgz. Extracting by manifest.
+379 silly tarball no local data for espree@https://registry.npmjs.org/espree/-/espree-10.4.0.tgz. Extracting by manifest.
+380 silly tarball no local data for eslint-plugin-react-hooks@https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-5.0.0.tgz. Extracting by manifest.
+381 silly tarball no local data for eslint-scope@https://registry.npmjs.org/eslint-scope/-/eslint-scope-8.4.0.tgz. Extracting by manifest.
+382 silly tarball no local data for eslint@https://registry.npmjs.org/eslint/-/eslint-9.39.0.tgz. Extracting by manifest.
+383 silly tarball no local data for detect-libc@https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz. Extracting by manifest.
+384 silly tarball no local data for escape-string-regexp@https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz. Extracting by manifest.
+385 silly tarball no local data for deep-is@https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz. Extracting by manifest.
+386 silly tarball no local data for cookie@https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz. Extracting by manifest.
+387 silly tarball no local data for cross-spawn@https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz. Extracting by manifest.
+388 silly tarball no local data for concat-map@https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz. Extracting by manifest.
+389 silly tarball no local data for brace-expansion@https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.18.tgz. Extracting by manifest.
+390 silly tarball no local data for balanced-match@https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz. Extracting by manifest.
+391 silly tarball no local data for chalk@https://registry.npmjs.org/chalk/-/chalk-4.1.2.tgz. Extracting by manifest.
+392 silly tarball no local data for callsites@https://registry.npmjs.org/callsites/-/callsites-3.1.0.tgz. Extracting by manifest.
+393 silly tarball no local data for argparse@https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz. Extracting by manifest.
+394 silly tarball no local data for ajv@https://registry.npmjs.org/ajv/-/ajv-6.15.0.tgz. Extracting by manifest.
+395 silly tarball no local data for acorn@https://registry.npmjs.org/acorn/-/acorn-8.18.0.tgz. Extracting by manifest.
+396 silly tarball no local data for acorn-jsx@https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz. Extracting by manifest.
+397 silly tarball no local data for scheduler@https://registry.npmjs.org/scheduler/-/scheduler-0.21.0.tgz. Extracting by manifest.
+398 silly tarball no local data for eslint-visitor-keys@https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz. Extracting by manifest.
+399 silly tarball no local data for globals@https://registry.npmjs.org/globals/-/globals-14.0.0.tgz. Extracting by manifest.
+400 http fetch GET 200 https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz 593ms (cache miss)
+401 http fetch GET 200 https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz 597ms (cache miss)
+402 http fetch GET 200 https://registry.npmjs.org/@oxc-project/types/-/types-0.147.0.tgz 623ms (cache miss)
+403 http fetch GET 200 https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz 663ms (cache miss)
+404 http fetch GET 200 https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz 702ms (cache miss)
+405 http fetch GET 200 https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz 720ms (cache miss)
+406 http fetch GET 200 https://registry.npmjs.org/word-wrap/-/word-wrap-1.2.5.tgz 728ms (cache miss)
+407 http fetch GET 200 https://registry.npmjs.org/which/-/which-2.0.2.tgz 851ms (cache miss)
+408 http fetch GET 200 https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.1.1.tgz 887ms (cache miss)
+409 http fetch GET 200 https://registry.npmjs.org/@humanwhocodes/module-importer/-/module-importer-1.0.1.tgz 946ms (cache miss)
+410 http fetch GET 200 https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz 955ms (cache miss)
+411 http fetch GET 200 https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz 956ms (cache miss)
+412 http fetch GET 200 https://registry.npmjs.org/strip-json-comments/-/strip-json-comments-3.1.1.tgz 990ms (cache miss)
+413 http fetch GET 200 https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz 999ms (cache miss)
+414 http fetch GET 200 https://registry.npmjs.org/resolve-from/-/resolve-from-4.0.0.tgz 1011ms (cache miss)
+415 http fetch GET 200 https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-2.7.2.tgz 1036ms (cache miss)
+416 http fetch GET 200 https://registry.npmjs.org/p-locate/-/p-locate-5.0.0.tgz 1041ms (cache miss)
+417 http fetch GET 200 https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz 1062ms (cache miss)
+418 http fetch GET 200 https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz 1056ms (cache miss)
+419 http fetch GET 200 https://registry.npmjs.org/@eslint/js/-/js-9.39.0.tgz 1062ms (cache miss)
+420 http fetch GET 200 https://registry.npmjs.org/p-limit/-/p-limit-3.1.0.tgz 1049ms (cache miss)
+421 http fetch GET 200 https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz 1055ms (cache miss)
+422 http fetch GET 200 https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz 1055ms (cache miss)
+423 http fetch GET 200 https://registry.npmjs.org/natural-compare/-/natural-compare-1.4.0.tgz 1055ms (cache miss)
+424 http fetch GET 200 https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz 1065ms (cache miss)
+425 http fetch GET 200 https://registry.npmjs.org/parent-module/-/parent-module-1.0.1.tgz 1063ms (cache miss)
+426 http fetch GET 200 https://registry.npmjs.org/type-check/-/type-check-0.4.0.tgz 1083ms (cache miss)
+427 http fetch GET 200 https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz 1074ms (cache miss)
+428 http fetch GET 200 https://registry.npmjs.org/lodash.merge/-/lodash.merge-4.6.2.tgz 1078ms (cache miss)
+429 http fetch GET 200 https://registry.npmjs.org/locate-path/-/locate-path-6.0.0.tgz 1079ms (cache miss)
+430 http fetch GET 200 https://registry.npmjs.org/@humanwhocodes/retry/-/retry-0.4.3.tgz 1101ms (cache miss)
+431 http fetch GET 200 https://registry.npmjs.org/react-router-dom/-/react-router-dom-7.18.3.tgz 1099ms (cache miss)
+432 http fetch GET 200 https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz 1093ms (cache miss)
+433 http fetch GET 200 https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.4.1.tgz 1119ms (cache miss)
+434 http fetch GET 200 https://registry.npmjs.org/@eslint/core/-/core-0.17.0.tgz 1122ms (cache miss)
+435 http fetch GET 200 https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz 1106ms (cache miss)
+436 http fetch GET 200 https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz 1108ms (cache miss)
+437 http fetch GET 200 https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz 1116ms (cache miss)
+438 http fetch GET 200 https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz 1129ms (cache miss)
+439 http fetch GET 200 https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz 1135ms (cache miss)
+440 http fetch GET 200 https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.10.1.tgz 1188ms (cache miss)
+441 http fetch GET 200 https://registry.npmjs.org/flatted/-/flatted-3.4.4.tgz 1174ms (cache miss)
+442 http fetch GET 200 https://registry.npmjs.org/react-use-measure/-/react-use-measure-2.1.7.tgz 1192ms (cache miss)
+443 http fetch GET 200 https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz 1192ms (cache miss)
+444 http fetch GET 200 https://registry.npmjs.org/@eslint/object-schema/-/object-schema-2.1.7.tgz 1221ms (cache miss)
+445 http fetch GET 200 https://registry.npmjs.org/ignore/-/ignore-5.3.2.tgz 1201ms (cache miss)
+446 http fetch GET 200 https://registry.npmjs.org/import-fresh/-/import-fresh-3.3.1.tgz 1213ms (cache miss)
+447 http fetch GET 200 https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.2.tgz 1240ms (cache miss)
+448 http fetch GET 200 https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz 1233ms (cache miss)
+449 http fetch GET 200 https://registry.npmjs.org/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz 1235ms (cache miss)
+450 http fetch GET 200 https://registry.npmjs.org/find-up/-/find-up-5.0.0.tgz 1237ms (cache miss)
+451 http fetch GET 200 https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz 1254ms (cache miss)
+452 http fetch GET 200 https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz 1265ms (cache miss)
+453 http fetch GET 200 https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz 1281ms (cache miss)
+454 http fetch GET 200 https://registry.npmjs.org/@eslint/config-helpers/-/config-helpers-0.4.2.tgz 1307ms (cache miss)
+455 http fetch GET 200 https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz 1325ms (cache miss)
+456 http fetch GET 200 https://registry.npmjs.org/esrecurse/-/esrecurse-4.3.0.tgz 1325ms (cache miss)
+457 http fetch GET 200 https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz 1341ms (cache miss)
+458 http fetch GET 200 https://registry.npmjs.org/levn/-/levn-0.4.1.tgz 1346ms (cache miss)
+459 http fetch GET 200 https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz 1345ms (cache miss)
+460 http fetch GET 200 https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz 1352ms (cache miss)
+461 http fetch GET 200 https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz 1366ms (cache miss)
+462 http fetch GET 200 https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz 1366ms (cache miss)
+463 http fetch GET 200 https://registry.npmjs.org/cookie/-/cookie-1.1.1.tgz 1373ms (cache miss)
+464 http fetch GET 200 https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz 1385ms (cache miss)
+465 http fetch GET 200 https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz 1394ms (cache miss)
+466 http fetch GET 200 https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz 1390ms (cache miss)
+467 http fetch GET 200 https://registry.npmjs.org/callsites/-/callsites-3.1.0.tgz 1391ms (cache miss)
+468 http fetch GET 200 https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.18.tgz 1397ms (cache miss)
+469 http fetch GET 200 https://registry.npmjs.org/globals/-/globals-15.0.0.tgz 1406ms (cache miss)
+470 http fetch GET 200 https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz 1379ms (cache miss)
+471 http fetch GET 200 https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-5.0.0.tgz 1411ms (cache miss)
+472 http fetch GET 200 https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz 1417ms (cache miss)
+473 http fetch GET 200 https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz 1440ms (cache miss)
+474 http fetch GET 200 https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz 1435ms (cache miss)
+475 http fetch GET 200 https://registry.npmjs.org/chalk/-/chalk-4.1.2.tgz 1433ms (cache miss)
+476 http fetch GET 200 https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz 1441ms (cache miss)
+477 http fetch GET 200 https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-4.2.1.tgz 1450ms (cache miss)
+478 http fetch GET 200 https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz 1463ms (cache miss)
+479 http fetch GET 200 https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz 1455ms (cache miss)
+480 http fetch GET 200 https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz 1459ms (cache miss)
+481 http fetch GET 200 https://registry.npmjs.org/globals/-/globals-14.0.0.tgz 1432ms (cache miss)
+482 http fetch GET 200 https://registry.npmjs.org/espree/-/espree-10.4.0.tgz 1466ms (cache miss)
+483 http fetch GET 200 https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz 1501ms (cache miss)
+484 http fetch GET 200 https://registry.npmjs.org/eslint-scope/-/eslint-scope-8.4.0.tgz 1505ms (cache miss)
+485 http fetch GET 200 https://registry.npmjs.org/@eslint/config-array/-/config-array-0.21.2.tgz 1534ms (cache miss)
+486 http fetch GET 200 https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz 1523ms (cache miss)
+487 http fetch GET 200 https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz 1529ms (cache miss)
+488 http fetch GET 200 https://registry.npmjs.org/acorn/-/acorn-8.18.0.tgz 1524ms (cache miss)
+489 http fetch GET 200 https://registry.npmjs.org/scheduler/-/scheduler-0.21.0.tgz 1512ms (cache miss)
+490 http fetch GET 200 https://registry.npmjs.org/esquery/-/esquery-1.7.0.tgz 1584ms (cache miss)
+491 http fetch GET 200 https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.6.tgz 1694ms (cache miss)
+492 http fetch GET 200 https://registry.npmjs.org/@react-three/fiber/-/fiber-8.18.0.tgz 1722ms (cache miss)
+493 http fetch GET 200 https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz 1838ms (cache miss)
+494 http fetch GET 200 https://registry.npmjs.org/postcss/-/postcss-8.5.26.tgz 1849ms (cache miss)
+495 http fetch GET 200 https://registry.npmjs.org/vite/-/vite-8.2.2.tgz 1906ms (cache miss)
+496 http fetch GET 200 https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz 1927ms (cache miss)
+497 http fetch GET 200 https://registry.npmjs.org/rolldown/-/rolldown-1.2.6.tgz 1932ms (cache miss)
+498 http fetch GET 200 https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz 2016ms (cache miss)
+499 http fetch GET 200 https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.6.tgz 2079ms (cache miss)
+500 http fetch GET 200 https://registry.npmjs.org/ajv/-/ajv-6.15.0.tgz 2067ms (cache miss)
+501 http fetch GET 200 https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.6.tgz 2179ms (cache miss)
+502 http fetch GET 200 https://registry.npmjs.org/react-router/-/react-router-7.18.3.tgz 2281ms (cache miss)
+503 http fetch GET 200 https://registry.npmjs.org/eslint/-/eslint-9.39.0.tgz 2522ms (cache miss)
+504 warn deprecated eslint@9.39.0: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+505 info run protobufjs@7.6.6 postinstall node_modules/protobufjs node scripts/postinstall
+506 info run protobufjs@7.6.6 postinstall { code: 0, signal: null }
+507 silly CHANGE node_modules/@vitejs/plugin-react
+508 silly CHANGE node_modules/@types/json-schema
+509 silly CHANGE node_modules/@react-three/fiber
+510 silly CHANGE node_modules/@react-three/fiber/node_modules/scheduler
+511 silly CHANGE node_modules/@rolldown/pluginutils
+512 silly CHANGE node_modules/@rolldown/binding-win32-x64-msvc
+513 silly CHANGE node_modules/@rolldown/binding-win32-arm64-msvc
+514 silly CHANGE node_modules/@rolldown/binding-openharmony-arm64
+515 silly CHANGE node_modules/@rolldown/binding-linux-x64-musl
+516 silly CHANGE node_modules/@rolldown/binding-linux-x64-gnu
+517 silly CHANGE node_modules/@rolldown/binding-linux-s390x-gnu
+518 silly CHANGE node_modules/@rolldown/binding-linux-ppc64-gnu
+519 silly CHANGE node_modules/@rolldown/binding-linux-arm64-musl
+520 silly CHANGE node_modules/@rolldown/binding-linux-arm64-gnu
+521 silly CHANGE node_modules/@rolldown/binding-linux-arm-gnueabihf
+522 silly CHANGE node_modules/@rolldown/binding-freebsd-x64
+523 silly CHANGE node_modules/@rolldown/binding-darwin-x64
+524 silly CHANGE node_modules/@rolldown/binding-darwin-arm64
+525 silly CHANGE node_modules/@rolldown/binding-android-arm64
+526 silly CHANGE node_modules/@rolldown/binding-android-arm-eabi
+527 silly CHANGE node_modules/@oxc-project/types
+528 silly CHANGE node_modules/@humanwhocodes/retry
+529 silly CHANGE node_modules/@humanwhocodes/module-importer
+530 silly CHANGE node_modules/@humanfs/types
+531 silly CHANGE node_modules/@humanfs/node
+532 silly CHANGE node_modules/@humanfs/core
+533 silly CHANGE node_modules/@eslint-community/regexpp
+534 silly CHANGE node_modules/@eslint-community/eslint-utils
+535 silly CHANGE node_modules/@eslint-community/eslint-utils/node_modules/eslint-visitor-keys
+536 silly CHANGE node_modules/@eslint/plugin-kit
+537 silly CHANGE node_modules/@eslint/object-schema
+538 silly CHANGE node_modules/@eslint/js
+539 silly CHANGE node_modules/@eslint/eslintrc
+540 silly CHANGE node_modules/@eslint/eslintrc/node_modules/globals
+541 silly CHANGE node_modules/@eslint/core
+542 silly CHANGE node_modules/@eslint/config-helpers
+543 silly CHANGE node_modules/@eslint/config-array
+544 silly CHANGE node_modules/yocto-queue
+545 silly CHANGE node_modules/word-wrap
+546 silly CHANGE node_modules/which
+547 silly CHANGE node_modules/vite
+548 silly CHANGE node_modules/uri-js
+549 silly CHANGE node_modules/type-check
+550 silly CHANGE node_modules/tinyglobby
+551 silly CHANGE node_modules/supports-color
+552 silly CHANGE node_modules/strip-json-comments
+553 silly CHANGE node_modules/shebang-regex
+554 silly CHANGE node_modules/shebang-command
+555 silly CHANGE node_modules/set-cookie-parser
+556 silly CHANGE node_modules/rolldown
+557 silly CHANGE node_modules/resolve-from
+558 silly CHANGE node_modules/react-use-measure
+559 silly CHANGE node_modules/react-router-dom
+560 silly CHANGE node_modules/react-router
+561 silly CHANGE node_modules/punycode
+562 silly CHANGE node_modules/protobufjs
+563 silly CHANGE node_modules/prelude-ls
+564 silly CHANGE node_modules/postcss
+565 silly CHANGE node_modules/picomatch
+566 silly CHANGE node_modules/path-key
+567 silly CHANGE node_modules/path-exists
+568 silly CHANGE node_modules/parent-module
+569 silly CHANGE node_modules/p-locate
+570 silly CHANGE node_modules/p-limit
+571 silly CHANGE node_modules/optionator
+572 silly CHANGE node_modules/natural-compare
+573 silly CHANGE node_modules/nanoid
+574 silly CHANGE node_modules/minimatch
+575 silly CHANGE node_modules/lodash.merge
+576 silly CHANGE node_modules/locate-path
+577 silly CHANGE node_modules/lightningcss-win32-x64-msvc
+578 silly CHANGE node_modules/lightningcss-win32-arm64-msvc
+579 silly CHANGE node_modules/lightningcss-linux-x64-musl
+580 silly CHANGE node_modules/lightningcss-linux-x64-gnu
+581 silly CHANGE node_modules/lightningcss-linux-arm64-musl
+582 silly CHANGE node_modules/lightningcss-linux-arm64-gnu
+583 silly CHANGE node_modules/lightningcss-linux-arm-gnueabihf
+584 silly CHANGE node_modules/lightningcss-freebsd-x64
+585 silly CHANGE node_modules/lightningcss-darwin-x64
+586 silly CHANGE node_modules/lightningcss-darwin-arm64
+587 silly CHANGE node_modules/lightningcss-android-arm64
+588 silly CHANGE node_modules/lightningcss
+589 silly CHANGE node_modules/levn
+590 silly CHANGE node_modules/json-schema-traverse
+591 silly CHANGE node_modules/keyv
+592 silly CHANGE node_modules/json-stable-stringify-without-jsonify
+593 silly CHANGE node_modules/json-buffer
+594 silly CHANGE node_modules/js-yaml
+595 silly CHANGE node_modules/isexe
+596 silly CHANGE node_modules/is-glob
+597 silly CHANGE node_modules/is-extglob
+598 silly CHANGE node_modules/imurmurhash
+599 silly CHANGE node_modules/import-fresh
+600 silly CHANGE node_modules/ignore
+601 silly CHANGE node_modules/has-flag
+602 silly CHANGE node_modules/globals
+603 silly CHANGE node_modules/glob-parent
+604 silly CHANGE node_modules/fsevents
+605 silly CHANGE node_modules/flat-cache
+606 silly CHANGE node_modules/flatted
+607 silly CHANGE node_modules/find-up
+608 silly CHANGE node_modules/file-entry-cache
+609 silly CHANGE node_modules/fdir
+610 silly CHANGE node_modules/fast-levenshtein
+611 silly CHANGE node_modules/fast-json-stable-stringify
+612 silly CHANGE node_modules/fast-deep-equal
+613 silly CHANGE node_modules/esutils
+614 silly CHANGE node_modules/estraverse
+615 silly CHANGE node_modules/esrecurse
+616 silly CHANGE node_modules/esquery
+617 silly CHANGE node_modules/espree
+618 silly CHANGE node_modules/eslint-visitor-keys
+619 silly CHANGE node_modules/eslint-scope
+620 silly CHANGE node_modules/eslint-plugin-react-hooks
+621 silly CHANGE node_modules/eslint
+622 silly CHANGE node_modules/escape-string-regexp
+623 silly CHANGE node_modules/detect-libc
+624 silly CHANGE node_modules/deep-is
+625 silly CHANGE node_modules/cross-spawn
+626 silly CHANGE node_modules/cookie
+627 silly CHANGE node_modules/concat-map
+628 silly CHANGE node_modules/chalk
+629 silly CHANGE node_modules/callsites
+630 silly CHANGE node_modules/brace-expansion
+631 silly CHANGE node_modules/balanced-match
+632 silly CHANGE node_modules/argparse
+633 silly CHANGE node_modules/ajv
+634 silly CHANGE node_modules/acorn-jsx
+635 silly CHANGE node_modules/acorn
+636 verbose cwd D:\CodeProject\NCKH\frontend
+637 verbose os Windows_NT 10.0.26200
+638 verbose node v22.22.2
+639 verbose npm  v10.9.7
+640 verbose exit 0
+641 info ok

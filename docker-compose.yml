@@ -8,31 +8,40 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/.env:/app/.env
+      - ./backend/firebase-service-account.json:/app/firebase-service-account.json:ro
       # Ánh xạ thư mục data để không bị mất dữ liệu VectorDB (Chroma) và file tải lên
       - ./backend/data:/app/data
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
     environment:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
+      FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    
-    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU BẠN CHẠY BẰNG GPU (NVIDIA) 
-    # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+
+    # OCR EasyOCR chạy trong service backend, nên backend cần được cấp GPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
     depends_on:
       mongodb:
         condition: service_healthy
     restart: unless-stopped
+    logging: &service-logging
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mongodb:
     image: mongo:7.0
@@ -49,6 +58,7 @@ services:
       retries: 20
       start_period: 10s
     restart: unless-stopped
+    logging: *service-logging
 
   worker:
     build:
@@ -57,19 +67,32 @@ services:
     container_name: nckh-worker
     volumes:
       - ./backend/.env:/app/.env
+      - ./backend/firebase-service-account.json:/app/firebase-service-account.json:ro
       - ./backend/data:/app/data
     command: ["python", "-m", "workers.run"]
     environment:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
+      FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       mongodb:
         condition: service_healthy
     restart: unless-stopped
+    logging: *service-logging
 
   frontend:
     build:
@@ -84,6 +107,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    logging: *service-logging
 
 volumes:
   mongodb_data:

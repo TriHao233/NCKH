@@ -105,6 +105,7 @@ class GeneratedQuestion(BaseModel):
     difficulty: Optional[str] = None
     source_context: str
     source_keywords: List[str] = Field(default_factory=list)
+    validation_warnings: List[str] = Field(default_factory=list)
     clo_codes: List[str] = Field(default_factory=list)
     false_mutation: Optional[dict[str, Any]] = None
     question_id: Optional[str] = None
@@ -131,6 +132,7 @@ class GenerationPlanSummary(BaseModel):
     requested_count: int
     parsed_count: int = 0
     valid_count: int = 0
+    retry_attempt_count: int = 0
     duplicate_count: int = 0
     exact_duplicate_count: int = 0
     near_duplicate_count: int = 0

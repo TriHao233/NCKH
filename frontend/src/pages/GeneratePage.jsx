@@ -221,6 +221,10 @@ function mergeUpdatedDraft(draft, updatedQuestion) {
     choices: formatChoices(rawOptions, correctAnswer),
     explanation: questionData.explanation ?? draft.explanation,
     sourceContext: questionData.model_source_context ?? draft.sourceContext,
+    validationWarnings: questionData.validation_warnings
+      || questionData.post_processing?.warnings
+      || draft.validationWarnings
+      || [],
   };
 }
 
@@ -302,6 +306,16 @@ function GeneratePage() {
   const generationShortfalls = generationSummary.filter((item) => (
     item.skipped_count > 0 || item.duplicate_count > 0 || (item.warnings || []).length > 0
   ));
+  const generationAcceptedNothing = (
+    phase === 'completed'
+    &&
+    generationSummary.length > 0
+    && drafts.length === 0
+    && generationSummary.every((item) => (item.saved_count || 0) === 0)
+  );
+  const generationStatusClass = phase === 'completed'
+    ? (generationAcceptedNothing ? 'warning' : 'done')
+    : 'running';
   const submittableDraftCount = drafts.filter(canSubmitDraft).length;
   const serverMetrics = generationInfo?.metrics?.server || {};
   const hasServerMetrics = Number.isFinite(serverMetrics.processing_ms);
@@ -932,10 +946,22 @@ function GeneratePage() {
         if (status.status === 'queued') setPhase('generate_queued');
         if (status.status === 'processing') setPhase('generate_processing');
         const progress = status.progress;
+        if (Array.isArray(progress?.data)) {
+          setDrafts(mapGeneratedQuestions(progress.data));
+          setDraftPage(0);
+        }
+        if (Array.isArray(progress?.summary)) {
+          setGenerationSummary(progress.summary);
+        }
         const progressLabel = progress?.total
           ? ` (${progress.completed || 0}/${progress.total})`
           : '';
-        setStatusDetail(`Generate: ${progress?.stage || status.status}${progressLabel}`);
+        const acceptedLabel = Number.isFinite(progress?.generated_questions)
+          ? ` · đã có ${progress.generated_questions} câu hợp lệ`
+          : '';
+        setStatusDetail(
+          `Đang sinh câu hỏi${progressLabel}${acceptedLabel}`,
+        );
       },
     });
 
@@ -960,7 +986,12 @@ function GeneratePage() {
       model: genResult.model || selectedModel || null,
     });
     setPhase('completed');
-    setStatusDetail(`Đã sinh ${(genResult.data || []).length}/${totalQuestions} câu hỏi`);
+    const generatedCount = (genResult.data || []).length;
+    setStatusDetail(
+      generatedCount > 0
+        ? `Đã sinh ${generatedCount}/${totalQuestions} câu hỏi`
+        : `Không có câu hỏi hợp lệ (${generatedCount}/${totalQuestions})`,
+    );
   };
 
   const runPipeline = async ({ fromGenerateOnly = false } = {}) => {
@@ -1110,7 +1141,7 @@ function GeneratePage() {
             <h3 className="gen-card-title">Cấu hình sinh câu hỏi</h3>
 
             {phase !== 'idle' && phase !== 'failed' && (
-              <div className={`gen-status gen-status--${phase === 'completed' ? 'done' : 'running'}`}>
+              <div className={`gen-status gen-status--${generationStatusClass}`}>
                 {phase !== 'completed' && <span className="gen-status-spinner" aria-hidden="true" />}
                 <div className="gen-status-text">
                   <strong>{PHASE_LABELS[phase] || phase}</strong>
@@ -1520,7 +1551,7 @@ function GeneratePage() {
                   <button
                     type="button"
                     className="mini-submit-btn"
-                    disabled={bulkSubmittingDrafts || Boolean(editingDraftId)}
+                    disabled={isBusy || bulkSubmittingDrafts || Boolean(editingDraftId)}
                     onClick={handleSubmitAllDraftsForReview}
                   >
                     {bulkSubmittingDrafts ? 'Đang gửi...' : `Gửi ${submittableDraftCount} câu`}
@@ -1554,16 +1585,30 @@ function GeneratePage() {
                         ].filter(Boolean).join(' · ')}
                       </small>
                     )}
-                    {(item.warnings || []).length > 0 && <small>{item.warnings[0]}</small>}
+                    {(item.warnings || []).slice(0, 4).map((warning) => (
+                      <small key={warning}>{warning}</small>
+                    ))}
+                    {(item.rejection_reasons || []).slice(0, 3).map((reason, index) => (
+                      <small key={`${reason.code || 'reason'}-${index}`}>
+                        {reason.candidate_index ? `Câu ${reason.candidate_index}: ` : ''}
+                        {reason.message}
+                      </small>
+                    ))}
                   </div>
                 ))}
               </div>
             )}
 
             {drafts.length === 0 ? (
-              <div className="gen-preview-empty">
-                <p>Chưa có câu hỏi nháp.</p>
-                <span>Tải PDF/DOCX, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.</span>
+              <div className={`gen-preview-empty ${generationAcceptedNothing ? 'gen-preview-empty--warning' : ''}`}>
+                <p>{generationAcceptedNothing ? 'Không có câu hỏi hợp lệ.' : 'Chưa có câu hỏi nháp.'}</p>
+                <span>
+                  {generationAcceptedNothing
+                    ? 'Các ứng viên AI sinh ra đã bị loại ở bước sàng lọc sau sinh. Xem lý do ở phần cảnh báo phía trên.'
+                    : isBusy
+                      ? 'Đang chờ câu hỏi hợp lệ đầu tiên...'
+                    : 'Tải PDF/DOCX, cấu hình và bấm sinh câu hỏi để xem kết quả tại đây.'}
+                </span>
               </div>
             ) : (
               <div className="draft-list">
@@ -1573,7 +1618,8 @@ function GeneratePage() {
                   const isRemoving = removingDraftId === question.id;
                   const isSubmitting = submittingDraftId === question.id;
                   const actionBusy = Boolean(
-                    savingDraftId
+                    isBusy
+                    || savingDraftId
                     || removingDraftId
                     || editingDraftId
                     || submittingDraftId
@@ -1595,6 +1641,9 @@ function GeneratePage() {
                         <span className="draft-status" title={question.questionCode}>
                           {shortCode(question.questionCode)} · Phiên bản {question.currentVersion || 1} · {reviewStatusLabel}
                         </span>
+                        {question.validationWarnings?.length ? (
+                          <span className="draft-warning-pill">Cần xem lại</span>
+                        ) : null}
                       </div>
 
                       {isEditing ? (
@@ -1630,6 +1679,17 @@ function GeneratePage() {
                             <h4 className="draft-section-label">Nội dung</h4>
                             <p className="draft-item-text">{question.text}</p>
                           </section>
+
+                          {question.validationWarnings?.length ? (
+                            <section className="draft-section draft-section--warning">
+                              <h4 className="draft-section-label">Cảnh báo</h4>
+                              <ul className="draft-warning-list">
+                                {question.validationWarnings.map((warning) => (
+                                  <li key={warning}>{warning}</li>
+                                ))}
+                              </ul>
+                            </section>
+                          ) : null}
 
                           <section className="draft-section">
                             <h4 className="draft-section-label">Đáp án</h4>

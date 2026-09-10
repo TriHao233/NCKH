@@ -12,6 +12,8 @@ from modules.generation.schemas import GeneratedQuestion, GenerationRejection
 POSTPROCESSOR_VERSION = "question-post-v2"
 MAX_TRUE_FALSE_LENGTH = 320
 MAX_SOURCE_KEYWORDS = 6
+MIN_SOURCE_CONTEXT_CHARS = 24
+MIN_SOURCE_CONTEXT_WORDS = 4
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,30 @@ def contains_exact_text(container: str, expected: str) -> bool:
     compact_expected = re.sub(r"[\W_]+", "", normalized_expected, flags=re.UNICODE)
     compact_container = re.sub(r"[\W_]+", "", normalized_container, flags=re.UNICODE)
     return len(compact_expected) >= 12 and compact_expected in compact_container
+
+
+def _context_evidence_sections(context_text: str) -> list[str]:
+    """Extract only the RAG payload after each `Nội dung:` label."""
+    return [
+        match.strip()
+        for match in re.findall(
+            r"(?:^|\n)Nội dung:\s*(.*?)(?=\n\s*---\s*(?:\n|$)|\Z)",
+            str(context_text or ""),
+            flags=re.DOTALL,
+        )
+        if match.strip()
+    ]
+
+
+def _is_substantive_source_context(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    without_heading_marker = re.sub(r"^#+\s*", "", text).strip()
+    if "\n" not in text and text.lstrip().startswith("#"):
+        return False
+    words = re.findall(r"\w+", without_heading_marker, flags=re.UNICODE)
+    return len(without_heading_marker) >= MIN_SOURCE_CONTEXT_CHARS and len(words) >= MIN_SOURCE_CONTEXT_WORDS
 
 
 def question_fingerprint(question: str) -> str:
@@ -101,6 +127,7 @@ def filter_duplicate_questions(
     seen_question_fingerprints: set[str],
     *,
     limit: int,
+    keep_duplicates: bool = False,
 ) -> tuple[list[GeneratedQuestion], DuplicateStats]:
     kept: list[GeneratedQuestion] = []
     exact_count = 0
@@ -110,6 +137,13 @@ def filter_duplicate_questions(
         fingerprint = question_fingerprint(question.question)
         if not fingerprint or fingerprint in seen_question_fingerprints:
             exact_count += 1
+            if keep_duplicates:
+                question.validation_warnings.append(
+                    "Câu này có nội dung trùng với câu đã có hoặc câu vừa sinh."
+                )
+                kept.append(question)
+                if len(kept) >= limit:
+                    break
             continue
         if any(
             _near_duplicate(fingerprint, seen)
@@ -117,6 +151,13 @@ def filter_duplicate_questions(
             if _plausible_near_duplicate(fingerprint, seen)
         ):
             near_count += 1
+            if keep_duplicates:
+                question.validation_warnings.append(
+                    "Câu này gần giống một câu đã có hoặc câu vừa sinh."
+                )
+                kept.append(question)
+                if len(kept) >= limit:
+                    break
             continue
         seen_question_fingerprints.add(fingerprint)
         kept.append(question)
@@ -165,14 +206,25 @@ def validate_source_grounding(
             )
         )
         return errors
-    if not contains_exact_text(context_text, source_context):
+    evidence_sections = _context_evidence_sections(context_text)
+    if not any(contains_exact_text(section, source_context) for section in evidence_sections):
         errors.append(
             _rejection(
-                "SOURCE_CONTEXT_NOT_FOUND",
-                "source_context không phải trích dẫn nguyên văn trong context snapshot.",
+                "SOURCE_CONTEXT_NOT_IN_CONTENT",
+                "source_context phải là trích dẫn nguyên văn từ phần Nội dung của RAG, không phải mục lục.",
                 item=item,
                 candidate_index=candidate_index,
                 repairable=False,
+            )
+        )
+    if not _is_substantive_source_context(source_context):
+        errors.append(
+            _rejection(
+                "SOURCE_CONTEXT_TOO_SHORT",
+                "source_context phải là một đoạn nội dung cụ thể, không được chỉ là tiêu đề chương/mục.",
+                item=item,
+                candidate_index=candidate_index,
+                repairable=True,
             )
         )
 

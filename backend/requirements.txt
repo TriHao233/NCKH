@@ -18,6 +18,9 @@ firebase-admin
 # =========================
 sentence-transformers==3.4.1
 chromadb==0.5.5
+# ChromaDB 0.5.x calls the PostHog 2.x telemetry API (distinct_id, event, properties).
+# PostHog 3+ changed that signature and makes every telemetry attempt log an error.
+posthog>=2.4.0,<3.0.0
 
 # =========================
 # OCR

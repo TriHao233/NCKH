@@ -84,6 +84,32 @@ def _content_mode(plan_item: QuestionPlanItem, context_text: str, instruction: s
     signal_count = sum(bool(re.search(pattern, sample, flags=re.IGNORECASE | re.MULTILINE)) for pattern in CODE_SIGNAL_PATTERNS)
     return "code" if signal_count >= 2 else "general"
 
+
+def _context_sections(context_text: str) -> list[str]:
+    return [
+        section.strip()
+        for section in re.split(r"\n\s*---\s*\n", str(context_text or ""))
+        if section.strip()
+    ]
+
+
+def _focused_context_snapshot(context_snapshot: dict, question_offset: int) -> tuple[dict, str]:
+    sections = _context_sections(context_snapshot.get("context_text") or "")
+    results = context_snapshot.get("results") or []
+    if len(sections) <= 1:
+        return context_snapshot, "Use the available CONTEXT, but choose a different tested idea from any prior question."
+
+    section_index = question_offset % len(sections)
+    focused_snapshot = {
+        **context_snapshot,
+        "context_text": sections[section_index],
+        "results": [results[section_index]] if section_index < len(results) else results,
+    }
+    return (
+        focused_snapshot,
+        f"Use primarily context section {section_index + 1} of {len(sections)} for this question.",
+    )
+
 async def generate_questions_rag(
     req: QuestionGenerateRequest,
     requested_by_user_id=None,
@@ -126,8 +152,19 @@ async def generate_questions_rag(
         if (fingerprint := question_fingerprint(question))
     }
 
+    total_questions = sum(item.num_questions for item in plan)
+    completed_questions = 0
     if progress_callback:
-        await progress_callback({"stage": "generating", "completed": 0, "total": len(plan)})
+        await progress_callback(
+            {
+                "stage": "generating",
+                "completed": 0,
+                "total": total_questions,
+                "generated_questions": 0,
+                "data": [],
+                "summary": [],
+            }
+        )
 
     for plan_index, plan_item in enumerate(plan, start=1):
         content_mode = _content_mode(plan_item, context_text, req.instruction)
@@ -147,38 +184,79 @@ async def generate_questions_rag(
             model_snapshot=selected_snapshot,
             fallback_model_snapshot=fallback_model_snapshot,
         )
-        questions, summary = await _generate_questions_for_plan_item(
-            req,
-            plan_item,
-            plan_index=plan_index,
-            avoid_questions=[
-                *existing_questions[:12],
-                *(question.question for question in generated_questions),
-            ],
-            seen_question_fingerprints=seen_question_fingerprints,
-            context_snapshot=context_snapshot,
-            context_text=context_text,
-            prompt_builder=prompt_builder,
-            llm=llm,
-            model_snapshot=selected_snapshot,
-            model_provider=selected_provider,
-            content_mode=content_mode,
-            learning_outcomes=learning_outcomes,
-            requested_by_user_id=requested_by_user_id,
-        )
-        for question in questions:
-            seen_question_fingerprints.add(question_fingerprint(question.question))
-        generated_questions.extend(questions)
-        summaries.append(summary)
-        if progress_callback:
-            await progress_callback(
-                {
-                    "stage": "generating",
-                    "completed": plan_index,
-                    "total": len(plan),
-                    "generated_questions": len(generated_questions),
-                }
+        item_summaries: list[GenerationPlanSummary] = []
+        # Một phản hồi ngắn cho mỗi câu giúp tránh mất cả nhóm khi JSON bị cắt,
+        # đồng thời cho phép lưu và hiển thị từng câu ngay khi hoàn tất.
+        for _ in range(plan_item.num_questions):
+            focused_snapshot, focus_directive = _focused_context_snapshot(
+                context_snapshot,
+                completed_questions,
             )
+            single_question_item = plan_item.model_copy(update={"num_questions": 1})
+            questions, batch_summary = await _generate_questions_for_plan_item(
+                req,
+                single_question_item,
+                plan_index=plan_index,
+                avoid_questions=[
+                    *existing_questions[:12],
+                    *(question.question for question in generated_questions),
+                ],
+                avoid_source_contexts=[
+                    question.source_context for question in generated_questions
+                ],
+                seen_question_fingerprints=seen_question_fingerprints,
+                context_snapshot=focused_snapshot,
+                context_text=focused_snapshot["context_text"],
+                prompt_builder=prompt_builder,
+                llm=llm,
+                model_snapshot=selected_snapshot,
+                model_provider=selected_provider,
+                content_mode=content_mode,
+                focus_directive=focus_directive,
+                learning_outcomes=learning_outcomes,
+                requested_by_user_id=requested_by_user_id,
+            )
+            for question in questions:
+                seen_question_fingerprints.add(question_fingerprint(question.question))
+            generated_questions.extend(questions)
+            item_summaries.append(batch_summary)
+            completed_questions += 1
+
+            current_summary = _aggregate_plan_summaries(
+                item_summaries,
+                plan_index=plan_index,
+                question_type=plan_item.question_type.value,
+                bloom_level=(plan_item.bloom_level or req.bloom_level).value,
+                requested_count=plan_item.num_questions,
+                model_provider=selected_provider,
+                content_mode=content_mode,
+            )
+            if progress_callback:
+                await progress_callback(
+                    {
+                        "stage": "generating",
+                        "completed": completed_questions,
+                        "total": total_questions,
+                        "generated_questions": len(generated_questions),
+                        "data": [question.model_dump() for question in generated_questions],
+                        "summary": [
+                            *(item.model_dump() for item in summaries),
+                            current_summary.model_dump(),
+                        ],
+                    }
+                )
+
+        summaries.append(
+            _aggregate_plan_summaries(
+                item_summaries,
+                plan_index=plan_index,
+                question_type=plan_item.question_type.value,
+                bloom_level=(plan_item.bloom_level or req.bloom_level).value,
+                requested_count=plan_item.num_questions,
+                model_provider=selected_provider,
+                content_mode=content_mode,
+            )
+        )
 
     return QuestionGenerateResponse(
         status="success",
@@ -193,6 +271,7 @@ async def _generate_questions_for_plan_item(
     *,
     plan_index: int,
     avoid_questions: list[str],
+    avoid_source_contexts: list[str] | None = None,
     seen_question_fingerprints: set[str],
     context_snapshot: dict,
     context_text: str,
@@ -201,6 +280,7 @@ async def _generate_questions_for_plan_item(
     model_snapshot: dict | None,
     model_provider: str,
     content_mode: str,
+    focus_directive: str | None = None,
     learning_outcomes: list[dict],
     requested_by_user_id=None,
 ) -> tuple[List[GeneratedQuestion], GenerationPlanSummary]:
@@ -214,8 +294,10 @@ async def _generate_questions_for_plan_item(
         num_questions=plan_item.num_questions,
         instruction=req.instruction,
         avoid_questions=avoid_questions,
+        avoid_source_contexts=avoid_source_contexts or [],
         learning_outcomes=learning_outcomes,
         content_mode=content_mode,
+        focus_directive=focus_directive,
     )
     request_snapshot = req.model_dump(mode="json")
     request_snapshot["active_plan_item"] = {
@@ -251,23 +333,10 @@ async def _generate_questions_for_plan_item(
     # 4. Làm sạch và Parse JSON
     clean_json_str = _clean_llm_output(raw_response)
     repair_attempt_count = 0
+    retry_attempt_count = 0
 
     try:
-        try:
-            parsed_data = json.loads(clean_json_str)
-        except json.JSONDecodeError as initial_parse_error:
-            repair_attempt_count += 1
-            retry_prompt = _build_retry_prompt(
-                original_prompt=full_prompt,
-                question_type=plan_item.question_type.value,
-                bloom_level=bloom_level.value,
-                missing_count=plan_item.num_questions,
-                validation_errors=[f"Invalid JSON response: {initial_parse_error.msg}"],
-                avoid_questions=avoid_questions,
-            )
-            retry_raw_response = await llm.generate_text(retry_prompt)
-            raw_response = f"{raw_response}\n\n--- JSON REPAIR ---\n{retry_raw_response}"
-            parsed_data = json.loads(_clean_llm_output(retry_raw_response))
+        parsed_data = json.loads(clean_json_str)
         questions_list = _extract_questions_list(parsed_data)
         parsed_count = len(questions_list)
 
@@ -286,8 +355,14 @@ async def _generate_questions_for_plan_item(
         )
         if len(deduped_data) < plan_item.num_questions:
             missing_count = plan_item.num_questions - len(deduped_data)
+            fallback_candidates: list[GeneratedQuestion] = [
+                question
+                for question in validated_data
+                if question not in deduped_data
+            ]
             for retry_index in range(1, MAX_FORMAT_RETRY_ATTEMPTS + 1):
                 repair_attempt_count += 1
+                retry_attempt_count += 1
                 retry_started_at = time.perf_counter()
                 retry_prompt = _build_retry_prompt(
                     original_prompt=full_prompt,
@@ -316,6 +391,7 @@ async def _generate_questions_for_plan_item(
                         context_text=context_text,
                     )
                     postprocessed_count += len(retry_validated)
+                    fallback_candidates.extend(retry_validated)
                     retry_deduped, retry_duplicate_stats = filter_duplicate_questions(
                         retry_validated,
                         seen_question_fingerprints,
@@ -343,6 +419,14 @@ async def _generate_questions_for_plan_item(
                         )
                     )
                     break
+            if missing_count > 0 and fallback_candidates:
+                fallback_deduped, _fallback_duplicate_stats = filter_duplicate_questions(
+                    fallback_candidates,
+                    seen_question_fingerprints,
+                    limit=missing_count,
+                    keep_duplicates=True,
+                )
+                deduped_data.extend(fallback_deduped)
 
         # 5. Lưu vào DB
         saved_data = save_generated_questions(
@@ -364,6 +448,7 @@ async def _generate_questions_for_plan_item(
             requested_count=plan_item.num_questions,
             parsed_count=parsed_count,
             valid_count=postprocessed_count,
+            retry_attempt_count=retry_attempt_count,
             duplicate_stats=duplicate_stats,
             saved_count=len(saved_data),
             validation_errors=validation_errors,
@@ -383,6 +468,7 @@ async def _generate_questions_for_plan_item(
                 "validated_count": postprocessed_count,
                 "accepted_count": len(saved_data),
                 "repair_attempt_count": repair_attempt_count,
+                "retry_attempt_count": retry_attempt_count,
                 "duplicate_count": duplicate_stats.total,
                 "exact_duplicate_count": duplicate_stats.exact,
                 "near_duplicate_count": duplicate_stats.near,
@@ -392,17 +478,49 @@ async def _generate_questions_for_plan_item(
 
         return [GeneratedQuestion(**question) for question in saved_data], summary
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         logger.error(f"Parse JSON lỗi: {clean_json_str}")
+        validation_errors = [
+            GenerationRejection(
+                code="INVALID_JSON_RESPONSE",
+                message=f"LLM trả về JSON không hoàn chỉnh: {exc.msg}.",
+                repairable=False,
+            )
+        ]
         finish_generation_run(
             generation_run_id,
             status="FAILED",
             raw_model_response=raw_response,
             latency_ms=int((time.perf_counter() - started_at) * 1000),
             error_message="Invalid JSON response",
+            validation_errors=[item.model_dump() for item in validation_errors],
+            post_processing={
+                "validator_version": POSTPROCESSOR_VERSION,
+                "parsed_count": 0,
+                "validated_count": 0,
+                "accepted_count": 0,
+                "repair_attempt_count": repair_attempt_count,
+                "retry_attempt_count": retry_attempt_count,
+                "duplicate_count": 0,
+                "exact_duplicate_count": 0,
+                "near_duplicate_count": 0,
+            },
             model_execution=get_llm_execution_snapshot(llm),
         )
-        raise Exception("Định dạng phản hồi từ LLM không hợp lệ.")
+        return [], _build_plan_summary(
+            plan_index=plan_index,
+            question_type=plan_item.question_type.value,
+            bloom_level=bloom_level.value,
+            requested_count=plan_item.num_questions,
+            parsed_count=0,
+            valid_count=0,
+            retry_attempt_count=0,
+            duplicate_stats=DuplicateStats(exact=0, near=0),
+            saved_count=0,
+            validation_errors=validation_errors,
+            model_provider=model_provider,
+            content_mode=content_mode,
+        )
     except Exception as exc:
         finish_generation_run(
             generation_run_id,
@@ -483,6 +601,40 @@ Return ONLY the same raw JSON object shape:
 """
 
 
+def _aggregate_plan_summaries(
+    summaries: list[GenerationPlanSummary],
+    *,
+    plan_index: int,
+    question_type: str,
+    bloom_level: str,
+    requested_count: int,
+    model_provider: str,
+    content_mode: str,
+) -> GenerationPlanSummary:
+    validation_errors = [
+        reason
+        for summary in summaries
+        for reason in summary.rejection_reasons
+    ]
+    return _build_plan_summary(
+        plan_index=plan_index,
+        question_type=question_type,
+        bloom_level=bloom_level,
+        requested_count=requested_count,
+        parsed_count=sum(summary.parsed_count for summary in summaries),
+        valid_count=sum(summary.valid_count for summary in summaries),
+        retry_attempt_count=sum(summary.retry_attempt_count for summary in summaries),
+        duplicate_stats=DuplicateStats(
+            exact=sum(summary.exact_duplicate_count for summary in summaries),
+            near=sum(summary.near_duplicate_count for summary in summaries),
+        ),
+        saved_count=sum(summary.saved_count for summary in summaries),
+        validation_errors=validation_errors,
+        model_provider=model_provider,
+        content_mode=content_mode,
+    )
+
+
 def _build_plan_summary(
     *,
     plan_index: int,
@@ -491,6 +643,7 @@ def _build_plan_summary(
     requested_count: int,
     parsed_count: int,
     valid_count: int,
+    retry_attempt_count: int,
     duplicate_stats: DuplicateStats,
     saved_count: int,
     validation_errors: list[GenerationRejection],
@@ -507,9 +660,11 @@ def _build_plan_summary(
         warnings.append(f"Ghi nhận {invalid_count} lỗi trong bước sàng lọc sau sinh.")
     if duplicate_stats.total:
         warnings.append(
-            f"Bỏ {duplicate_stats.total} câu trùng nội dung "
-            f"({duplicate_stats.exact} trùng tuyệt đối, {duplicate_stats.near} gần trùng)."
+            f"Ghi nhận {duplicate_stats.total} câu nghi trùng nội dung qua các lượt sinh "
+            f"({duplicate_stats.exact} trùng tuyệt đối, {duplicate_stats.near} gần trùng); đã giữ lại để người tạo tự duyệt."
         )
+    if retry_attempt_count:
+        warnings.append(f"Đã thử sinh bù {retry_attempt_count} lượt để đủ số câu yêu cầu.")
     if skipped_count:
         warnings.append(f"Lưu thiếu {skipped_count} câu so với yêu cầu.")
     warnings.extend(item.message for item in validation_errors[:3])
@@ -523,6 +678,7 @@ def _build_plan_summary(
         requested_count=requested_count,
         parsed_count=parsed_count,
         valid_count=valid_count,
+        retry_attempt_count=retry_attempt_count,
         duplicate_count=duplicate_stats.total,
         exact_duplicate_count=duplicate_stats.exact,
         near_duplicate_count=duplicate_stats.near,

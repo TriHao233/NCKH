@@ -77,6 +77,18 @@ class GenerationPostProcessingTests(unittest.TestCase):
         )
         self.assertIn("KEYWORD_NOT_IN_EVIDENCE", {error.code for error in errors})
 
+    def test_grounding_rejects_heading_as_evidence(self):
+        errors = validate_source_grounding(
+            candidate(source_context="Mục lục: [Ngăn xếp]"),
+            context_text=CONTEXT,
+            question_type="dung_sai",
+            candidate_index=1,
+        )
+
+        codes = {error.code for error in errors}
+        self.assertIn("SOURCE_CONTEXT_NOT_IN_CONTENT", codes)
+        self.assertIn("SOURCE_CONTEXT_TOO_SHORT", codes)
+
     def test_grounding_rejects_non_string_keyword(self):
         errors = validate_source_grounding(
             candidate(source_keywords=[123]),
@@ -150,6 +162,23 @@ class GenerationPostProcessingTests(unittest.TestCase):
         self.assertEqual(stats.exact, 1)
         self.assertEqual(stats.near, 1)
         self.assertIn(question_fingerprint(first.question), seen)
+
+    def test_duplicate_filter_can_keep_duplicates_with_warnings(self):
+        first = GeneratedQuestion(**candidate())
+        exact = GeneratedQuestion(**candidate())
+        seen = set()
+        kept, stats = filter_duplicate_questions(
+            [first, exact],
+            seen,
+            limit=2,
+            keep_duplicates=True,
+        )
+
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(stats.exact, 1)
+        self.assertEqual(exact.validation_warnings, [
+            "Câu này có nội dung trùng với câu đã có hoặc câu vừa sinh."
+        ])
 
     def test_true_false_prompt_contract_declares_grounding_fields(self):
         prompt_root = BASE_DIR / "prompts"

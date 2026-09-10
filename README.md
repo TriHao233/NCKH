@@ -206,3 +206,18 @@ Các CRUD endpoint:
 - `/api/v1/questions/{question_id}/versions`
 
 Thiết kế dữ liệu chi tiết xem tại [`DATABASE_DESIGN_V2.md`](DATABASE_DESIGN_V2.md).
+# Chạy Docker
+
+Trên PowerShell, chạy lệnh sau để build và khởi động dự án với đầu ra gọn:
+
+```powershell
+.\start-docker.ps1
+```
+
+Sau khi thành công, mở `http://localhost`.
+
+Chỉ khởi động lại container, không build image:
+
+```powershell
+.\start-docker.ps1 -NoBuild
+```

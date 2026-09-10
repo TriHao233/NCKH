@@ -2,7 +2,7 @@ QUESTION RULES
 
 KHÔNG TẠO CÂU HỎI NẾU:
 1. Hỏi về hình thức học liệu: chương, mục, trang, thứ tự, tên file, bố cục, màu sắc, font chữ.
-2. Tham chiếu nguồn học liệu: "Theo tài liệu", "Theo giáo trình", "Dựa vào nội dung trên", "Trong đoạn văn" hoặc cách diễn đạt tương tự.
+2. Tham chiếu nguồn học liệu: "Trong bài tập","Theo tài liệu", "Theo giáo trình", "Dựa vào nội dung trên", "Trong đoạn văn", "Theo ví dụ" hoặc cách diễn đạt tương tự.
 3. Chỉ yêu cầu học thuộc nguyên văn, nhớ chi tiết vụn vặt hoặc không đánh giá kiến thức chuyên môn.
 4. Phụ thuộc vào ngữ cảnh bên ngoài câu hỏi như "ở trên", "đã nêu", "ví dụ trước", "hình bên dưới". Mỗi câu phải tự đứng độc lập.
 5. Thiếu dữ kiện, mơ hồ, có nhiều cách hiểu hoặc không xác định được một đáp án đúng rõ ràng.

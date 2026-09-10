@@ -1,4 +1,5 @@
 import { API_BASE_URL, apiFetch, authHeaders, parseError } from './client';
+import { parseGenerateStatusSseFrame } from '../utils/generateSse';
 
 export function enqueueGenerateQuestions(payload, idempotencyKey) {
   return apiFetch('/generate/questions', {
@@ -47,13 +48,8 @@ export async function streamGenerateStatus(jobId, options = {}) {
       buffer = frames.pop() || '';
 
       for (const frame of frames) {
-        const data = frame
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart())
-          .join('\n');
-        if (!data) continue;
-        latest = JSON.parse(data);
+        latest = parseGenerateStatusSseFrame(frame);
+        if (!latest) continue;
         onUpdate?.(latest);
         if (terminal.includes(latest.status)) return latest;
       }

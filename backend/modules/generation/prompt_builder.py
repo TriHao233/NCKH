@@ -32,8 +32,10 @@ class PromptBuilder:
         num_questions: int,
         instruction: str | None = None,
         avoid_questions: list[str] | None = None,
+        avoid_source_contexts: list[str] | None = None,
         learning_outcomes: list[dict] | None = None,
         content_mode: str = "general",
+        focus_directive: str | None = None,
     ):
         system = self._load_template("system", "system.txt")
         question_rule = self._load_template("question_rule", "question_rule.txt")
@@ -62,8 +64,21 @@ Note: Follow this request only when it is grounded in CONTEXT and does not confl
             if avoid_list:
                 duplicate_block = f"""
 AVOID DUPLICATES:
-Do not repeat or paraphrase the following previously generated questions:
+Do not repeat or paraphrase the following existing or previously generated questions:
 {avoid_list}
+Pick a different tested concept, relation, condition, example, or consequence.
+"""
+        if avoid_source_contexts:
+            avoid_evidence_list = "\n".join(
+                f"- {source.strip()}"
+                for source in avoid_source_contexts[-8:]
+                if source and source.strip()
+            )
+            if avoid_evidence_list:
+                duplicate_block += f"""
+AVOID USED EVIDENCE:
+Do not use these source_context excerpts again unless the focused CONTEXT has no other usable evidence:
+{avoid_evidence_list}
 """
         clo_block = ""
         if learning_outcomes:
@@ -84,6 +99,10 @@ Set `clo_codes` to the best matching codes from this list. Do not invent codes.
             if content_mode == "code"
             else "CONTENT MODE: GENERAL\nPrioritize conceptual and non-code knowledge grounded in CONTEXT."
         )
+        focus_block = f"""
+FOCUS:
+{focus_directive.strip()}
+""" if focus_directive else ""
 
         # Ráp lại với cấu trúc tối ưu hóa
         return f"""
@@ -99,6 +118,7 @@ TASK: Generate exactly {num_questions} questions.
 {duplicate_block}
 {clo_block}
 {mode_block}
+{focus_block}
 CONTEXT:
 {context}
 

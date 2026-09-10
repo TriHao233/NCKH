@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
 # Copy file requirements và cài đặt dependencies Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m playwright install --with-deps chromium
 
 # Copy toàn bộ mã nguồn
 COPY . .

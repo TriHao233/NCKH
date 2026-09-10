@@ -11,6 +11,9 @@ from modules.rag.chromadb_engine import get_collection
 
 logger = logging.getLogger(__name__)
 
+MIN_EVIDENCE_CHARS = 24
+MIN_EVIDENCE_WORDS = 4
+
 
 def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str, str]:
     try:
@@ -86,6 +89,44 @@ def _build_heading_label(meta: dict) -> str:
     return ""
 
 
+def _is_substantive_evidence(doc: str, meta: dict | None = None) -> bool:
+    """Return whether a chunk can support a question, rather than just label it."""
+    text = str(doc or "").strip()
+    if not text:
+        return False
+
+    nonempty_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(nonempty_lines) == 1 and nonempty_lines[0].startswith("#"):
+        return False
+
+    metadata = meta or {}
+    heading_values = [
+        _build_heading_label(metadata),
+        str(metadata.get("heading") or ""),
+        *(_coerce_heading_path(metadata)[-1:] or []),
+    ]
+    normalized_headings = {
+        _normalize_heading_text(value)
+        for value in heading_values
+        if _normalize_heading_text(value)
+    }
+    without_markdown_heading = re.sub(r"^#+\s*", "", text).strip()
+    normalized = _normalize_heading_text(without_markdown_heading)
+    if normalized in normalized_headings:
+        return False
+
+    words = re.findall(r"\w+", without_markdown_heading, flags=re.UNICODE)
+    return len(without_markdown_heading) >= MIN_EVIDENCE_CHARS and len(words) >= MIN_EVIDENCE_WORDS
+
+
+def _evidence_text(doc: str) -> str:
+    """Keep a section label out of the text that the model may quote as evidence."""
+    lines = str(doc or "").splitlines()
+    if lines and lines[0].lstrip().startswith("#") and any(line.strip() for line in lines[1:]):
+        return "\n".join(lines[1:]).strip()
+    return str(doc or "").strip()
+
+
 def _heading_matches_target(meta: dict, normalized_target: str) -> bool:
     if not normalized_target:
         return True
@@ -99,7 +140,16 @@ def _heading_matches_target(meta: dict, normalized_target: str) -> bool:
     heading_path = _coerce_heading_path(meta)
     if heading_path:
         heading_candidates.append(_normalize_heading_text(" > ".join(heading_path)))
-    return any(normalized_target in candidate for candidate in heading_candidates if candidate)
+    target_chapter = re.search(r"\bchuong\s+(\d+)\b", normalized_target)
+    for candidate in heading_candidates:
+        if not candidate:
+            continue
+        if normalized_target in candidate or candidate in normalized_target:
+            return True
+        candidate_chapter = re.search(r"\bchuong\s+(\d+)\b", candidate)
+        if target_chapter and candidate_chapter and target_chapter.group(1) == candidate_chapter.group(1):
+            return True
+    return False
 
 
 _KEYWORD_STOP_WORDS = {
@@ -153,7 +203,9 @@ def get_context_snapshot(
     query_tokens = _keyword_tokens(semantic_query)
 
     try:
-        candidate_limit = max(1, min(max(limit * 4, limit, 1), collection.count()))
+        # Fetch beyond the final result limit because title-only chunks often rank highly
+        # for a heading query but must never become evidence for a generated question.
+        candidate_limit = max(1, min(max(limit * 10, limit, 1), collection.count()))
         if semantic_query:
             results = collection.query(
                 query_texts=[semantic_query],
@@ -179,7 +231,7 @@ def get_context_snapshot(
                     key=lambda x: (-(x[1].get("information_density") or 0.0), x[1].get("page_start") or 0)
                 )
                 seed_doc, seed_meta = seed_pairs[0]
-                seed_text = _build_heading_label(seed_meta) or (seed_doc[:500] if seed_doc else "")
+                seed_text = (seed_doc[:500] if seed_doc else "") or _build_heading_label(seed_meta)
 
             if seed_text:
                 query_results = collection.query(
@@ -203,17 +255,20 @@ def get_context_snapshot(
         for vector_rank, (doc, meta) in enumerate(chunks_with_meta):
             if not doc:
                 continue
+            if not _is_substantive_evidence(doc, meta):
+                continue
+            evidence_text = _evidence_text(doc)
             density = float(meta.get("information_density", 0) or 0)
             if density < min_density:
                 continue
 
             ranked_meta = {
                 **meta,
-                "_hybrid_score": _hybrid_score(doc, meta, query_tokens, vector_rank),
+                "_hybrid_score": _hybrid_score(evidence_text, meta, query_tokens, vector_rank),
             }
-            candidate_chunks.append((doc, ranked_meta))
+            candidate_chunks.append((evidence_text, ranked_meta))
             if _heading_matches_target(ranked_meta, normalized_target):
-                heading_matched_chunks.append((doc, ranked_meta))
+                heading_matched_chunks.append((evidence_text, ranked_meta))
 
         filtered_chunks = heading_matched_chunks or candidate_chunks
         if not filtered_chunks:

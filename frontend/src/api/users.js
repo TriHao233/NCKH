@@ -8,6 +8,12 @@ export function updateMe(payload) {
   return apiRequest('/users/me', { method: 'PATCH', body: payload });
 }
 
+export function uploadMyAvatar(file) {
+  const body = new FormData();
+  body.append('file', file);
+  return apiRequest('/users/me/avatar', { method: 'POST', body });
+}
+
 export function getMyStats() {
   return apiRequest('/users/me/stats');
 }

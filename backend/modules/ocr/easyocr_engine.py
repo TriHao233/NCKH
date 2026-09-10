@@ -71,8 +71,18 @@ def detect_gpu() -> bool:
     try:
         _prepare_easyocr_runtime()
         import torch
-        return torch.cuda.is_available()
+        available = torch.cuda.is_available()
+        if not available:
+            logger.warning(
+                "PyTorch không thấy CUDA trong môi trường hiện tại; EasyOCR sẽ chạy CPU. "
+                "torch=%s cuda=%s device_count=%s",
+                getattr(torch, "__version__", "unknown"),
+                getattr(torch.version, "cuda", None),
+                torch.cuda.device_count(),
+            )
+        return available
     except Exception:
+        logger.exception("Không kiểm tra được CUDA; EasyOCR sẽ chạy CPU")
         return False
 
 
@@ -99,7 +109,8 @@ def get_reader(languages: list[str], gpu: bool | None = None):
         if reader is None:
             easyocr = _import_easyocr()
 
-            logger.info(f"⚙️ Khởi tạo mô hình EasyOCR mới vào VRAM: Languages={languages}, GPU={gpu}")
+            target = "GPU/VRAM" if gpu else "CPU/RAM"
+            logger.info(f"⚙️ Khởi tạo mô hình EasyOCR mới trên {target}: Languages={languages}, GPU={gpu}")
             reader = easyocr.Reader(languages, gpu=gpu, verbose=False)
             _readers_cache[cache_key] = reader
         else:

@@ -468,6 +468,10 @@
   border-color: rgba(34, 197, 94, 0.25);
   background: #f0fff6;
 }
+.generate-page .gen-status--warning {
+  border-color: rgba(245,158,11,0.45);
+  background: #fffbeb;
+}
 .generate-page .gen-status-text {
   display: flex;
   flex-direction: column;
@@ -559,6 +563,10 @@
 .generate-page .gen-preview-empty span {
   font-size: 0.84rem;
   color: var(--text-muted, #5c6f89);
+}
+.generate-page .gen-preview-empty--warning {
+  border-color: rgba(245,158,11,0.55);
+  background: #fffbeb;
 }
 .generate-page .draft-item-explanation {
   font-size: 0.8rem;
@@ -653,6 +661,7 @@
 .generate-page .difficulty-tag--trung_binh { background: #FFF4E0; color: #B36500; }
 .generate-page .difficulty-tag--kho { background: #FEECEC; color: #B42318; }
 .generate-page .draft-status { font-size: 0.72rem; font-weight: 600; color: var(--text-muted, #5c6f89); margin-left: auto; }
+.generate-page .draft-warning-pill { font-size: 0.72rem; font-weight: 700; color: #8a4b00; background: #fff4d6; border: 1px solid #f5c56b; border-radius: 999px; padding: 3px 8px; }
 .generate-page .draft-item-text { font-size: 0.92rem; color: var(--text, #13253f); font-weight: 500; line-height: 1.55; margin: 0; }
 .generate-page .draft-item-choices { display: flex; flex-wrap: wrap; gap: 6px; }
 .generate-page .choice { font-size: 0.78rem; font-weight: 500; background: #fff; border: 1.5px solid #a7c8e6; border-radius: 6px; padding: 4px 10px; color: var(--text-muted, #5c6f89); }
@@ -665,6 +674,7 @@
 .generate-page .draft-section:first-child { padding-top: 0; }
 .generate-page .draft-section:last-child { padding-bottom: 0; }
 .generate-page .draft-section + .draft-section { border-top: 1px solid #a7c8e6; }
+.generate-page .draft-section--warning { color: #6f4300; }
 .generate-page .draft-section-label {
   font-size: 0.7rem;
   font-weight: 700;
@@ -673,6 +683,7 @@
   color: var(--text-muted, #5c6f89);
   margin: 0 0 6px;
 }
+.generate-page .draft-warning-list { margin: 0; padding-left: 18px; color: #6f4300; font-size: 0.86rem; line-height: 1.45; }
 .generate-page .draft-item-evidence {
   margin: 0;
   padding: 10px 12px;

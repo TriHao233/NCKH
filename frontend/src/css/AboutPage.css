@@ -2,7 +2,14 @@
    AboutPage.css | QBankCTU — Giới thiệu đề tài
    ═══════════════════════════════════════════════════════════════ */
 
-.about-page { width: 100%; }
+.about-page {
+  width: 100%;
+  --about-rule: rgba(12, 120, 212, 0.24);
+  --about-rule-strong: rgba(12, 120, 212, 0.38);
+  --about-card-rule: rgba(12, 120, 212, 0.28);
+  --about-card-rule-strong: rgba(12, 120, 212, 0.44);
+  --about-section-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
 /* .container, .btn*, .section-*, .page-hero* dùng chung — xem css/shared.css */
 
 /* Chống xuống dòng mồ côi (orphan) / dòng cụt cuối đoạn */
@@ -15,8 +22,34 @@
 .about-page dd,
 .about-page span { text-wrap: pretty; }
 
+.about-page .page-hero {
+  border-bottom: 2px solid var(--about-rule-strong);
+  box-shadow: var(--about-section-shadow);
+}
+
+.about-page .section-header {
+  position: relative;
+  padding-bottom: 20px;
+}
+
+.about-page .section-header::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: min(180px, 42vw);
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--about-card-rule-strong), transparent);
+  transform: translateX(-50%);
+}
+
 /* ─── Problem & Solution (side-by-side) ─────────────────────────── */
-.about-page .problem-solution { padding: 80px 0; background: #fff; }
+.about-page .problem-solution {
+  padding: 80px 0;
+  background: #fff;
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
 .about-page .ps-grid {
   display: grid;
   grid-template-columns: 0.82fr 40px 1.35fr;
@@ -40,9 +73,10 @@
 /* -- Issue column (compact) -- */
 .about-page .ps-issue {
   background: #fafcff;
-  border: 1px solid #EAF3FC;
+  border: 1.5px solid var(--about-card-rule);
   border-radius: 18px;
   padding: 30px 28px;
+  box-shadow: 0 10px 28px rgba(5, 40, 90, 0.06);
 }
 .about-page .issue-list { display: flex; flex-direction: column; gap: 22px; }
 .about-page .issue-item { display: flex; gap: 14px; }
@@ -59,7 +93,7 @@
 .about-page .ps-solution {
   position: relative;
   background: linear-gradient(160deg, #F0F8FF 0%, #FCFEFF 60%);
-  border: 1.5px solid rgba(12, 120, 212, 0.28);
+  border: 2px solid var(--about-card-rule-strong);
   border-radius: 20px;
   padding: 36px 34px;
   box-shadow: 0 16px 40px rgba(5, 40, 90, 0.1);
@@ -86,7 +120,7 @@
 .about-page .ps-solution .solution-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .about-page .ps-solution .solution-card {
   background: #fff;
-  border: 1px solid rgba(12, 120, 212, 0.16);
+  border: 1.5px solid var(--about-card-rule);
   border-radius: 14px;
   padding: 18px 18px;
 }
@@ -102,16 +136,26 @@
 .about-page .solution-card p { font-size: 0.82rem; color: var(--text-muted, #5c6f89); line-height: 1.6; }
 
 /* ─── Capabilities ───────────────────────────────────────────── */
-.about-page .capabilities { padding: 80px 0; background: #fafcff; border-top: 1px solid #eaf3fc; border-bottom: 1px solid #eaf3fc; }
+.about-page .capabilities {
+  padding: 80px 0;
+  background: #fafcff;
+  border-top: 2px solid var(--about-rule);
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
 .about-page .capabilities-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
 .about-page .capability-card {
   background: #fff;
-  border: 1px solid #EAF3FC;
+  border: 1.5px solid var(--about-card-rule);
   border-radius: 14px;
   padding: 24px 22px;
-  transition: box-shadow 0.25s, transform 0.25s;
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
 }
-.about-page .capability-card:hover { box-shadow: 0 10px 30px rgba(5, 40, 90, 0.08); transform: translateY(-3px); }
+.about-page .capability-card:hover {
+  border-color: var(--about-card-rule-strong);
+  box-shadow: 0 12px 32px rgba(5, 40, 90, 0.1);
+  transform: translateY(-3px);
+}
 .about-page .capability-icon {
   width: 44px; height: 44px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
@@ -122,7 +166,12 @@
 .about-page .capability-card p { font-size: 0.84rem; color: var(--text-muted, #5c6f89); line-height: 1.6; }
 
 /* ─── Tech stack (icon tiles) ────────────────────────────────── */
-.about-page .tech { padding: 80px 0; background: #fff; }
+.about-page .tech {
+  padding: 80px 0;
+  background: #fff;
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
 .about-page .tech-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
 .about-page .tech-tile {
   display: flex;
@@ -131,12 +180,16 @@
   text-align: center;
   gap: 6px;
   background: #fafcff;
-  border: 1px solid #EAF3FC;
+  border: 1.5px solid var(--about-card-rule);
   border-radius: 16px;
   padding: 28px 16px;
   transition: box-shadow 0.25s, transform 0.25s, border-color 0.25s;
 }
-.about-page .tech-tile:hover { box-shadow: 0 10px 30px rgba(5, 40, 90, 0.08); transform: translateY(-3px); border-color: rgba(12, 120, 212, 0.3); }
+.about-page .tech-tile:hover {
+  border-color: var(--about-card-rule-strong);
+  box-shadow: 0 12px 32px rgba(5, 40, 90, 0.1);
+  transform: translateY(-3px);
+}
 .about-page .tech-tile-icon {
   width: 56px; height: 56px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -148,14 +201,20 @@
 .about-page .tech-tile-caption { font-size: 0.74rem; font-weight: 600; color: var(--text-muted, #5c6f89); text-transform: uppercase; letter-spacing: 0.03em; }
 
 /* ─── Architecture ───────────────────────────────────────────── */
-.about-page .architecture { padding: 80px 0; background: #fafcff; border-top: 1px solid #eaf3fc; border-bottom: 1px solid #eaf3fc; }
+.about-page .architecture {
+  padding: 80px 0;
+  background: #fafcff;
+  border-top: 2px solid var(--about-rule);
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
 .about-page .arch-flow { display: flex; flex-direction: column; align-items: stretch; gap: 6px; max-width: 720px; margin: 0 auto; }
 .about-page .arch-box {
   background: #fff;
-  border: 1.5px solid #EAF3FC;
+  border: 2px solid var(--about-card-rule);
   border-radius: 16px;
   padding: 22px 26px;
-  box-shadow: 0 6px 20px rgba(5, 40, 90, 0.05);
+  box-shadow: 0 8px 24px rgba(5, 40, 90, 0.07);
 }
 .about-page .arch-box-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
 .about-page .arch-icon {
@@ -173,7 +232,7 @@
   font-weight: 600;
   color: var(--secondary, #005bac);
   background: #EDF6FF;
-  border: 1px solid #D6EBFB;
+  border: 1px solid rgba(12, 120, 212, 0.28);
   border-radius: 20px;
   padding: 5px 12px;
 }
@@ -200,7 +259,7 @@
   font-weight: 600;
   color: var(--navy, #003a75);
   background: #fff;
-  border: 1px solid #EAF3FC;
+  border: 1.5px solid var(--about-card-rule);
   border-radius: 30px;
   padding: 9px 18px;
 }
@@ -212,13 +271,28 @@
 .about-page .arch-integration-link { color: rgba(12, 120, 212, 0.6); display: inline-flex; }
 
 /* ─── Flow / workflow ────────────────────────────────────────── */
-.about-page .flow { padding: 80px 0; background: #fff; }
-.about-page .flow-steps { display: flex; flex-direction: column; gap: 4px; max-width: 780px; margin: 0 auto; }
+.about-page .flow {
+  padding: 80px 0;
+  background: #fff;
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
+.about-page .flow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-width: 780px;
+  margin: 0 auto;
+  border: 1.5px solid var(--about-card-rule);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #fff;
+}
 .about-page .flow-step {
   display: flex;
   gap: 22px;
-  padding: 20px 6px;
-  border-bottom: 1px solid #eaf3fc;
+  padding: 22px 24px;
+  border-bottom: 1.5px solid var(--about-rule);
 }
 .about-page .flow-step:last-child { border-bottom: none; }
 .about-page .flow-num {
@@ -233,12 +307,18 @@
 .about-page .flow-body p { font-size: 0.88rem; color: var(--text-muted, #5c6f89); line-height: 1.65; }
 
 /* ─── Advisors (formal, before team) ─────────────────────────── */
-.about-page .advisors { padding: 84px 0; background: #fafcff; border-top: 1px solid #eaf3fc; border-bottom: 1px solid #eaf3fc; }
+.about-page .advisors {
+  padding: 84px 0;
+  background: #fafcff;
+  border-top: 2px solid var(--about-rule);
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
 .about-page .advisors-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 26px; max-width: 900px; margin: 0 auto; }
 .about-page .advisor-card {
   position: relative;
   background: linear-gradient(160deg, #fff 0%, #FFFBF2 100%);
-  border: 1px solid rgba(201, 154, 46, 0.25);
+  border: 2px solid rgba(201, 154, 46, 0.42);
   border-radius: 18px;
   padding: 34px 30px 30px;
   box-shadow: 0 10px 30px rgba(5, 40, 90, 0.07);
@@ -285,7 +365,13 @@
 .about-page .advisor-field dd { font-size: 0.87rem; color: var(--text, #13253f); line-height: 1.55; }
 
 /* ─── Team (2 top + 3 bottom pyramid, equal cards) ───────────── */
-.about-page .team { padding: 80px 0; background: #fafcff; border-top: 1px solid #eaf3fc; border-bottom: 1px solid #eaf3fc; }
+.about-page .team {
+  padding: 80px 0;
+  background: #fafcff;
+  border-top: 2px solid var(--about-rule);
+  border-bottom: 2px solid var(--about-rule);
+  box-shadow: var(--about-section-shadow);
+}
 .about-page .team-pyramid { display: flex; flex-direction: column; align-items: center; gap: 20px; }
 .about-page .team-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 20px; width: 100%; }
 .about-page .team-card {
@@ -293,12 +379,16 @@
   flex: 1 1 300px;
   max-width: 320px;
   background: #fff;
-  border: 1px solid #EAF3FC;
+  border: 1.5px solid var(--about-card-rule);
   border-radius: 14px;
   padding: 26px 24px;
-  transition: box-shadow 0.25s, transform 0.25s;
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
 }
-.about-page .team-card:hover { box-shadow: 0 10px 30px rgba(5, 40, 90, 0.08); transform: translateY(-3px); }
+.about-page .team-card:hover {
+  border-color: var(--about-card-rule-strong);
+  box-shadow: 0 12px 32px rgba(5, 40, 90, 0.1);
+  transform: translateY(-3px);
+}
 .about-page .team-lead-badge {
   position: absolute;
   top: 18px;
@@ -331,20 +421,25 @@
   font-weight: 600;
   color: var(--secondary, #005bac);
   background: #EDF6FF;
-  border: 1px solid #D6EBFB;
+  border: 1px solid rgba(12, 120, 212, 0.28);
   border-radius: 20px;
   padding: 3px 10px;
 }
 .about-page .team-card p { font-size: 0.84rem; color: var(--text-muted, #5c6f89); line-height: 1.6; }
 
 /* ─── CTA ────────────────────────────────────────────────────── */
-.about-page .about-cta { padding: 72px 0; background: #fafcff; border-top: 1px solid #eaf3fc; }
+.about-page .about-cta {
+  padding: 72px 0;
+  background: #fafcff;
+  border-top: 2px solid var(--about-rule);
+}
 .about-page .about-cta-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
   background: linear-gradient(135deg, var(--navy, #003a75) 0%, var(--secondary, #005bac) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.62);
   border-radius: 20px;
   padding: 40px 48px;
   color: #fff;

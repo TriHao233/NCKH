@@ -10,7 +10,7 @@ ENV VITE_PIPELINE_3D=${VITE_PIPELINE_3D}
 
 # Copy package.json và package-lock.json để tận dụng cache
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm ci
 
 # Copy toàn bộ source code và build
 COPY . .

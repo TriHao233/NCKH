@@ -282,9 +282,11 @@ def save_generated_questions(
                     "model_source_context": question.get("source_context"),
                     "source_keywords": question.get("source_keywords") or [],
                     "false_mutation": question.get("false_mutation"),
+                    "validation_warnings": question.get("validation_warnings") or [],
                     "post_processing": {
-                        "status": "ACCEPTED",
+                        "status": "WARNING" if question.get("validation_warnings") else "ACCEPTED",
                         "validator_version": "question-post-v2",
+                        "warnings": question.get("validation_warnings") or [],
                     },
                 },
                 document_id=document_id,
@@ -304,6 +306,7 @@ def save_generated_questions(
                 "current_version": saved_question["current_version"],
                 "current_version_id": saved_question["current_version_id"],
                 "review_status": saved_question["review_status"],
+                "validation_warnings": question.get("validation_warnings") or [],
             }
         )
     return saved_questions

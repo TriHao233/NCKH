@@ -1,8 +1,11 @@
 from datetime import date, datetime, timezone
+from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse
 
-from core.config import settings
+from core.config import resolve_path, settings
 from core.dependencies import (
     CurrentUser,
     get_current_user,
@@ -36,6 +39,16 @@ from modules.users.service import UserService, get_user_service
 
 router = APIRouter(prefix=f"{settings.api_prefix}/users", tags=["Users"])
 
+AVATAR_UPLOAD_DIR = resolve_path(settings.upload_dir) / "avatars"
+AVATAR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+AVATAR_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
 
 @router.get("/me", response_model=UserResponse)
 def get_me(
@@ -58,6 +71,37 @@ def update_me(
     if not user:
         raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
     return user
+
+
+@router.post("/me/avatar")
+async def upload_my_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    extension = AVATAR_CONTENT_TYPES.get(file.content_type or "")
+    if not extension:
+        raise HTTPException(status_code=400, detail="Vui lòng chọn ảnh JPG, PNG, WEBP hoặc GIF.")
+
+    content = await file.read(MAX_AVATAR_BYTES + 1)
+    if len(content) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="Ảnh đại diện không vượt quá 2MB.")
+    if not content:
+        raise HTTPException(status_code=400, detail="File ảnh không hợp lệ.")
+
+    filename = f"{current_user.id}-{uuid4().hex}{extension}"
+    destination = AVATAR_UPLOAD_DIR / filename
+    destination.write_bytes(content)
+    base_url = str(request.base_url).rstrip("/")
+    return {"avatar_url": f"{base_url}{settings.api_prefix}/users/avatar/{filename}"}
+
+
+@router.get("/avatar/{filename}")
+def get_avatar(filename: str):
+    path = (AVATAR_UPLOAD_DIR / Path(filename).name).resolve()
+    if not str(path).startswith(str(AVATAR_UPLOAD_DIR.resolve())) or not path.exists():
+        raise HTTPException(status_code=404, detail="Không tìm thấy ảnh đại diện")
+    return FileResponse(path)
 
 
 @router.get("/me/stats", response_model=UserStatsResponse)
