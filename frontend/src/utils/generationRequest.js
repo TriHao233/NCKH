@@ -15,6 +15,7 @@ export function buildGenerationRequest({
   return {
     document_id: documentId,
     bloom_level: firstPlanItem.bloom_level,
+    difficulty: firstPlanItem.difficulty,
     question_type: firstPlanItem.question_type,
     num_questions: firstPlanItem.num_questions,
     question_plan: questionPlan,

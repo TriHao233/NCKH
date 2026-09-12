@@ -52,6 +52,9 @@ function readableErrorDetail(value) {
 }
 
 export function loginErrorMessage(error, demoLoginEnabled = false) {
+  if (error?.code === 'auth/not-configured') {
+    return 'Firebase web app chưa khởi tạo được với project nckh-e6817. Vui lòng rebuild frontend hoặc dùng tài khoản demo admin/reviewer.';
+  }
   if (
     error?.code === 'auth/invalid-credential'
     || error?.code === 'auth/user-not-found'
@@ -63,6 +66,9 @@ export function loginErrorMessage(error, demoLoginEnabled = false) {
     return demoLoginEnabled
       ? 'Email không hợp lệ. Bạn có thể nhập email đầy đủ hoặc tài khoản demo admin/reviewer.'
       : 'Email không hợp lệ. Vui lòng nhập email đầy đủ, ví dụ: example@ctu.edu.vn.';
+  }
+  if (error?.code === 'auth/operation-not-allowed') {
+    return 'Đăng nhập email/mật khẩu chưa được bật trong Firebase project hiện tại. Hãy bật Email/Password provider trong Firebase Authentication, hoặc dùng tài khoản demo admin/reviewer.';
   }
   const message = readableErrorDetail(error?.payload?.detail)
     || readableErrorDetail(error?.payload?.message)

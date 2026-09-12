@@ -87,12 +87,11 @@ class UserService:
         )
         user = None
         try:
-            user = self.repository.create(
+            user = self.repository.sync_identity(
                 {
-                    "firebase_uid": firebase_user.uid,
+                    "uid": firebase_user.uid,
                     "email": str(payload.email),
-                    "display_name": payload.full_name,
-                    "role": "Teacher",
+                    "name": payload.full_name,
                 }
             )
             self.sessions.upsert(firebase_user.uid, None)

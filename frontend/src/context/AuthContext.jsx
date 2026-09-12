@@ -2,6 +2,7 @@ import { createContext, useState, useEffect, useRef } from 'react';
 import { onIdTokenChanged, signOut } from 'firebase/auth';
 
 import { auth } from '../firebase';
+import { clearDemoSession, readDemoSession, saveDemoSession } from '../auth/demoSession';
 import { apiRequest } from '../services/apiClient';
 
 export const AuthContext = createContext();
@@ -56,9 +57,32 @@ export const AuthProvider = ({ children }) => {
     useEffect(() => {
         // Firebase is the source of truth for session persistence and token refresh.
         let active = true;
+        if (!auth) {
+            const demoSession = readDemoSession();
+            if (demoSession?.user) {
+                localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
+                setUser(demoSession.user);
+            } else {
+                localStorage.removeItem("userInfo");
+                setUser(null);
+            }
+            setLoading(false);
+            return () => {
+                active = false;
+            };
+        }
         const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
             const generation = ++authGeneration.current;
             if (!firebaseUser) {
+                const demoSession = readDemoSession();
+                if (demoSession?.user) {
+                    localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
+                    if (active) {
+                        setUser(demoSession.user);
+                        setLoading(false);
+                    }
+                    return;
+                }
                 localStorage.removeItem("userInfo");
                 if (active) {
                     setUser(null);
@@ -68,6 +92,7 @@ export const AuthProvider = ({ children }) => {
             }
 
             setLoading(true);
+            clearDemoSession();
             const cachedUser = readCachedUser();
             if (cachedUser?.firebase_uid === firebaseUser.uid) {
                 setUser(cachedUser);
@@ -126,6 +151,10 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const login = async (firebaseUser) => {
+        if (!auth) {
+            throw new Error("Firebase web app chưa được cấu hình");
+        }
+        clearDemoSession();
         const syncedUser = await syncBackendSession(firebaseUser);
         if (auth.currentUser?.uid !== firebaseUser.uid) {
             throw new Error("Phiên Firebase đã thay đổi");
@@ -134,13 +163,25 @@ export const AuthProvider = ({ children }) => {
         return syncedUser;
     };
 
+    const loginWithDemoSession = async ({ demo_token: demoToken, user: demoUser }) => {
+        if (!demoToken || !demoUser) {
+            throw new Error("Phiên demo không hợp lệ");
+        }
+        saveDemoSession(demoToken, demoUser);
+        persistUser(demoUser);
+        return demoUser;
+    };
+
     const logout = async () => {
         try {
             await apiRequest("/auth/logout", { method: "POST" });
         } catch {
             // Firebase sign-out must still complete if the API is unavailable.
         } finally {
-            await signOut(auth);
+            clearDemoSession();
+            if (auth) {
+                await signOut(auth);
+            }
             localStorage.removeItem("userInfo");
             setUser(null);
         }
@@ -152,7 +193,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, login, logout, updateUser, loading }}>
+        <AuthContext.Provider value={{ user, login, loginWithDemoSession, logout, updateUser, loading }}>
             {children}
         </AuthContext.Provider>
     );

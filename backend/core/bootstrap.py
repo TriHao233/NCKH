@@ -690,22 +690,6 @@ def _ensure_indexes() -> None:
 def _seed_reference_data() -> None:
     db = get_rag_db()
     now = datetime.now(timezone.utc)
-    db.subjects.update_one(
-        {"subject_code": "CTDL"},
-        {
-            "$setOnInsert": {
-                "schema_version": SCHEMA_VERSION,
-                "subject_name": "Cấu trúc dữ liệu",
-                "description": "Học phần mặc định cho pipeline RAG",
-                "chapters": [],
-                "learning_outcomes": [],
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            }
-        },
-        upsert=True,
-    )
     weights = {
         "faithfulness": 0.35,
         "contextual_relevancy": 0.20,

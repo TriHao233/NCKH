@@ -100,10 +100,13 @@ class Settings(BaseModel):
     firebase_credentials_path: str = os.getenv(
         "FIREBASE_CREDENTIALS_PATH", str(BASE_DIR / "firebase-service-account.json")
     )
+    firebase_project_id: str = os.getenv("FIREBASE_PROJECT_ID", "nckh-e6817").strip()
     demo_admin_email: str = os.getenv("DEMO_ADMIN_EMAIL", "admin@qbankctu.edu.vn")
     demo_admin_password: str = os.getenv("DEMO_ADMIN_PASSWORD", "")
     demo_reviewer_email: str = os.getenv("DEMO_REVIEWER_EMAIL", "reviewer@qbankctu.edu.vn")
     demo_reviewer_password: str = os.getenv("DEMO_REVIEWER_PASSWORD", "")
+    demo_session_secret: str = os.getenv("DEMO_SESSION_SECRET", "")
+    demo_session_ttl_hours: int = int(os.getenv("DEMO_SESSION_TTL_HOURS", "8"))
 
     # Provider LLM mặc định (qwen chạy local qua Ollama)
     model_provider: str = os.getenv("MODEL_PROVIDER", "qwen")

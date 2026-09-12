@@ -54,6 +54,8 @@ class UserRepository(Protocol):
 
     def find_by_firebase_uid(self, firebase_uid: str) -> dict | None: ...
 
+    def find_by_email(self, email: str) -> dict | None: ...
+
     def create(self, data: dict) -> dict: ...
 
     def sync_identity(self, claims: dict) -> dict: ...
@@ -97,6 +99,9 @@ class MongoUserRepository:
     def find_by_firebase_uid(self, firebase_uid: str) -> dict | None:
         return self.collection.find_one({"firebase_uid": firebase_uid})
 
+    def find_by_email(self, email: str) -> dict | None:
+        return self.collection.find_one({"email": email.lower()})
+
     def create(self, data: dict) -> dict:
         now = utc_now()
         record = {
@@ -122,8 +127,13 @@ class MongoUserRepository:
         avatar = claims.get("picture") or ""
         profile_defaults = {"school": "", "address": "", "avatar": ""}
         profile_overlay = {"avatar": avatar} if avatar else {}
+        identity_filter = (
+            {"$or": [{"firebase_uid": firebase_uid}, {"email": email}]}
+            if claims.get("email")
+            else {"firebase_uid": firebase_uid}
+        )
         return self.collection.find_one_and_update(
-            {"firebase_uid": firebase_uid},
+            identity_filter,
             [
                 {
                     "$set": {

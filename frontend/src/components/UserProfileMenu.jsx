@@ -11,6 +11,7 @@ import {
   faBook
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
+import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import './UserProfileMenu.css';
 
 const UserProfileMenu = () => {
@@ -51,7 +52,7 @@ const UserProfileMenu = () => {
   const canOpenSettings = user.role === 'Admin';
   
   // Tự động generate avatar dựa trên tên người dùng
-  const avatarUrl = user.profile?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0c78d4&color=fff`;
+  const avatarUrl = normalizeAvatarUrl(user.profile?.avatar) || buildFallbackAvatar(displayName);
 
   return (
     <div className="user-menu-container" ref={menuRef}>

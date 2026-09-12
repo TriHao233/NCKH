@@ -10,6 +10,7 @@ import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/
 import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
 import {
   BLOOM_LEVELS,
+  DIFFICULTIES,
   QUESTION_TYPES,
   bloomLevelLabel,
   difficultyLabel,
@@ -99,6 +100,7 @@ function createPlanItem(overrides = {}) {
     id: globalThis.crypto?.randomUUID?.() || fallbackId,
     questionTypeId: 'mcq',
     bloomId: 'remember',
+    difficulty: 'trung_binh',
     count: 1,
     contentMode: 'auto',
     ...overrides,
@@ -130,9 +132,10 @@ function presetInstructionValue(preset) {
 function presetApiPayload(preset) {
   return {
     name: String(preset.name || '').trim(),
-    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, count, contentMode }) => ({
+    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, difficulty, count, contentMode }) => ({
       questionTypeId,
       bloomId,
+      difficulty: difficulty || 'trung_binh',
       count: normalizeCount(count),
       contentMode: contentMode || 'auto',
     })),
@@ -285,6 +288,7 @@ function GeneratePage() {
     .map((item) => ({
       question_type: toBackendQuestionType(item.questionTypeId),
       bloom_level: toBackendBloomLevel(item.bloomId),
+      difficulty: item.difficulty || 'trung_binh',
       num_questions: normalizeCount(item.count),
       content_mode: item.contentMode || 'auto',
     }))
@@ -523,9 +527,10 @@ function GeneratePage() {
     }
     const presetPayload = {
       name,
-      planItems: planItems.map(({ questionTypeId, bloomId, count, contentMode }) => ({
+      planItems: planItems.map(({ questionTypeId, bloomId, difficulty, count, contentMode }) => ({
         questionTypeId,
         bloomId,
+        difficulty: difficulty || 'trung_binh',
         count: normalizeCount(count),
         contentMode: contentMode || 'auto',
       })),
@@ -1121,11 +1126,10 @@ function GeneratePage() {
     <main className="generate-page">
       <section className="page-hero">
         <div className="container">
-          <div className="page-hero-badge">AI Pipeline · RAG</div>
+          <div className="page-hero-badge">RAG question studio</div>
           <h1 className="page-hero-title">Trình sinh câu hỏi bằng AI</h1>
           <p className="page-hero-desc">
-            Tải lên tài liệu học phần, cấu hình loại câu hỏi và cấp độ tư duy theo thang Bloom — hệ thống sẽ dùng
-            mô hình ngôn ngữ lớn kết hợp kỹ thuật RAG để sinh câu hỏi nháp từ đúng nội dung tài liệu.
+            Chọn tài liệu, đặt ma trận Bloom và độ khó, rồi rà từng câu nháp kèm đáp án và dẫn chứng nguồn.
           </p>
         </div>
       </section>
@@ -1152,7 +1156,15 @@ function GeneratePage() {
       <section className="gen-body">
         <div className="container gen-grid">
           <form className="gen-form-card" onSubmit={handleSubmit}>
-            <h3 className="gen-card-title">Cấu hình sinh câu hỏi</h3>
+            <div className="gen-panel-head">
+              <div>
+                <span className="gen-panel-kicker">Thiết lập</span>
+                <h2 className="gen-card-title">Nguồn và ma trận</h2>
+              </div>
+              <span className={`plan-total ${totalQuestions > MAX_TOTAL_QUESTIONS ? 'plan-total--error' : ''}`}>
+                {totalQuestions}/{MAX_TOTAL_QUESTIONS}
+              </span>
+            </div>
 
             {phase !== 'idle' && phase !== 'failed' && (
               <div className={`gen-status gen-status--${generationStatusClass}`}>
@@ -1246,7 +1258,7 @@ function GeneratePage() {
                   />
                   <FontAwesomeIcon icon={faUpload} className="upload-dropzone-icon" />
                   <span>{fileName || 'Kéo thả hoặc chọn PDF, DOC/DOCX, Markdown, TXT'}</span>
-                  <span className="upload-hint">PDF được định tuyến theo từng trang · định dạng văn bản giữ cấu trúc nguồn</span>
+                  <span className="upload-hint">PDF được định tuyến theo từng trang · văn bản giữ cấu trúc nguồn</span>
                 </label>
               ) : (
                 <div className="existing-doc-panel">
@@ -1328,7 +1340,7 @@ function GeneratePage() {
               )}
             </div>
 
-            <div className="field-group" style={{ marginBottom: '32px', marginTop: '16px' }}>
+            <div className="field-group document-action-row">
               <button
                 className="btn btn--secondary gen-submit"
                 type="button"
@@ -1355,7 +1367,7 @@ function GeneratePage() {
               >
                 <span className="preset-toggle-label">
                   Mẫu cấu hình sinh câu hỏi
-                  <small>Lưu lại ma trận (dạng câu hỏi, mức Bloom) để dùng lại cho lần sau</small>
+                  <small>Lưu ma trận dạng câu hỏi, mức nhận thức, độ khó và số lượng</small>
                 </span>
                 {presets.length > 0 && <span className="preset-toggle-count">{presets.length}</span>}
                 <FontAwesomeIcon
@@ -1415,14 +1427,10 @@ function GeneratePage() {
             <div className="field-group">
               <div className="field-label-row">
                 <label className="field-label">Ma trận sinh câu hỏi</label>
-                <span className={`plan-total ${totalQuestions > MAX_TOTAL_QUESTIONS ? 'plan-total--error' : ''}`}>
-                  {totalQuestions}/{MAX_TOTAL_QUESTIONS}
-                </span>
               </div>
               <div className="plan-builder-list">
                 {planItems.map((item, index) => {
                   const count = normalizeCount(item.count);
-                  const selectedBloomMeta = BLOOM_LEVELS.find((bloom) => bloom.id === item.bloomId);
                   return (
                     <div className="plan-builder-row" key={item.id}>
                       <div className="plan-row-header">
@@ -1452,7 +1460,7 @@ function GeneratePage() {
                           </select>
                         </label>
                         <label className="plan-field plan-field--wide">
-                          <span>Mức Bloom</span>
+                          <span>Mức nhận thức Bloom</span>
                           <select
                             className="field-select plan-select"
                             value={item.bloomId}
@@ -1465,9 +1473,22 @@ function GeneratePage() {
                               </option>
                             ))}
                           </select>
-                          {selectedBloomMeta && (
-                            <small>{selectedBloomMeta.caption}</small>
-                          )}
+                        </label>
+                        <label className="plan-field">
+                          <span>Độ khó</span>
+                          <select
+                            className="field-select plan-select"
+                            value={item.difficulty || 'trung_binh'}
+                            disabled={isBusy}
+                            onChange={(e) => updatePlanItem(item.id, { difficulty: e.target.value })}
+                          >
+                            {DIFFICULTIES.map((difficulty) => (
+                              <option key={difficulty.id} value={difficulty.backend}>
+                                {difficulty.label}
+                              </option>
+                            ))}
+                          </select>
+                          {/* <small>Ước lượng độc lập với Bloom</small> */}
                         </label>
                         <label className="plan-field plan-field--count">
                           <span>Số câu</span>
@@ -1582,7 +1603,10 @@ function GeneratePage() {
 
           <div className="gen-preview-card">
             <div className="gen-card-title-row">
-              <h3 className="gen-card-title">Xem trước câu hỏi nháp</h3>
+              <div>
+                <span className="gen-panel-kicker">Kết quả</span>
+                <h2 className="gen-card-title">Bảng nháp câu hỏi</h2>
+              </div>
               <div className="gen-preview-actions">
                 <span className="gen-preview-count">{drafts.length} câu hỏi</span>
                 {submittableDraftCount > 0 && (
@@ -1601,10 +1625,12 @@ function GeneratePage() {
             {generationSummary.length > 0 && (
               <div className={`gen-summary-list ${generationShortfalls.length ? 'gen-summary-list--warning' : ''}`}>
                 {generationSummary.map((item) => (
-                  <div className="gen-summary-item" key={`${item.plan_index}-${item.question_type}-${item.bloom_level}`}>
+                  <div className="gen-summary-item" key={`${item.plan_index}-${item.question_type}-${item.bloom_level}-${item.difficulty || 'auto'}`}>
                     <strong>Dòng {item.plan_index}</strong>
                     <span>
-                      {questionTypeLabel(item.question_type)} · {bloomLevelLabel(item.bloom_level)} · {item.saved_count}/{item.requested_count}
+                      {questionTypeLabel(item.question_type)} · {bloomLevelLabel(item.bloom_level)}
+                      {item.difficulty ? ` · ${difficultyLabel(item.difficulty)}` : ''}
+                      {` · ${item.saved_count}/${item.requested_count}`}
                     </span>
                     {(
                       item.format_rejected_count > 0
@@ -1892,11 +1918,12 @@ function GeneratePage() {
               {planItems.map((item, index) => {
                 const type = QUESTION_TYPES.find((entry) => entry.id === item.questionTypeId);
                 const bloom = BLOOM_LEVELS.find((entry) => entry.id === item.bloomId);
+                const difficulty = difficultyLabel(item.difficulty || 'trung_binh');
                 return (
                   <div key={item.id}>
                     <b>Dòng {index + 1}</b>
                     <span>
-                      {type?.label || item.questionTypeId} · {bloom?.label || item.bloomId} · {normalizeCount(item.count)} câu
+                      {type?.label || item.questionTypeId} · {bloom?.label || item.bloomId} · {difficulty} · {normalizeCount(item.count)} câu
                     </span>
                   </div>
                 );

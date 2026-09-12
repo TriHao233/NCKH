@@ -1,4 +1,5 @@
 import { auth } from '../firebase';
+import { demoAuthHeaders } from '../auth/demoSession';
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
@@ -15,6 +16,12 @@ export async function parseError(response) {
 }
 
 export async function authHeaders() {
+  const demoHeaders = demoAuthHeaders();
+  if (demoHeaders) return demoHeaders;
+
+  if (!auth) {
+    throw new Error('Firebase web app chưa được cấu hình');
+  }
   await auth.authStateReady();
   const firebaseUser = auth.currentUser;
   if (!firebaseUser) {

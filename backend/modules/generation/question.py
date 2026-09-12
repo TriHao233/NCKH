@@ -120,7 +120,10 @@ async def generate_questions_rag(
 ) -> QuestionGenerateResponse:
     plan = req.effective_plan()
     plan_log = ", ".join(
-        f"{item.question_type.value}/{(item.bloom_level or req.bloom_level).value}:{item.num_questions}"
+        (
+            f"{item.question_type.value}/{(item.bloom_level or req.bloom_level).value}"
+            f"/{item.difficulty or req.difficulty or 'auto'}:{item.num_questions}"
+        )
         for item in plan
     )
     logger.info("Sinh câu hỏi [Doc: %s | Plan: %s]", req.document_id, plan_log)
@@ -227,6 +230,7 @@ async def generate_questions_rag(
                 plan_index=plan_index,
                 question_type=plan_item.question_type.value,
                 bloom_level=(plan_item.bloom_level or req.bloom_level).value,
+                difficulty=plan_item.difficulty or req.difficulty,
                 requested_count=plan_item.num_questions,
                 model_provider=selected_provider,
                 content_mode=content_mode,
@@ -252,6 +256,7 @@ async def generate_questions_rag(
                 plan_index=plan_index,
                 question_type=plan_item.question_type.value,
                 bloom_level=(plan_item.bloom_level or req.bloom_level).value,
+                difficulty=plan_item.difficulty or req.difficulty,
                 requested_count=plan_item.num_questions,
                 model_provider=selected_provider,
                 content_mode=content_mode,
@@ -286,12 +291,14 @@ async def _generate_questions_for_plan_item(
 ) -> tuple[List[GeneratedQuestion], GenerationPlanSummary]:
     reset_llm_execution_tracking(llm)
     bloom_level = plan_item.bloom_level or req.bloom_level
+    difficulty = plan_item.difficulty or req.difficulty
     # 2. Xây dựng Prompt thông qua hệ thống file-based cho từng dạng câu hỏi
     full_prompt = prompt_builder.build(
         context=context_text,
         bloom_level=bloom_level.value,
         question_type=plan_item.question_type.value,
         num_questions=plan_item.num_questions,
+        difficulty=difficulty,
         instruction=req.instruction,
         avoid_questions=avoid_questions,
         avoid_source_contexts=avoid_source_contexts or [],
@@ -303,6 +310,7 @@ async def _generate_questions_for_plan_item(
     request_snapshot["active_plan_item"] = {
         **plan_item.model_dump(mode="json"),
         "effective_bloom_level": bloom_level.value,
+        "effective_difficulty": difficulty,
     }
     generation_run_id = create_generation_run(
         document_id=req.document_id,
@@ -345,6 +353,7 @@ async def _generate_questions_for_plan_item(
             questions_list,
             question_type=plan_item.question_type.value,
             bloom_level=bloom_level.value,
+            requested_difficulty=difficulty,
             context_text=context_text,
         )
         postprocessed_count = len(validated_data)
@@ -368,6 +377,7 @@ async def _generate_questions_for_plan_item(
                     original_prompt=full_prompt,
                     question_type=plan_item.question_type.value,
                     bloom_level=bloom_level.value,
+                    difficulty=difficulty,
                     missing_count=missing_count,
                     validation_errors=validation_errors,
                     avoid_questions=[
@@ -388,6 +398,7 @@ async def _generate_questions_for_plan_item(
                         retry_questions,
                         question_type=plan_item.question_type.value,
                         bloom_level=bloom_level.value,
+                        requested_difficulty=difficulty,
                         context_text=context_text,
                     )
                     postprocessed_count += len(retry_validated)
@@ -445,6 +456,7 @@ async def _generate_questions_for_plan_item(
             plan_index=plan_index,
             question_type=plan_item.question_type.value,
             bloom_level=bloom_level.value,
+            difficulty=difficulty,
             requested_count=plan_item.num_questions,
             parsed_count=parsed_count,
             valid_count=postprocessed_count,
@@ -511,6 +523,7 @@ async def _generate_questions_for_plan_item(
             plan_index=plan_index,
             question_type=plan_item.question_type.value,
             bloom_level=bloom_level.value,
+            difficulty=difficulty,
             requested_count=plan_item.num_questions,
             parsed_count=0,
             valid_count=0,
@@ -565,6 +578,7 @@ def _build_retry_prompt(
     missing_count: int,
     validation_errors: list[str | GenerationRejection],
     avoid_questions: list[str],
+    difficulty: str | None = None,
 ) -> str:
     error_messages = [
         error.message if isinstance(error, GenerationRejection) else str(error)
@@ -578,6 +592,7 @@ def _build_retry_prompt(
         if question and question.strip()
     ) or "- None"
     type_rule = QUESTION_TYPE_RETRY_RULES.get(question_type, "Follow the QUESTION TYPE rules exactly.")
+    difficulty_rule = f"- difficulty: {difficulty}" if difficulty else "- difficulty: apply the difficulty rule"
     return f"""
 {original_prompt}
 
@@ -588,6 +603,7 @@ Generate exactly {missing_count} additional questions.
 STRICT TARGET:
 - question_type: {question_type}
 - bloom_level: {bloom_level}
+{difficulty_rule}
 - required structure: {type_rule}
 
 RECENT VALIDATION ERRORS TO FIX:
@@ -607,6 +623,7 @@ def _aggregate_plan_summaries(
     plan_index: int,
     question_type: str,
     bloom_level: str,
+    difficulty: str | None,
     requested_count: int,
     model_provider: str,
     content_mode: str,
@@ -620,6 +637,7 @@ def _aggregate_plan_summaries(
         plan_index=plan_index,
         question_type=question_type,
         bloom_level=bloom_level,
+        difficulty=difficulty,
         requested_count=requested_count,
         parsed_count=sum(summary.parsed_count for summary in summaries),
         valid_count=sum(summary.valid_count for summary in summaries),
@@ -640,6 +658,7 @@ def _build_plan_summary(
     plan_index: int,
     question_type: str,
     bloom_level: str,
+    difficulty: str | None,
     requested_count: int,
     parsed_count: int,
     valid_count: int,
@@ -673,6 +692,7 @@ def _build_plan_summary(
         plan_index=plan_index,
         question_type=question_type,
         bloom_level=bloom_level,
+        difficulty=difficulty,
         model_provider=model_provider,
         content_mode=content_mode,
         requested_count=requested_count,
@@ -770,6 +790,7 @@ def _validate_and_format(
     *,
     question_type: str,
     bloom_level: str,
+    requested_difficulty: str | None = None,
     context_text: str,
 ) -> tuple[List[GeneratedQuestion], list[GenerationRejection]]:
     """Validate dữ liệu và ép kiểu về model chuẩn. Loại bỏ các câu hỏi không đúng
@@ -842,7 +863,7 @@ def _validate_and_format(
             continue
 
         raw_difficulty = item.get("difficulty")
-        difficulty = _normalize_difficulty(raw_difficulty)
+        difficulty = requested_difficulty or _normalize_difficulty(raw_difficulty)
         if raw_difficulty not in (None, "") and difficulty is None:
             logger.warning("Bỏ qua difficulty không hợp lệ: %s", raw_difficulty)
 

@@ -117,8 +117,6 @@ const Header = () => {
       items: [
         { path: '/gioi-thieu', label: 'Giới thiệu' },
         { path: '/trang-chu', label: 'Trang chủ' },
-        { path: '/huong-dan', label: 'Hướng dẫn' },
-        { path: '/lien-he', label: 'Liên hệ' },
       ],
     },
     {
@@ -127,6 +125,15 @@ const Header = () => {
       items: [
         { path: '/sinh-cau-hoi', label: 'Sinh câu hỏi' },
         { path: '/lam-de-thi', label: 'Làm đề thi' },
+      ],
+    },
+    {
+      id: 'support',
+      label: 'Hỗ trợ',
+      isPublic: true,
+      items: [
+        { path: '/huong-dan', label: 'Hướng dẫn' },
+        { path: '/lien-he', label: 'Liên hệ' },
       ],
     },
     {
@@ -171,7 +178,7 @@ const Header = () => {
     }))
     .filter((group) => {
       if (role === 'Admin' && group.id === 'public') return false;
-      return group.id === 'public' || (signedIn && group.items.length > 0);
+      return group.isPublic || group.id === 'public' || (signedIn && group.items.length > 0);
     });
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
 

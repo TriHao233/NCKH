@@ -5,9 +5,10 @@ from typing import Callable
 from bson import ObjectId
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from firebase_admin import auth
 
 from core.database import get_rag_db
+from core.demo_auth import is_demo_session_token, verify_demo_session_token
+from core.firebase_auth import verify_firebase_id_token
 from modules.auth.session_repository import get_firebase_session_repository
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -88,10 +89,17 @@ def get_current_user(
             detail="Thiếu Firebase ID token",
         )
     try:
-        claims = auth.verify_id_token(
-            credentials.credentials,
-            clock_skew_seconds=TOKEN_CLOCK_SKEW_SECONDS,
-        )
+        bearer_token = credentials.credentials
+        if is_demo_session_token(bearer_token):
+            claims = verify_demo_session_token(bearer_token)
+            session = get_firebase_session_repository().find_by_uid(claims["uid"])
+            if session is not None and session.get("token") != bearer_token:
+                raise ValueError("Demo token has been revoked")
+        else:
+            claims = verify_firebase_id_token(
+                bearer_token,
+                clock_skew_seconds=TOKEN_CLOCK_SKEW_SECONDS,
+            )
     except Exception as exc:
         logger.warning("Firebase ID token verification failed: %s", exc)
         raise HTTPException(
@@ -109,7 +117,7 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tài khoản đã bị khóa")
     get_firebase_session_repository().upsert(
         claims["uid"],
-        credentials.credentials,
+        bearer_token,
     )
     return CurrentUser(
         id=user["_id"],

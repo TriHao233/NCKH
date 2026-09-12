@@ -20,3 +20,6 @@ SCHEMA:
     }
   ]
 }
+
+GHI CHÚ:
+- `difficulty` là độ khó ước lượng độc lập với `bloom_level`; chỉ trả về đúng một trong ba mã de, trung_binh hoặc kho.

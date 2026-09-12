@@ -18,7 +18,7 @@
   min-height: var(--nav-h, 80px);
   max-width: 100%;
   margin: 0 auto;
-  padding: 0 clamp(16px, 2vw, 32px);
+  padding: 0 clamp(40px, 5vw, 72px);
   overflow: visible;
 }
 
@@ -92,7 +92,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0 2px;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scroll-padding-inline: 24px;
   scrollbar-width: none;
 }
@@ -382,6 +382,7 @@
   .nav-container {
     grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
     gap: 16px;
+    padding-inline: clamp(28px, 4vw, 48px);
   }
 
   .nav-brand {
@@ -418,7 +419,7 @@
     grid-template-columns: 1fr auto;
     min-height: 60px;
     gap: 12px;
-    padding: 0 16px;
+    padding: 0 20px;
   }
 
   .nav-logo {

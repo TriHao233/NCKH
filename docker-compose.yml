@@ -1,5 +1,6 @@
 services:
   backend:
+    image: nckh-backend:dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -23,7 +24,6 @@ services:
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
-      ANONYMIZED_TELEMETRY: "False"
       DOCLING_OCR_PRESET: ${DOCLING_OCR_PRESET:-tesseract}
       DOCLING_OCR_LANGUAGES: ${DOCLING_OCR_LANGUAGES:-vie}
     extra_hosts:
@@ -42,11 +42,10 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-      docling:
-        condition: service_started
     restart: unless-stopped
 
   docling:
+    profiles: ["ocr"]
     build:
       context: ./backend
       dockerfile: Docling.Dockerfile
@@ -96,6 +95,7 @@ services:
     logging: *service-logging
 
   worker:
+    image: nckh-backend:dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -115,7 +115,6 @@ services:
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
-      ANONYMIZED_TELEMETRY: "False"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
@@ -128,22 +127,16 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     restart: unless-stopped
     logging: *service-logging
 
   frontend:
+    profiles: ["prod"]
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_DEMO_MODE: ${VITE_DEMO_MODE:-false}
+        VITE_DEMO_MODE: ${VITE_DEMO_MODE:-true}
         VITE_PIPELINE_3D: ${VITE_PIPELINE_3D:-false}
     container_name: nckh-frontend
     ports:

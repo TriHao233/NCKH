@@ -1768,7 +1768,7 @@ function ReviewQueuePage() {
                       <span>{questionTypeLabel(assessmentType(question))}</span>
                       <span>{bloomDisplay(question.classification)}</span>
                       <span className={`difficulty-tag ${question.classification?.difficulty ? `difficulty-tag--${question.classification.difficulty}` : 'difficulty-tag--empty'}`}>
-                        {difficultyLabel(question.classification?.difficulty) || 'Chưa gán độ khó'}
+                        {difficultyLabel(question.classification?.difficulty) || 'Chưa ước lượng độ khó'}
                       </span>
                       <span>{subjectLabelForQuestion(question)}</span>
                       {question.submitted_by_user_id && (
@@ -1874,7 +1874,7 @@ function ReviewQueuePage() {
                   <b>{subjectLabelForQuestion(selected)}</b>
                 </div>
                 <div>
-                  <span>Độ khó</span>
+                  <span>Độ khó ước lượng</span>
                   <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b>
                 </div>
                 <div>
@@ -1945,8 +1945,8 @@ function ReviewQueuePage() {
                   <section className="question-answer-panel" hidden={detailView !== 'question'}>
                     <div className="question-answer-panel__meta">
                       <span>Dạng câu hỏi <b>{questionTypeLabel(assessmentType(selected))}</b></span>
-                      <span>Mức Bloom <b>{bloomDisplay(selected.classification)}</b></span>
-                      <span>Độ khó đã chọn <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b></span>
+                      <span>Mức nhận thức <b>{bloomDisplay(selected.classification)}</b></span>
+                      <span>Độ khó ước lượng <b>{difficultyLabel(selected.classification?.difficulty) || 'Chưa gán'}</b></span>
                       <span>Phiên bản <b>{selected.current_version}</b></span>
                     </div>
                     <h3>Nội dung câu hỏi</h3>
@@ -2105,7 +2105,7 @@ function ReviewQueuePage() {
                       <span>Đánh giá lúc: <b>{formatDate(latestEvaluation?.created_at || qualitySummary.evaluated_at)}</b></span>
                       {latestEvidence.assessed_difficulty ? (
                         <span>
-                          Độ khó AI đề xuất: <b>{difficultyLabel(latestEvidence.assessed_difficulty)}</b>
+                          AI ước lượng độ khó: <b>{difficultyLabel(latestEvidence.assessed_difficulty)}</b>
                         </span>
                       ) : null}
                     </div>

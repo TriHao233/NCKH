@@ -23,9 +23,13 @@ class QuestionType(str, Enum):
     NHIEU_LUA_CHON = "nhieu_lua_chon"
 
 
+QuestionDifficulty = Literal["de", "trung_binh", "kho"]
+
+
 class QuestionPlanItem(BaseModel):
     question_type: QuestionType
     bloom_level: Optional[BloomLevel] = None
+    difficulty: Optional[QuestionDifficulty] = None
     num_questions: int = Field(default=1, ge=1, le=10)
     content_mode: Literal["auto", "code", "general"] = "auto"
 
@@ -50,6 +54,10 @@ class QuestionGenerateRequest(BaseModel):
         description="Yêu cầu/chủ đề cụ thể từ giảng viên khi sinh câu hỏi",
     )
     bloom_level: BloomLevel
+    difficulty: Optional[QuestionDifficulty] = Field(
+        None,
+        description="Độ khó ước lượng mong muốn; mỗi dòng trong question_plan có thể ghi đè giá trị này.",
+    )
     question_type: QuestionType = QuestionType.TRAC_NGHIEM
     num_questions: int = Field(default=1, ge=1, le=10)
     model_provider: str = Field(default_factory=lambda: settings.model_provider, min_length=1, max_length=160)
@@ -127,6 +135,7 @@ class GenerationPlanSummary(BaseModel):
     plan_index: int
     question_type: str
     bloom_level: str
+    difficulty: Optional[str] = None
     model_provider: str = ""
     content_mode: str = "general"
     requested_count: int

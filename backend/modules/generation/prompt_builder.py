@@ -36,6 +36,7 @@ class PromptBuilder:
         learning_outcomes: list[dict] | None = None,
         content_mode: str = "general",
         focus_directive: str | None = None,
+        difficulty: str | None = None,
     ):
         system = self._load_template("system", "system.txt")
         question_rule = self._load_template("question_rule", "question_rule.txt")
@@ -103,6 +104,15 @@ Set `clo_codes` to the best matching codes from this list. Do not invent codes.
 FOCUS:
 {focus_directive.strip()}
 """ if focus_directive else ""
+        difficulty_block = f"""
+TARGET ESTIMATED DIFFICULTY:
+- Generate questions whose `difficulty` is exactly `{difficulty}`.
+- Keep the requested Bloom level unchanged; adjust familiarity, number of reasoning steps, amount of data, and distractor closeness to match this difficulty.
+- Do not add unsupported facts or obscure trivia just to make a question harder.
+""" if difficulty else """
+TARGET ESTIMATED DIFFICULTY:
+- Choose `difficulty` by applying the difficulty rule after the question is written.
+"""
 
         # Ráp lại với cấu trúc tối ưu hóa
         return f"""
@@ -119,6 +129,7 @@ TASK: Generate exactly {num_questions} questions.
 {clo_block}
 {mode_block}
 {focus_block}
+{difficulty_block}
 CONTEXT:
 {context}
 

@@ -18,6 +18,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
 import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
+import { normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/AdminJobsPage.css';
 import '../css/UsersAdminPage.css';
 
@@ -480,8 +481,8 @@ function UsersAdminPage() {
                   <tr key={u.id}>
                     <td>
                       <div className="user-cell">
-                        {u.profile?.avatar ? (
-                          <img className="user-avatar-img" src={u.profile.avatar} alt="" referrerPolicy="no-referrer" />
+                        {normalizeAvatarUrl(u.profile?.avatar) ? (
+                          <img className="user-avatar-img" src={normalizeAvatarUrl(u.profile?.avatar)} alt="" referrerPolicy="no-referrer" />
                         ) : (
                           <span className="user-avatar-initials" style={{ background: ROLE_COLOR[u.role] || '#5c6f89' }}>
                             {initials(u.display_name)}

@@ -23,23 +23,20 @@ import {
 import { AuthContext } from '../context/AuthContext';
 import { auth } from '../firebase';
 import { getMe, getMyStats, updateMe, uploadMyAvatar } from '../api/users';
+import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/UserProfile.css';
 
 const MAX_SCHOOL_LENGTH = 200;
 const MAX_ADDRESS_LENGTH = 300;
 const MAX_AVATAR_FILE_SIZE = 2 * 1024 * 1024;
-const URL_PATTERN = /^https?:\/\/[^\s]+$/i;
-
-function buildFallbackAvatar(name) {
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'U')}&background=0c78d4&color=fff`;
-}
+const URL_PATTERN = /^(?:https?:\/\/[^\s]+|\/api\/[^\s]+)$/i;
 
 function toFormState(user) {
   return {
     displayName: user?.display_name || '',
     school: user?.profile?.school || '',
     address: user?.profile?.address || '',
-    avatar: user?.profile?.avatar || '',
+    avatar: normalizeAvatarUrl(user?.profile?.avatar),
   };
 }
 
@@ -55,7 +52,7 @@ function validateForm(form) {
     errors.address = `Địa chỉ không vượt quá ${MAX_ADDRESS_LENGTH} ký tự.`;
   }
   if (form.avatar.trim() && !URL_PATTERN.test(form.avatar.trim())) {
-    errors.avatar = 'Ảnh đại diện phải là một URL hợp lệ (bắt đầu bằng http:// hoặc https://) hoặc để trống.';
+    errors.avatar = 'Ảnh đại diện phải là URL hợp lệ, đường dẫn /api/... hoặc để trống.';
   }
   return errors;
 }
@@ -147,7 +144,7 @@ function InfoTab({ user, onProfileUpdated }) {
     setFieldErrors((prev) => ({ ...prev, avatar: undefined }));
     try {
       const result = await uploadMyAvatar(file);
-      setForm((prev) => ({ ...prev, avatar: result.avatar_url || '' }));
+      setForm((prev) => ({ ...prev, avatar: normalizeAvatarUrl(result.avatar_url) }));
       setBanner({ type: 'success', message: 'Đã tải ảnh lên. Bấm Lưu thay đổi để cập nhật hồ sơ.' });
     } catch (error) {
       setFieldErrors((prev) => ({
@@ -181,7 +178,7 @@ function InfoTab({ user, onProfileUpdated }) {
         profile: {
           school: form.school.trim(),
           address: form.address.trim(),
-          avatar: form.avatar.trim(),
+          avatar: normalizeAvatarUrl(form.avatar),
         },
       });
       onProfileUpdated(updated);
@@ -196,7 +193,7 @@ function InfoTab({ user, onProfileUpdated }) {
     }
   };
 
-  const avatarPreview = form.avatar.trim() || buildFallbackAvatar(form.displayName);
+  const avatarPreview = normalizeAvatarUrl(form.avatar) || buildFallbackAvatar(form.displayName);
 
   return (
     <form className="card profile-card" onSubmit={handleSubmit}>
@@ -353,7 +350,7 @@ function InfoTab({ user, onProfileUpdated }) {
 }
 
 function SecurityTab() {
-  const isPasswordAccount = (auth.currentUser?.providerData || []).some(
+  const isPasswordAccount = (auth?.currentUser?.providerData || []).some(
     (provider) => provider.providerId === 'password',
   );
 
@@ -376,6 +373,9 @@ function SecurityTab() {
     setIsSubmitting(true);
     setBanner(null);
     try {
+      if (!auth?.currentUser) {
+        throw new Error('Firebase web app chưa được cấu hình hoặc phiên đăng nhập đã hết hạn.');
+      }
       const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
       await reauthenticateWithCredential(auth.currentUser, credential);
       await updatePassword(auth.currentUser, newPassword);
@@ -532,7 +532,7 @@ function UserProfile() {
   const displayName = user?.display_name || 'Giảng viên';
   const displayEmail = user?.email || '';
   const displayRole = user?.role || 'Teacher';
-  const avatarUrl = user?.profile?.avatar || buildFallbackAvatar(displayName);
+  const avatarUrl = normalizeAvatarUrl(user?.profile?.avatar) || buildFallbackAvatar(displayName);
 
   return (
     <main className="profile-page">

@@ -99,6 +99,9 @@ export function getVariantPreview(examId, variantId) {
 }
 
 async function downloadVariantExport(examId, variantId, format, type, fallbackMessage) {
+  if (!auth) {
+    throw new ApiError('Firebase web app chưa được cấu hình', 503, null);
+  }
   await auth.authStateReady();
   const firebaseUser = auth.currentUser;
   if (!firebaseUser) {

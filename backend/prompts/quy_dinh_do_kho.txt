@@ -1,33 +1,56 @@
-QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ
+QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ ƯỚC LƯỢNG
 
-Nhiệm vụ: gán đúng MỘT nhãn độ khó cho mỗi câu hỏi. Chỉ dùng ba giá trị:
+Nhiệm vụ: gán đúng MỘT nhãn độ khó ước lượng cho mỗi câu hỏi. Chỉ dùng ba giá trị:
 - de
 - trung_binh
 - kho
 
-Độ khó khác Bloom. Bloom là thao tác tư duy (nhớ, hiểu, vận dụng...). Độ khó là mức dễ hay khó để người học trả lời đúng. Phải đo từ chính nội dung câu hỏi, không bịa thêm kiến thức ngoài CONTEXT, không tự làm khó bằng chi tiết vụn vặt.
+Độ khó khác Bloom. Bloom là thao tác tư duy cần đo (nhớ, hiểu, vận dụng, phân tích, đánh giá, sáng tạo). Độ khó là mức thử thách dự kiến để người học trả lời đúng trong cùng thao tác tư duy đó.
 
-Đo theo ba tiêu chí, theo thứ tự ưu tiên.
+Không suy luận theo công thức "Bloom thấp = dễ" hoặc "Bloom cao = khó". Một câu Nhớ vẫn có thể khó nếu hỏi chi tiết hiếm/dễ nhầm; một câu Vận dụng vẫn có thể dễ nếu chỉ áp dụng trực tiếp một quy tắc quen thuộc. Không bịa thêm kiến thức ngoài CONTEXT và không tự làm khó bằng chi tiết vụn vặt.
 
-1. MỨC BLOOM (tiêu chí chính)
-- Bloom 1 Nhớ, 2 Hiểu: mặc định nghiêng de. Chỉ lên trung_binh nếu câu dài, nhiều điều kiện hoặc dùng keyword khó.
-- Bloom 3 Vận dụng, 4 Phân tích: mặc định trung_binh. Xuống de nếu chỉ nhận diện thuật ngữ rất ngắn. Lên kho nếu phải so sánh nhiều nhánh, ngoại lệ, hoặc suy nhiều bước.
-- Bloom 5 Đánh giá, 6 Sáng tạo: mặc định kho. Chỉ xuống trung_binh nếu tình huống rất ngắn, ràng buộc rõ, gần như áp dụng một quy tắc.
+Đo theo các tiêu chí sau, theo thứ tự ưu tiên.
 
-2. KEYWORD TRONG CÂU HỎI
-Keyword dễ (kéo về de): là gì, định nghĩa, gọi tên, liệt kê, nhận biết, ký hiệu, thuật ngữ, đúng hay sai.
-Keyword khó (kéo về kho): so sánh, phân tích, phân biệt, ngoại lệ, tại sao, chứng minh, tối ưu, độ phức tạp, hậu quả, kết hợp, thiết kế, đánh giá, ưu nhược, trường hợp nào.
+1. ĐỘ QUEN THUỘC VÀ TRỌNG TÂM KIẾN THỨC
+- Kiến thức lõi, thuật ngữ phổ biến, nguyên tắc xuất hiện rõ trong CONTEXT: dễ hơn.
+- Chi tiết phụ, trường hợp ngoại lệ, khái niệm gần giống nhau hoặc dễ nhầm: khó hơn.
+- Không nâng độ khó chỉ vì nội dung có tên thuật toán/cấu trúc dữ liệu chuyên ngành nếu câu hỏi vẫn kiểm tra trực tiếp một ý quen thuộc.
 
-Nếu có keyword khó, không gắn de dù Bloom thấp, trừ khi câu chỉ hỏi nhận diện một thuật ngữ.
+2. KEYWORD TRONG CÂU HỎI VÀ CÁCH DIỄN ĐẠT
+- Keyword gợi ý dễ: là gì, định nghĩa, gọi tên, liệt kê, nhận biết, ký hiệu, thuật ngữ, đúng hay sai.
+- Keyword gợi ý khó: so sánh, phân tích, phân biệt, ngoại lệ, tại sao, chứng minh, tối ưu, độ phức tạp, hậu quả, kết hợp, thiết kế, đánh giá, ưu nhược, trường hợp nào.
+- Keyword chỉ là tín hiệu phụ. Phải xét câu hỏi thực tế: "phân tích" trong một câu rất trực tiếp có thể chỉ trung_binh; "định nghĩa" của hai khái niệm rất dễ nhầm có thể không còn de.
 
-3. ĐỘ DÀI VÀ CẤU TRÚC
-- Stem ngắn, hỏi trực tiếp một ý: dễ hơn.
-- Stem dài, nhiều mệnh đề, có nếu / khi / trong trường hợp, tình huống nhiều dữ kiện: khó hơn.
-- Đếm cả phần câu hỏi và lựa chọn. Nhiều lựa chọn gần nghĩa, nhiễu tinh vi: khó hơn. Lựa chọn lộ đáp án: dễ hơn, nhưng không vì thế mà hạ Bloom.
+3. SỐ BƯỚC SUY LUẬN
+- Một bước nhận diện hoặc áp dụng trực tiếp: nghiêng de.
+- Một đến hai bước suy luận, cần nối điều kiện với quy tắc: nghiêng trung_binh.
+- Nhiều bước, phải so sánh nhánh, xét ngoại lệ hoặc kết hợp nhiều ý: nghiêng kho.
+
+4. ĐỘ DÀI, DỮ KIỆN VÀ RÀNG BUỘC
+- Stem ngắn, hỏi trực tiếp một ý, dữ kiện rõ: dễ hơn.
+- Stem có tình huống, nhiều mệnh đề, nếu/khi/trong trường hợp, hoặc nhiều ràng buộc cần giữ cùng lúc: khó hơn.
+- Ràng buộc càng rõ thì câu hỏi càng dễ chấm; không coi câu hỏi mơ hồ là "khó".
+
+5. PHƯƠNG ÁN NHIỄU VÀ KHẢ NĂNG LOẠI TRỪ
+- Lựa chọn lộ đáp án, khác loại rõ rệt, hoặc có thể loại trừ bằng mẹo hình thức: dễ hơn.
+- Nhiều lựa chọn gần nghĩa, cùng loại, chỉ khác ở điều kiện quan trọng: khó hơn.
+- Nhiễu phải hợp lý và có căn cứ; không dùng nhiễu sai vô lý chỉ để tạo cảm giác khó.
+
+6. VAI TRÒ CỦA BLOOM
+- Bloom là ràng buộc về kiểu tư duy; không hạ/nâng Bloom để khớp độ khó.
+- Chỉ dùng Bloom như tín hiệu tham khảo sau khi đã xét các tiêu chí trên.
+- Cùng một Bloom có thể có đủ ba nhãn de, trung_binh, kho nếu câu hỏi thật sự khác nhau về độ quen thuộc, số bước, dữ kiện và nhiễu.
+
+VÍ DỤ ĐỊNH HƯỚNG
+- Nhớ + kho: hỏi chi tiết hiếm hoặc hai thuật ngữ rất dễ nhầm.
+- Hiểu + kho: yêu cầu phân biệt hai khái niệm gần giống nhau bằng điều kiện tinh tế.
+- Vận dụng + de: áp dụng trực tiếp một quy tắc quen thuộc vào tình huống ngắn.
+- Phân tích + trung_binh: so sánh hai trường hợp rõ, không có ngoại lệ phức tạp.
+- Sáng tạo + trung_binh: đề xuất phương án theo mẫu đã học, ràng buộc ít và rõ.
 
 CÁCH CHỐT NHÃN
-- de: nhớ/nhận diện, câu ngắn, keyword dễ, một bước.
-- trung_binh: vận dụng hoặc hiểu có điều kiện, độ dài vừa, một đến hai bước.
-- kho: phân tích / đánh giá / sáng tạo, nhiều điều kiện, keyword khó, hoặc phải kết hợp nhiều ý.
+- de: kiến thức quen thuộc, một ý chính, một bước, dữ kiện rõ, nhiễu dễ loại trừ.
+- trung_binh: cần nối vài dữ kiện hoặc một đến hai bước suy luận, nhiễu tương đối hợp lý.
+- kho: chi tiết dễ nhầm, nhiều bước, nhiều ràng buộc, ngoại lệ, hoặc nhiễu rất gần nghĩa nhưng vẫn công bằng.
 
 Không dùng nhãn khác. Không để trống nếu đã viết được câu hỏi hợp lệ.

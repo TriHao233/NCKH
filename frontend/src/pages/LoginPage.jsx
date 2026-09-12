@@ -4,7 +4,6 @@ import "../css/LoginPage.css";
 import { AuthContext } from "../context/AuthContext";
 import {
   getRedirectResult,
-  signInWithCustomToken,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -28,6 +27,9 @@ const POPUP_FALLBACK_CODES = new Set([
 ]);
 
 function googleLoginErrorMessage(error) {
+  if (error?.code === "auth/not-configured") {
+    return "Firebase web app chưa khởi tạo được với project nckh-e6817. Vui lòng rebuild frontend và tải lại trang.";
+  }
   if (error?.code === "auth/unauthorized-domain") {
     return "Miền hiện tại chưa được Firebase cho phép. Hãy mở ứng dụng bằng localhost hoặc thêm domain này vào Firebase Authorized domains.";
   }
@@ -37,7 +39,7 @@ function googleLoginErrorMessage(error) {
 function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, user, loading } = useContext(AuthContext);
+  const { login, loginWithDemoSession, user, loading } = useContext(AuthContext);
   const requestedPath = location.state?.from;
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -72,6 +74,11 @@ function LoginPage() {
     if (redirectChecked.current) return undefined;
     redirectChecked.current = true;
     let active = true;
+    if (!auth) {
+      return () => {
+        active = false;
+      };
+    }
     getRedirectResult(auth)
       .then(async (result) => {
         if (!active || !result?.user) return;
@@ -100,11 +107,18 @@ function LoginPage() {
     setIsLoading(true);
     setAuthNotice(null);
     try {
+      if (!auth || !googleProvider) {
+        const error = new Error("Firebase web app chưa được cấu hình");
+        error.code = "auth/not-configured";
+        throw error;
+      }
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await login(result.user);
       navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
-      await signOut(auth).catch(() => {});
+      if (auth) {
+        await signOut(auth).catch(() => {});
+      }
       if (POPUP_FALLBACK_CODES.has(error?.code)) {
         setAuthNotice({
           type: "info",
@@ -140,6 +154,11 @@ function LoginPage() {
 
     try {
       const demoUsername = demoUsernameFor(formData.email, DEMO_LOGIN_ENABLED);
+      if (!demoUsername && !auth) {
+        const error = new Error("Firebase web app chưa được cấu hình");
+        error.code = "auth/not-configured";
+        throw error;
+      }
       const userCredential = demoUsername
         ? await apiRequest("/auth/demo-login", {
             method: "POST",
@@ -148,17 +167,20 @@ function LoginPage() {
               password: formData.password,
             },
             authRequired: false,
-          }).then((data) => signInWithCustomToken(auth, data.custom_token))
+          }).then((data) => ({ user: null, appUser: data }))
         : await signInWithEmailAndPassword(
             auth,
             normalizeLoginEmail(formData.email),
             formData.password
       );
-      const firebaseUser = userCredential.user;
-      const appUser = await login(firebaseUser);
+      const appUser = demoUsername
+        ? await loginWithDemoSession(userCredential.appUser)
+        : await login(userCredential.user);
       navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
     } catch (error) {
-      await signOut(auth).catch(() => {});
+      if (auth) {
+        await signOut(auth).catch(() => {});
+      }
       setAuthNotice({ type: "error", message: loginErrorMessage(error, DEMO_LOGIN_ENABLED) });
     } finally {
       setIsLoading(false);
@@ -256,9 +278,7 @@ function LoginPage() {
                 Đăng nhập với Google
               </button>
 
-              <div className="divider">
-                <span>{DEMO_LOGIN_ENABLED ? "hoặc đăng nhập bằng tài khoản demo/email" : "hoặc đăng nhập bằng email"}</span>
-              </div>
+              
 
               <form className="auth-form" onSubmit={handleSubmit} noValidate>
                 <div className="field-group">

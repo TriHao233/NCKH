@@ -19,6 +19,14 @@
   padding-inline: var(--page-gutter);
 }
 
+.page-main :is(
+  .generate-page,
+  .exam-list-page,
+  .exam-builder-page
+) .container {
+  padding-inline: clamp(44px, 5vw, 72px);
+}
+
 .page-main .admin-jobs-page :is(.jobs-header, .jobs-summary, .jobs-toolbar, .jobs-layout, .jobs-error),
 .page-main .admin-moodle-page :is(.moodle-header, .moodle-summary, .moodle-layout, .publication-panel, .moodle-error),
 .page-main .admin-overview-page :is(.overview-header, .overview-stats, .overview-grid, .overview-error),
@@ -161,6 +169,14 @@
     .profile-page
   ) .container {
     padding-inline: 16px;
+  }
+
+  .page-main :is(
+    .generate-page,
+    .exam-list-page,
+    .exam-builder-page
+  ) .container {
+    padding-inline: 24px;
   }
 
   .page-main :is(

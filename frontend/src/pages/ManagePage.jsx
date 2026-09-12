@@ -365,7 +365,7 @@ function versionDiffRows(left, right) {
       after: rightClassification.bloom?.name || rightClassification.bloom?.level,
     },
     {
-      label: 'Độ khó',
+      label: 'Độ khó ước lượng',
       before: leftClassification.difficulty,
       after: rightClassification.difficulty,
     },
@@ -2200,7 +2200,7 @@ function ManagePage() {
                     value={difficultyFilter}
                     onChange={(e) => setDifficultyFilter(e.target.value)}
                   >
-                    <option value="all-difficulties">Tất cả độ khó</option>
+                    <option value="all-difficulties">Tất cả độ khó ước lượng</option>
                     {DIFFICULTIES.map((difficulty) => (
                       <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
                     ))}
@@ -2351,7 +2351,7 @@ function ManagePage() {
                           <span className="q-tag">{questionTypeLabel((item.classification?.assessment_type || '').toLowerCase())}</span>
                           <span className="bloom-tag">{item.classification?.bloom?.name || '—'}</span>
                           <span className={`difficulty-tag ${item.classification?.difficulty ? `difficulty-tag--${item.classification.difficulty}` : 'difficulty-tag--empty'}`}>
-                            {difficultyLabel(item.classification?.difficulty) || 'Chưa gán độ khó'}
+                            {difficultyLabel(item.classification?.difficulty) || 'Chưa ước lượng độ khó'}
                           </span>
                           {(item.clos || []).slice(0, 2).map((clo) => (
                             <span className="clo-tag" key={refId(clo.id || clo)}>
@@ -3013,7 +3013,7 @@ function ManagePage() {
               <span className="q-tag">{questionTypeLabel((viewingQuestion.classification?.assessment_type || '').toLowerCase())}</span>
               <span className="bloom-tag">{viewingQuestion.classification?.bloom?.name || '—'}</span>
               <span className={`difficulty-tag ${viewingQuestion.classification?.difficulty ? `difficulty-tag--${viewingQuestion.classification.difficulty}` : 'difficulty-tag--empty'}`}>
-                {difficultyLabel(viewingQuestion.classification?.difficulty) || 'Chưa gán độ khó'}
+                {difficultyLabel(viewingQuestion.classification?.difficulty) || 'Chưa ước lượng độ khó'}
               </span>
               <span className={`status-badge ${REVIEW_STATUS_CLASS[viewingQuestion.review_status] || ''}`}>
                 {REVIEW_STATUS_LABEL[viewingQuestion.review_status] || viewingQuestion.review_status}
@@ -3054,7 +3054,7 @@ function ManagePage() {
             <h3 className="profile-card-title">Sửa hàng loạt {selectedQuestions.length} câu hỏi</h3>
 
             <div className="field-group">
-              <label className="field-label">Mức Bloom</label>
+              <label className="field-label">Mức nhận thức Bloom</label>
               <select
                 className="field-select"
                 value={bulkEditDraft.bloomLevel}
@@ -3070,13 +3070,13 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Độ khó</label>
+              <label className="field-label">Độ khó ước lượng</label>
               <select
                 className="field-select"
                 value={bulkEditDraft.difficulty}
                 onChange={(e) => setBulkEditDraft((current) => ({ ...current, difficulty: e.target.value }))}
               >
-                <option value="">Không đổi độ khó</option>
+                <option value="">Không đổi độ khó ước lượng</option>
                 {DIFFICULTIES.map((difficulty) => (
                   <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
                 ))}

@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 
 from core.config import resolve_path, settings
@@ -75,7 +75,6 @@ def update_me(
 
 @router.post("/me/avatar")
 async def upload_my_avatar(
-    request: Request,
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -92,8 +91,7 @@ async def upload_my_avatar(
     filename = f"{current_user.id}-{uuid4().hex}{extension}"
     destination = AVATAR_UPLOAD_DIR / filename
     destination.write_bytes(content)
-    base_url = str(request.base_url).rstrip("/")
-    return {"avatar_url": f"{base_url}{settings.api_prefix}/users/avatar/{filename}"}
+    return {"avatar_url": f"{settings.api_prefix}/users/avatar/{filename}"}
 
 
 @router.get("/avatar/{filename}")

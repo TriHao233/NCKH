@@ -1,30 +1,71 @@
-import { lazy, Suspense, useContext } from 'react';
+import { lazy, Suspense, useContext, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import { AuthContext } from './context/AuthContext';
 import { canAccessPath } from './auth/permissions';
 
-const AboutPage = lazy(() => import('./pages/AboutPage'));
-const GeneratePage = lazy(() => import('./pages/GeneratePage'));
-const ManagePage = lazy(() => import('./pages/ManagePage'));
-const ReviewQueuePage = lazy(() => import('./pages/ReviewQueuePage'));
-const AdminAiReviewPage = lazy(() => import('./pages/AdminAiReviewPage'));
-const AdminOverviewPage = lazy(() => import('./pages/AdminOverviewPage'));
-const CatalogAdminPage = lazy(() => import('./pages/CatalogAdminPage'));
-const AdminAuditPage = lazy(() => import('./pages/AdminAuditPage'));
-const AdminJobsPage = lazy(() => import('./pages/AdminJobsPage'));
-const AdminMoodlePage = lazy(() => import('./pages/AdminMoodlePage'));
-const UsersAdminPage = lazy(() => import('./pages/UsersAdminPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
-const RegisterPage = lazy(() => import('./pages/RegisterPage'));
-const GuidePage = lazy(() => import('./pages/GuidePage'));
-const ContactPage = lazy(() => import('./pages/ContactPage'));
-const UserProfile = lazy(() => import('./pages/UserProfile'));
-const TaskCalendarPage = lazy(() => import('./pages/TaskCalendarPage'));
-const ExamListPage = lazy(() => import('./pages/ExamListPage'));
-const SubjectManage = lazy(() => import('./pages/SubjectManage'));
-const ExamBuilderPage = lazy(() => import('./pages/ExamBuilderPage'));
+const pageImports = {
+    AboutPage: () => import('./pages/AboutPage'),
+    GeneratePage: () => import('./pages/GeneratePage'),
+    ManagePage: () => import('./pages/ManagePage'),
+    ReviewQueuePage: () => import('./pages/ReviewQueuePage'),
+    AdminAiReviewPage: () => import('./pages/AdminAiReviewPage'),
+    AdminOverviewPage: () => import('./pages/AdminOverviewPage'),
+    CatalogAdminPage: () => import('./pages/CatalogAdminPage'),
+    AdminAuditPage: () => import('./pages/AdminAuditPage'),
+    AdminJobsPage: () => import('./pages/AdminJobsPage'),
+    AdminMoodlePage: () => import('./pages/AdminMoodlePage'),
+    UsersAdminPage: () => import('./pages/UsersAdminPage'),
+    LoginPage: () => import('./pages/LoginPage'),
+    RegisterPage: () => import('./pages/RegisterPage'),
+    GuidePage: () => import('./pages/GuidePage'),
+    ContactPage: () => import('./pages/ContactPage'),
+    UserProfile: () => import('./pages/UserProfile'),
+    TaskCalendarPage: () => import('./pages/TaskCalendarPage'),
+    ExamListPage: () => import('./pages/ExamListPage'),
+    SubjectManage: () => import('./pages/SubjectManage'),
+    ExamBuilderPage: () => import('./pages/ExamBuilderPage'),
+};
+
+const AboutPage = lazy(pageImports.AboutPage);
+const GeneratePage = lazy(pageImports.GeneratePage);
+const ManagePage = lazy(pageImports.ManagePage);
+const ReviewQueuePage = lazy(pageImports.ReviewQueuePage);
+const AdminAiReviewPage = lazy(pageImports.AdminAiReviewPage);
+const AdminOverviewPage = lazy(pageImports.AdminOverviewPage);
+const CatalogAdminPage = lazy(pageImports.CatalogAdminPage);
+const AdminAuditPage = lazy(pageImports.AdminAuditPage);
+const AdminJobsPage = lazy(pageImports.AdminJobsPage);
+const AdminMoodlePage = lazy(pageImports.AdminMoodlePage);
+const UsersAdminPage = lazy(pageImports.UsersAdminPage);
+const LoginPage = lazy(pageImports.LoginPage);
+const RegisterPage = lazy(pageImports.RegisterPage);
+const GuidePage = lazy(pageImports.GuidePage);
+const ContactPage = lazy(pageImports.ContactPage);
+const UserProfile = lazy(pageImports.UserProfile);
+const TaskCalendarPage = lazy(pageImports.TaskCalendarPage);
+const ExamListPage = lazy(pageImports.ExamListPage);
+const SubjectManage = lazy(pageImports.SubjectManage);
+const ExamBuilderPage = lazy(pageImports.ExamBuilderPage);
+
+function preloadDevPages() {
+    if (!import.meta.env.DEV) return;
+
+    const preload = () => {
+        Object.values(pageImports).forEach((loadPage) => {
+            loadPage().catch(() => {});
+        });
+    };
+
+    if ('requestIdleCallback' in window) {
+        const idleId = window.requestIdleCallback(preload, { timeout: 1500 });
+        return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timerId = window.setTimeout(preload, 500);
+    return () => window.clearTimeout(timerId);
+}
 
 function RequireAccess({ path, children }) {
     const { user, loading } = useContext(AuthContext);
@@ -44,6 +85,8 @@ function ProtectedPage({ path, children }) {
 }
 
 function App() {
+    useEffect(() => preloadDevPages(), []);
+
     return (
       <Suspense fallback={<div className="route-loading">Đang tải trang...</div>}>
         <Routes>

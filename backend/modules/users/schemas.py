@@ -12,7 +12,7 @@ class RoleEnum(str, Enum):
     REVIEWER = "Reviewer"
 
 
-_URL_PATTERN = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"^(?:https?://[^\s]+|/api/[^\s]+)$", re.IGNORECASE)
 
 
 class UserProfile(BaseModel):
@@ -34,7 +34,7 @@ class UserProfile(BaseModel):
     @classmethod
     def _validate_avatar_url(cls, value: str) -> str:
         if value and not _URL_PATTERN.match(value):
-            raise ValueError("Ảnh đại diện phải là một URL hợp lệ (http/https) hoặc để trống")
+            raise ValueError("Ảnh đại diện phải là URL http/https, đường dẫn /api/... hoặc để trống")
         return value
 
 
@@ -149,6 +149,7 @@ class GenerationPresetPlanItem(BaseModel):
 
     questionTypeId: str = Field(..., min_length=1, max_length=50)
     bloomId: str = Field(..., min_length=1, max_length=50)
+    difficulty: Literal["de", "trung_binh", "kho"] = "trung_binh"
     count: int = Field(..., ge=1, le=10)
     contentMode: Literal["auto", "code", "general"] = "auto"
 

@@ -10,8 +10,11 @@ from core.bootstrap import SCHEMA_VERSION
 from core.audit import record_audit_event
 from core.config import settings
 from core.database import get_rag_db
+from core.demo_auth import create_demo_session_token
 from core.dependencies import CurrentUser, get_current_user
+from core.firebase_auth import verify_firebase_id_token
 from modules.auth.session_repository import get_firebase_session_repository
+from modules.users.repository import serialize_user
 from modules.users.service import get_user_service
 from core.limiter import limiter
 
@@ -102,19 +105,21 @@ if settings.demo_mode:
             demo_user["email"],
             demo_user["display_name"],
         )
-        app_user = _ensure_demo_app_user(firebase_user.uid, demo_user)
-        if not app_user.get("is_active", True):
+        app_user_record = _ensure_demo_app_user(firebase_user.uid, demo_user)
+        if not app_user_record.get("is_active", True):
             raise HTTPException(status_code=403, detail="Tài khoản đã bị khóa")
+        app_user = serialize_user(app_user_record)
+        demo_token = create_demo_session_token(app_user)
+        get_firebase_session_repository().upsert(firebase_user.uid, demo_token)
         record_audit_event(
             action="auth.demo_login",
             entity_type="user",
-            entity_id=app_user["_id"],
-            actor_user_id=app_user["_id"],
-            actor_role=app_user["role"],
+            entity_id=app_user_record["_id"],
+            actor_user_id=app_user_record["_id"],
+            actor_role=app_user_record["role"],
             metadata={"username": username, "email": demo_user["email"].lower()},
         )
-        custom_token = auth.create_custom_token(firebase_user.uid).decode("utf-8")
-        return {"custom_token": custom_token}
+        return {"demo_token": demo_token, "user": app_user}
 
 
 @router.post("/login")
@@ -122,7 +127,7 @@ if settings.demo_mode:
 def login_user(request: Request, body: TokenRequest):
     """Verify Firebase identity and synchronize the MongoDB application profile."""
     try:
-        claims = auth.verify_id_token(
+        claims = verify_firebase_id_token(
             body.id_token,
             clock_skew_seconds=TOKEN_CLOCK_SKEW_SECONDS,
         )
@@ -142,6 +147,7 @@ def login_user(request: Request, body: TokenRequest):
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Backend session sync failed for Firebase uid %s", claims.get("uid"))
         raise HTTPException(
             status_code=500,
             detail="Không thể đồng bộ phiên đăng nhập",
