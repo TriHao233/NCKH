@@ -37,7 +37,7 @@ const Footer = () => {
               </div>
             </div>
             <p className="footer-tagline">
-              Hệ thống ngân hàng câu hỏi thông minh ứng dụng AI — phục vụ nghiên cứu và giảng dạy tại Đại học Cần Thơ.
+              Hệ thống ngân hàng câu hỏi thông minh QBankCTU ứng dụng Trí Tuệ Nhân Tạo — phục vụ nghiên cứu và giảng dạy tại Đại học Cần Thơ.
             </p>
           </div>
 

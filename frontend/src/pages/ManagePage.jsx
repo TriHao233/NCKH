@@ -488,7 +488,8 @@ function ManagePage() {
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
   const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
-  const canCreateSubjects = permissionsForUser(user).includes('admin.catalog');
+  const permissions = permissionsForUser(user);
+  const canCreateSubjects = permissions.includes('catalog.subjects.manage_own');
 
   const [questions, setQuestions] = useState([]);
   const [questionTotal, setQuestionTotal] = useState(0);
@@ -713,6 +714,18 @@ function ManagePage() {
     setSelectedSavedFilterId('');
     setSavedFilterName('');
   }, [savedFilterStorageKey]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const subjectId = params.get('subject_id') || '';
+    const chapterId = params.get('chapter_id') || '';
+    const cloId = params.get('clo_id') || '';
+    if (!subjectId) return;
+    setSubjectFilter(subjectId);
+    setChapterFilter(chapterId || 'all-chapters');
+    setCloFilter(cloId || 'all-clos');
+    setFiltersOpen(true);
+  }, [location.search]);
 
   useEffect(() => {
     const loadTeacherOptions = async () => {

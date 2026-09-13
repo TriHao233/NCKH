@@ -18,7 +18,7 @@
   min-height: var(--nav-h, 80px);
   max-width: 100%;
   margin: 0 auto;
-  padding: 0 clamp(40px, 5vw, 72px);
+  padding: 0 var(--page-gutter, clamp(44px, 6vw, 88px));
   overflow: visible;
 }
 
@@ -382,7 +382,7 @@
   .nav-container {
     grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
     gap: 16px;
-    padding-inline: clamp(28px, 4vw, 48px);
+    padding-inline: var(--page-gutter, clamp(44px, 6vw, 88px));
   }
 
   .nav-brand {

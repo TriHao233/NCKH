@@ -13,13 +13,17 @@
   margin: 0 auto;
 }
 
+.jobs-header {
+  margin-bottom: 26px;
+}
+
 /* .jobs-header (layout, span/h1/p) dùng chung — xem css/admin-shared.css */
 
 .jobs-header-actions {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   flex-wrap: wrap;
 }
 
@@ -76,15 +80,15 @@
 .jobs-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 18px;
+  margin-bottom: 24px;
 }
 
 .summary-tile {
   flex-direction: column;
   align-items: flex-start;
   min-height: 84px;
-  padding: 14px 16px;
+  padding: 18px;
   border: 1px solid #eaf3fc;
   background: #fff;
   color: #13253f;
@@ -115,13 +119,13 @@
 .jobs-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 150px 190px 170px 140px 140px 135px;
-  gap: 10px;
+  gap: 16px;
   align-items: end;
-  margin-bottom: 14px;
+  margin-bottom: 24px;
   background: #fff;
   border: 1px solid #eaf3fc;
   border-radius: 8px;
-  padding: 14px;
+  padding: 18px;
 }
 
 .jobs-toolbar--audit {
@@ -190,7 +194,7 @@
 .jobs-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 14px;
+  gap: 24px;
   align-items: start;
 }
 
@@ -206,8 +210,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  padding: 16px 16px 0;
+  gap: 16px;
+  padding: 18px 20px 0;
 }
 
 .jobs-table-header h2,
@@ -227,7 +231,7 @@
 .jobs-table-wrap {
   width: 100%;
   overflow-x: auto;
-  padding: 12px 16px 0;
+  padding: 16px 20px 0;
 }
 
 .jobs-table {
@@ -328,7 +332,7 @@
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
 
 .row-actions button {
@@ -356,8 +360,8 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px 16px;
+  gap: 14px;
+  padding: 18px 20px 20px;
 }
 
 .jobs-pagination button {
@@ -377,20 +381,20 @@
 .job-detail-panel {
   position: sticky;
   top: 90px;
-  padding: 16px;
+  padding: 20px;
 }
 
 .job-detail-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin: 14px 0;
+  gap: 14px;
+  margin: 18px 0;
 }
 
 .job-detail-list div {
   display: grid;
   grid-template-columns: 82px minmax(0, 1fr);
-  gap: 10px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -482,6 +486,6 @@
   }
 
   .jobs-toolbar {
-    padding: 12px;
+    padding: 16px;
   }
 }

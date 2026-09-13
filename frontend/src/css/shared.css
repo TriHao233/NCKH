@@ -131,7 +131,7 @@
 }
 
 @media (max-width: 640px) {
-  .container { padding-inline: 16px; }
+  .container { padding-inline: 20px; }
   .page-hero { padding: 40px 0 28px; }
   .section-header { margin-bottom: 32px; }
   .section-desc,

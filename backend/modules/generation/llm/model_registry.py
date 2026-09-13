@@ -9,6 +9,11 @@ from core.database import get_database
 GENERATION_CAPABILITY = "QUESTION_GENERATION"
 EVALUATION_CAPABILITY = "QUESTION_EVALUATION"
 
+DIRECT_MODEL_CODES_BY_CAPABILITY = {
+    GENERATION_CAPABILITY: ("qwen", "deepseek", "gemini"),
+    EVALUATION_CAPABILITY: ("qwen", "deepseek", "deepseek-r1", "gemini"),
+}
+
 
 def _number(config: dict, key: str, default, *, minimum, maximum):
     value = config.get(key, default)
@@ -42,7 +47,13 @@ def _runtime_parameters(runtime: str, config: dict) -> dict:
         return {
             "timeout_seconds": _number(config, "timeout_seconds", 300.0, minimum=1.0, maximum=1800.0),
             "temperature": _number(config, "temperature", 0.0, minimum=0.0, maximum=2.0),
-            "max_output_tokens": _number(config, "max_output_tokens", 2048, minimum=1, maximum=65536),
+            "max_output_tokens": _number(
+                config,
+                "max_output_tokens",
+                settings.gemini_max_output_tokens,
+                minimum=1,
+                maximum=65536,
+            ),
         }
     return dict(config)
 
@@ -97,7 +108,7 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
             "temperature": settings.deepseek_temperature,
         }
     elif normalized == "gemini":
-        runtime, model_name, display_name = "GEMINI", settings.gemini_model_name, "Gemini"
+        runtime, model_name, display_name = "GEMINI", settings.gemini_model_name, "Gemini 3.6 Flash"
         config = {}
     elif normalized.startswith("ollama:"):
         runtime, model_name, display_name = "OLLAMA", model_code.split(":", 1)[1].strip(), "Ollama"
@@ -149,12 +160,14 @@ def resolve_model_snapshot(
 
 def available_model_options(database, *, capability: str, default_code: str) -> dict:
     items = []
+    seen_codes = set()
     active_query = {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]}
     for record in database.ai_models.find(active_query).sort("priority", 1):
         try:
             snapshot = _snapshot_from_record(record, record["model_code"], capability)
         except ValueError:
             continue
+        seen_codes.add(snapshot["model_code"])
         items.append(
             {
                 "code": snapshot["model_code"],
@@ -165,6 +178,28 @@ def available_model_options(database, *, capability: str, default_code: str) -> 
                 "is_default": snapshot["model_code"] == default_code,
             }
         )
+
+    for model_code in DIRECT_MODEL_CODES_BY_CAPABILITY.get(capability, ()):
+        if model_code in seen_codes:
+            continue
+        if database.ai_models.find_one({"model_code": model_code}):
+            continue
+        try:
+            snapshot = resolve_direct_model_snapshot(model_code, capability)
+        except ValueError:
+            continue
+        seen_codes.add(snapshot["model_code"])
+        items.append(
+            {
+                "code": snapshot["model_code"],
+                "name": snapshot["display_name"],
+                "version": snapshot["model_name"],
+                "description": snapshot["description"],
+                "runtime": snapshot["runtime"],
+                "is_default": snapshot["model_code"] == default_code,
+            }
+        )
+
     default_record = database.ai_models.find_one({"model_code": default_code})
     if not any(item["code"] == default_code for item in items) and not default_record:
         try:

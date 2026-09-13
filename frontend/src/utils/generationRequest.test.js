@@ -24,6 +24,7 @@ test('buildGenerationRequest uses backend defaults and keeps instruction separat
 
   assert.equal(payload.instruction, 'Tập trung vào định nghĩa');
   assert.equal(payload.model_provider, 'qwen-fast');
+  assert.equal(payload.code_model_provider, 'qwen-fast');
   assert.equal(payload.difficulty, 'kho');
   assert.equal(payload.collection_name, undefined);
   assert.equal(payload.target_heading, 'Chương 3 - Hàng đợi');

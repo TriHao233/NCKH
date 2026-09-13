@@ -205,8 +205,9 @@ class Settings(BaseModel):
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model_name: str = _env_first(
         ("GEMINI_MODEL_NAME", "DEFAULT_MODEL"),
-        "gemini-2.0-flash",
+        "gemini-3.6-flash",
     )
+    gemini_max_output_tokens: int = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 
 
 @lru_cache

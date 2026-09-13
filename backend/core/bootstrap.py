@@ -764,16 +764,28 @@ def _seed_reference_data() -> None:
             "capabilities": ["QUESTION_EVALUATION"],
             "priority": 15,
         },
+        {
+            "model_code": "gemini",
+            "model_name": settings.gemini_model_name,
+            "display_name": "Gemini 3.6 Flash",
+            "description": "Sinh câu hỏi qua Google Gemini API.",
+            "runtime": "GEMINI",
+            "kind": "CHAT",
+            "capabilities": ["QUESTION_GENERATION", "QUESTION_EVALUATION"],
+            "priority": 30,
+            "is_local": False,
+        },
     ):
+        is_local = model.get("is_local", True)
         db.ai_models.update_one(
             {"model_code": model["model_code"]},
             {
                 "$setOnInsert": {
                     "schema_version": SCHEMA_VERSION,
                     **model,
-                    "revision": "local",
+                    "revision": "remote" if not is_local else "local",
                     "config": {},
-                    "is_local": True,
+                    "is_local": is_local,
                     "is_active": True,
                     "created_at": now,
                     "updated_at": now,
@@ -793,10 +805,28 @@ def _seed_reference_data() -> None:
         )
     db.ai_models.update_many(
         {
-            "model_code": {"$in": ["qwen", "deepseek", "deepseek-r1"]},
+            "model_code": {"$in": ["qwen", "deepseek", "deepseek-r1", "gemini"]},
             "config.endpoint": "http://localhost:11434/api/generate",
         },
         {"$unset": {"config.endpoint": ""}},
+    )
+    db.ai_models.update_one(
+        {
+            "model_code": "gemini",
+            "$or": [
+                {"model_name": {"$in": ["", "gemini-2.0-flash"]}},
+                {"display_name": {"$in": ["", "Gemini"]}},
+            ],
+        },
+        {
+            "$set": {
+                "model_name": settings.gemini_model_name,
+                "display_name": "Gemini 3.6 Flash",
+                "revision": "remote",
+                "is_local": False,
+                "updated_at": now,
+            }
+        },
     )
     _seed_prompt_templates(db, now)
 

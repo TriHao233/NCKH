@@ -204,8 +204,7 @@ class MongoDocumentRepository:
         self.collection = database.documents
 
     def default_subject_id(self) -> ObjectId | None:
-        subject = self.db.subjects.find_one({"subject_code": "CTDL", "is_active": True}, {"_id": 1})
-        return subject["_id"] if subject else None
+        return None
 
     def validate_subject_chapter(
         self,

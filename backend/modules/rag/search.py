@@ -7,7 +7,7 @@ from bson import ObjectId
 
 from core.config import settings
 from core.database import get_rag_db
-from modules.rag.chromadb_engine import embedding_config_hash, get_collection
+from modules.rag.chromadb_engine import embedding_config_hash, get_collection, model_scoped_collection_name
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,11 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
     if not vector:
         raise ValueError("Không tìm thấy cấu hình vector hiện hành")
     active_collection_name = vector.get("collection_name")
-    if active_collection_name != collection_name and collection_name != settings.chromadb_collection_name:
+    if (
+        active_collection_name != collection_name
+        and active_collection_name != model_scoped_collection_name(collection_name)
+        and collection_name != settings.chromadb_collection_name
+    ):
         raise ValueError(
             f"Tài liệu đang được index trong collection '{active_collection_name}'"
         )

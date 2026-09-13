@@ -69,6 +69,13 @@ def embedding_config_hash() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def model_scoped_collection_name(collection_name: str) -> str:
+    suffix = embedding_config_hash()[:8]
+    if collection_name.endswith(f"_{suffix}"):
+        return collection_name
+    return f"{collection_name}_{suffix}"
+
+
 def _get_embedding_model() -> SentenceTransformer:
     global _embedding_model, _model_load_ms, _resolved_precision
     if _embedding_model is not None:
@@ -274,7 +281,11 @@ def _get_write_collection(collection_name: str):
     return get_chroma_client().get_or_create_collection(
         name=collection_name,
         embedding_function=None,
-        metadata={"hnsw:space": "cosine"},
+        metadata={
+            "hnsw:space": "cosine",
+            "embedding_config_hash": embedding_config_hash(),
+            "embedding_model_name": settings.embedding_model_name,
+        },
     )
 
 

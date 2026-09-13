@@ -28,6 +28,7 @@ from modules.rag.chromadb_engine import (
     embedding_config_snapshot,
     embedding_token_lengths,
     embedding_token_offsets,
+    model_scoped_collection_name,
     store_chunks,
 )
 from modules.rag.mongodb import (
@@ -190,28 +191,15 @@ def queue_chunk_retry(background_tasks: BackgroundTasks, document_id: str, confi
     return {"chunk_job_id": chunk_job_id, "chunk_set_id": chunk_set_id}
 
 
-def _model_collection_name(collection_name: str) -> str:
-    suffix = embedding_config_hash()[:8]
-    return f"{collection_name}_{suffix}"
-
-
 def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, str]:
     db = get_database()
     now = utc_now()
+    current_config_hash = embedding_config_hash()
+    resolved_collection = model_scoped_collection_name(collection_name)
     record = db.vector_collections.find_one(
-        {"provider": "CHROMA", "collection_name": collection_name, "is_active": True},
+        {"provider": "CHROMA", "collection_name": resolved_collection, "is_active": True},
         sort=[("created_at", -1)],
     )
-    model_name = (record.get("embedding_model") or {}).get("model_name") if record else None
-    indexed_config_hash = record.get("embedding_config_hash") if record else None
-    current_config_hash = embedding_config_hash()
-    resolved_collection = collection_name
-    if record and (model_name != settings.embedding_model_name or indexed_config_hash != current_config_hash):
-        resolved_collection = _model_collection_name(collection_name)
-        record = db.vector_collections.find_one(
-            {"provider": "CHROMA", "collection_name": resolved_collection, "is_active": True},
-            sort=[("created_at", -1)],
-        )
     if record and record.get("embedding_config_hash") != current_config_hash:
         raise ValueError("Vector collection name collision for a different embedding configuration")
     if record:

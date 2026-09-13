@@ -2,7 +2,9 @@ import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import MagicMock, patch
 
+from modules.generation.llm.gemini import GeminiProvider
 from modules.generation.llm.ollama import OllamaProvider, close_ollama_client
 
 
@@ -57,3 +59,22 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["model_received"], "fake-model")
         self.assertEqual(FakeOllamaHandler.last_payload["options"]["num_ctx"], 8192)
+
+
+class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_gemini_3_uses_interactions_api_and_cleans_json_fences(self):
+        response = MagicMock()
+        response.output_text = '```json\n{"ok": true}\n```'
+        client = MagicMock()
+        client.interactions.create.return_value = response
+
+        with (
+            patch("modules.generation.llm.gemini.settings.gemini_api_key", "test-key"),
+            patch("modules.generation.llm.gemini.genai.Client", return_value=client),
+        ):
+            provider = GeminiProvider(model_name="gemini-3.6-flash", max_output_tokens=2048)
+            result = await provider.generate_text("prompt")
+
+        self.assertEqual(result, '{"ok": true}')
+        client.interactions.create.assert_called_once()
+        client.models.generate_content.assert_not_called()

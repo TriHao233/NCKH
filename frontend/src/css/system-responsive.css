@@ -1,6 +1,6 @@
 /*
  * Shared workspace alignment and responsive rules.
- * ManagePage is the visual reference: 1480px workspace, 24/16px gutters,
+ * ManagePage is the visual reference: 1480px workspace, responsive gutters,
  * 16px cards, 8px controls, strong blue borders, and 960/640px breakpoints.
  * Keep feature-specific layout in each page stylesheet; add rules here only
  * when the same behavior applies across multiple screens.
@@ -24,7 +24,7 @@
   .exam-list-page,
   .exam-builder-page
 ) .container {
-  padding-inline: clamp(44px, 5vw, 72px);
+  padding-inline: max(var(--page-gutter), clamp(44px, 5vw, 72px));
 }
 
 .page-main .admin-jobs-page :is(.jobs-header, .jobs-summary, .jobs-toolbar, .jobs-layout, .jobs-error),
@@ -156,7 +156,7 @@
     .catalog-page,
     .review-page
   ) {
-    padding: 24px 16px 56px;
+    padding: 24px 20px 56px;
   }
 
   .page-main :is(
@@ -168,7 +168,7 @@
     .task-calendar-page,
     .profile-page
   ) .container {
-    padding-inline: 16px;
+    padding-inline: 20px;
   }
 
   .page-main :is(
@@ -176,7 +176,7 @@
     .exam-list-page,
     .exam-builder-page
   ) .container {
-    padding-inline: 24px;
+    padding-inline: 28px;
   }
 
   .page-main :is(

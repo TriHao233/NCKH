@@ -38,7 +38,7 @@ def _provider_from_snapshot(snapshot: dict) -> LLMProvider:
             snapshot["model_name"],
             timeout_seconds=parameters.get("timeout_seconds", 300),
             temperature=parameters.get("temperature", 0),
-            max_output_tokens=parameters.get("max_output_tokens", 2048),
+            max_output_tokens=parameters.get("max_output_tokens", settings.gemini_max_output_tokens),
         )
         concurrency_code = "gemini"
     else:

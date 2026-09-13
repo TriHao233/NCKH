@@ -58,7 +58,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/quan-ly": PERMISSIONS.teacherAdminWorkspace,
   "/lam-de-thi": PERMISSIONS.teacherAdminWorkspace,
   "/lam-de-thi/:examId": PERMISSIONS.teacherAdminWorkspace,
-  "/quan-ly-hoc-phan": PERMISSIONS.teacherAdminWorkspace,
+  "/quan-ly-hoc-phan": PERMISSIONS.teacherWorkspace,
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
   "/duyet-ai": PERMISSIONS.adminWorkspace,
   "/tong-quan": PERMISSIONS.adminWorkspace,
