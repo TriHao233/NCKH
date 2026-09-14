@@ -3,7 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from core.config import resolve_path, settings
 from core.dependencies import (
@@ -48,6 +48,11 @@ AVATAR_CONTENT_TYPES = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+DEFAULT_AVATAR_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<rect width="128" height="128" rx="64" fill="#0c78d4"/>
+<circle cx="64" cy="48" r="24" fill="#fff"/>
+<path d="M24 116c4-25 19-38 40-38s36 13 40 38" fill="#fff"/>
+</svg>"""
 
 
 @router.get("/me", response_model=UserResponse)
@@ -97,8 +102,17 @@ async def upload_my_avatar(
 @router.get("/avatar/{filename}")
 def get_avatar(filename: str):
     path = (AVATAR_UPLOAD_DIR / Path(filename).name).resolve()
-    if not str(path).startswith(str(AVATAR_UPLOAD_DIR.resolve())) or not path.exists():
+    if not path.is_relative_to(AVATAR_UPLOAD_DIR.resolve()):
         raise HTTPException(status_code=404, detail="Không tìm thấy ảnh đại diện")
+    if not path.is_file():
+        # User profiles can outlive an uploaded file (for example after restoring a
+        # database without the uploads directory). Return a valid default image so
+        # stale avatar references do not render as broken images or generate 404s.
+        return Response(
+            content=DEFAULT_AVATAR_SVG,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-store"},
+        )
     return FileResponse(path)
 
 

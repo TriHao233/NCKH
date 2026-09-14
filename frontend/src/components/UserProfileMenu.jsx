@@ -8,7 +8,8 @@ import {
   faSignOutAlt,
   faChevronDown,
   faListCheck,
-  faBook
+  faBook,
+  faFileLines,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -88,6 +89,10 @@ const UserProfileMenu = () => {
               <Link to="/quan-ly-hoc-phan" className="dropdown-item" onClick={() => setIsOpen(false)}>
                 <FontAwesomeIcon icon={faBook} className="dropdown-icon" />
                 Quản lý học phần
+              </Link>
+              <Link to="/quan-ly-tai-lieu" className="dropdown-item dropdown-item--nested" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faFileLines} className="dropdown-icon" />
+                Quản lý tài liệu
               </Link>
             </>
           )}

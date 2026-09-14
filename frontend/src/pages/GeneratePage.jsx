@@ -12,8 +12,10 @@ import {
   BLOOM_LEVELS,
   DIFFICULTIES,
   QUESTION_TYPES,
+  isBloomAllowedForQuestionType,
   bloomLevelLabel,
   difficultyLabel,
+  normalizeBloomForQuestionType,
   questionTypeLabel,
   toBackendBloomLevel,
   toBackendQuestionType,
@@ -96,7 +98,7 @@ function normalizeCount(value) {
 
 function createPlanItem(overrides = {}) {
   const fallbackId = `plan-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return {
+  const item = {
     id: globalThis.crypto?.randomUUID?.() || fallbackId,
     questionTypeId: 'mcq',
     bloomId: 'remember',
@@ -104,6 +106,10 @@ function createPlanItem(overrides = {}) {
     count: 1,
     contentMode: 'auto',
     ...overrides,
+  };
+  return {
+    ...item,
+    bloomId: normalizeBloomForQuestionType(item.questionTypeId, item.bloomId),
   };
 }
 
@@ -481,6 +487,18 @@ function GeneratePage() {
   const updatePlanItem = (itemId, patch) => {
     setPlanItems((current) => current.map((item) => (
       item.id === itemId ? { ...item, ...patch } : item
+    )));
+  };
+
+  const updatePlanQuestionType = (itemId, questionTypeId) => {
+    setPlanItems((current) => current.map((item) => (
+      item.id === itemId
+        ? {
+          ...item,
+          questionTypeId,
+          bloomId: normalizeBloomForQuestionType(questionTypeId, item.bloomId),
+        }
+        : item
     )));
   };
 
@@ -1452,7 +1470,7 @@ function GeneratePage() {
                             className="field-select plan-select"
                             value={item.questionTypeId}
                             disabled={isBusy}
-                            onChange={(e) => updatePlanItem(item.id, { questionTypeId: e.target.value })}
+                            onChange={(e) => updatePlanQuestionType(item.id, e.target.value)}
                           >
                             {QUESTION_TYPES.map((type) => (
                               <option key={type.id} value={type.id}>{type.label}</option>
@@ -1468,8 +1486,17 @@ function GeneratePage() {
                             onChange={(e) => updatePlanItem(item.id, { bloomId: e.target.value })}
                           >
                             {BLOOM_LEVELS.map((bloom) => (
-                              <option key={bloom.id} value={bloom.id}>
-                                {bloom.label}
+                              <option
+                                key={bloom.id}
+                                value={bloom.id}
+                                disabled={!isBloomAllowedForQuestionType(item.questionTypeId, bloom.id)}
+                                className={isBloomAllowedForQuestionType(item.questionTypeId, bloom.id)
+                                  ? 'bloom-option--allowed'
+                                  : 'bloom-option--locked'}
+                              >
+                                {isBloomAllowedForQuestionType(item.questionTypeId, bloom.id)
+                                  ? bloom.label
+                                  : `\u{1F512}\uFE0E ${bloom.label}`}
                               </option>
                             ))}
                           </select>

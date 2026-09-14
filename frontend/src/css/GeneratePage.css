@@ -683,6 +683,18 @@
   background: var(--gen-paper);
 }
 
+.generate-page .plan-select option.bloom-option--allowed {
+  color: var(--gen-ink);
+  font-weight: 650;
+}
+
+.generate-page .plan-select option.bloom-option--locked {
+  background: var(--gen-paper-2);
+  color: var(--gen-muted);
+  font-family: "Segoe UI Symbol", "Segoe UI", sans-serif;
+  opacity: 0.55;
+}
+
 .generate-page .plan-count-input {
   text-align: center;
   font-weight: 900;

@@ -17,6 +17,32 @@ export const BLOOM_LEVELS = [
   { id: 'create', level: 6, label: '6. Sáng tạo', caption: 'Thiết kế giải pháp', backend: '6_sang_tao' },
 ];
 
+// Ma trận tương thích đã được chốt theo loại câu hỏi của dự án.
+// Các giá trị là UI id để giao diện có thể khóa ngay trước khi tạo request.
+export const QUESTION_TYPE_BLOOM_MATRIX = Object.freeze({
+  mcq: Object.freeze(['remember', 'understand', 'apply', 'analyze']),
+  multi: Object.freeze(['remember', 'understand', 'apply', 'analyze']),
+  tf: Object.freeze(['remember', 'understand']),
+  fill: Object.freeze(['remember', 'understand']),
+  match: Object.freeze(['remember', 'understand']),
+  order: Object.freeze(['remember', 'understand', 'apply']),
+  scenario: Object.freeze(['apply', 'analyze', 'evaluate', 'create']),
+});
+
+export function allowedBloomLevels(questionTypeId) {
+  const allowedIds = new Set(QUESTION_TYPE_BLOOM_MATRIX[questionTypeId] || []);
+  return BLOOM_LEVELS.filter((level) => allowedIds.has(level.id));
+}
+
+export function isBloomAllowedForQuestionType(questionTypeId, bloomId) {
+  return QUESTION_TYPE_BLOOM_MATRIX[questionTypeId]?.includes(bloomId) === true;
+}
+
+export function normalizeBloomForQuestionType(questionTypeId, bloomId) {
+  if (isBloomAllowedForQuestionType(questionTypeId, bloomId)) return bloomId;
+  return allowedBloomLevels(questionTypeId)[0]?.id || BLOOM_LEVELS[0].id;
+}
+
 const questionTypeByUi = Object.fromEntries(QUESTION_TYPES.map((item) => [item.id, item]));
 const bloomByUi = Object.fromEntries(BLOOM_LEVELS.map((item) => [item.id, item]));
 const questionTypeByBackend = Object.fromEntries(QUESTION_TYPES.map((item) => [item.backend, item]));

@@ -70,6 +70,7 @@ def serialize_document(document: dict) -> dict:
             "original_filename": document["original_filename"],
             "status": document["status"],
             "subject_id": document.get("subject_id"),
+            "subject_ids": document.get("subject_ids") or ([document.get("subject_id")] if document.get("subject_id") else []),
             "chapter_id": document.get("chapter_id"),
             "uploaded_by_user_id": document.get("uploaded_by_user_id"),
             "shared_with_user_ids": document.get("shared_with_user_ids") or [],
@@ -144,6 +145,7 @@ class DocumentRepository(Protocol):
         status: str | None,
         search: str | None,
         *,
+        subject_id: ObjectId | None = None,
         uploaded_by_user_id: ObjectId | None = None,
         visible_to_user_id: ObjectId | None = None,
     ) -> tuple[list[dict], int]: ...
@@ -230,11 +232,28 @@ class MongoDocumentRepository:
         if chapter_id not in chapter_ids:
             raise ValueError("Chương không thuộc học phần đã chọn")
 
+    def validate_subject_ids(self, subject_ids: list[ObjectId]) -> None:
+        if not subject_ids:
+            return
+        existing = self.db.subjects.count_documents({
+            "_id": {"$in": subject_ids},
+            "is_active": True,
+        })
+        if existing != len(subject_ids):
+            raise ValueError("Một hoặc nhiều học phần không tồn tại hoặc đã ngừng hoạt động")
+
     def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
         now = utc_now()
         document_id = ObjectId()
         subject_id = object_id(data["subject_id"], "subject_id") if data.get("subject_id") else self.default_subject_id()
+        subject_ids = list(dict.fromkeys(
+            [object_id(value, "subject_id") for value in data.get("subject_ids") or []]
+            + ([subject_id] if subject_id else [])
+        ))
+        if not subject_id and subject_ids:
+            subject_id = subject_ids[0]
         chapter_id = object_id(data["chapter_id"], "chapter_id") if data.get("chapter_id") else None
+        self.validate_subject_ids(subject_ids)
         self.validate_subject_chapter(subject_id, chapter_id)
         artifacts = []
         if data.get("original_uri"):
@@ -255,6 +274,7 @@ class MongoDocumentRepository:
             "_id": document_id,
             "schema_version": SCHEMA_VERSION,
             "subject_id": subject_id,
+            "subject_ids": subject_ids,
             "chapter_id": chapter_id,
             "uploaded_by_user_id": uploaded_by_user_id,
             "shared_with_user_ids": [],
@@ -301,6 +321,7 @@ class MongoDocumentRepository:
         status: str | None,
         search: str | None,
         *,
+        subject_id: ObjectId | None = None,
         uploaded_by_user_id: ObjectId | None = None,
         visible_to_user_id: ObjectId | None = None,
     ) -> tuple[list[dict], int]:
@@ -320,6 +341,13 @@ class MongoDocumentRepository:
             )
         if status:
             query["status"] = status
+        if subject_id is not None:
+            filters.append({
+                "$or": [
+                    {"subject_ids": subject_id},
+                    {"subject_id": subject_id},
+                ]
+            })
         if search:
             filters.append(
                 {
@@ -345,8 +373,21 @@ class MongoDocumentRepository:
         if not current:
             return None
         normalized = dict(fields)
+        if "subject_ids" in normalized:
+            normalized["subject_ids"] = list(dict.fromkeys(
+                object_id(value, "subject_id") for value in (normalized.get("subject_ids") or [])
+            ))
+            self.validate_subject_ids(normalized["subject_ids"])
+            normalized["subject_id"] = normalized["subject_ids"][0] if normalized["subject_ids"] else None
+            if current.get("chapter_id") and normalized["subject_id"] != current.get("subject_id"):
+                normalized["chapter_id"] = None
         if "subject_id" in normalized:
-            normalized["subject_id"] = object_id(normalized["subject_id"], "subject_id")
+            normalized["subject_id"] = (
+                object_id(normalized["subject_id"], "subject_id")
+                if normalized["subject_id"] else None
+            )
+            if "subject_ids" not in normalized:
+                normalized["subject_ids"] = [normalized["subject_id"]] if normalized["subject_id"] else []
         if "chapter_id" in normalized:
             normalized["chapter_id"] = object_id(normalized["chapter_id"], "chapter_id")
         if "uploaded_by_user_id" in normalized and normalized["uploaded_by_user_id"] is not None:

@@ -12,6 +12,7 @@ from modules.documents.repository import (
     MongoDocumentRepository,
     RETRYABLE_DOCUMENT_JOB_STATUSES,
     RETRYABLE_DOCUMENT_JOB_TYPES,
+    object_id,
     serialize_document,
     serialize_document_job,
     serialize_document_page,
@@ -74,18 +75,18 @@ class DocumentService:
         status: str | None,
         search: str | None,
         current_user: CurrentUser | None = None,
+        subject_id: str | None = None,
     ) -> dict:
-        records, total = self.repository.list(
-            page,
-            page_size,
-            status,
-            search,
-            visible_to_user_id=(
+        list_options = {
+            "visible_to_user_id": (
                 None
                 if not current_user or self._can_manage_all(current_user)
                 else current_user.id
-            ),
-        )
+            )
+        }
+        if subject_id:
+            list_options["subject_id"] = object_id(subject_id, "subject_id")
+        records, total = self.repository.list(page, page_size, status, search, **list_options)
         return {
             "items": [serialize_document(item) for item in records],
             "total": total,

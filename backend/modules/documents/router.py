@@ -27,6 +27,7 @@ def list_documents(
     page_size: int = Query(20, ge=1, le=100),
     document_status: DocumentStatus | None = Query(None, alias="status"),
     search: str | None = None,
+    subject_id: str | None = None,
     current_user: CurrentUser = Depends(require_teacher_or_admin),
     service: DocumentService = Depends(get_document_service),
 ):
@@ -36,6 +37,7 @@ def list_documents(
         document_status.value if document_status else None,
         search,
         current_user,
+        subject_id,
     )
 
 

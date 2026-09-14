@@ -17,6 +17,7 @@ class DocumentCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=300)
     original_filename: str = Field(..., min_length=1, max_length=300)
     subject_id: str | None = None
+    subject_ids: list[str] = Field(default_factory=list, max_length=20)
     chapter_id: str | None = None
     original_uri: str | None = None
     size_bytes: int | None = Field(None, ge=0)
@@ -26,6 +27,7 @@ class DocumentCreateRequest(BaseModel):
 class DocumentUpdateRequest(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=300)
     subject_id: str | None = None
+    subject_ids: list[str] | None = Field(None, max_length=20)
     chapter_id: str | None = None
 
 
@@ -41,6 +43,7 @@ class DocumentResponse(BaseModel):
     original_filename: str
     status: DocumentStatus
     subject_id: str | None
+    subject_ids: list[str] = Field(default_factory=list)
     chapter_id: str | None
     uploaded_by_user_id: str | None
     shared_with_user_ids: list[str] = Field(default_factory=list)

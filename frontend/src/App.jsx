@@ -25,6 +25,7 @@ const pageImports = {
     TaskCalendarPage: () => import('./pages/TaskCalendarPage'),
     ExamListPage: () => import('./pages/ExamListPage'),
     SubjectManage: () => import('./pages/SubjectManage'),
+    DocumentManagePage: () => import('./pages/DocumentManagePage'),
     ExamBuilderPage: () => import('./pages/ExamBuilderPage'),
 };
 
@@ -47,6 +48,7 @@ const UserProfile = lazy(pageImports.UserProfile);
 const TaskCalendarPage = lazy(pageImports.TaskCalendarPage);
 const ExamListPage = lazy(pageImports.ExamListPage);
 const SubjectManage = lazy(pageImports.SubjectManage);
+const DocumentManagePage = lazy(pageImports.DocumentManagePage);
 const ExamBuilderPage = lazy(pageImports.ExamBuilderPage);
 
 function preloadDevPages() {
@@ -115,6 +117,14 @@ function App() {
                     element={(
                         <ProtectedPage path="/quan-ly-hoc-phan">
                             <SubjectManage />
+                        </ProtectedPage>
+                    )}
+                />
+                <Route
+                    path="/quan-ly-tai-lieu"
+                    element={(
+                        <ProtectedPage path="/quan-ly-tai-lieu">
+                            <DocumentManagePage />
                         </ProtectedPage>
                     )}
                 />

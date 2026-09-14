@@ -160,7 +160,10 @@ class CatalogService:
         subject_counts = {
             "documents": self._count(
                 "documents",
-                {"subject_id": subject_id, "archived_at": None},
+                {
+                    "$or": [{"subject_ids": subject_id}, {"subject_id": subject_id}],
+                    "archived_at": None,
+                },
             ),
             "questions": self._count_current_questions(
                 {"classification.subject.id": subject_id}

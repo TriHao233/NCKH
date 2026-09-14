@@ -142,6 +142,8 @@ VALIDATORS = {
                 "schema_version": {"bsonType": "int", "minimum": 2},
                 "title": {"bsonType": "string", "minLength": 1},
                 "original_filename": {"bsonType": "string", "minLength": 1},
+                "subject_id": {"bsonType": ["objectId", "null"]},
+                "subject_ids": {"bsonType": "array", "items": {"bsonType": "objectId"}},
                 "status": {
                     "enum": [
                         "UPLOADED",
@@ -450,6 +452,7 @@ def _ensure_indexes() -> None:
                 name="ix_documents_catalog",
             ),
             IndexModel([("uploaded_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_documents_uploader"),
+            IndexModel([("subject_ids", ASCENDING), ("status", ASCENDING)], name="ix_documents_subjects_status"),
             IndexModel([("artifacts.sha256", ASCENDING)], name="ix_documents_artifact_hash"),
         ]
     )
