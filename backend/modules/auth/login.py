@@ -45,6 +45,12 @@ DEMO_USERS = {
         "display_name": "Reviewer Demo",
         "role": "Reviewer",
     },
+    "teacher": {
+        "password": settings.demo_admin_password,
+        "email": "teacher@qbankctu.edu.vn",
+        "display_name": "Teacher Demo",
+        "role": "Teacher",
+    },
 }
 
 

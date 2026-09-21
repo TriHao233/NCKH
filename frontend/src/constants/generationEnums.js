@@ -48,6 +48,10 @@ const difficultyByValue = Object.fromEntries(
   DIFFICULTIES.flatMap((item) => [[item.id, item], [item.backend, item]]),
 );
 
+export function toBackendDifficulty(uiId) {
+  return difficultyByValue[uiId]?.backend;
+}
+
 export function difficultyLabel(value) {
   if (!value) return '';
   return difficultyByValue[String(value).trim()]?.label || '';

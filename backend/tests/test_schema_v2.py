@@ -5833,6 +5833,18 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("kho", prompt)
         self.assertIn("KEYWORD TRONG CÂU HỎI", prompt)
 
+    def test_prompt_includes_target_difficulty_when_requested(self):
+        prompt = PromptBuilder().build(
+            context="Stack hoạt động theo nguyên tắc LIFO.",
+            bloom_level="2_hieu",
+            question_type="trac_nghiem",
+            num_questions=1,
+            difficulty="kho",
+        )
+
+        self.assertIn("TARGET DIFFICULTY: kho", prompt)
+        self.assertIn('Set `difficulty` in the JSON output exactly to "kho".', prompt)
+
     def test_normalize_difficulty_accepts_known_labels(self):
         self.assertEqual(_normalize_difficulty("de"), "de")
         self.assertEqual(_normalize_difficulty("Khó"), "kho")

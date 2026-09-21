@@ -36,6 +36,7 @@ class PromptBuilder:
         learning_outcomes: list[dict] | None = None,
         content_mode: str = "general",
         focus_directive: str | None = None,
+        difficulty: str | None = None,
     ):
         system = self._load_template("system", "system.txt")
         question_rule = self._load_template("question_rule", "question_rule.txt")
@@ -103,6 +104,13 @@ Set `clo_codes` to the best matching codes from this list. Do not invent codes.
 FOCUS:
 {focus_directive.strip()}
 """ if focus_directive else ""
+        difficulty_target = ""
+        if difficulty:
+            difficulty_target = f"""
+TARGET DIFFICULTY: {difficulty}
+Write every question so its answerability matches this label. Bloom stays the cognitive operation; difficulty is separate.
+Set `difficulty` in the JSON output exactly to "{difficulty}".
+"""
 
         # Ráp lại với cấu trúc tối ưu hóa
         return f"""
@@ -110,6 +118,7 @@ FOCUS:
 {question_rule}
 {bloom}
 {difficulty_rule}
+{difficulty_target}
 {qtype}
 {qstructure}
 

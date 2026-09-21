@@ -3,6 +3,8 @@ export const DEMO_LOGIN_ALIASES = {
   'admin@qbankctu.edu.vn': 'admin',
   reviewer: 'reviewer',
   'reviewer@qbankctu.edu.vn': 'reviewer',
+  teacher: 'teacher',
+  'teacher@qbankctu.edu.vn': 'teacher',
 };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

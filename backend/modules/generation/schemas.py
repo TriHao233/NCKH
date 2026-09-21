@@ -23,9 +23,16 @@ class QuestionType(str, Enum):
     NHIEU_LUA_CHON = "nhieu_lua_chon"
 
 
+class GenerationDifficulty(str, Enum):
+    DE = "de"
+    TRUNG_BINH = "trung_binh"
+    KHO = "kho"
+
+
 class QuestionPlanItem(BaseModel):
     question_type: QuestionType
     bloom_level: Optional[BloomLevel] = None
+    difficulty: Optional[GenerationDifficulty] = None
     num_questions: int = Field(default=1, ge=1, le=10)
     content_mode: Literal["auto", "code", "general"] = "auto"
 
@@ -127,6 +134,7 @@ class GenerationPlanSummary(BaseModel):
     plan_index: int
     question_type: str
     bloom_level: str
+    difficulty: Optional[str] = None
     model_provider: str = ""
     content_mode: str = "general"
     requested_count: int

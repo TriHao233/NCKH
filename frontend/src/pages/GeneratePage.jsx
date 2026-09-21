@@ -10,11 +10,13 @@ import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/
 import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
 import {
   BLOOM_LEVELS,
+  DIFFICULTIES,
   QUESTION_TYPES,
   bloomLevelLabel,
   difficultyLabel,
   questionTypeLabel,
   toBackendBloomLevel,
+  toBackendDifficulty,
   toBackendQuestionType,
 } from '../constants/generationEnums';
 import { pollJob, watchJob } from '../hooks/useJobPoll';
@@ -99,6 +101,7 @@ function createPlanItem(overrides = {}) {
     id: globalThis.crypto?.randomUUID?.() || fallbackId,
     questionTypeId: 'mcq',
     bloomId: 'remember',
+    difficultyId: 'trung_binh',
     count: 1,
     contentMode: 'auto',
     ...overrides,
@@ -130,9 +133,10 @@ function presetInstructionValue(preset) {
 function presetApiPayload(preset) {
   return {
     name: String(preset.name || '').trim(),
-    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, count, contentMode }) => ({
+    planItems: (preset.planItems || []).map(({ questionTypeId, bloomId, difficultyId, count, contentMode }) => ({
       questionTypeId,
       bloomId,
+      difficultyId: difficultyId || 'trung_binh',
       count: normalizeCount(count),
       contentMode: contentMode || 'auto',
     })),
@@ -285,6 +289,7 @@ function GeneratePage() {
     .map((item) => ({
       question_type: toBackendQuestionType(item.questionTypeId),
       bloom_level: toBackendBloomLevel(item.bloomId),
+      difficulty: toBackendDifficulty(item.difficultyId) || 'trung_binh',
       num_questions: normalizeCount(item.count),
       content_mode: item.contentMode || 'auto',
     }))
@@ -523,9 +528,10 @@ function GeneratePage() {
     }
     const presetPayload = {
       name,
-      planItems: planItems.map(({ questionTypeId, bloomId, count, contentMode }) => ({
+      planItems: planItems.map(({ questionTypeId, bloomId, difficultyId, count, contentMode }) => ({
         questionTypeId,
         bloomId,
+        difficultyId: difficultyId || 'trung_binh',
         count: normalizeCount(count),
         contentMode: contentMode || 'auto',
       })),
@@ -1469,6 +1475,22 @@ function GeneratePage() {
                             <small>{selectedBloomMeta.caption}</small>
                           )}
                         </label>
+                        <label className="plan-field">
+                          <span>Độ khó</span>
+                          <select
+                            className="field-select plan-select"
+                            value={item.difficultyId || 'trung_binh'}
+                            disabled={isBusy}
+                            onChange={(e) => updatePlanItem(item.id, { difficultyId: e.target.value })}
+                          >
+                            {DIFFICULTIES.map((difficulty) => (
+                              <option key={difficulty.id} value={difficulty.id}>
+                                {difficulty.label}
+                              </option>
+                            ))}
+                          </select>
+                          <small>Khác với mức Bloom</small>
+                        </label>
                         <label className="plan-field plan-field--count">
                           <span>Số câu</span>
                           <input
@@ -1601,10 +1623,11 @@ function GeneratePage() {
             {generationSummary.length > 0 && (
               <div className={`gen-summary-list ${generationShortfalls.length ? 'gen-summary-list--warning' : ''}`}>
                 {generationSummary.map((item) => (
-                  <div className="gen-summary-item" key={`${item.plan_index}-${item.question_type}-${item.bloom_level}`}>
+                  <div className="gen-summary-item" key={`${item.plan_index}-${item.question_type}-${item.bloom_level}-${item.difficulty || 'auto'}`}>
                     <strong>Dòng {item.plan_index}</strong>
                     <span>
-                      {questionTypeLabel(item.question_type)} · {bloomLevelLabel(item.bloom_level)} · {item.saved_count}/{item.requested_count}
+                      {questionTypeLabel(item.question_type)} · {bloomLevelLabel(item.bloom_level)}
+                      {item.difficulty ? ` · ${difficultyLabel(item.difficulty)}` : ''} · {item.saved_count}/{item.requested_count}
                     </span>
                     {(
                       item.format_rejected_count > 0
@@ -1892,11 +1915,12 @@ function GeneratePage() {
               {planItems.map((item, index) => {
                 const type = QUESTION_TYPES.find((entry) => entry.id === item.questionTypeId);
                 const bloom = BLOOM_LEVELS.find((entry) => entry.id === item.bloomId);
+                const difficulty = DIFFICULTIES.find((entry) => entry.id === (item.difficultyId || 'trung_binh'));
                 return (
                   <div key={item.id}>
                     <b>Dòng {index + 1}</b>
                     <span>
-                      {type?.label || item.questionTypeId} · {bloom?.label || item.bloomId} · {normalizeCount(item.count)} câu
+                      {type?.label || item.questionTypeId} · {bloom?.label || item.bloomId} · {difficulty?.label || 'Trung bình'} · {normalizeCount(item.count)} câu
                     </span>
                   </div>
                 );

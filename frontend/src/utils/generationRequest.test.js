@@ -4,7 +4,12 @@ import test from 'node:test';
 import { buildGenerationRequest } from './generationRequest.js';
 
 test('buildGenerationRequest uses backend defaults and keeps instruction separate from heading', () => {
-  const questionPlan = [{ bloom_level: '2_hieu', question_type: 'dung_sai', num_questions: 3 }];
+  const questionPlan = [{
+    bloom_level: '2_hieu',
+    difficulty: 'de',
+    question_type: 'dung_sai',
+    num_questions: 3,
+  }];
   const payload = buildGenerationRequest({
     documentId: 'document-1',
     questionPlan,

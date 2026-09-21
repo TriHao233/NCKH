@@ -48,7 +48,7 @@ import {
 import { listSubjects, saveSubject } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
 import { permissionsForUser } from '../auth/permissions';
-import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
+import { BLOOM_LEVELS, DIFFICULTIES, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
   SINGLE_CHOICE_TYPES,
@@ -162,12 +162,6 @@ const QUALITY_COLOR_LABEL = {
   YELLOW: 'Cần xem lại',
   RED: 'Rủi ro cao',
 };
-
-const DIFFICULTIES = [
-  { value: 'de', label: 'Dễ' },
-  { value: 'trung_binh', label: 'Trung bình' },
-  { value: 'kho', label: 'Khó' },
-];
 
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
 const QUESTION_BANK_EXPORT_FORMATS = [
@@ -579,6 +573,8 @@ function ManagePage() {
 
   const [creatingQuestion, setCreatingQuestion] = useState(false);
   const [newQuestionType, setNewQuestionType] = useState(QUESTION_TYPES[0]?.backend || '');
+  const [newBloomLevel, setNewBloomLevel] = useState('');
+  const [newDifficulty, setNewDifficulty] = useState('trung_binh');
   const [newContent, setNewContent] = useState('');
   const [newRawOptions, setNewRawOptions] = useState(null);
   const [newCorrectAnswer, setNewCorrectAnswer] = useState('');
@@ -1695,6 +1691,8 @@ function ManagePage() {
 
   const openCreateQuestion = () => {
     setNewQuestionType(QUESTION_TYPES[0]?.backend || '');
+    setNewBloomLevel('');
+    setNewDifficulty('trung_binh');
     setNewContent('');
     setNewRawOptions(null);
     setNewCorrectAnswer('');
@@ -1741,6 +1739,8 @@ function ManagePage() {
       await createQuestion({
         content: newContent.trim(),
         question_type: newQuestionType,
+        bloom_level: newBloomLevel ? Number(newBloomLevel) : null,
+        difficulty: newDifficulty || null,
         question_data: {
           options: newRawOptions,
           correct_answer: newCorrectAnswer,
@@ -2202,7 +2202,7 @@ function ManagePage() {
                   >
                     <option value="all-difficulties">Tất cả độ khó</option>
                     {DIFFICULTIES.map((difficulty) => (
-                      <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
+                      <option key={difficulty.id} value={difficulty.id}>{difficulty.label}</option>
                     ))}
                   </select>
                   <select
@@ -3078,7 +3078,7 @@ function ManagePage() {
               >
                 <option value="">Không đổi độ khó</option>
                 {DIFFICULTIES.map((difficulty) => (
-                  <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
+                  <option key={difficulty.id} value={difficulty.id}>{difficulty.label}</option>
                 ))}
               </select>
             </div>
@@ -3336,6 +3336,34 @@ function ManagePage() {
                   <option key={type.backend} value={type.backend}>{type.label}</option>
                 ))}
               </select>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Mức Bloom</label>
+              <select
+                className="field-select"
+                value={newBloomLevel}
+                onChange={(e) => setNewBloomLevel(e.target.value)}
+              >
+                <option value="">Chưa gán</option>
+                {BLOOM_LEVELS.map((bloom) => (
+                  <option key={bloom.id} value={bloom.level}>{bloom.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Độ khó</label>
+              <select
+                className="field-select"
+                value={newDifficulty}
+                onChange={(e) => setNewDifficulty(e.target.value)}
+              >
+                {DIFFICULTIES.map((difficulty) => (
+                  <option key={difficulty.id} value={difficulty.id}>{difficulty.label}</option>
+                ))}
+              </select>
+              <small>Độ khó khác với mức Bloom (thao tác tư duy).</small>
             </div>
 
             <div className="field-group">

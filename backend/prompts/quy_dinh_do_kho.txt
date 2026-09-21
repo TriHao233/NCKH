@@ -30,4 +30,6 @@ CÁCH CHỐT NHÃN
 - trung_binh: vận dụng hoặc hiểu có điều kiện, độ dài vừa, một đến hai bước.
 - kho: phân tích / đánh giá / sáng tạo, nhiều điều kiện, keyword khó, hoặc phải kết hợp nhiều ý.
 
+Khi giảng viên chỉ định TARGET DIFFICULTY, ưu tiên nhãn đó: viết nội dung khớp độ khó được chọn và gán đúng nhãn đó trong JSON. Vẫn giữ Bloom đúng thao tác tư duy đã yêu cầu.
+
 Không dùng nhãn khác. Không để trống nếu đã viết được câu hỏi hợp lệ.

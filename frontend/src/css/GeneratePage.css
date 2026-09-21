@@ -284,7 +284,7 @@
 }
 .generate-page .plan-builder-fields {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(170px, 1.2fr) 88px;
+  grid-template-columns: minmax(140px, 1fr) minmax(150px, 1.1fr) minmax(110px, 0.85fr) 88px minmax(120px, 0.9fr);
   gap: 12px;
   align-items: start;
 }
