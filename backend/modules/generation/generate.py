@@ -21,7 +21,7 @@ from modules.generation.mongodb import (
     update_generation_job,
     update_generation_progress,
 )
-from modules.generation.question import generate_questions_rag
+from modules.generation.question import GenerationOutputError, generate_questions_rag
 from modules.generation.llm.model_registry import GENERATION_CAPABILITY, resolve_model_snapshot
 from modules.generation.schemas import (
     GenerationJobStatus,
@@ -34,9 +34,6 @@ from modules.generation.schemas import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix=f"{settings.api_prefix}/generate", tags=["generation"])
-
-generate_semaphore = asyncio.Semaphore(1)
-
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -104,46 +101,61 @@ async def process_generate_background(job_id: str, worker_id: str):
     try:
         logger.info("Job [%s] đang đợi cấp phát tài nguyên sinh câu hỏi...", job_id)
 
-        async with generate_semaphore:
-            processing_started_at = utc_now()
-            req = QuestionGenerateRequest(**job["request"])
-            client_telemetry = (
-                req.client_telemetry.model_dump(exclude_none=True)
-                if req.client_telemetry
-                else {}
-            )
+        processing_started_at = utc_now()
+        req = QuestionGenerateRequest(**job["request"])
+        client_telemetry = (
+            req.client_telemetry.model_dump(exclude_none=True)
+            if req.client_telemetry
+            else {}
+        )
 
-            async def report_progress(progress: dict) -> None:
-                await asyncio.to_thread(update_generation_progress, job_id, worker_id, progress)
+        async def report_progress(progress: dict) -> None:
+            await asyncio.to_thread(update_generation_progress, job_id, worker_id, progress)
 
-            result = await generate_questions_rag(
-                req,
-                requested_by_user_id=requested_by_user_id,
-                progress_callback=report_progress,
-                model_snapshot=job.get("model_snapshot"),
-                code_model_snapshot=job.get("code_model_snapshot"),
-                fallback_model_snapshot=job.get("fallback_model_snapshot"),
-            )
-            finished_at = utc_now()
-            metrics = build_generation_metrics(
-                job,
-                processing_started_at=processing_started_at,
-                finished_at=finished_at,
-                client_telemetry=client_telemetry,
-            )
-            await asyncio.to_thread(
-                update_generation_job,
-                job_id,
-                status="completed",
-                result={
-                    "status": result.status,
-                    "data": [item.model_dump() for item in result.data],
-                    "summary": [item.model_dump() for item in result.summary],
-                },
-                metrics=metrics,
-                worker_id=worker_id,
-            )
-            logger.info("Job [%s] hoàn tất thành công", job_id)
+        result = await generate_questions_rag(
+            req,
+            requested_by_user_id=requested_by_user_id,
+            progress_callback=report_progress,
+            model_snapshot=job.get("model_snapshot"),
+            code_model_snapshot=job.get("code_model_snapshot"),
+            fallback_model_snapshot=job.get("fallback_model_snapshot"),
+        )
+        finished_at = utc_now()
+        metrics = build_generation_metrics(
+            job,
+            processing_started_at=processing_started_at,
+            finished_at=finished_at,
+            client_telemetry=client_telemetry,
+        )
+        await asyncio.to_thread(
+            update_generation_job,
+            job_id,
+            status="completed",
+            result={
+                "status": result.status,
+                "data": [item.model_dump() for item in result.data],
+                "summary": [item.model_dump() for item in result.summary],
+            },
+            metrics=metrics,
+            worker_id=worker_id,
+        )
+        logger.info("Job [%s] hoàn tất thành công", job_id)
+    except GenerationOutputError as ex:
+        logger.error("Job [%s] thất bại do đầu ra mô hình: %s", job_id, ex)
+        metrics = build_generation_metrics(
+            job,
+            processing_started_at=processing_started_at,
+            finished_at=utc_now(),
+            client_telemetry=client_telemetry,
+        )
+        await asyncio.to_thread(
+            update_generation_job,
+            job_id,
+            status="failed",
+            error_message=str(ex),
+            metrics=metrics,
+            worker_id=worker_id,
+        )
     except Exception as ex:
         logger.exception("Job [%s] thất bại: %s", job_id, ex)
         metrics = build_generation_metrics(

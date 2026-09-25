@@ -1,7 +1,6 @@
 LOẠI CÂU HỎI: trac_nghiem - một đáp án đúng
 
-ĐỊNH NGHĨA:
-1. Câu hỏi yêu cầu người học chọn một phương án đúng nhất trong nhiều phương án.
-2. Phù hợp để kiểm tra nhận biết, hiểu, vận dụng hoặc phân tích một ý kiến thức cụ thể.
-3. Câu hỏi tốt có một trọng tâm rõ, đáp án đúng không mơ hồ, phương án nhiễu hợp lý và cùng chủ đề.
-4. Tránh hỏi mẹo, hỏi vụn vặt hoặc tạo phương án nhiễu vô lý.
+YÊU CẦU:
+1. Câu hỏi có một trọng tâm rõ và đúng một đáp án được CONTEXT chứng minh.
+2. Các phương án phải cùng phạm trù. Mỗi phương án nhiễu là một sai lệch hợp lý từ CONTEXT, không bổ sung thuật ngữ hoặc dữ kiện mới.
+3. Tránh hỏi mẹo, phương án trùng nghĩa và dấu hiệu làm lộ đáp án.

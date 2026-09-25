@@ -191,7 +191,6 @@ def main() -> int:
         document_title=title,
         languages=["vi", "en"],
         gpu=None,
-        poppler_path=os.environ.get("POPPLER_PATH"),
     )
 
     save_document_pages(document_id, ocr_job_id, result["pages"])

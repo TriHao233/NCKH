@@ -11,7 +11,7 @@ from core.dependencies import CurrentUser, require_teacher_or_admin
 from modules.documents.service import get_document_service
 from modules.generation.generate import router
 from modules.generation.mongodb import _resolve_clo_ids
-from modules.generation.prompt_builder import PromptBuilder
+from modules.generation.prompt_builder import ChatPromptPackage, PromptBuilder
 from modules.generation.question import (
     _content_mode,
     _focused_context_snapshot,
@@ -253,6 +253,47 @@ class GenerationStatusApiTests(unittest.TestCase):
         self.assertEqual(collection.query_kwargs["query_texts"], ["cây nhị phân tìm kiếm"])
         self.assertEqual(snapshot["results"][0]["chunk_id"], "tree")
 
+    def test_gemini_retrieval_does_not_wait_for_ollama_gpu(self):
+        class CollectionStub:
+            def __init__(self):
+                self.query_called = False
+
+            def count(self):
+                return 2
+
+            def query(self, **_kwargs):
+                self.query_called = True
+                raise AssertionError("Vector query must not wait behind Ollama")
+
+            def get(self, **_kwargs):
+                return {
+                    "documents": [
+                        "Câu lệnh if dùng để rẽ nhánh theo điều kiện.",
+                        "Vòng lặp for dùng để lặp với số lần xác định.",
+                    ],
+                    "metadatas": [
+                        {"chunk_id": "if", "chunk_set_id": "set-1"},
+                        {"chunk_id": "for", "chunk_set_id": "set-1"},
+                    ],
+                }
+
+        collection = CollectionStub()
+        with (
+            patch("modules.rag.search._active_vector_snapshot", return_value=("set-1", "vector-1")),
+            patch("modules.rag.search.get_collection", return_value=collection),
+            patch("modules.rag.search.current_gpu_operation_label", return_value="ollama"),
+        ):
+            snapshot = get_context_snapshot(
+                document_id=str(ObjectId()),
+                collection_name="chunks",
+                query_text="if",
+                avoid_ollama_gpu_wait=True,
+                limit=1,
+            )
+
+        self.assertFalse(collection.query_called)
+        self.assertEqual(snapshot["results"][0]["chunk_id"], "if")
+
     def test_context_snapshot_excludes_heading_only_chunks(self):
         class CollectionStub:
             def count(self):
@@ -394,30 +435,29 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
         progress_updates = []
 
         async def generate_one(_req, plan_item, *, plan_index, **_kwargs):
-            question_number = generate_one.call_count
-            generate_one.call_count += 1
-            question = GeneratedQuestion(
-                question=f"Câu hỏi {question_number}",
-                options={"A": "Một", "B": "Hai", "C": "Ba", "D": "Bốn"},
-                correct_answer="A",
-                explanation="Giải thích",
-                question_type="trac_nghiem",
-                bloom_level="2_hieu",
-                source_context="Nội dung nguồn đủ dài để kiểm thử.",
-                question_id=str(ObjectId()),
-            )
+            questions = [
+                GeneratedQuestion(
+                    question=f"Câu hỏi {question_number}",
+                    options={"A": "Một", "B": "Hai", "C": "Ba", "D": "Bốn"},
+                    correct_answer="A",
+                    explanation="Giải thích",
+                    question_type="trac_nghiem",
+                    bloom_level="2_hieu",
+                    source_context="Nội dung nguồn đủ dài để kiểm thử.",
+                    question_id=str(ObjectId()),
+                )
+                for question_number in range(1, plan_item.num_questions + 1)
+            ]
             summary = GenerationPlanSummary(
                 plan_index=plan_index,
                 question_type="trac_nghiem",
                 bloom_level="2_hieu",
                 requested_count=plan_item.num_questions,
-                parsed_count=1,
-                valid_count=1,
-                saved_count=1,
+                parsed_count=plan_item.num_questions,
+                valid_count=plan_item.num_questions,
+                saved_count=plan_item.num_questions,
             )
-            return [question], summary
-
-        generate_one.call_count = 1
+            return questions, summary
 
         async def report_progress(progress):
             progress_updates.append(progress)
@@ -434,7 +474,10 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("modules.generation.question.get_document_learning_outcomes", return_value=[]),
             patch("modules.generation.question.get_existing_question_texts", return_value=[]),
-            patch("modules.generation.question.resolve_model_snapshot", return_value={}),
+            patch(
+                "modules.generation.question.resolve_model_snapshot",
+                return_value={"runtime": "OLLAMA"},
+            ),
             patch("modules.generation.question.get_llm_service", return_value=object()),
             patch(
                 "modules.generation.question._generate_questions_for_plan_item",
@@ -444,7 +487,9 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
             result = await generate_questions_rag(request, progress_callback=report_progress)
 
         self.assertEqual(generate_batch.await_count, 3)
-        self.assertTrue(all(call.args[1].num_questions == 1 for call in generate_batch.await_args_list))
+        self.assertTrue(
+            all(call.args[1].num_questions == 1 for call in generate_batch.await_args_list)
+        )
         self.assertEqual(len(result.data), 3)
         self.assertEqual(result.summary[0].requested_count, 3)
         self.assertEqual(result.summary[0].saved_count, 3)
@@ -460,9 +505,15 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
         )
         plan_item = request.effective_plan()[0]
         llm = MagicMock()
-        llm.generate_text = AsyncMock(return_value='{"questions": [{"question": "bị cắt"}')
+        llm.generate_chat = AsyncMock(
+            side_effect=[
+                '{"questions": [{"question": "bị cắt"}',
+                '{"questions": [{"question": "vẫn bị cắt"}',
+                '{"questions": [{"question": "tiếp tục bị cắt"}',
+            ]
+        )
         prompt_builder = MagicMock()
-        prompt_builder.build.return_value = "prompt"
+        prompt_builder.build_chat.return_value = ChatPromptPackage("system", "user", {"type": "object"})
 
         with (
             patch("modules.generation.question.create_generation_run", return_value=str(ObjectId())),
@@ -492,9 +543,79 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(questions, [])
         self.assertEqual(summary.saved_count, 0)
+        self.assertEqual(summary.retry_attempt_count, 2)
         self.assertEqual(summary.rejection_reasons[0].code, "INVALID_JSON_RESPONSE")
+        self.assertEqual(llm.generate_chat.call_count, 3)
         finish_run.assert_called_once()
         self.assertEqual(finish_run.call_args.kwargs["status"], "FAILED")
+
+    async def test_invalid_json_is_repaired_before_rejecting_question(self):
+        source_context = "Kiến thức dùng để sinh câu hỏi về ngăn xếp theo nguyên tắc LIFO."
+        repaired_question = {
+            "question": "Ngăn xếp hoạt động theo nguyên tắc nào?",
+            "options": {"A": "FIFO", "B": "LIFO", "C": "Ngẫu nhiên", "D": "Theo khóa"},
+            "correct_answer": "B",
+            "explanation": "Ngăn xếp lấy phần tử được thêm sau cùng trước.",
+            "question_type": "trac_nghiem",
+            "bloom_level": "2_hieu",
+            "source_context": source_context,
+            "source_keywords": ["ngăn xếp", "LIFO"],
+            "false_mutation": None,
+        }
+        request = QuestionGenerateRequest(
+            document_id=str(ObjectId()),
+            bloom_level="2_hieu",
+            question_type="trac_nghiem",
+            num_questions=1,
+        )
+        plan_item = request.effective_plan()[0]
+        llm = MagicMock()
+        llm.generate_chat = AsyncMock(
+            side_effect=[
+                '{"questions": [{"question": "bị cắt"}',
+                json.dumps({"questions": [repaired_question]}, ensure_ascii=False),
+            ]
+        )
+        prompt_builder = MagicMock()
+        prompt_builder.build_chat.return_value = ChatPromptPackage(
+            "system", "user", {"type": "object"}
+        )
+
+        with (
+            patch("modules.generation.question.create_generation_run", return_value=str(ObjectId())),
+            patch("modules.generation.question.finish_generation_run") as finish_run,
+            patch("modules.generation.question.reset_llm_execution_tracking"),
+            patch("modules.generation.question.get_llm_execution_snapshot", return_value={}),
+            patch(
+                "modules.generation.question.save_generated_questions",
+                return_value=[{**repaired_question, "question_id": str(ObjectId())}],
+            ),
+        ):
+            questions, summary = await _generate_questions_for_plan_item(
+                request,
+                plan_item,
+                plan_index=1,
+                avoid_questions=[],
+                seen_question_fingerprints=set(),
+                context_snapshot={
+                    "results": [],
+                    "chunk_set_id": None,
+                    "vector_collection_id": None,
+                },
+                context_text=f"Nội dung: {source_context}",
+                prompt_builder=prompt_builder,
+                llm=llm,
+                model_snapshot={},
+                model_provider="qwen",
+                content_mode="general",
+                learning_outcomes=[],
+            )
+
+        self.assertEqual(llm.generate_chat.call_count, 2)
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(summary.saved_count, 1)
+        self.assertEqual(summary.retry_attempt_count, 1)
+        self.assertEqual(finish_run.call_args.kwargs["status"], "COMPLETED")
 
     async def test_duplicate_candidate_is_retried_before_fallback(self):
         source_context = "Kiến thức dùng để sinh câu hỏi về ngăn xếp LIFO."
@@ -527,12 +648,12 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
         )
         plan_item = request.effective_plan()[0]
         llm = MagicMock()
-        llm.generate_text = AsyncMock(side_effect=[
+        llm.generate_chat = AsyncMock(side_effect=[
             json.dumps({"questions": [duplicate_question]}, ensure_ascii=False),
             json.dumps({"questions": [unique_question]}, ensure_ascii=False),
         ])
         prompt_builder = MagicMock()
-        prompt_builder.build.return_value = "prompt"
+        prompt_builder.build_chat.return_value = ChatPromptPackage("system", "user", {"type": "object"})
 
         with (
             patch("modules.generation.question.create_generation_run", return_value=str(ObjectId())),
@@ -564,7 +685,7 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
                 learning_outcomes=[],
             )
 
-        self.assertEqual(llm.generate_text.call_count, 2)
+        self.assertEqual(llm.generate_chat.call_count, 2)
         self.assertEqual(questions[0].question, unique_question["question"])
         self.assertEqual(save_questions.call_args.args[1][0]["question"], unique_question["question"])
         self.assertEqual(summary.saved_count, 1)

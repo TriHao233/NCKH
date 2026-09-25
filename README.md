@@ -56,7 +56,7 @@ NCKH/
 │   ├── common/                 # exceptions, responses, utils dùng chung
 │   ├── modules/                # Feature-based, mỗi module theo router → service → repository
 │   │   ├── auth/                # register / login / profile (Firebase Auth)
-│   │   ├── ocr/                  # easyocr pipeline, formula detector/processor
+│   │   ├── ocr/                  # EasyOCR + PDFium selective scan OCR
 │   │   ├── rag/                   # chunking, chromadb vector store, search
 │   │   ├── generation/            # sinh câu hỏi, prompt builder, LLM factory (gemini/qwen/deepseek)
 │   │   └── dictionary/             # auto-learning từ khóa
@@ -67,7 +67,7 @@ NCKH/
 **Stack:**
 - **Frontend:** React 18 + Vite, React Router, Firebase SDK (auth), FontAwesome.
 - **Backend:** 1 FastAPI app duy nhất (`uvicorn main:app --reload`), Firebase Admin (xác thực người dùng).
-  - OCR: `easyocr` + `pdf2image` (xử lý PDF scan tiếng Việt).
+  - OCR: `EasyOCR` + `pypdfium2` (GPU, xử lý chọn lọc các trang PDF scan tiếng Việt, không cần Poppler).
   - Vector DB: `chromadb` + `sentence-transformers` (embedding & retrieval cho RAG).
   - LLM: `google-genai` hiện dùng để thử nghiệm (mục tiêu cuối là LLM local qua PyTorch CUDA — `torch`/`torchvision`/`torchaudio` đã có trong requirements).
   - Lưu trữ tài liệu/metadata: MongoDB (`pymongo`).
@@ -81,7 +81,7 @@ NCKH/
         │
         ▼
 3. Tiền xử lý tài liệu
-   - Nếu là PDF scan → OCR (easyocr) trích xuất văn bản
+   - Nếu là PDF scan → EasyOCR GPU trích xuất văn bản; PDF có text layer không chạy OCR
    - Làm sạch, chuẩn hóa văn bản
         │
         ▼
@@ -153,7 +153,7 @@ Các trang frontend hiện có khớp với các chức năng trên: `HomePage`,
 
 - **RAG là xương sống chống hallucination** — mọi câu hỏi sinh ra phải truy xuất ngữ cảnh từ ChromaDB trước khi gọi LLM, không sinh "chay" từ kiến thức nội tại của model.
 - **LLM mục tiêu là chạy local/mã nguồn mở** (Qwen, Llama...) — `google-genai` trong requirements hiện tại là phương án thử nghiệm/tạm thời, không phải đích cuối.
-- **OCR chỉ cần khi tài liệu là PDF scan** (ảnh) — tài liệu PDF text thuần không cần qua easyocr.
+- **OCR chỉ cần khi tài liệu là PDF scan** (ảnh) — tài liệu PDF text thuần không cần qua EasyOCR.
 - **Không được auto-publish câu hỏi AI sinh ra** — luôn phải qua bước duyệt của giảng viên (human-in-the-loop) trước khi vào Moodle.
 - **Chuẩn hóa output theo Moodle**: đáp án, thiết lập xáo trộn, mã hóa tiếng Việt phải đúng ngay từ bước Generation để Plugin xuất bản không cần xử lý lại.
 - Backend đã hợp nhất thành 1 FastAPI app duy nhất (`backend/main.py`), tổ chức theo Feature-based Modular Architecture (`core/`, `common/`, `modules/{auth,ocr,rag,generation,dictionary}/`), mỗi module theo pattern router → service → repository.

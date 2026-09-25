@@ -67,19 +67,88 @@ async def process_available_jobs_once(worker_id: str | None = None) -> bool:
 
 
 async def run_job_worker(stop_event: asyncio.Event) -> None:
+    """Run independent generation lanes for Ollama and Gemini.
+
+    Each lane processes one job at a time, but neither lane waits for the other.
+    This keeps provider-specific limits intact while removing cross-provider
+    head-of-line blocking.
+    """
+    from modules.generation.generate import process_generate_background
+    from modules.generation.mongodb import get_next_queued_generation_job_id
+    from modules.questions.workflow_service import process_evaluation_job_background
+
     worker_id = get_worker_id()
     logger.info("Mongo job worker started: %s", worker_id)
+    generation_tasks: dict[str, asyncio.Task] = {}
+    evaluation_task: asyncio.Task | None = None
+
+    async def finish_task(task: asyncio.Task, label: str) -> None:
+        try:
+            await task
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Background %s task failed", label)
+
     try:
         while not stop_event.is_set():
+            for provider_group, task in list(generation_tasks.items()):
+                if task.done():
+                    await finish_task(task, f"generation/{provider_group}")
+                    generation_tasks.pop(provider_group, None)
+
+            if evaluation_task is not None and evaluation_task.done():
+                await finish_task(evaluation_task, "evaluation")
+                evaluation_task = None
+
             try:
-                found_work = await process_available_jobs_once(worker_id)
+                for provider_group in ("ollama", "gemini"):
+                    if provider_group in generation_tasks:
+                        continue
+                    job_id = await asyncio.to_thread(
+                        get_next_queued_generation_job_id,
+                        provider_group,
+                    )
+                    if job_id:
+                        logger.info(
+                            "Dispatching generation job [%s] on independent %s lane",
+                            job_id,
+                            provider_group,
+                        )
+                        generation_tasks[provider_group] = asyncio.create_task(
+                            process_generate_background(job_id, worker_id)
+                        )
+
+                if evaluation_task is None:
+                    evaluation_job_id = await asyncio.to_thread(get_next_queued_evaluation_job_id)
+                    if evaluation_job_id:
+                        evaluation_task = asyncio.create_task(
+                            process_evaluation_job_background(evaluation_job_id, worker_id)
+                        )
             except Exception:
                 logger.exception("Mongo job worker iteration failed")
-                found_work = False
-            if not found_work:
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=settings.job_worker_poll_seconds)
-                except asyncio.TimeoutError:
-                    pass
+
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=max(0.05, settings.job_worker_poll_seconds),
+                )
+            except asyncio.TimeoutError:
+                pass
+
+        pending = [*generation_tasks.values()]
+        if evaluation_task is not None:
+            pending.append(evaluation_task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+    except asyncio.CancelledError:
+        pending = [*generation_tasks.values()]
+        if evaluation_task is not None:
+            pending.append(evaluation_task)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        raise
     finally:
         logger.info("Mongo job worker stopped")

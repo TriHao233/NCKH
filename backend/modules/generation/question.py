@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import logging
@@ -45,6 +46,7 @@ from modules.generation.mongodb import (
 
 logger = logging.getLogger(__name__)
 MAX_FORMAT_RETRY_ATTEMPTS = 1
+MAX_JSON_REPAIR_ATTEMPTS = 2
 VALID_DIFFICULTIES = {"de", "trung_binh", "kho"}
 CODE_SIGNAL_PATTERNS = (
     r"```",
@@ -75,6 +77,27 @@ QUESTION_TYPE_RETRY_RULES = {
     "ghep_cot": "options must be a matching object with numbered keys and extra lettered distractors.",
     "sap_xep": "options must contain ordered step keys; correct_answer must list every key in the correct order.",
 }
+
+
+class GenerationOutputError(RuntimeError):
+    """The model completed, but its output cannot produce valid questions."""
+
+
+def _llm_hit_output_limit(llm) -> bool:
+    provider = llm
+    if getattr(provider, "last_used", None) in {"primary", "fallback"}:
+        provider = (
+            provider.fallback
+            if provider.last_used == "fallback"
+            else provider.primary
+        )
+    metadata = getattr(provider, "last_response_metadata", {}) or {}
+    return metadata.get("done_reason") == "length"
+
+
+def _response_excerpt(text: str, limit: int = 2000) -> str:
+    value = str(text or "")
+    return value if len(value) <= limit else f"{value[:limit]}... [truncated {len(value) - limit} chars]"
 
 
 def _content_mode(plan_item: QuestionPlanItem, context_text: str, instruction: str | None) -> str:
@@ -129,11 +152,19 @@ async def generate_questions_rag(
     logger.info("Sinh câu hỏi [Doc: %s | Plan: %s]", req.document_id, plan_log)
 
     # 1. Truy xuất ngữ cảnh (RAG)
-    context_snapshot = get_context_snapshot(
+    # Retrieval can perform synchronous embedding work. Keep it off the event
+    # loop so a Gemini lane remains dispatchable while Ollama is streaming (and
+    # vice versa).
+    model_runtime = str((model_snapshot or {}).get("runtime") or "").upper()
+    code_runtime = str((code_model_snapshot or model_snapshot or {}).get("runtime") or "").upper()
+    gemini_only_request = model_runtime == "GEMINI" and code_runtime == "GEMINI"
+    context_snapshot = await asyncio.to_thread(
+        get_context_snapshot,
         document_id=req.document_id,
         collection_name=req.collection_name,
         target_heading=req.target_heading,
         query_text=req.instruction,
+        avoid_ollama_gpu_wait=gemini_only_request,
     )
     context_text = context_snapshot["context_text"]
 
@@ -188,17 +219,24 @@ async def generate_questions_rag(
             fallback_model_snapshot=fallback_model_snapshot,
         )
         item_summaries: list[GenerationPlanSummary] = []
-        # Một phản hồi ngắn cho mỗi câu giúp tránh mất cả nhóm khi JSON bị cắt,
-        # đồng thời cho phép lưu và hiển thị từng câu ngay khi hoàn tất.
-        for _ in range(plan_item.num_questions):
+        # Local 7B models are more reliable when each response contains one question.
+        # Remote providers keep the configured batching to reduce API requests.
+        configured_batch_size = (
+            settings.ollama_generation_batch_size
+            if str((selected_snapshot or {}).get("runtime") or "").upper() == "OLLAMA"
+            else settings.generation_batch_size
+        )
+        batch_size = max(1, min(configured_batch_size, plan_item.num_questions))
+        for batch_start in range(0, plan_item.num_questions, batch_size):
+            batch_count = min(batch_size, plan_item.num_questions - batch_start)
             focused_snapshot, focus_directive = _focused_context_snapshot(
                 context_snapshot,
                 completed_questions,
             )
-            single_question_item = plan_item.model_copy(update={"num_questions": 1})
+            batch_item = plan_item.model_copy(update={"num_questions": batch_count})
             questions, batch_summary = await _generate_questions_for_plan_item(
                 req,
-                single_question_item,
+                batch_item,
                 plan_index=plan_index,
                 avoid_questions=[
                     *existing_questions[:12],
@@ -223,7 +261,7 @@ async def generate_questions_rag(
                 seen_question_fingerprints.add(question_fingerprint(question.question))
             generated_questions.extend(questions)
             item_summaries.append(batch_summary)
-            completed_questions += 1
+            completed_questions += batch_count
 
             current_summary = _aggregate_plan_summaries(
                 item_summaries,
@@ -293,7 +331,7 @@ async def _generate_questions_for_plan_item(
     bloom_level = plan_item.bloom_level or req.bloom_level
     difficulty = plan_item.difficulty or req.difficulty
     # 2. Xây dựng Prompt thông qua hệ thống file-based cho từng dạng câu hỏi
-    full_prompt = prompt_builder.build(
+    chat_prompt = prompt_builder.build_chat(
         context=context_text,
         bloom_level=bloom_level.value,
         question_type=plan_item.question_type.value,
@@ -306,6 +344,7 @@ async def _generate_questions_for_plan_item(
         content_mode=content_mode,
         focus_directive=focus_directive,
     )
+    full_prompt = chat_prompt.rendered_snapshot()
     request_snapshot = req.model_dump(mode="json")
     request_snapshot["active_plan_item"] = {
         **plan_item.model_dump(mode="json"),
@@ -327,7 +366,11 @@ async def _generate_questions_for_plan_item(
     # 3. Gọi LLM
     started_at = time.perf_counter()
     try:
-        raw_response = await llm.generate_text(full_prompt)
+        raw_response = await llm.generate_chat(
+            system_prompt=chat_prompt.system_prompt,
+            user_prompt=chat_prompt.user_prompt,
+            output_schema=chat_prompt.output_schema,
+        )
     except Exception as exc:
         finish_generation_run(
             generation_run_id,
@@ -344,7 +387,58 @@ async def _generate_questions_for_plan_item(
     retry_attempt_count = 0
 
     try:
-        parsed_data = json.loads(clean_json_str)
+        for json_attempt in range(MAX_JSON_REPAIR_ATTEMPTS + 1):
+            try:
+                parsed_data = json.loads(clean_json_str)
+                break
+            except json.JSONDecodeError as json_error:
+                if _llm_hit_output_limit(llm):
+                    logger.error(
+                        "%s đã chạm giới hạn đầu ra; không lặp lại yêu cầu JSON lỗi",
+                        model_provider,
+                    )
+                    raise
+                if json_attempt >= MAX_JSON_REPAIR_ATTEMPTS:
+                    raise
+                # A local model can reach its token boundary after producing most
+                # of the object. Ask for a fresh response before rejecting it.
+                repair_attempt_count += 1
+                retry_attempt_count += 1
+                logger.warning(
+                    "JSON không hợp lệ; yêu cầu %s sinh lại (%s/%s): %s",
+                    model_provider,
+                    json_attempt + 1,
+                    MAX_JSON_REPAIR_ATTEMPTS,
+                    json_error,
+                )
+                retry_prompt = _build_retry_prompt(
+                    original_prompt=chat_prompt.user_prompt,
+                    question_type=plan_item.question_type.value,
+                    bloom_level=bloom_level.value,
+                    difficulty=difficulty,
+                    missing_count=plan_item.num_questions,
+                    validation_errors=[
+                        GenerationRejection(
+                            code="INVALID_JSON_RESPONSE",
+                            message=(
+                                "Phản hồi trước bị cắt hoặc không phải JSON hợp lệ. "
+                                "Hãy sinh lại toàn bộ và chỉ trả về một JSON object hoàn chỉnh."
+                            ),
+                            repairable=True,
+                        )
+                    ],
+                    avoid_questions=avoid_questions,
+                )
+                retry_raw_response = await llm.generate_chat(
+                    system_prompt=chat_prompt.system_prompt,
+                    user_prompt=retry_prompt,
+                    output_schema=chat_prompt.output_schema,
+                )
+                raw_response = (
+                    f"{raw_response}\n\n--- JSON REPAIR {json_attempt + 1} ---\n"
+                    f"{retry_raw_response}"
+                )
+                clean_json_str = _clean_llm_output(retry_raw_response)
         questions_list = _extract_questions_list(parsed_data)
         parsed_count = len(questions_list)
 
@@ -374,7 +468,7 @@ async def _generate_questions_for_plan_item(
                 retry_attempt_count += 1
                 retry_started_at = time.perf_counter()
                 retry_prompt = _build_retry_prompt(
-                    original_prompt=full_prompt,
+                    original_prompt=chat_prompt.user_prompt,
                     question_type=plan_item.question_type.value,
                     bloom_level=bloom_level.value,
                     difficulty=difficulty,
@@ -386,7 +480,11 @@ async def _generate_questions_for_plan_item(
                     ],
                 )
                 try:
-                    retry_raw_response = await llm.generate_text(retry_prompt)
+                    retry_raw_response = await llm.generate_chat(
+                        system_prompt=chat_prompt.system_prompt,
+                        user_prompt=retry_prompt,
+                        output_schema=chat_prompt.output_schema,
+                    )
                     raw_response = (
                         f"{raw_response}\n\n--- FORMAT RETRY {retry_index} ---\n"
                         f"{retry_raw_response}"
@@ -439,7 +537,7 @@ async def _generate_questions_for_plan_item(
                 )
                 deduped_data.extend(fallback_deduped)
 
-        # 5. Lưu vào DB
+        # 5. Chuẩn bị bản nháp tạm; chỉ ghi vào ngân hàng khi giảng viên gửi duyệt.
         saved_data = save_generated_questions(
             req.document_id,
             [q.model_dump() for q in deduped_data],
@@ -467,6 +565,10 @@ async def _generate_questions_for_plan_item(
             model_provider=model_provider,
             content_mode=content_mode,
         )
+        if not saved_data:
+            raise GenerationOutputError(
+                "Mô hình không tạo được câu hỏi hợp lệ sau bước kiểm tra đầu ra."
+            )
         finish_generation_run(
             generation_run_id,
             status="COMPLETED",
@@ -491,7 +593,11 @@ async def _generate_questions_for_plan_item(
         return [GeneratedQuestion(**question) for question in saved_data], summary
 
     except json.JSONDecodeError as exc:
-        logger.error(f"Parse JSON lỗi: {clean_json_str}")
+        logger.error(
+            "Parse JSON lỗi (response_chars=%s): %s",
+            len(clean_json_str),
+            _response_excerpt(clean_json_str),
+        )
         validation_errors = [
             GenerationRejection(
                 code="INVALID_JSON_RESPONSE",
@@ -502,7 +608,7 @@ async def _generate_questions_for_plan_item(
         finish_generation_run(
             generation_run_id,
             status="FAILED",
-            raw_model_response=raw_response,
+            raw_model_response=_response_excerpt(raw_response, limit=12000),
             latency_ms=int((time.perf_counter() - started_at) * 1000),
             error_message="Invalid JSON response",
             validation_errors=[item.model_dump() for item in validation_errors],
@@ -519,26 +625,14 @@ async def _generate_questions_for_plan_item(
             },
             model_execution=get_llm_execution_snapshot(llm),
         )
-        return [], _build_plan_summary(
-            plan_index=plan_index,
-            question_type=plan_item.question_type.value,
-            bloom_level=bloom_level.value,
-            difficulty=difficulty,
-            requested_count=plan_item.num_questions,
-            parsed_count=0,
-            valid_count=0,
-            retry_attempt_count=0,
-            duplicate_stats=DuplicateStats(exact=0, near=0),
-            saved_count=0,
-            validation_errors=validation_errors,
-            model_provider=model_provider,
-            content_mode=content_mode,
-        )
+        raise GenerationOutputError(
+            "Mô hình trả về JSON không hoàn chỉnh nên không tạo được câu hỏi hợp lệ."
+        ) from exc
     except Exception as exc:
         finish_generation_run(
             generation_run_id,
             status="FAILED",
-            raw_model_response=raw_response,
+            raw_model_response=_response_excerpt(raw_response, limit=12000),
             latency_ms=int((time.perf_counter() - started_at) * 1000),
             error_message=str(exc),
             model_execution=get_llm_execution_snapshot(llm),

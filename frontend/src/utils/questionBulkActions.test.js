@@ -43,11 +43,19 @@ test('bulk summary counts fulfilled and rejected results', () => {
     { status: 'fulfilled', value: {} },
     { status: 'rejected', reason: new Error('Version conflict') },
     { status: 'rejected', reason: new Error('Permission denied') },
+  ], [
+    { id: 'q1', question_code: 'Q001' },
+    { id: 'q2', question_code: 'Q002' },
+    { id: 'q3', question_code: 'Q003' },
   ]);
 
   assert.deepEqual(summary, {
     success: 1,
     failed: 2,
     firstError: 'Version conflict',
+    failures: [
+      { id: 'q2', code: 'Q002', message: 'Version conflict' },
+      { id: 'q3', code: 'Q003', message: 'Permission denied' },
+    ],
   });
 });

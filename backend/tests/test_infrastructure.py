@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from bson import ObjectId
 
 from core import database
-from core.job_worker import process_available_jobs_once
+from core.job_worker import process_available_jobs_once, run_job_worker
 from modules.admin.job_metrics import collect_job_metrics
 from modules.generation.mongodb import retry_or_dead_letter_generation_job
 from modules.generation.llm.model_registry import (
@@ -77,6 +77,49 @@ class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generation_processor.await_args.args[0], "generation-job")
         self.assertEqual(evaluation_processor.await_args.args[0], "evaluation-job")
         self.assertEqual(generation_processor.await_args.args[1], evaluation_processor.await_args.args[1])
+
+    async def test_ollama_and_gemini_lanes_do_not_wait_for_each_other(self):
+        stop_event = asyncio.Event()
+        ollama_started = asyncio.Event()
+        gemini_started = asyncio.Event()
+        release_ollama = asyncio.Event()
+        returned_jobs = {"ollama": False, "gemini": False}
+
+        def next_generation_job(provider_group):
+            if returned_jobs[provider_group]:
+                return None
+            returned_jobs[provider_group] = True
+            return f"{provider_group}-job"
+
+        async def process_generation(job_id, _worker_id):
+            if job_id == "ollama-job":
+                ollama_started.set()
+                await release_ollama.wait()
+                return
+            self.assertTrue(ollama_started.is_set())
+            gemini_started.set()
+            release_ollama.set()
+            stop_event.set()
+
+        with (
+            patch(
+                "modules.generation.mongodb.get_next_queued_generation_job_id",
+                side_effect=next_generation_job,
+            ),
+            patch(
+                "core.job_worker.get_next_queued_evaluation_job_id",
+                return_value=None,
+            ),
+            patch(
+                "modules.generation.generate.process_generate_background",
+                side_effect=process_generation,
+            ),
+            patch.object(database.settings, "job_worker_poll_seconds", 0.01),
+        ):
+            await asyncio.wait_for(run_job_worker(stop_event), timeout=1)
+
+        self.assertTrue(ollama_started.is_set())
+        self.assertTrue(gemini_started.is_set())
 
     async def test_superseded_evaluation_cancels_in_flight_model_call(self):
         job_id = str(ObjectId())

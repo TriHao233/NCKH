@@ -110,7 +110,7 @@ class _FakeReader:
         self.is_encrypted = False
 
 
-def test_pdf_parser_routes_only_risky_pages_to_docling_and_keeps_good_text(tmp_path: Path):
+def test_pdf_parser_routes_only_scanned_pages_to_easyocr_and_keeps_good_text(tmp_path: Path):
     source = tmp_path / "mixed.pdf"
     source.write_bytes(b"fake")
     pages = [
@@ -134,35 +134,25 @@ def test_pdf_parser_routes_only_risky_pages_to_docling_and_keeps_good_text(tmp_p
                     }
                 ],
             },
-            3: {
-                "text": "Docling layout",
-                "structured_blocks": [
-                    {"block_type": "caption", "content": "Hình 1: Sơ đồ", "structured_content": None}
-                ],
-            },
         }
 
     with patch("modules.documents.ingest.parsers.pdf.PdfReader", return_value=_FakeReader(pages)):
         parsed = PdfParser(ocr_page_extractor=extract).parse(source, _context(source.name, "pdf"))
 
-    assert calls == [[2, 3]]
+    assert calls == [[2]]
     assert parsed.units[0].quality["selected_method"] == "pypdf_plain"
-    assert parsed.units[1].quality["selected_method"] == "docling_page_selective_ocr"
-    hard_ocr_table = next(block for block in parsed.units[1].content_blocks if block.block_type == "table")
-    assert hard_ocr_table.structured_content["rows"] == [["A", "B"], ["1", "2"]]
-    assert hard_ocr_table.provenance.bbox == [10.0, 20.0, 300.0, 180.0]
+    assert parsed.units[1].quality["selected_method"] == "easyocr_page_selective_ocr"
+    assert parsed.units[1].raw_text.startswith("Nội dung OCR")
     assert parsed.units[2].raw_text.startswith("Trang có sơ đồ")
-    assert parsed.units[2].content_blocks[-1].block_type == "caption"
     assert parsed.units[2].asset_ids
-    assert parsed.assets[0].asset_type == "diagram"
-    assert parsed.assets[0].source_caption
+    assert parsed.assets[0].asset_type == "image"
     assert parsed.stats == {
         "source_format": "pdf",
         "page_count": 3,
         "asset_count": 1,
         "ocr_page_count": 1,
-        "layout_page_count": 1,
-        "docling_page_count": 2,
+        "layout_page_count": 0,
+        "easyocr_page_count": 1,
         "text_layer_page_count": 2,
     }
     assert validate_parsed_document(parsed).passed

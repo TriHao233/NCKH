@@ -164,3 +164,7 @@ class ConcurrencyLimitedProvider(LLMProvider):
     async def generate_text(self, prompt: str) -> str:
         async with distributed_llm_slot(self.provider_code):
             return await self.wrapped.generate_text(prompt)
+
+    async def generate_chat(self, **kwargs) -> str:
+        async with distributed_llm_slot(self.provider_code):
+            return await self.wrapped.generate_chat(**kwargs)

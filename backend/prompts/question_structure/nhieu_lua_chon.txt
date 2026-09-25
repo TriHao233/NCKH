@@ -1,6 +1,5 @@
 CẤU TRÚC: nhieu_lua_chon
-1. `question` là câu dẫn hoàn chỉnh và báo hiệu rõ có thể chọn nhiều đáp án.
-2. `options` là object có 4-7 khóa liên tiếp từ "A" trở đi.
-3. Có ít nhất 2 đáp án đúng nhưng không đúng tất cả phương án.
-4. `correct_answer` liệt kê mọi khóa đúng, cách nhau bằng dấu phẩy và khoảng trắng, ví dụ "A, C, E".
-5. Mỗi phương án đúng phải đúng độc lập; tránh phương án bao hàm nhau gây mơ hồ.
+1. `question` hoàn chỉnh và nêu rõ có nhiều đáp án đúng.
+2. `options` có 4-6 khóa liên tiếp từ "A"; ít nhất 2 nhưng không phải tất cả phương án là đúng.
+3. `correct_answer` liệt kê đủ khóa đúng theo dạng `A, C, E`.
+4. Mỗi phương án đúng phải đúng độc lập, không bao hàm nhau hoặc gây mơ hồ.

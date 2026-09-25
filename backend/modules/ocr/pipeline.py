@@ -13,7 +13,6 @@ from core.config import settings
 from core.gpu_coordination import gpu_operation
 from modules.documents.ingest import ParseContext, build_default_registry
 from modules.documents.ingest.quality import validate_parsed_document
-from modules.ocr.docling_engine import is_docling_available, ocr_pdf
 from modules.ocr.pdf_text_extractor import extract_pdf_text_layer
 from modules.ocr.text_cleaner import clean_ocr_pages
 
@@ -178,7 +177,8 @@ def run_document_pipeline(
     logger.info("Starting structured extraction: %s (%s)", title, document_type)
     registry = build_default_registry(pdf_ocr_enabled=pdf_ocr_enabled)
     parser = registry.resolve(path, resolved_mime)
-    parsed = parser.parse(path, context)
+    with gpu_operation("ocr"):
+        parsed = parser.parse(path, context)
     report = validate_parsed_document(parsed)
     if not report.passed:
         raise DocumentQualityError(report.to_dict())
@@ -241,7 +241,6 @@ def run_ocr_pipeline(
     document_title: str | None = None,
     languages: list[str] | None = None,
     gpu: bool | None = None,
-    poppler_path: str | None = None,
     document_id: str = "standalone",
     source_file_name: str | None = None,
     source_uri: str | None = None,

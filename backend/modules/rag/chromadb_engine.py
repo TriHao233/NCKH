@@ -209,27 +209,45 @@ def _encode_documents(
     peak_reserved_mb = 0.0
     with gpu_operation("embedding"):
         lock_wait_ms = (perf_counter() - lock_wait_started_at) * 1000
+        managed_model = model is None
         resolved_model = model or _get_embedding_model()
+        if (
+            managed_model
+            and settings.embedding_release_gpu_after_use
+            and torch.cuda.is_available()
+            and torch.device(str(resolved_model.device)).type != "cuda"
+        ):
+            resolved_model.to("cuda")
         model_device = torch.device(str(resolved_model.device))
         if model_device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(model_device)
-        inference_started_at = perf_counter()
-        for batch in batches:
-            batch_documents = [documents[index] for index in batch]
-            encoded = resolved_model.encode(
-                batch_documents,
-                batch_size=len(batch_documents),
-                normalize_embeddings=True,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-            )
-            vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
-            for index, vector in zip(batch, vectors):
-                results[index] = [float(value) for value in vector]
-        inference_ms = (perf_counter() - inference_started_at) * 1000
-        if model_device.type == "cuda":
-            peak_allocated_mb = torch.cuda.max_memory_allocated(model_device) / (1024 * 1024)
-            peak_reserved_mb = torch.cuda.max_memory_reserved(model_device) / (1024 * 1024)
+        try:
+            inference_started_at = perf_counter()
+            for batch in batches:
+                batch_documents = [documents[index] for index in batch]
+                encoded = resolved_model.encode(
+                    batch_documents,
+                    batch_size=len(batch_documents),
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                )
+                vectors = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
+                for index, vector in zip(batch, vectors):
+                    results[index] = [float(value) for value in vector]
+            inference_ms = (perf_counter() - inference_started_at) * 1000
+            if model_device.type == "cuda":
+                peak_allocated_mb = torch.cuda.max_memory_allocated(model_device) / (1024 * 1024)
+                peak_reserved_mb = torch.cuda.max_memory_reserved(model_device) / (1024 * 1024)
+        finally:
+            if (
+                managed_model
+                and settings.embedding_release_gpu_after_use
+                and model_device.type == "cuda"
+            ):
+                resolved_model.to("cpu")
+                torch.cuda.empty_cache()
+                logger.info("Embedding model moved to CPU; released CUDA cache for Ollama")
 
     embedding_ms = (perf_counter() - embedding_started_at) * 1000
     if any(vector is None for vector in results):
@@ -250,7 +268,7 @@ def _encode_documents(
         "peak_reserved_mb": round(peak_reserved_mb, 2),
         "model_load_ms": round(_model_load_ms, 2),
         "precision": _resolved_precision or _target_precision(),
-        "device": str(resolved_model.device),
+        "device": str(model_device),
     }
     return [vector for vector in results if vector is not None], metrics
 

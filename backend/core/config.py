@@ -89,12 +89,15 @@ class Settings(BaseModel):
     llm_slot_wait_timeout_seconds: int = int(os.getenv("LLM_SLOT_WAIT_TIMEOUT_SECONDS", "600"))
     llm_slot_poll_seconds: float = float(os.getenv("LLM_SLOT_POLL_SECONDS", "0.5"))
     ollama_max_concurrency: int = int(os.getenv("OLLAMA_MAX_CONCURRENCY", "1"))
+    generation_batch_size: int = int(os.getenv("GENERATION_BATCH_SIZE", "3"))
+    ollama_generation_batch_size: int = int(os.getenv("OLLAMA_GENERATION_BATCH_SIZE", "1"))
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
     gpu_coordination_enabled: bool = _env_bool("GPU_COORDINATION_ENABLED", True)
     gpu_lock_path: str = os.getenv("GPU_LOCK_PATH", "./data/gpu-operation.lock")
     gpu_lock_timeout_seconds: float = float(os.getenv("GPU_LOCK_TIMEOUT_SECONDS", "1200"))
-    gpu_lock_stale_seconds: float = float(os.getenv("GPU_LOCK_STALE_SECONDS", "3600"))
+    gpu_lock_stale_seconds: float = float(os.getenv("GPU_LOCK_STALE_SECONDS", "120"))
+    gpu_lock_heartbeat_seconds: float = float(os.getenv("GPU_LOCK_HEARTBEAT_SECONDS", "10"))
     gpu_lock_poll_seconds: float = float(os.getenv("GPU_LOCK_POLL_SECONDS", "0.25"))
 
     firebase_credentials_path: str = os.getenv(
@@ -111,7 +114,7 @@ class Settings(BaseModel):
     # Provider LLM mặc định (qwen chạy local qua Ollama)
     model_provider: str = os.getenv("MODEL_PROVIDER", "qwen")
     code_generation_model_provider: str = os.getenv(
-        "CODE_GENERATION_MODEL_PROVIDER", "deepseek"
+        "CODE_GENERATION_MODEL_PROVIDER", "qwen"
     ).strip()
     evaluation_model_provider: str = _env_first(
         ("EVALUATION_MODEL_PROVIDER", "EVALUATOR_MODEL_CODE"),
@@ -124,10 +127,12 @@ class Settings(BaseModel):
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",
     )
-    ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+    ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600"))
     ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
-    ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "900"))
+    ollama_num_predict: int = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
     ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
+    # RTX 4050 6 GB shares VRAM with Docling; keep Ollama warm briefly, not indefinitely.
+    ollama_keep_alive: str = os.getenv("OLLAMA_KEEP_ALIVE", "5m").strip()
     qwen_model_name: str = os.getenv("QWEN_MODEL_NAME", "qwen2.5:7b").strip()
     deepseek_model_name: str = _env_first(("DEEPSEEK_MODEL_NAME",), "deepseek-r1")
     deepseek_timeout_seconds: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "180"))
@@ -156,26 +161,27 @@ class Settings(BaseModel):
     embedding_max_tokens: int = int(os.getenv("EMBEDDING_MAX_TOKENS", "1024"))
     embedding_token_overlap: int = int(os.getenv("EMBEDDING_TOKEN_OVERLAP", "128"))
     embedding_cache_enabled: bool = _env_bool("EMBEDDING_CACHE_ENABLED", True)
+    embedding_release_gpu_after_use: bool = _env_bool("EMBEDDING_RELEASE_GPU_AFTER_USE", True)
     lexical_fallback_max_chunks: int = int(os.getenv("LEXICAL_FALLBACK_MAX_CHUNKS", "1200"))
     lexical_fallback_distance_threshold: float = float(
         os.getenv("LEXICAL_FALLBACK_DISTANCE_THRESHOLD", "0.55")
     )
 
-    # Docling OCR
-    docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001")
-    docling_timeout: int = int(os.getenv("DOCLING_TIMEOUT", "600"))
-    docling_poll_seconds: float = float(os.getenv("DOCLING_POLL_SECONDS", "0.5"))
-    docling_ocr_preset: str = os.getenv("DOCLING_OCR_PRESET", "rapidocr").strip().lower()
-    docling_ocr_backend: str = os.getenv("DOCLING_OCR_BACKEND", "onnxruntime").strip().lower()
-    docling_ocr_languages: list[str] = [
+    # EasyOCR + PDFium (selective OCR for scanned pages)
+    easyocr_languages: list[str] = [
         language.strip()
-        for language in os.getenv("DOCLING_OCR_LANGUAGES", "vi").split(",")
+        for language in os.getenv("EASYOCR_LANGUAGES", "vi,en").split(",")
         if language.strip()
     ]
-    docling_images_scale: float = float(os.getenv("DOCLING_IMAGES_SCALE", "2.0"))
-    docling_table_mode: str = os.getenv("DOCLING_TABLE_MODE", "accurate").strip().lower()
-    docling_do_table_structure: bool = _env_bool("DOCLING_DO_TABLE_STRUCTURE", True)
-    docling_include_images: bool = _env_bool("DOCLING_INCLUDE_IMAGES", True)
+    easyocr_gpu: bool = _env_bool("EASYOCR_GPU", True)
+    easyocr_batch_size: int = int(os.getenv("EASYOCR_BATCH_SIZE", "2"))
+    easyocr_render_scale: float = float(os.getenv("EASYOCR_RENDER_SCALE", "2.0"))
+    easyocr_min_confidence: float = float(os.getenv("EASYOCR_MIN_CONFIDENCE", "0.20"))
+    easyocr_model_storage_directory: str = os.getenv(
+        "EASYOCR_MODEL_STORAGE_DIRECTORY", "./data/easyocr_models"
+    )
+    easyocr_download_enabled: bool = _env_bool("EASYOCR_DOWNLOAD_ENABLED", True)
+    easyocr_unload_after_use: bool = _env_bool("EASYOCR_UNLOAD_AFTER_USE", True)
 
     pdf_text_fast_path_enabled: bool = _env_bool("PDF_TEXT_FAST_PATH_ENABLED", True)
     pdf_text_fast_path_min_coverage: float = float(os.getenv("PDF_TEXT_FAST_PATH_MIN_COVERAGE", "0.98"))

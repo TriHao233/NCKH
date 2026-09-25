@@ -6,7 +6,7 @@ import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listDocuments } from '../api/documents';
 import { enqueueGenerateQuestions, getGenerateStatus, streamGenerateStatus } from '../api/generate';
 import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
-import { deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
+import { createQuestion, deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
 import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
 import {
   BLOOM_LEVELS,
@@ -51,6 +51,12 @@ const DRAFTS_PER_PAGE = 3;
 const SUPPORTED_SOURCE_EXTENSIONS = ['.pdf', '.doc', '.docx', '.md', '.markdown', '.txt'];
 const PRESET_STORAGE_KEY = 'qbank_generation_presets';
 const SUBMITTABLE_REVIEW_STATUSES = new Set(['DRAFT', 'NEEDS_REVISION']);
+
+function isDeepSeekModel(model = {}) {
+  return [model.code, model.name, model.version]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes('deepseek'));
+}
 
 const REVIEW_STATUS_LABEL = {
   DRAFT: 'Nháp',
@@ -238,10 +244,28 @@ function mergeUpdatedDraft(draft, updatedQuestion) {
 }
 
 function canSubmitDraft(draft) {
-  return Boolean(
-    draft.persistedId
-    && SUBMITTABLE_REVIEW_STATUSES.has(String(draft.reviewStatus || '').toUpperCase()),
-  );
+  return SUBMITTABLE_REVIEW_STATUSES.has(String(draft.reviewStatus || 'DRAFT').toUpperCase());
+}
+
+function generatedDraftPayload(draft, fallbackDocumentId) {
+  return {
+    content: draft.text.trim(),
+    question_type: draft.questionType,
+    bloom_level: Number.parseInt(String(draft.bloomLevel || ''), 10) || null,
+    difficulty: draft.difficulty || null,
+    question_data: {
+      options: draft.rawOptions ?? null,
+      correct_answer: draft.correctAnswer,
+      explanation: draft.explanation,
+      model_source_context: draft.sourceContext,
+      source_keywords: draft.sourceKeywords || [],
+      false_mutation: draft.falseMutation || null,
+      validation_warnings: draft.validationWarnings || [],
+    },
+    document_id: draft.documentId || fallbackDocumentId || null,
+    source_chunk_ids: draft.sourceChunkIds || [],
+    clo_ids: draft.cloIds || [],
+  };
 }
 
 function GeneratePage() {
@@ -416,12 +440,15 @@ function GeneratePage() {
     setModelsError('');
     try {
       const result = await listAvailableAiModels('QUESTION_GENERATION');
-      const items = result.items || [];
+      const items = (result.items || []).filter((model) => !isDeepSeekModel(model));
+      const defaultModelCode = items.some((model) => model.code === result.default_model_code)
+        ? result.default_model_code
+        : (items[0]?.code || '');
       setAvailableModels(items);
       setSelectedModelCode((current) => (
         items.some((model) => model.code === current)
           ? current
-          : (result.default_model_code || items[0]?.code || '')
+          : defaultModelCode
       ));
     } catch {
       setAvailableModels([]);
@@ -637,10 +664,6 @@ function GeneratePage() {
   };
 
   const handleSaveDraft = async (draft) => {
-    if (!draft.persistedId) {
-      alert('Câu hỏi này chưa có ID trong ngân hàng, vui lòng sinh lại.');
-      return;
-    }
     if (!draft.text.trim()) {
       alert('Nội dung câu hỏi không được để trống.');
       return;
@@ -653,6 +676,16 @@ function GeneratePage() {
 
     setSavingDraftId(draft.id);
     try {
+      if (!draft.persistedId) {
+        updateDraft(draft.id, {
+          text: draft.text.trim(),
+          choices: formatChoices(draft.rawOptions, draft.correctAnswer),
+        });
+        setDraftEditSnapshot(null);
+        setEditingDraftId(null);
+        setStatusDetail('Đã lưu chỉnh sửa trong danh sách nháp');
+        return;
+      }
       const updatedQuestion = await updateQuestion(draft.persistedId, {
         expected_version: draft.currentVersion || 1,
         content: draft.text.trim(),
@@ -707,13 +740,29 @@ function GeneratePage() {
       return;
     }
     setSubmittingDraftId(draft.id);
+    let createdQuestion = null;
     try {
-      const updatedQuestion = await submitQuestionForReview(draft.persistedId);
+      const questionId = draft.persistedId;
+      if (!questionId) {
+        const validationError = validateDraftBeforeSave(draft);
+        if (!draft.text.trim() || validationError) {
+          throw new Error(validationError || 'Nội dung câu hỏi không được để trống.');
+        }
+        createdQuestion = await createQuestion(generatedDraftPayload(draft, generationInfo?.documentId || documentId));
+      }
+      const updatedQuestion = await submitQuestionForReview(questionId || createdQuestion.id);
       setDrafts((current) => current.map((item) => (
         item.id === draft.id ? mergeUpdatedDraft(item, updatedQuestion) : item
       )));
       setStatusDetail(`Đã gửi ${draft.questionCode || 'câu hỏi nháp'} sang hàng đợi duyệt`);
     } catch (err) {
+      if (createdQuestion?.id) {
+        try {
+          await deleteQuestion(createdQuestion.id);
+        } catch {
+          // Best-effort cleanup: preserve the original submission error.
+        }
+      }
       alert(`Gửi duyệt thất bại: ${err.message}`);
     } finally {
       setSubmittingDraftId(null);
@@ -730,10 +779,25 @@ function GeneratePage() {
     try {
       for (const draft of targets) {
         setSubmittingDraftId(draft.id);
-        const updatedQuestion = await submitQuestionForReview(draft.persistedId);
-        setDrafts((current) => current.map((item) => (
-          item.id === draft.id ? mergeUpdatedDraft(item, updatedQuestion) : item
-        )));
+        let createdQuestion = null;
+        try {
+          if (!draft.persistedId) {
+            createdQuestion = await createQuestion(generatedDraftPayload(draft, generationInfo?.documentId || documentId));
+          }
+          const updatedQuestion = await submitQuestionForReview(draft.persistedId || createdQuestion.id);
+          setDrafts((current) => current.map((item) => (
+            item.id === draft.id ? mergeUpdatedDraft(item, updatedQuestion) : item
+          )));
+        } catch (error) {
+          if (createdQuestion?.id) {
+            try {
+              await deleteQuestion(createdQuestion.id);
+            } catch {
+              // Best-effort cleanup: preserve the original submission error.
+            }
+          }
+          throw error;
+        }
       }
       setStatusDetail(`Đã gửi ${targets.length} câu hỏi sang hàng đợi duyệt`);
     } catch (err) {
@@ -1198,9 +1262,6 @@ function GeneratePage() {
                       {generationInfo.generatedCount}/{generationInfo.requestedCount} câu
                       {generationInfo.updatedAt ? ` · ${formatDateTime(generationInfo.updatedAt)}` : ''}
                     </span>
-                  )}
-                  {phase === 'completed' && generationInfo?.model?.name && (
-                    <span className="job-badge">AI: {generationInfo.model.name}</span>
                   )}
                   {phase === 'completed' && hasTimings && (
                     <div className="gen-timing-grid">

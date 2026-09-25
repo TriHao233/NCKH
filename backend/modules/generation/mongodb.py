@@ -12,18 +12,7 @@ from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
 from modules.documents.repository import object_id
-from modules.questions.schemas import QuestionCreateRequest, QuestionDifficulty
-from modules.questions.service import get_question_service
-
-BLOOM_TO_LEVEL = {
-    "1_nho": 1,
-    "2_hieu": 2,
-    "3_van_dung": 3,
-    "4_phan_tich": 4,
-    "5_danh_gia": 5,
-    "6_sang_tao": 6,
-}
-
+from modules.questions.schemas import QuestionDifficulty
 
 def utc_now():
     return datetime.now(timezone.utc)
@@ -261,55 +250,27 @@ def save_generated_questions(
     source_chunk_ids: list[str],
     learning_outcomes: list[dict] | None = None,
 ) -> list[dict]:
-    service = get_question_service()
-    run_oid = object_id(generation_run_id, "generation_run_id")
-    saved_questions = []
+    # Generated candidates stay attached to the generation job until the
+    # teacher explicitly submits them. This prevents unreviewed AI output
+    # from filling the question bank with draft records.
+    prepared_questions = []
     allowed_difficulties = {item.value for item in QuestionDifficulty}
     for question in questions:
         difficulty = question.get("difficulty")
         if difficulty not in allowed_difficulties:
             difficulty = None
-        saved_question = service.create(
-            QuestionCreateRequest(
-                content=question["question"],
-                question_type=question["question_type"],
-                bloom_level=BLOOM_TO_LEVEL.get(question["bloom_level"]),
-                difficulty=difficulty,
-                question_data={
-                    "options": question.get("options"),
-                    "correct_answer": question.get("correct_answer"),
-                    "explanation": question.get("explanation"),
-                    "model_source_context": question.get("source_context"),
-                    "source_keywords": question.get("source_keywords") or [],
-                    "false_mutation": question.get("false_mutation"),
-                    "validation_warnings": question.get("validation_warnings") or [],
-                    "post_processing": {
-                        "status": "WARNING" if question.get("validation_warnings") else "ACCEPTED",
-                        "validator_version": "question-post-v2",
-                        "warnings": question.get("validation_warnings") or [],
-                    },
-                },
-                document_id=document_id,
-                source_chunk_ids=source_chunk_ids,
-                clo_ids=_resolve_clo_ids(document_id, question, learning_outcomes),
-            ),
-            requested_by_user_id,
-            origin="AI",
-            generation_run_id=run_oid,
-            initial_review_status="DRAFT",
-        )
-        saved_questions.append(
+        prepared_questions.append(
             {
                 **question,
-                "question_id": saved_question["id"],
-                "question_code": saved_question["question_code"],
-                "current_version": saved_question["current_version"],
-                "current_version_id": saved_question["current_version_id"],
-                "review_status": saved_question["review_status"],
+                "difficulty": difficulty,
+                "document_id": document_id,
+                "generation_run_id": generation_run_id,
+                "source_chunk_ids": source_chunk_ids,
+                "clo_ids": _resolve_clo_ids(document_id, question, learning_outcomes),
                 "validation_warnings": question.get("validation_warnings") or [],
             }
         )
-    return saved_questions
+    return prepared_questions
 
 
 def create_generation_job(
@@ -478,21 +439,57 @@ def claim_generation_job(job_id: str, worker_id: str) -> dict | None:
     return _serialize_generation_job(doc)
 
 
-def get_next_queued_generation_job_id() -> str | None:
+def get_next_queued_generation_job_id(provider_group: str | None = None) -> str | None:
+    """Return the oldest runnable generation job, optionally for one provider lane.
+
+    Ollama-backed models and Gemini are deliberately selected independently so a
+    slow local generation cannot head-of-line block a remote Gemini request (and
+    vice versa).
+    """
     now = utc_now()
-    doc = get_database()["generation_jobs"].find_one(
-        {
+    runnable_filter = {
+        "$or": [
+            {
+                "status": "queued",
+                "$or": [
+                    {"next_attempt_at": {"$exists": False}},
+                    {"next_attempt_at": {"$lte": now}},
+                ],
+            },
+            {"status": "processing", "lease_expires_at": {"$lte": now}},
+        ]
+    }
+    normalized_group = (provider_group or "").strip().lower()
+    if normalized_group == "gemini":
+        provider_filter = {
             "$or": [
+                {"model_snapshot.runtime": "GEMINI"},
                 {
-                    "status": "queued",
-                    "$or": [
-                        {"next_attempt_at": {"$exists": False}},
-                        {"next_attempt_at": {"$lte": now}},
-                    ],
+                    "model_snapshot.runtime": {"$exists": False},
+                    "request.model_provider": "gemini",
                 },
-                {"status": "processing", "lease_expires_at": {"$lte": now}},
             ]
-        },
+        }
+    elif normalized_group == "ollama":
+        provider_filter = {
+            "$or": [
+                {"model_snapshot.runtime": "OLLAMA"},
+                {
+                    "model_snapshot.runtime": {"$exists": False},
+                    "request.model_provider": {"$ne": "gemini"},
+                },
+            ]
+        }
+    else:
+        provider_filter = None
+
+    query = (
+        {"$and": [runnable_filter, provider_filter]}
+        if provider_filter is not None
+        else runnable_filter
+    )
+    doc = get_database()["generation_jobs"].find_one(
+        query,
         sort=[("created_at", 1)],
         projection={"_id": 1},
     )

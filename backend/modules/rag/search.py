@@ -7,6 +7,7 @@ from bson import ObjectId
 
 from core.config import settings
 from core.database import get_rag_db
+from core.gpu_coordination import current_gpu_operation_label
 from modules.rag.chromadb_engine import embedding_config_hash, get_collection, model_scoped_collection_name
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,7 @@ def get_context_snapshot(
     query_text: str = None,
     min_density: float = 0.0,
     limit: int = 5,
+    avoid_ollama_gpu_wait: bool = False,
 ) -> dict:
     """Truy xuất các chunk từ ChromaDB làm Context cho LLM"""
     active_snapshot = _active_vector_snapshot(
@@ -247,7 +249,30 @@ def get_context_snapshot(
         # Fetch beyond the final result limit because title-only chunks often rank highly
         # for a heading query but must never become evidence for a generated question.
         candidate_limit = max(1, min(max(limit * 10, limit, 1), collection.count()))
-        if semantic_query:
+        ollama_is_using_gpu = (
+            avoid_ollama_gpu_wait
+            and current_gpu_operation_label() == "ollama"
+        )
+        if ollama_is_using_gpu:
+            # Gemini is remote and must not sit behind a long local Ollama call
+            # merely to embed one retrieval query. Use the bounded lexical pool
+            # already stored in ChromaDB until the shared GPU becomes available.
+            lexical_limit = min(
+                max(limit * 60, 200),
+                settings.lexical_fallback_max_chunks,
+                collection.count(),
+            )
+            results = collection.get(
+                where=where_filter,
+                limit=max(1, lexical_limit),
+                include=["documents", "metadatas"],
+            )
+            raw_docs = results.get("documents") or []
+            raw_metas = results.get("metadatas") or []
+            logger.info(
+                "Ollama đang giữ GPU; dùng lexical retrieval cho Gemini để tránh chờ chéo provider"
+            )
+        elif semantic_query:
             results = collection.query(
                 query_texts=[semantic_query],
                 where=where_filter,

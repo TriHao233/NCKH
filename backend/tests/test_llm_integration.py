@@ -15,15 +15,23 @@ class FakeOllamaHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(content_length) or b"{}")
         type(self).last_payload = payload
-        response = {
-            "response": json.dumps(
+        generated = json.dumps({"model_received": payload.get("model"), "status": "ok"})
+        midpoint = len(generated) // 2
+        if self.path.endswith("/api/chat"):
+            chunks = [
+                {"message": {"role": "assistant", "content": generated[:midpoint]}, "done": False},
                 {
-                    "model_received": payload.get("model"),
-                    "status": "ok",
-                }
-            )
-        }
-        body = json.dumps(response).encode("utf-8")
+                    "message": {"role": "assistant", "content": generated[midpoint:]},
+                    "done": True,
+                    "done_reason": "stop",
+                },
+            ]
+        else:
+            chunks = [
+                {"response": generated[:midpoint], "done": False},
+                {"response": generated[midpoint:], "done": True, "done_reason": "stop"},
+            ]
+        body = ("\n".join(json.dumps(chunk) for chunk in chunks) + "\n").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -58,7 +66,29 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["model_received"], "fake-model")
+        self.assertTrue(FakeOllamaHandler.last_payload["stream"])
         self.assertEqual(FakeOllamaHandler.last_payload["options"]["num_ctx"], 8192)
+        self.assertEqual(provider.last_response_metadata["done_reason"], "stop")
+
+    async def test_provider_sends_roles_and_schema_to_chat_endpoint(self):
+        provider = OllamaProvider("fake-model", timeout_seconds=2, num_ctx=8192)
+        provider.url = f"http://127.0.0.1:{self.server.server_port}/api/generate"
+        schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+
+        result = json.loads(
+            await provider.generate_chat(
+                system_prompt="system rules",
+                user_prompt="user task",
+                output_schema=schema,
+            )
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(FakeOllamaHandler.last_payload["stream"])
+        self.assertEqual(provider.last_response_metadata["done_reason"], "stop")
+        self.assertEqual(FakeOllamaHandler.last_payload["messages"][0]["role"], "system")
+        self.assertEqual(FakeOllamaHandler.last_payload["messages"][1]["role"], "user")
+        self.assertEqual(FakeOllamaHandler.last_payload["format"], schema)
 
 
 class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):

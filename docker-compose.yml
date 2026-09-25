@@ -24,8 +24,10 @@ services:
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
-      DOCLING_OCR_PRESET: ${DOCLING_OCR_PRESET:-tesseract}
-      DOCLING_OCR_LANGUAGES: ${DOCLING_OCR_LANGUAGES:-vie}
+      EASYOCR_GPU: ${EASYOCR_GPU:-true}
+      EASYOCR_LANGUAGES: ${EASYOCR_LANGUAGES:-vi,en}
+      EASYOCR_BATCH_SIZE: ${EASYOCR_BATCH_SIZE:-2}
+      EASYOCR_MODEL_STORAGE_DIRECTORY: /app/data/easyocr_models
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -44,39 +46,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  docling:
-    profiles: ["ocr"]
-    build:
-      context: ./backend
-      dockerfile: Docling.Dockerfile
-    image: nckh-docling-vie
-    container_name: nckh-docling
-    ports:
-      - "5001:5001"
-    environment:
-      DOCLING_SERVE_OCR_BATCH_SIZE: ${DOCLING_SERVE_OCR_BATCH_SIZE:-4}
-      DOCLING_SERVE_LAYOUT_BATCH_SIZE: ${DOCLING_SERVE_LAYOUT_BATCH_SIZE:-4}
-      DOCLING_SERVE_TABLE_BATCH_SIZE: ${DOCLING_SERVE_TABLE_BATCH_SIZE:-4}
-      DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS: ${DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS:-0.1}
-      DOCLING_SERVE_OPTIONS_CACHE_SIZE: ${DOCLING_SERVE_OPTIONS_CACHE_SIZE:-1}
-      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: ${DOCLING_SERVE_LOAD_MODELS_AT_BOOT:-false}
-      DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG: ${DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG:-false}
-    volumes:
-      - docling_models:/root/.cache
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    restart: unless-stopped
-    logging: &service-logging
-      driver: local
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   mongodb:
     image: mongo:latest
     container_name: nckh-mongodb
@@ -92,7 +61,11 @@ services:
       retries: 20
       start_period: 10s
     restart: unless-stopped
-    logging: *service-logging
+    logging: &service-logging
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   worker:
     image: nckh-backend:dev
@@ -148,5 +121,4 @@ services:
 
 volumes:
   mongodb_data:
-  docling_models:
   huggingface_cache:

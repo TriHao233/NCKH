@@ -121,6 +121,10 @@ class GeneratedQuestion(BaseModel):
     current_version: Optional[int] = None
     current_version_id: Optional[str] = None
     review_status: Optional[str] = None
+    document_id: Optional[str] = None
+    generation_run_id: Optional[str] = None
+    source_chunk_ids: List[str] = Field(default_factory=list)
+    clo_ids: List[str] = Field(default_factory=list)
 
 
 class GenerationRejection(BaseModel):

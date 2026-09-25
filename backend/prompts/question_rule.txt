@@ -1,20 +1,11 @@
-QUESTION RULES
+QUY TẮC CÂU HỎI
 
-KHÔNG TẠO CÂU HỎI NẾU:
-1. Hỏi về hình thức học liệu: chương, mục, trang, thứ tự, tên file, bố cục, màu sắc, font chữ.
-2. Tham chiếu nguồn học liệu: "Theo đoạn văn","Trong bài tập","Theo tài liệu", "Theo giáo trình", "Dựa vào nội dung trên", "Trong đoạn văn", "Theo ví dụ" hoặc cách diễn đạt tương tự.
-3. Chỉ yêu cầu học thuộc nguyên văn, nhớ chi tiết vụn vặt hoặc không đánh giá kiến thức chuyên môn.
-4. Phụ thuộc vào ngữ cảnh bên ngoài câu hỏi như "ở trên", "đã nêu", "ví dụ trước", "hình bên dưới". Mỗi câu phải tự đứng độc lập.
-5. Thiếu dữ kiện, mơ hồ, có nhiều cách hiểu hoặc không xác định được một đáp án đúng rõ ràng.
-6. Dài dòng, lan man, tình huống vô lý, mang tính đánh đố hoặc không phù hợp văn phong học thuật.
-7. Sử dụng công nghệ, ngôn ngữ lập trình, ví dụ hoặc dữ kiện không có trong CONTEXT.
-8. Với câu hỏi một đáp án đúng: có nhiều đáp án đúng, lựa chọn trùng nghĩa hoặc phương án nhiễu vô lý/quá dễ loại.
+Không tạo câu hỏi:
+1. Hỏi về hình thức học liệu như chương, mục, trang, tên file hoặc bố cục.
+2. Nhắc đến nguồn bằng các cụm như “theo tài liệu”, “trong đoạn văn”, “dựa vào nội dung trên” hoặc tương tự.
+3. Phụ thuộc vào thông tin “ở trên”, ví dụ trước, hình bên dưới hoặc ngữ cảnh ngoài câu hỏi.
+4. Thiếu dữ kiện, mơ hồ, có nhiều đáp án đúng, hỏi mẹo hoặc chỉ kiểm tra chi tiết vụn vặt.
+5. Chép gần nguyên văn một câu nguồn rồi hỏi lại mà không kiểm tra một thuật ngữ, thuộc tính, vai trò hoặc quan hệ rõ ràng.
+6. Dùng dữ kiện ngoài CONTEXT trong câu hỏi, đáp án đúng hoặc giải thích.
 
-YÊU CẦU:
-- Ngắn gọn, rõ ràng, tự đủ nghĩa.
-- Có giá trị kiểm tra kiến thức chuyên môn.
-- Phù hợp chủ đề và phạm vi CONTEXT.
-- Không suy diễn hoặc bổ sung kiến thức ngoài CONTEXT.
-- Mức độ câu hỏi phải phù hợp với năng lực nhận thức cần đánh giá.
-
-Nếu vi phạm bất kỳ quy tắc nào, hãy thay bằng câu hỏi khác phù hợp hơn.
+Câu hỏi phải ngắn gọn, tự đủ nghĩa, có giá trị chuyên môn và đúng năng lực nhận thức cần đánh giá. Với câu hỏi có lựa chọn, nhiễu phải cùng kiểu với đáp án đúng và sai ở một điểm có thể bác bỏ từ CONTEXT.

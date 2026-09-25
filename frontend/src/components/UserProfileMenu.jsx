@@ -82,10 +82,6 @@ const UserProfileMenu = () => {
 
           {user.role === 'Teacher' && (
             <>
-              <Link to="/quan-ly" className="dropdown-item" onClick={() => setIsOpen(false)}>
-                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
-                Quản lý câu hỏi
-              </Link>
               <Link to="/quan-ly-hoc-phan" className="dropdown-item" onClick={() => setIsOpen(false)}>
                 <FontAwesomeIcon icon={faBook} className="dropdown-icon" />
                 Quản lý học phần
@@ -93,6 +89,10 @@ const UserProfileMenu = () => {
               <Link to="/quan-ly-tai-lieu" className="dropdown-item dropdown-item--nested" onClick={() => setIsOpen(false)}>
                 <FontAwesomeIcon icon={faFileLines} className="dropdown-icon" />
                 Quản lý tài liệu
+              </Link>
+              <Link to="/quan-ly" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
+                Quản lý câu hỏi
               </Link>
             </>
           )}

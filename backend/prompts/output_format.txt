@@ -1,25 +1,11 @@
-ĐỊNH DẠNG ĐẦU RA:
-Chỉ trả về một JSON object thô, không bọc trong ```json, không thêm giải thích ngoài JSON.
-Tuân thủ đúng file QUESTION_STRUCTURE của loại câu hỏi đang sinh.
+ĐỊNH DẠNG ĐẦU RA
 
-SCHEMA:
-{
-  "questions": [
-    {
-      "question": "string",
-      "options": "object hoặc null theo QUESTION_STRUCTURE",
-      "correct_answer": "string",
-      "explanation": "string",
-      "question_type": "string",
-      "bloom_level": "string",
-      "difficulty": "de | trung_binh | kho",
-      "source_context": "string (exact verbatim quote)",
-      "source_keywords": ["exact keyword or phrase from source_context"],
-      "clo_codes": ["CLO code selected only from LEARNING OUTCOMES; empty when none fit"],
-      "false_mutation": "object for a false dung_sai statement; otherwise null"
-    }
-  ]
-}
+Chỉ trả về một JSON object thô khớp schema được cung cấp; không dùng Markdown hoặc thêm văn bản ngoài JSON.
 
-GHI CHÚ:
-- `difficulty` là độ khó ước lượng độc lập với `bloom_level`; chỉ trả về đúng một trong ba mã de, trung_binh hoặc kho.
+Mỗi phần tử trong `questions` phải có đủ: `question`, `options`, `correct_answer`, `explanation`, `question_type`, `bloom_level`, `difficulty`, `source_context`, `source_keywords`, `clo_codes`, `false_mutation`.
+
+- Tuân thủ cấu trúc của loại câu hỏi đang sinh.
+- `difficulty` chỉ là `de`, `trung_binh` hoặc `kho`.
+- `source_context` là trích dẫn nguyên văn hợp lệ; `source_keywords` tối đa 2 cụm có trong trích dẫn.
+- `clo_codes` chỉ lấy từ danh sách chuẩn đầu ra được cung cấp; nếu không có hoặc không phù hợp, trả `[]`.
+- `false_mutation` chỉ là object cho phát biểu đúng/sai bị làm sai; các trường hợp khác trả `null`.
