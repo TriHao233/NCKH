@@ -30,6 +30,7 @@ def _provider_from_snapshot(snapshot: dict) -> LLMProvider:
             num_ctx=parameters.get("num_ctx"),
             num_predict=parameters.get("num_predict"),
             temperature=parameters.get("temperature"),
+            think=parameters.get("think"),
             url=parameters.get("endpoint"),
         )
         concurrency_code = f"ollama:{snapshot['model_name']}"

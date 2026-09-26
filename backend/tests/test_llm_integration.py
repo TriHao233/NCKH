@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from modules.generation.llm.gemini import GeminiProvider
 from modules.generation.llm.ollama import OllamaProvider, close_ollama_client
+from modules.generation.llm.model_registry import GENERATION_CAPABILITY, resolve_direct_model_snapshot
 
 
 class FakeOllamaHandler(BaseHTTPRequestHandler):
@@ -89,6 +90,19 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(FakeOllamaHandler.last_payload["messages"][0]["role"], "system")
         self.assertEqual(FakeOllamaHandler.last_payload["messages"][1]["role"], "user")
         self.assertEqual(FakeOllamaHandler.last_payload["format"], schema)
+        self.assertNotIn("think", FakeOllamaHandler.last_payload)
+
+    async def test_qwen3_uses_its_own_model_and_disables_thinking(self):
+        snapshot = resolve_direct_model_snapshot("qwen3-8b", GENERATION_CAPABILITY)
+        self.assertEqual(snapshot["model_name"], "qwen3:8b")
+        self.assertIs(snapshot["parameters"]["think"], False)
+        provider = OllamaProvider("qwen3:8b", think=snapshot["parameters"]["think"])
+        provider.url = f"http://127.0.0.1:{self.server.server_port}/api/generate"
+
+        result = json.loads(await provider.generate_chat(system_prompt="rules", user_prompt="question"))
+
+        self.assertEqual(result["model_received"], "qwen3:8b")
+        self.assertIs(FakeOllamaHandler.last_payload["think"], False)
 
 
 class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):

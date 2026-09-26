@@ -412,7 +412,7 @@ def cancel_generation_job(job_id: str, *, requested_by_user_id=None) -> bool:
         query,
         {
             "$set": {
-                "status": "cancelled",
+                "status": "failed",
                 "error_message": "Đã dừng theo yêu cầu của người dùng",
                 "updated_at": now,
                 "expires_at": now + timedelta(days=settings.job_retention_days),

@@ -71,7 +71,7 @@ def cancel_unfinished_generation_jobs_on_worker_start() -> int:
         {"status": {"$in": ["queued", "processing"]}},
         {
             "$set": {
-                "status": "cancelled",
+                "status": "failed",
                 "error_message": "Job đã bị dừng khi worker khởi động lại",
                 "updated_at": now,
                 "expires_at": now + timedelta(days=settings.job_retention_days),

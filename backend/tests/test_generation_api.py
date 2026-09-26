@@ -84,14 +84,15 @@ class GenerationStatusApiTests(unittest.TestCase):
 
     def test_teacher_can_cancel_own_generation_job(self):
         cancelled = self.queued_job(self.job_id)
-        cancelled["status"] = "cancelled"
+        cancelled["status"] = "failed"
+        cancelled["error_message"] = "Đã dừng theo yêu cầu của người dùng"
         with (
             patch("modules.generation.generate.get_generation_job", side_effect=[self.queued_job(self.job_id), cancelled]),
             patch("modules.generation.generate.cancel_generation_job", return_value=True) as cancel,
         ):
             response = self.client.post(f"/api/v1/generate/status/{self.job_id}/cancel")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "cancelled")
+        self.assertEqual(response.json()["status"], "failed")
         cancel.assert_called_once_with(self.job_id, requested_by_user_id=self.current_user.id)
 
     def test_admin_can_inspect_any_generation_job(self):

@@ -10,7 +10,7 @@ GENERATION_CAPABILITY = "QUESTION_GENERATION"
 EVALUATION_CAPABILITY = "QUESTION_EVALUATION"
 
 DIRECT_MODEL_CODES_BY_CAPABILITY = {
-    GENERATION_CAPABILITY: ("qwen", "deepseek", "gemini"),
+    GENERATION_CAPABILITY: ("qwen", "qwen3-8b", "deepseek", "gemini"),
     EVALUATION_CAPABILITY: ("qwen", "deepseek", "deepseek-r1", "gemini"),
 }
 
@@ -28,7 +28,7 @@ def _number(config: dict, key: str, default, *, minimum, maximum):
 
 def _runtime_parameters(runtime: str, config: dict) -> dict:
     if runtime == "OLLAMA":
-        return {
+        parameters = {
             "endpoint": str(config.get("endpoint") or settings.ollama_generate_url).strip(),
             "timeout_seconds": _number(
                 config, "timeout_seconds", settings.ollama_timeout_seconds, minimum=1.0, maximum=1800.0
@@ -43,6 +43,11 @@ def _runtime_parameters(runtime: str, config: dict) -> dict:
                 config, "num_predict", settings.ollama_num_predict, minimum=1, maximum=32768
             ),
         }
+        if "think" in config:
+            if not isinstance(config["think"], bool):
+                raise ValueError("Cấu hình think của model phải là true hoặc false")
+            parameters["think"] = config["think"]
+        return parameters
     if runtime == "GEMINI":
         return {
             "timeout_seconds": _number(config, "timeout_seconds", 300.0, minimum=1.0, maximum=1800.0),
@@ -93,6 +98,9 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
     if normalized == "qwen":
         runtime, model_name, display_name = "OLLAMA", settings.qwen_model_name, "Qwen"
         config: dict[str, Any] = {}
+    elif normalized == "qwen3-8b":
+        runtime, model_name, display_name = "OLLAMA", "qwen3:8b", "Qwen3 (8B)"
+        config = {"think": False}
     elif normalized in {"deepseek", "deepseek-r1"}:
         runtime, model_name, display_name = "OLLAMA", settings.deepseek_model_name, "DeepSeek"
         config = {

@@ -1238,14 +1238,25 @@ function GeneratePage() {
     await runPipeline({ fromGenerateOnly: false });
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     const jobId = generationJobRef.current;
+    if (jobId) {
+      try {
+        const cancelled = await cancelGenerateJob(jobId);
+        if (!['cancelled', 'completed', 'failed'].includes(cancelled.status)) {
+          throw new Error(`Server chưa xác nhận hủy job (trạng thái: ${cancelled.status})`);
+        }
+      } catch (err) {
+        const reason = err.message === 'Not Found'
+          ? 'Backend đang chạy phiên bản cũ, chưa có API hủy job. Cần build và khởi động lại backend cùng worker.'
+          : err.message;
+        setError(`Không hủy được job ${jobId}: ${reason}`);
+        return;
+      }
+    }
     generationJobRef.current = '';
     sessionStorage.removeItem('active-generation-job');
     abortRef.current?.abort();
-    if (jobId) {
-      cancelGenerateJob(jobId).catch((err) => setError(`Không hủy được job ${jobId}: ${err.message}`));
-    }
     setPhase('idle');
     setError('');
     setStatusDetail('');

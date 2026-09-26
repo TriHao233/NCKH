@@ -97,7 +97,7 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
                     from modules.generation.mongodb import get_generation_job
                     try:
                         job = await asyncio.to_thread(get_generation_job, job_id)
-                        if job and job.get("status") == "cancelled":
+                        if job and job.get("progress", {}).get("stage") == "cancelled":
                             task.cancel()
                     except Exception:
                         logger.exception("Cannot check cancellation for generation job [%s]", job_id)

@@ -319,7 +319,7 @@ def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
             "runtime": snapshot.get("runtime"),
         }
 
-    if job["status"] in {GenerationJobStatus.FAILED.value, GenerationJobStatus.CANCELLED.value} and job.get("error_message"):
+    if job["status"] == GenerationJobStatus.FAILED.value and job.get("error_message"):
         response_kwargs["error_message"] = job["error_message"]
 
     return GenerationJobStatusResponse(**response_kwargs)
@@ -358,7 +358,7 @@ async def stream_generation_job_status(
             elif now >= heartbeat_deadline:
                 yield ": keep-alive\n\n"
                 heartbeat_deadline = now + 15
-            if job.get("status") in {"completed", "failed", "cancelled"}:
+            if job.get("status") in {"completed", "failed"}:
                 return
             await asyncio.sleep(1)
 

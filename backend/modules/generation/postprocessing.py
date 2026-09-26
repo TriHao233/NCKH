@@ -193,6 +193,16 @@ def validate_source_grounding(
 ) -> list[GenerationRejection]:
     errors: list[GenerationRejection] = []
     source_context = str(item.get("source_context") or "").strip()
+    # Small Ollama models sometimes copy the RAG wrapper together with the
+    # evidence. Remove only that wrapper; the quote must still match content.
+    source_context = re.sub(
+        r"^Nội dung:\s*(?:\.{3}|…)?\s*",
+        "",
+        source_context,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    item["source_context"] = source_context
     statement = str(item.get("question") or "").strip()
 
     if not source_context:
