@@ -41,6 +41,7 @@ class OllamaProvider(LLMProvider):
         num_ctx: int | None = None,
         num_predict: int | None = None,
         temperature: float | None = None,
+        think: bool | None = None,
         url: str | None = None,
     ):
         self.url = (url or settings.ollama_generate_url).strip()
@@ -50,6 +51,7 @@ class OllamaProvider(LLMProvider):
         self.num_ctx = num_ctx if num_ctx is not None else settings.ollama_num_ctx
         self.num_predict = num_predict if num_predict is not None else settings.ollama_num_predict
         self.temperature = temperature if temperature is not None else settings.ollama_temperature
+        self.think = think
         self.last_response_metadata: dict[str, Any] = {}
 
     async def _stream_completion(
@@ -141,6 +143,8 @@ class OllamaProvider(LLMProvider):
                 "num_predict": self.num_predict,
             },
         }
+        if self.think is not None:
+            payload["think"] = self.think
         try:
             text = await self._stream_completion(url=self.url, payload=payload, chat=False)
             cleaned = re.sub(r"```json|```", "", text).strip()
@@ -175,6 +179,8 @@ class OllamaProvider(LLMProvider):
                 "num_predict": self.num_predict,
             },
         }
+        if self.think is not None:
+            payload["think"] = self.think
         try:
             text = await self._stream_completion(url=chat_url, payload=payload, chat=True)
             cleaned = re.sub(r"```json|```", "", text).strip()

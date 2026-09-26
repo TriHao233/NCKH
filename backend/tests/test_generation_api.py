@@ -82,6 +82,19 @@ class GenerationStatusApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         lookup.assert_called_once_with(self.job_id, requested_by_user_id=self.current_user.id)
 
+    def test_teacher_can_cancel_own_generation_job(self):
+        cancelled = self.queued_job(self.job_id)
+        cancelled["status"] = "failed"
+        cancelled["error_message"] = "Đã dừng theo yêu cầu của người dùng"
+        with (
+            patch("modules.generation.generate.get_generation_job", side_effect=[self.queued_job(self.job_id), cancelled]),
+            patch("modules.generation.generate.cancel_generation_job", return_value=True) as cancel,
+        ):
+            response = self.client.post(f"/api/v1/generate/status/{self.job_id}/cancel")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "failed")
+        cancel.assert_called_once_with(self.job_id, requested_by_user_id=self.current_user.id)
+
     def test_admin_can_inspect_any_generation_job(self):
         self.current_user = user("Admin")
         with patch("modules.generation.generate.get_generation_job") as lookup:
@@ -174,14 +187,13 @@ class GenerationStatusApiTests(unittest.TestCase):
         self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], snapshot)
         self.assertIsNone(create_job.call_args.kwargs["fallback_model_snapshot"])
 
-    def test_enqueue_freezes_separate_code_model_snapshot(self):
+    def test_enqueue_uses_selected_model_for_code_questions_too(self):
         general_snapshot = {"model_code": "qwen", "runtime": "OLLAMA"}
-        code_snapshot = {"model_code": "deepseek", "runtime": "OLLAMA"}
         with (
             patch("modules.generation.generate.count_active_generation_jobs", return_value=0),
             patch(
                 "modules.generation.generate.resolve_model_snapshot",
-                side_effect=[general_snapshot, code_snapshot],
+                return_value=general_snapshot,
             ) as resolve,
             patch("modules.generation.generate.create_generation_job", return_value=self.job_id) as create_job,
         ):
@@ -190,9 +202,10 @@ class GenerationStatusApiTests(unittest.TestCase):
             response = self.client.post("/api/v1/generate/questions", json=payload)
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual([call.args[0] for call in resolve.call_args_list], ["qwen", "deepseek"])
+        self.assertEqual([call.args[0] for call in resolve.call_args_list], ["qwen"])
         self.assertEqual(create_job.call_args.kwargs["model_snapshot"], general_snapshot)
-        self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], code_snapshot)
+        self.assertEqual(create_job.call_args.kwargs["code_model_snapshot"], general_snapshot)
+        self.assertEqual(create_job.call_args.args[0]["code_model_provider"], "qwen")
 
     def test_content_mode_detects_code_and_honors_override(self):
         auto = QuestionPlanItem(question_type="trac_nghiem", content_mode="auto")

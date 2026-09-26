@@ -79,20 +79,28 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
 
     worker_id = get_worker_id()
     logger.info("Mongo job worker started: %s", worker_id)
-    generation_tasks: dict[str, asyncio.Task] = {}
+    generation_tasks: dict[str, tuple[str, asyncio.Task]] = {}
     evaluation_task: asyncio.Task | None = None
 
     async def finish_task(task: asyncio.Task, label: str) -> None:
         try:
             await task
         except asyncio.CancelledError:
-            raise
+            logger.info("Background %s task cancelled", label)
         except Exception:
             logger.exception("Background %s task failed", label)
 
     try:
         while not stop_event.is_set():
-            for provider_group, task in list(generation_tasks.items()):
+            for provider_group, (job_id, task) in list(generation_tasks.items()):
+                if not task.done():
+                    from modules.generation.mongodb import get_generation_job
+                    try:
+                        job = await asyncio.to_thread(get_generation_job, job_id)
+                        if job and job.get("progress", {}).get("stage") == "cancelled":
+                            task.cancel()
+                    except Exception:
+                        logger.exception("Cannot check cancellation for generation job [%s]", job_id)
                 if task.done():
                     await finish_task(task, f"generation/{provider_group}")
                     generation_tasks.pop(provider_group, None)
@@ -115,8 +123,9 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
                             job_id,
                             provider_group,
                         )
-                        generation_tasks[provider_group] = asyncio.create_task(
-                            process_generate_background(job_id, worker_id)
+                        generation_tasks[provider_group] = (
+                            job_id,
+                            asyncio.create_task(process_generate_background(job_id, worker_id)),
                         )
 
                 if evaluation_task is None:
@@ -136,13 +145,21 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
             except asyncio.TimeoutError:
                 pass
 
-        pending = [*generation_tasks.values()]
+        from modules.generation.mongodb import cancel_generation_job
+        for job_id, task in generation_tasks.values():
+            if not task.done():
+                await asyncio.to_thread(cancel_generation_job, job_id)
+                task.cancel()
+        pending = [task for _, task in generation_tasks.values()]
         if evaluation_task is not None:
             pending.append(evaluation_task)
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
     except asyncio.CancelledError:
-        pending = [*generation_tasks.values()]
+        from modules.generation.mongodb import cancel_generation_job
+        for job_id, _ in generation_tasks.values():
+            await asyncio.to_thread(cancel_generation_job, job_id)
+        pending = [task for _, task in generation_tasks.values()]
         if evaluation_task is not None:
             pending.append(evaluation_task)
         for task in pending:

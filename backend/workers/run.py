@@ -5,7 +5,10 @@ import signal
 from core.bootstrap import bootstrap_database
 from core.database import close_database, ping_database
 from core.postgres import close_postgres, ping_postgres
-from core.job_recovery import recover_stale_jobs
+from core.job_recovery import (
+    cancel_unfinished_generation_jobs_on_worker_start,
+    recover_stale_jobs,
+)
 from core.job_worker import run_job_worker
 from core.logging import setup_logging
 from core.config import settings
@@ -25,6 +28,7 @@ async def run() -> None:
         with postgres_connection() as connection:
             apply_migrations(connection, check=True)
     await asyncio.to_thread(recover_stale_jobs)
+    await asyncio.to_thread(cancel_unfinished_generation_jobs_on_worker_start)
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()

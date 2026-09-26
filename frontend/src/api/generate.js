@@ -16,11 +16,15 @@ export function getGenerateStatus(jobId, options = {}) {
   return apiFetch(`/generate/status/${jobId}`, options);
 }
 
+export function cancelGenerateJob(jobId) {
+  return apiFetch(`/generate/status/${jobId}/cancel`, { method: 'POST' });
+}
+
 export async function streamGenerateStatus(jobId, options = {}) {
   const {
     signal,
     timeoutMs = 20 * 60 * 1000,
-    terminal = ['completed', 'failed'],
+    terminal = ['completed', 'failed', 'cancelled'],
     onUpdate,
   } = options;
   const controller = new AbortController();

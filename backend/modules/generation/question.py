@@ -202,21 +202,15 @@ async def generate_questions_rag(
 
     for plan_index, plan_item in enumerate(plan, start=1):
         content_mode = _content_mode(plan_item, context_text, req.instruction)
-        selected_provider = (
-            req.code_model_provider if content_mode == "code" else req.model_provider
-        )
-        selected_snapshot = (
-            model_snapshot
-            if selected_provider == req.model_provider and model_snapshot
-            else code_model_snapshot
-            if selected_provider == req.code_model_provider and code_model_snapshot
-            else resolve_model_snapshot(selected_provider, capability=GENERATION_CAPABILITY)
+        selected_provider = req.model_provider
+        selected_snapshot = model_snapshot or resolve_model_snapshot(
+            selected_provider, capability=GENERATION_CAPABILITY
         )
         llm = get_llm_service(
             selected_provider,
-            settings.generation_fallback_provider,
+            None,
             model_snapshot=selected_snapshot,
-            fallback_model_snapshot=fallback_model_snapshot,
+            fallback_model_snapshot=None,
         )
         item_summaries: list[GenerationPlanSummary] = []
         # Local 7B models are more reliable when each response contains one question.
