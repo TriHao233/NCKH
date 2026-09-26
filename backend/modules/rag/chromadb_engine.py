@@ -30,6 +30,14 @@ _model_load_ms = 0.0
 _resolved_precision = ""
 
 
+def _huggingface_model_name() -> str:
+    # Keep the stored embedding snapshot stable for existing Chroma collections.
+    # Hugging Face requires the repository namespace when the local cache is empty.
+    if settings.embedding_model_name == "all-MiniLM-L6-v2":
+        return "sentence-transformers/all-MiniLM-L6-v2"
+    return settings.embedding_model_name
+
+
 class STEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model: SentenceTransformer | None = None):
         self._model = model
@@ -87,7 +95,7 @@ def _get_embedding_model() -> SentenceTransformer:
             model_kwargs = {}
             if settings.embedding_model_revision:
                 model_kwargs["revision"] = settings.embedding_model_revision
-            _embedding_model = SentenceTransformer(settings.embedding_model_name, **model_kwargs)
+            _embedding_model = SentenceTransformer(_huggingface_model_name(), **model_kwargs)
             target_precision = _target_precision()
             if target_precision == "fp16":
                 _embedding_model.half()
@@ -114,7 +122,7 @@ def _get_embedding_tokenizer():
             kwargs = {"use_fast": True}
             if settings.embedding_model_revision:
                 kwargs["revision"] = settings.embedding_model_revision
-            _embedding_tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_name, **kwargs)
+            _embedding_tokenizer = AutoTokenizer.from_pretrained(_huggingface_model_name(), **kwargs)
     return _embedding_tokenizer
 
 
