@@ -13,6 +13,7 @@ from core.config import settings
 from core.database import get_database
 from modules.catalog.schemas import (
     AiModelActivationPayload,
+    AiModelVersionActivationPayload,
     AiModelHealthCheckPayload,
     AiModelPayload,
     ChapterPayload,
@@ -36,6 +37,7 @@ from modules.generation.llm.model_registry import (
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import json_safe, object_id
+from modules.catalog.postgres_ai_repository import PostgresAiRepository
 
 
 def utc_now() -> datetime:
@@ -129,6 +131,7 @@ def _subject_response(
 class CatalogService:
     def __init__(self, database):
         self.db = database
+        self.ai_repo = PostgresAiRepository() if settings.ai_config_store == "postgres" else None
 
     def _count(self, collection_name: str, query: dict) -> int:
         collection = getattr(self.db, collection_name, None)
@@ -462,6 +465,9 @@ class CatalogService:
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def list_ai_models(self) -> list[dict]:
+        if self.ai_repo:
+            return [json_safe({**item, "factory_status": self._model_factory_status(item["model_code"])})
+                    for item in self.ai_repo.models()]
         return [
             json_safe({**item, "factory_status": self._model_factory_status(item["model_code"])})
             for item in self.db.ai_models.find().sort("priority", 1)
@@ -469,7 +475,9 @@ class CatalogService:
 
     def _model_factory_status(self, model_code: str) -> dict:
         try:
-            snapshot = resolve_model_snapshot(model_code, database=self.db)
+            snapshot = resolve_model_snapshot(
+                model_code, database=None if self.ai_repo else self.db
+            )
             provider = get_llm_service(model_code, model_snapshot=snapshot)
             runtime = {
                 "provider_class": provider.__class__.__name__,
@@ -482,6 +490,8 @@ class CatalogService:
             return {"supported": False, "error": str(exc)}
 
     def _catalog_model(self, model_code: str) -> dict | None:
+        if self.ai_repo:
+            return self.ai_repo.model(model_code)
         return self.db.ai_models.find_one({"model_code": model_code})
 
     def available_ai_models(self, capability: str) -> dict:
@@ -493,6 +503,10 @@ class CatalogService:
             if normalized == GENERATION_CAPABILITY
             else settings.evaluation_model_provider
         )
+        if self.ai_repo:
+            return available_model_options(
+                None, capability=normalized, default_code=default_code
+            )
         return available_model_options(
             self.db,
             capability=normalized,
@@ -502,10 +516,15 @@ class CatalogService:
     def runtime_config(self) -> dict:
         generation_code = settings.model_provider
         evaluation_code = settings.evaluation_model_provider
-        active_prompt_count = self.db.prompt_templates.count_documents({"is_active": True})
-        active_policy = self.db.evaluation_policies.find_one(
-            {"is_active": True},
-            sort=[("version", -1)],
+        active_prompt_count = (
+            self.ai_repo.active_prompt_count() if self.ai_repo else
+            self.db.prompt_templates.count_documents({"is_active": True})
+        )
+        active_policy = (
+            self.ai_repo.policy(active_only=True) if self.ai_repo else
+            self.db.evaluation_policies.find_one(
+                {"is_active": True}, sort=[("version", -1)]
+            )
         )
         warnings: list[str] = []
         if settings.prompt_source != "db" and active_prompt_count:
@@ -559,7 +578,10 @@ class CatalogService:
             }
         )
 
-    def upsert_ai_model(self, payload: AiModelPayload) -> dict:
+    def upsert_ai_model(self, payload: AiModelPayload, *, actor_id=None) -> dict:
+        if self.ai_repo:
+            record = self.ai_repo.save_model(payload, actor_id=actor_id)
+            return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
         now = utc_now()
         record = self.db.ai_models.find_one_and_update(
             {"model_code": payload.model_code},
@@ -576,7 +598,10 @@ class CatalogService:
         )
         return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
 
-    def set_ai_model_active(self, payload: AiModelActivationPayload) -> dict:
+    def set_ai_model_active(self, payload: AiModelActivationPayload, *, actor_id=None) -> dict:
+        if self.ai_repo:
+            record = self.ai_repo.activate_model(payload.model_code, payload.is_active, actor_id=actor_id)
+            return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
         now = utc_now()
         record = self.db.ai_models.find_one_and_update(
             {"model_code": payload.model_code},
@@ -585,6 +610,19 @@ class CatalogService:
         )
         if not record:
             raise LookupError("Không tìm thấy model")
+        return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
+
+    def list_ai_model_versions(self, model_code: str) -> list[dict]:
+        if not self.ai_repo:
+            raise ValueError("Lịch sử phiên bản model chỉ có khi AI_CONFIG_STORE=postgres")
+        return [json_safe(row) for row in self.ai_repo.model_versions(model_code)]
+
+    def activate_ai_model_version(self, payload: AiModelVersionActivationPayload, *, actor_id=None) -> dict:
+        if not self.ai_repo:
+            raise ValueError("Rollback phiên bản model chỉ có khi AI_CONFIG_STORE=postgres")
+        record = self.ai_repo.activate_model_version(
+            payload.model_code, payload.version, actor_id=actor_id
+        )
         return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
 
     async def check_ai_model_health(self, payload: AiModelHealthCheckPayload) -> dict:
@@ -598,7 +636,9 @@ class CatalogService:
                 "error": factory_status.get("error"),
                 "checked_at": utc_now(),
             }
-            if self._catalog_model(payload.model_code):
+            if self.ai_repo and self._catalog_model(payload.model_code):
+                self.ai_repo.update_health(payload.model_code, json_safe(snapshot))
+            elif self._catalog_model(payload.model_code):
                 self.db.ai_models.find_one_and_update(
                     {"model_code": payload.model_code},
                     {"$set": {"last_health_check": snapshot, "updated_at": snapshot["checked_at"]}},
@@ -610,7 +650,9 @@ class CatalogService:
                 **snapshot,
             })
         try:
-            snapshot = resolve_model_snapshot(payload.model_code, database=self.db)
+            snapshot = resolve_model_snapshot(
+                payload.model_code, database=None if self.ai_repo else self.db
+            )
             provider = get_llm_service(payload.model_code, model_snapshot=snapshot)
             response_text = await asyncio.wait_for(
                 provider.generate_text(payload.prompt),
@@ -630,7 +672,9 @@ class CatalogService:
             "error": error,
             "checked_at": utc_now(),
         }
-        if self._catalog_model(payload.model_code):
+        if self.ai_repo and self._catalog_model(payload.model_code):
+            self.ai_repo.update_health(payload.model_code, json_safe(snapshot))
+        elif self._catalog_model(payload.model_code):
             self.db.ai_models.find_one_and_update(
                 {"model_code": payload.model_code},
                 {"$set": {"last_health_check": snapshot, "updated_at": snapshot["checked_at"]}},
@@ -645,10 +689,14 @@ class CatalogService:
         )
 
     def list_prompt_templates(self) -> list[dict]:
+        if self.ai_repo:
+            return [json_safe(item) for item in self.ai_repo.prompts()]
         cursor = self.db.prompt_templates.find().sort([("template_key", 1), ("version", -1)])
         return [json_safe(item) for item in cursor]
 
-    def save_prompt_template(self, payload: PromptTemplatePayload) -> dict:
+    def save_prompt_template(self, payload: PromptTemplatePayload, *, actor_id=None) -> dict:
+        if self.ai_repo:
+            return json_safe(self.ai_repo.save_prompt(payload, actor_id=actor_id))
         now = utc_now()
         latest = self.db.prompt_templates.find_one(
             {"template_key": payload.template_key},
@@ -682,7 +730,11 @@ class CatalogService:
         )
         return json_safe(record)
 
-    def activate_prompt_template(self, payload: PromptTemplateActivationPayload) -> dict:
+    def activate_prompt_template(self, payload: PromptTemplateActivationPayload, *, actor_id=None) -> dict:
+        if self.ai_repo:
+            return json_safe(self.ai_repo.activate_prompt(
+                payload.template_key, payload.version, payload.is_active, actor_id=actor_id
+            ))
         now = utc_now()
         query = {"template_key": payload.template_key, "version": payload.version}
         if not self.db.prompt_templates.find_one(query):
@@ -710,9 +762,11 @@ class CatalogService:
         ]
         effective_sources = {}
         for key in template_keys:
-            active_db = self.db.prompt_templates.find_one(
-                {"template_key": key, "is_active": True},
-                sort=[("version", -1)],
+            active_db = (
+                self.ai_repo.prompt(key, active_only=True) if self.ai_repo else
+                self.db.prompt_templates.find_one(
+                    {"template_key": key, "is_active": True}, sort=[("version", -1)]
+                )
             )
             effective_sources[key] = (
                 "db"
@@ -741,10 +795,14 @@ class CatalogService:
         }
 
     def list_evaluation_policies(self) -> list[dict]:
+        if self.ai_repo:
+            return [json_safe(item) for item in self.ai_repo.policies()]
         cursor = self.db.evaluation_policies.find().sort([("policy_name", 1), ("version", -1)])
         return [json_safe(item) for item in cursor]
 
-    def save_evaluation_policy(self, payload: EvaluationPolicyPayload) -> dict:
+    def save_evaluation_policy(self, payload: EvaluationPolicyPayload, *, actor_id=None) -> dict:
+        if self.ai_repo:
+            return json_safe(self.ai_repo.save_policy(payload, actor_id=actor_id))
         now = utc_now()
         latest = self.db.evaluation_policies.find_one(
             {"policy_name": payload.policy_name},
@@ -777,7 +835,11 @@ class CatalogService:
         )
         return json_safe(record)
 
-    def activate_evaluation_policy(self, payload: EvaluationPolicyActivationPayload) -> dict:
+    def activate_evaluation_policy(self, payload: EvaluationPolicyActivationPayload, *, actor_id=None) -> dict:
+        if self.ai_repo:
+            return json_safe(self.ai_repo.activate_policy(
+                payload.policy_name, payload.version, payload.is_active, actor_id=actor_id
+            ))
         now = utc_now()
         query = {"policy_name": payload.policy_name, "version": payload.version}
         if not self.db.evaluation_policies.find_one(query):

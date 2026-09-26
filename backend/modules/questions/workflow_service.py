@@ -232,6 +232,12 @@ class QuestionWorkflowService:
             raise PermissionError("Bạn không có quyền truy cập câu hỏi này")
 
     def _policy(self) -> dict:
+        if settings.ai_config_store == "postgres":
+            from modules.catalog.postgres_ai_repository import PostgresAiRepository
+            return PostgresAiRepository().policy(active_only=True) or {
+                "_id": None, "policy_name": "Default fallback", "version": 1,
+                "weights": DEFAULT_WEIGHTS, "thresholds": DEFAULT_THRESHOLDS,
+            }
         if self.db is None:
             return {
                 "_id": None,
@@ -252,7 +258,13 @@ class QuestionWorkflowService:
         }
 
     def _model_snapshot(self, model_code: str) -> dict:
-        model = self.db.ai_models.find_one({"model_code": model_code, "is_active": True})
+        if settings.ai_config_store == "postgres":
+            from modules.catalog.postgres_ai_repository import PostgresAiRepository
+            model = PostgresAiRepository().model(model_code)
+            if model and not model["is_active"]:
+                raise ValueError("Mô hình AI này đang tạm dừng")
+        else:
+            model = self.db.ai_models.find_one({"model_code": model_code, "is_active": True})
         if not model:
             return {
                 "id": None,

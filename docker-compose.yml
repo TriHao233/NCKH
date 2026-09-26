@@ -17,6 +17,7 @@ services:
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
     environment:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
       NVIDIA_VISIBLE_DEVICES: all
@@ -44,10 +45,12 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   mongodb:
-    image: mongo:latest
+    image: mongo:7.0
     container_name: nckh-mongodb
     ports:
       - "27017:27017"
@@ -56,7 +59,7 @@ services:
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
-      interval: 5s
+      interval: 20s
       timeout: 5s
       retries: 20
       start_period: 10s
@@ -66,6 +69,25 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  postgres:
+    image: postgres:17
+    container_name: nckh-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nckh}
+      POSTGRES_USER: ${POSTGRES_USER:-nckh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nckh_local_dev_only}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nckh} -d ${POSTGRES_DB:-nckh}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *service-logging
 
   worker:
     image: nckh-backend:dev
@@ -81,6 +103,7 @@ services:
     command: ["python", "-m", "workers.run"]
     environment:
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
       NVIDIA_VISIBLE_DEVICES: all
@@ -99,6 +122,8 @@ services:
               capabilities: [gpu]
     depends_on:
       mongodb:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     logging: *service-logging
@@ -121,4 +146,5 @@ services:
 
 volumes:
   mongodb_data:
+  postgres_data:
   huggingface_cache:

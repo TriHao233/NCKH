@@ -8,6 +8,7 @@ from bson import ObjectId
 from firebase_admin import auth
 
 from core.audit import record_audit_event
+from core.config import settings
 from core.database import get_rag_db
 from core.dependencies import CurrentUser
 from modules.auth.session_repository import (
@@ -519,8 +520,14 @@ class UserService:
 
 
 def get_user_service() -> UserService:
+    if settings.user_store == "postgres":
+        from modules.users.postgres_repository import PostgresUserRepository
+
+        repository = PostgresUserRepository()
+    else:
+        repository = MongoUserRepository(get_rag_db())
     return UserService(
-        MongoUserRepository(get_rag_db()),
+        repository,
         FirebaseIdentityGateway(),
         get_firebase_session_repository(),
     )

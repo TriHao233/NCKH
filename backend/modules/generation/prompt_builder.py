@@ -140,10 +140,14 @@ class PromptBuilder:
     @staticmethod
     def _load_db_template(template_key: str) -> str | None:
         try:
-            template = get_database().prompt_templates.find_one(
-                {"template_key": template_key, "is_active": True},
-                sort=[("version", -1)],
-            )
+            if settings.ai_config_store == "postgres":
+                from modules.catalog.postgres_ai_repository import PostgresAiRepository
+                template = PostgresAiRepository().prompt(template_key, active_only=True)
+            else:
+                template = get_database().prompt_templates.find_one(
+                    {"template_key": template_key, "is_active": True},
+                    sort=[("version", -1)],
+                )
             if template and template.get("prompt_body"):
                 return template["prompt_body"]
         except Exception:

@@ -3,6 +3,7 @@ from typing import Protocol
 from pymongo import ReturnDocument
 from pymongo.database import Database
 
+from core.config import settings
 from core.database import get_auth_db
 
 class FirebaseSessionRepository(Protocol):
@@ -30,4 +31,8 @@ class MongoFirebaseSessionRepository:
 
 
 def get_firebase_session_repository() -> FirebaseSessionRepository:
+    if settings.user_store == "postgres":
+        from modules.auth.postgres_session_repository import PostgresFirebaseSessionRepository
+
+        return PostgresFirebaseSessionRepository()
     return MongoFirebaseSessionRepository(get_auth_db())

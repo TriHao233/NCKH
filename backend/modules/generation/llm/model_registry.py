@@ -65,6 +65,10 @@ def _snapshot_from_record(record: dict, requested_code: str, capability: str | N
     if capability and capabilities and capability not in capabilities:
         raise ValueError("Mô hình AI này không phù hợp với tác vụ đã chọn")
     runtime = str(record.get("runtime") or "OLLAMA").strip().upper()
+    if settings.ai_config_store == "postgres" and runtime == "OLLAMA":
+        endpoint = (record.get("config") or {}).get("endpoint")
+        if endpoint and endpoint != settings.ollama_generate_url:
+            raise ValueError("Endpoint model không khớp OLLAMA_GENERATE_URL của môi trường")
     if runtime not in {"OLLAMA", "GEMINI"}:
         raise ValueError(f"Runtime model '{runtime}' chưa được hỗ trợ")
     if runtime == "GEMINI" and not settings.gemini_api_key:
@@ -151,8 +155,12 @@ def resolve_model_snapshot(
     # PyMongo Database deliberately rejects truth-value testing.  Callers pass
     # the active database into this function, so only fall back when it is
     # actually absent instead of evaluating it as a boolean.
-    db = database if database is not None else get_database()
-    record = db.ai_models.find_one({"model_code": requested_code})
+    if settings.ai_config_store == "postgres":
+        from modules.catalog.postgres_ai_repository import PostgresAiRepository
+        record = PostgresAiRepository().model(requested_code)
+    else:
+        db = database if database is not None else get_database()
+        record = db.ai_models.find_one({"model_code": requested_code})
     if record:
         return _snapshot_from_record(record, requested_code, capability)
     return resolve_direct_model_snapshot(requested_code, capability)
@@ -161,8 +169,16 @@ def resolve_model_snapshot(
 def available_model_options(database, *, capability: str, default_code: str) -> dict:
     items = []
     seen_codes = set()
-    active_query = {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]}
-    for record in database.ai_models.find(active_query).sort("priority", 1):
+    if settings.ai_config_store == "postgres":
+        from modules.catalog.postgres_ai_repository import PostgresAiRepository
+        repo = PostgresAiRepository()
+        active_records = repo.models(active_only=True)
+        find_record = repo.model
+    else:
+        active_query = {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]}
+        active_records = database.ai_models.find(active_query).sort("priority", 1)
+        find_record = lambda code: database.ai_models.find_one({"model_code": code})
+    for record in active_records:
         try:
             snapshot = _snapshot_from_record(record, record["model_code"], capability)
         except ValueError:
@@ -182,7 +198,7 @@ def available_model_options(database, *, capability: str, default_code: str) -> 
     for model_code in DIRECT_MODEL_CODES_BY_CAPABILITY.get(capability, ()):
         if model_code in seen_codes:
             continue
-        if database.ai_models.find_one({"model_code": model_code}):
+        if find_record(model_code):
             continue
         try:
             snapshot = resolve_direct_model_snapshot(model_code, capability)
@@ -200,7 +216,7 @@ def available_model_options(database, *, capability: str, default_code: str) -> 
             }
         )
 
-    default_record = database.ai_models.find_one({"model_code": default_code})
+    default_record = find_record(default_code)
     if not any(item["code"] == default_code for item in items) and not default_record:
         try:
             snapshot = resolve_direct_model_snapshot(default_code, capability)

@@ -1,0 +1,1 @@
+ALTER TABLE ai_models ADD COLUMN kind text NOT NULL DEFAULT 'CHAT';

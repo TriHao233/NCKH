@@ -124,6 +124,11 @@ class AiModelActivationPayload(BaseModel):
     is_active: bool = True
 
 
+class AiModelVersionActivationPayload(BaseModel):
+    model_code: str = Field(..., min_length=1, max_length=80)
+    version: int = Field(..., ge=1)
+
+
 class AiModelHealthCheckPayload(BaseModel):
     model_code: str = Field(..., min_length=1, max_length=80)
     prompt: str = Field(

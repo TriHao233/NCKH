@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from core.database import get_rag_db
+from core.config import settings
 from core.demo_auth import is_demo_session_token, verify_demo_session_token
 from core.firebase_auth import verify_firebase_id_token
 from modules.auth.session_repository import get_firebase_session_repository
@@ -93,7 +94,12 @@ def get_current_user(
         if is_demo_session_token(bearer_token):
             claims = verify_demo_session_token(bearer_token)
             session = get_firebase_session_repository().find_by_uid(claims["uid"])
-            if session is not None and session.get("token") != bearer_token:
+            if settings.user_store == "postgres":
+                from modules.auth.postgres_session_repository import token_hash
+
+                if session is None or session.get("demo_token_hash") != token_hash(bearer_token):
+                    raise ValueError("Demo token has been revoked")
+            elif session is not None and session.get("token") != bearer_token:
                 raise ValueError("Demo token has been revoked")
         else:
             claims = verify_firebase_id_token(
@@ -107,7 +113,12 @@ def get_current_user(
             detail="Firebase ID token không hợp lệ hoặc đã hết hạn",
         ) from exc
 
-    user = get_rag_db().users.find_one({"firebase_uid": claims["uid"]})
+    if settings.user_store == "postgres":
+        from modules.users.postgres_repository import PostgresUserRepository
+
+        user = PostgresUserRepository().find_by_firebase_uid(claims["uid"])
+    else:
+        user = get_rag_db().users.find_one({"firebase_uid": claims["uid"]})
     if not user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -55,6 +55,9 @@ watchfiles==0.21.0
 pymongo==4.6.3
 certifi>=2024.2.2
 
+# PostgreSQL business data (scenario B)
+psycopg[binary,pool]>=3.2,<4.0
+
 # =========================
 # Exam PDF export
 # =========================

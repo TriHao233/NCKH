@@ -4,6 +4,7 @@ import signal
 
 from core.bootstrap import bootstrap_database
 from core.database import close_database, ping_database
+from core.postgres import close_postgres, ping_postgres
 from core.job_recovery import recover_stale_jobs
 from core.job_worker import run_job_worker
 from core.logging import setup_logging
@@ -17,6 +18,12 @@ async def run() -> None:
     setup_logging()
     await asyncio.to_thread(ping_database)
     await asyncio.to_thread(bootstrap_database)
+    if settings.user_store == "postgres" or settings.ai_config_store == "postgres":
+        await asyncio.to_thread(ping_postgres)
+        from db.migrate import apply_migrations
+        from core.postgres import postgres_connection
+        with postgres_connection() as connection:
+            apply_migrations(connection, check=True)
     await asyncio.to_thread(recover_stale_jobs)
 
     stop_event = asyncio.Event()
@@ -47,6 +54,7 @@ async def run() -> None:
         stop_task.cancel()
         await close_ollama_client()
         close_database()
+        close_postgres()
         logger.info("Worker database connection closed")
 
 

@@ -79,7 +79,13 @@ def _resolve_clo_ids(
 
 
 def _model_snapshot(database, provider: str, fallback: dict | None = None) -> dict:
-    model = database.ai_models.find_one({"model_code": provider, "is_active": True})
+    if settings.ai_config_store == "postgres":
+        from modules.catalog.postgres_ai_repository import PostgresAiRepository
+        model = PostgresAiRepository().model(provider)
+        if model and not model["is_active"]:
+            raise ValueError("Mô hình AI này đang tạm dừng")
+    else:
+        model = database.ai_models.find_one({"model_code": provider, "is_active": True})
     if not model:
         return fallback or {"provider": provider}
     return {
