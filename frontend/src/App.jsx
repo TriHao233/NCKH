@@ -9,8 +9,10 @@ const pageImports = {
     AboutPage: () => import('./pages/AboutPage'),
     GeneratePage: () => import('./pages/GeneratePage'),
     ManagePage: () => import('./pages/ManagePage'),
-    ReviewQueuePage: () => import('./pages/ReviewQueuePage'),
-    AdminAiReviewPage: () => import('./pages/AdminAiReviewPage'),
+    ReviewInboxPage: () => import('./pages/review/ReviewInboxPage'),
+    ReviewDeskPage: () => import('./pages/review/ReviewDeskPage'),
+    ReviewStatsPage: () => import('./pages/review/ReviewStatsPage'),
+    AiConfigPage: () => import('./pages/AiConfigPage'),
     AdminOverviewPage: () => import('./pages/AdminOverviewPage'),
     CatalogAdminPage: () => import('./pages/CatalogAdminPage'),
     AdminAuditPage: () => import('./pages/AdminAuditPage'),
@@ -32,8 +34,10 @@ const pageImports = {
 const AboutPage = lazy(pageImports.AboutPage);
 const GeneratePage = lazy(pageImports.GeneratePage);
 const ManagePage = lazy(pageImports.ManagePage);
-const ReviewQueuePage = lazy(pageImports.ReviewQueuePage);
-const AdminAiReviewPage = lazy(pageImports.AdminAiReviewPage);
+const ReviewInboxPage = lazy(pageImports.ReviewInboxPage);
+const ReviewDeskPage = lazy(pageImports.ReviewDeskPage);
+const ReviewStatsPage = lazy(pageImports.ReviewStatsPage);
+const AiConfigPage = lazy(pageImports.AiConfigPage);
 const AdminOverviewPage = lazy(pageImports.AdminOverviewPage);
 const CatalogAdminPage = lazy(pageImports.CatalogAdminPage);
 const AdminAuditPage = lazy(pageImports.AdminAuditPage);
@@ -148,15 +152,32 @@ function App() {
                     path="/kiem-duyet"
                     element={(
                         <ProtectedPage path="/kiem-duyet">
-                            <ReviewQueuePage />
+                            <ReviewInboxPage />
                         </ProtectedPage>
                     )}
                 />
                 <Route
+                    path="/kiem-duyet/hieu-suat"
+                    element={(
+                        <ProtectedPage path="/kiem-duyet/hieu-suat">
+                            <ReviewStatsPage />
+                        </ProtectedPage>
+                    )}
+                />
+                <Route
+                    path="/kiem-duyet/:questionId"
+                    element={(
+                        <ProtectedPage path="/kiem-duyet/:questionId">
+                            <ReviewDeskPage />
+                        </ProtectedPage>
+                    )}
+                />
+                {/* Trang "Thẩm định AI" cũ: Admin xử lý tác vụ đánh giá lỗi hoặc treo ở trang Tác vụ. */}
+                <Route
                     path="/duyet-ai"
                     element={(
                         <ProtectedPage path="/duyet-ai">
-                            <AdminAiReviewPage />
+                            <Navigate to="/quan-ly-job?type=evaluation" replace />
                         </ProtectedPage>
                     )}
                 />
@@ -173,6 +194,14 @@ function App() {
                     element={(
                         <ProtectedPage path="/danh-muc">
                             <CatalogAdminPage />
+                        </ProtectedPage>
+                    )}
+                />
+                <Route
+                    path="/cau-hinh-ai"
+                    element={(
+                        <ProtectedPage path="/cau-hinh-ai">
+                            <AiConfigPage />
                         </ProtectedPage>
                     )}
                 />

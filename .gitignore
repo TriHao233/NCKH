@@ -62,3 +62,8 @@ Prompt/
 AGENTS.md
 note.txt
 prompts/
+/.codegraph/
+
+# Kết quả sinh tự động (acceptance, Playwright)
+/artifacts/
+/frontend/test-results/

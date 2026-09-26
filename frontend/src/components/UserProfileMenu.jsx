@@ -4,7 +4,6 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faUser,
   faCalendarCheck,
-  faCog,
   faSignOutAlt,
   faChevronDown,
   faListCheck,
@@ -105,10 +104,16 @@ const UserProfileMenu = () => {
           )}
 
           {canOpenSettings && (
-            <Link to="/quan-ly-nguoi-dung" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
-              Quản lý người dùng
-            </Link>
+            <>
+              <Link to="/quan-ly-tai-lieu" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faFileLines} className="dropdown-icon" />
+                Quản lý tài liệu
+              </Link>
+              <Link to="/quan-ly" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
+                Ngân hàng câu hỏi
+              </Link>
+            </>
           )}
           
           <div className="dropdown-divider"></div>

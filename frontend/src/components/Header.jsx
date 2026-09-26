@@ -13,6 +13,12 @@ import {
 import UserProfileMenu from './UserProfileMenu'; 
 import './Header.css';
 
+function isNavItemActive(link, pathname) {
+  if ((link.exclude || []).some((path) => pathname === path || pathname.startsWith(`${path}/`))) return false;
+  const paths = link.matches || [link.path];
+  return paths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
 const Header = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -140,7 +146,8 @@ const Header = () => {
       id: 'reviewer',
       label: 'Người duyệt',
       items: [
-        { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+        { path: '/kiem-duyet', label: 'Hộp việc', exclude: ['/kiem-duyet/hieu-suat'] },
+        { path: '/kiem-duyet/hieu-suat', label: 'Hiệu suất' },
       ],
     },
     {
@@ -159,15 +166,16 @@ const Header = () => {
   const adminNavGroup = {
     id: 'admin',
     label: 'Quản trị',
+    // Theo thứ tự pipeline; mỗi mục một tên duy nhất dùng thống nhất ở mọi nơi.
     items: [
       { path: '/tong-quan', label: 'Tổng quan' },
+      { path: '/kiem-duyet', label: 'Kiểm duyệt' },
       { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
-      { path: '/quan-ly', label: 'Câu hỏi' },
-      { path: '/duyet-ai', label: 'Thẩm định AI' },
-      { path: '/lam-de-thi', label: 'Đề thi' },
-      { path: '/nhat-ky-he-thong', label: 'Lịch sử' },
-      { path: '/quan-ly-job', label: 'Thống kê' },
+      { path: '/danh-muc', label: 'Học phần' },
+      { path: '/cau-hinh-ai', label: 'Cấu hình AI' },
+      { path: '/quan-ly-job', label: 'Tác vụ' },
       { path: '/quan-ly-moodle', label: 'Moodle' },
+      { path: '/nhat-ky-he-thong', label: 'Nhật ký' },
     ],
   };
   const roleNavGroups = role === 'Admin' ? [adminNavGroup] : navGroups;
@@ -223,13 +231,13 @@ const Header = () => {
               {showSectionLabels && <span className="nav-section-label">{group.label}</span>}
               <div className="nav-section-links">
                 {group.items.map((link) => {
-                  const isActive = location.pathname === link.path
-                    || location.pathname.startsWith(`${link.path}/`);
+                  const isActive = isNavItemActive(link, location.pathname);
                   return (
                     <Link
                       key={link.path}
                       to={link.path}
                       className={`nav-link ${isActive ? 'nav-link--active' : ''}`}
+                      aria-current={isActive ? 'page' : undefined}
                     >
                       {link.label}
                     </Link>
@@ -327,8 +335,7 @@ const Header = () => {
                 <span className="mobile-nav-section-label">{group.label}</span>
                 <div className="mobile-nav-links">
                   {group.items.map((link) => {
-                    const isActive = location.pathname === link.path
-                      || location.pathname.startsWith(`${link.path}/`);
+                    const isActive = isNavItemActive(link, location.pathname);
                     return (
                       <Link
                         key={link.path}

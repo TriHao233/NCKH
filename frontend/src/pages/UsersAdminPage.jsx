@@ -1,70 +1,84 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  faChevronLeft,
-  faChevronRight,
   faCopy,
   faEnvelope,
   faFileImport,
-  faFilter,
   faKey,
   faLock,
   faLockOpen,
+  faMagnifyingGlass,
   faPen,
   faPlus,
-  faRotateRight,
-  faSearch,
-  faXmark,
+  faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
 import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
+import { AuthContext } from '../context/AuthContext';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
-import '../css/AdminJobsPage.css';
-import '../css/UsersAdminPage.css';
+import WorkspaceHero from '../components/workspace/WorkspaceHero';
+import Drawer from '../components/workspace/Drawer';
+import MoreMenu from '../components/workspace/MoreMenu';
+import { EmptyState, ErrorState, Notice, SkeletonRows } from '../components/workspace/Feedback';
+import { useConfirm, useFlash } from '../components/workspace/Dialog';
+import { Pagination, Segmented } from '../components/workspace/Navigation';
+import '../css/workspace.css';
+import '../css/AdminPages.css';
 
 const PAGE_SIZE = 20;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const ROLE_LABEL = {
-  Admin: 'Quản trị viên',
-  Teacher: 'Giảng viên',
-  Reviewer: 'Người duyệt',
-};
-
-const ROLE_COLOR = {
-  Admin: '#DC2626',
-  Teacher: '#0c78d4',
-  Reviewer: '#087f5b',
-};
-
-const PERMISSION_OPTIONS = [
-  { value: 'questions.generate', label: 'Sinh câu hỏi' },
-  { value: 'questions.manage_own', label: 'Quản lý câu hỏi cá nhân' },
-  { value: 'questions.manage_all', label: 'Quản lý mọi câu hỏi' },
-  { value: 'questions.share_bank', label: 'Chia sẻ ngân hàng câu hỏi' },
-  { value: 'questions.use_shared_bank', label: 'Dùng ngân hàng được chia sẻ' },
-  { value: 'questions.read_review_queue', label: 'Xem hàng đợi kiểm duyệt' },
-  { value: 'questions.comment', label: 'Bình luận câu hỏi' },
-  { value: 'questions.export_moodle', label: 'Xuất câu hỏi ra Moodle' },
-  { value: 'reviews.manage', label: 'Kiểm duyệt câu hỏi' },
-  { value: 'documents.manage_own', label: 'Quản lý tài liệu cá nhân' },
-  { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
-  { value: 'exams.manage_own', label: 'Làm đề thi' },
-  { value: 'admin.overview', label: 'Tổng quan Admin' },
-  { value: 'admin.users', label: 'Quản lý người dùng' },
-  { value: 'admin.catalog', label: 'Quản lý danh mục' },
-  { value: 'admin.audit', label: 'Xem audit log' },
-  { value: 'admin.jobs', label: 'Quản lý job' },
-  { value: 'admin.moodle', label: 'Quản lý Moodle' },
+const ROLE_OPTIONS = [
+  { value: 'Teacher', label: 'Giảng viên' },
+  { value: 'Reviewer', label: 'Người duyệt' },
+  { value: 'Admin', label: 'Quản trị viên' },
 ];
 
-const emptyCreateForm = {
-  email: '',
-  password: '',
-  display_name: '',
-  role: 'Teacher',
-  permissions: [...ROLE_DEFAULT_PERMISSIONS.Teacher],
+const ROLE_LABEL = Object.fromEntries(ROLE_OPTIONS.map((role) => [role.value, role.label]));
+
+const ROLE_TONE = {
+  Admin: 'danger',
+  Teacher: 'info',
+  Reviewer: 'success',
 };
+
+// Nhóm quyền theo khu vực nghiệp vụ để dễ đọc hơn danh sách phẳng.
+const PERMISSION_GROUPS = [
+  {
+    label: 'Giảng viên',
+    items: [
+      { value: 'questions.generate', label: 'Sinh câu hỏi bằng AI' },
+      { value: 'questions.manage_own', label: 'Quản lý câu hỏi của mình' },
+      { value: 'questions.share_bank', label: 'Chia sẻ ngân hàng câu hỏi' },
+      { value: 'questions.use_shared_bank', label: 'Dùng ngân hàng được chia sẻ' },
+      { value: 'documents.manage_own', label: 'Quản lý tài liệu của mình' },
+      { value: 'exams.manage_own', label: 'Làm đề thi' },
+      { value: 'catalog.subjects.manage_own', label: 'Quản lý học phần của mình' },
+    ],
+  },
+  {
+    label: 'Kiểm duyệt',
+    items: [
+      { value: 'reviews.manage', label: 'Kiểm duyệt câu hỏi' },
+      { value: 'questions.read_review_queue', label: 'Xem hàng kiểm duyệt' },
+      { value: 'questions.comment', label: 'Trao đổi trên câu hỏi' },
+      { value: 'questions.export_moodle', label: 'Xuất và ghi Moodle' },
+    ],
+  },
+  {
+    label: 'Quản trị',
+    items: [
+      { value: 'questions.manage_all', label: 'Quản lý mọi câu hỏi' },
+      { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
+      { value: 'admin.overview', label: 'Xem tổng quan' },
+      { value: 'admin.users', label: 'Quản lý người dùng' },
+      { value: 'admin.catalog', label: 'Quản lý danh mục' },
+      { value: 'admin.jobs', label: 'Quản lý hàng đợi' },
+      { value: 'admin.moodle', label: 'Quản lý Moodle' },
+      { value: 'admin.audit', label: 'Xem nhật ký' },
+    ],
+  },
+];
 
 function permissionsForRole(role) {
   return [...(ROLE_DEFAULT_PERMISSIONS[role] || [])];
@@ -72,27 +86,21 @@ function permissionsForRole(role) {
 
 function togglePermission(list, permission) {
   const current = new Set(list || []);
-  if (current.has(permission)) {
-    current.delete(permission);
-  } else {
-    current.add(permission);
-  }
+  if (current.has(permission)) current.delete(permission);
+  else current.add(permission);
   return Array.from(current);
 }
 
 function initials(name) {
-  const trimmed = (name || '').trim();
-  if (!trimmed) return '?';
-  const parts = trimmed.split(/\s+/);
-  const first = parts[0]?.[0] || '';
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
-  return (first + last).toUpperCase() || '?';
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return `${parts[0][0] || ''}${parts.length > 1 ? parts[parts.length - 1][0] : ''}`.toUpperCase();
 }
 
 function formatDate(value) {
-  if (!value) return '—';
+  if (!value) return '--';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '--';
   return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
 }
 
@@ -103,66 +111,95 @@ function parseImportRows(text) {
     .filter(Boolean)
     .map((line) => {
       const [email = '', displayName, role = 'Teacher', permissions = ''] = line.split(',').map((part) => part.trim());
+      const normalizedRole = ROLE_LABEL[role] ? role : 'Teacher';
       return {
         email,
         display_name: displayName || email,
-        role: ROLE_LABEL[role] ? role : 'Teacher',
+        role: normalizedRole,
         permissions: permissions
           ? permissions.split('|').map((item) => item.trim()).filter(Boolean)
-          : permissionsForRole(ROLE_LABEL[role] ? role : 'Teacher'),
+          : permissionsForRole(normalizedRole),
       };
     });
 }
 
+function PermissionPicker({ value, onChange }) {
+  return (
+    <div className="ws-field">
+      <span className="ws-label">Quyền chi tiết</span>
+      <small>Chọn vai trò sẽ điền sẵn quyền mặc định; chỉnh thêm khi cần ngoại lệ.</small>
+      {PERMISSION_GROUPS.map((group) => (
+        <fieldset key={group.label} style={{ border: 0, padding: 0, margin: '6px 0 0' }}>
+          <legend className="ws-hint" style={{ fontWeight: 700, marginBottom: 6 }}>{group.label}</legend>
+          <div className="ad-permission-grid">
+            {group.items.map((permission) => (
+              <label className="ws-check" key={permission.value}>
+                <input
+                  type="checkbox"
+                  checked={(value || []).includes(permission.value)}
+                  onChange={() => onChange(togglePermission(value, permission.value))}
+                />
+                {permission.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ))}
+    </div>
+  );
+}
+
+function SecretLink({ label, value, copied, onCopy }) {
+  return (
+    <div className="ws-field">
+      <span>{label}</span>
+      <div className="ad-secret">
+        <input className="ws-input" readOnly value={value} onFocus={(event) => event.target.select()} />
+        <button type="button" className="btn btn--outline" onClick={onCopy}>
+          <FontAwesomeIcon icon={faCopy} />
+          {copied ? 'Đã chép' : 'Sao chép'}
+        </button>
+      </div>
+      <small>Gửi link này cho người dùng qua kênh an toàn. Link chỉ dùng được một lần.</small>
+    </div>
+  );
+}
+
 function UsersAdminPage() {
+  const { user: currentUser } = useContext(AuthContext);
+  const { flash, show: showFlash, clear: clearFlash } = useFlash();
+  const [confirm, confirmDialog] = useConfirm();
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const [stats, setStats] = useState({ all: 0, Admin: 0, Teacher: 0, Reviewer: 0 });
-
+  const [stats, setStats] = useState({ all: null, Admin: null, Teacher: null, Reviewer: null });
   const [roleFilter, setRoleFilter] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const [showCreate, setShowCreate] = useState(false);
-  const [createMode, setCreateMode] = useState('direct');
-  const [createForm, setCreateForm] = useState(emptyCreateForm);
-  const [creating, setCreating] = useState(false);
-  const [inviteResult, setInviteResult] = useState(null);
-  const [showImport, setShowImport] = useState(false);
-  const [importText, setImportText] = useState('');
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-
-  const [editing, setEditing] = useState(null);
-  const [editDisplayName, setEditDisplayName] = useState('');
-  const [editRole, setEditRole] = useState('Teacher');
-  const [editActive, setEditActive] = useState(true);
-  const [editPermissions, setEditPermissions] = useState([]);
-  const [saving, setSaving] = useState(false);
-
-  const [togglingId, setTogglingId] = useState(null);
-  const [resettingId, setResettingId] = useState(null);
+  const [createState, setCreateState] = useState(null);
+  const [importState, setImportState] = useState(null);
+  const [editState, setEditState] = useState(null);
   const [resetResult, setResetResult] = useState(null);
+  const [busyKey, setBusyKey] = useState('');
   const [copiedKey, setCopiedKey] = useState('');
 
   useEffect(() => {
-    const handle = setTimeout(() => {
+    const handle = window.setTimeout(() => {
       setPage(1);
       setSearchTerm(searchInput.trim());
-    }, 400);
-    return () => clearTimeout(handle);
+    }, 350);
+    return () => window.clearTimeout(handle);
   }, [searchInput]);
 
-  const fetchUsers = async (pageArg = page) => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const result = await listUsers({
-        page: pageArg,
+        page,
         pageSize: PAGE_SIZE,
         role: roleFilter === 'all' ? undefined : roleFilter,
         search: searchTerm || undefined,
@@ -170,626 +207,492 @@ function UsersAdminPage() {
       setUsers(result.items || []);
       setTotal(result.total || 0);
     } catch (err) {
-      setError(err.message || 'Không tải được danh sách người dùng');
+      setError(err.message || 'Không tải được danh sách người dùng.');
       setUsers([]);
       setTotal(0);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, roleFilter, searchTerm]);
 
-  const fetchStats = async () => {
-    try {
-      const [allRes, adminRes, teacherRes, reviewerRes] = await Promise.all([
-        listUsers({ page: 1, pageSize: 1 }),
-        listUsers({ page: 1, pageSize: 1, role: 'Admin' }),
-        listUsers({ page: 1, pageSize: 1, role: 'Teacher' }),
-        listUsers({ page: 1, pageSize: 1, role: 'Reviewer' }),
-      ]);
-      setStats({
-        all: allRes.total || 0,
-        Admin: adminRes.total || 0,
-        Teacher: teacherRes.total || 0,
-        Reviewer: reviewerRes.total || 0,
-      });
-    } catch {
-      // stat tiles are non-critical; keep the previously known values on failure
-    }
-  };
+  const fetchStats = useCallback(async () => {
+    const results = await Promise.allSettled([
+      listUsers({ page: 1, pageSize: 1 }),
+      ...ROLE_OPTIONS.map((role) => listUsers({ page: 1, pageSize: 1, role: role.value })),
+    ]);
+    const value = (index) => (results[index].status === 'fulfilled' ? results[index].value.total || 0 : null);
+    setStats({ all: value(0), Teacher: value(1), Reviewer: value(2), Admin: value(3) });
+  }, []);
 
   useEffect(() => {
-    fetchUsers(page);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, searchTerm, roleFilter]);
+    fetchUsers();
+  }, [fetchUsers]);
 
   useEffect(() => {
     fetchStats();
-  }, []);
+  }, [fetchStats]);
 
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const refreshAll = () => Promise.all([fetchUsers(), fetchStats()]);
 
-  const selectRoleFilter = (role) => {
+  const selectRole = (role) => {
     setRoleFilter(role);
     setPage(1);
   };
 
-  const refreshAll = async (pageArg = page) => {
-    await Promise.all([fetchUsers(pageArg), fetchStats()]);
-  };
-
-  const importRows = useMemo(() => parseImportRows(importText), [importText]);
-  const importValidCount = importRows.filter((row) => EMAIL_RE.test(row.email)).length;
-  const importInvalidCount = importRows.length - importValidCount;
-
-  const copyToClipboard = async (text, key) => {
+  const copy = async (text, key) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedKey(key);
-      setTimeout(() => setCopiedKey(''), 1500);
+      window.setTimeout(() => setCopiedKey(''), 1500);
     } catch {
-      // clipboard API may be unavailable (e.g. insecure context); user can still select the text manually
+      // Môi trường không cho phép clipboard: người dùng tự chọn và sao chép trong ô.
     }
   };
 
-  const openCreate = (mode = 'direct') => {
-    setCreateMode(mode);
-    setInviteResult(null);
-    setCreateForm({
-      ...emptyCreateForm,
-      password: '',
-      permissions: permissionsForRole('Teacher'),
+  const openCreate = (mode) => {
+    setCreateState({
+      mode,
+      error: '',
+      result: null,
+      form: { email: '', password: '', display_name: '', role: 'Teacher', permissions: permissionsForRole('Teacher') },
     });
-    setShowCreate(true);
   };
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    const email = createForm.email.trim();
-    const displayName = createForm.display_name.trim();
-    if (!email || !displayName) {
-      alert('Vui lòng nhập đầy đủ email và họ tên.');
+  const updateCreate = (patch) => setCreateState((current) => ({ ...current, form: { ...current.form, ...patch }, error: '' }));
+
+  const submitCreate = async () => {
+    const { form, mode } = createState;
+    const email = form.email.trim();
+    const displayName = form.display_name.trim();
+    let message = '';
+    if (!email || !displayName) message = 'Nhập đầy đủ email và họ tên.';
+    else if (!EMAIL_RE.test(email)) message = 'Email chưa đúng định dạng.';
+    else if (mode === 'direct' && form.password.length < 6) message = 'Mật khẩu cần ít nhất 6 ký tự.';
+    if (message) {
+      setCreateState((current) => ({ ...current, error: message }));
       return;
     }
-    if (!EMAIL_RE.test(email)) {
-      alert('Email không hợp lệ.');
-      return;
-    }
-    if (createMode === 'direct' && createForm.password.length < 6) {
-      alert('Mật khẩu phải có ít nhất 6 ký tự.');
-      return;
-    }
-    setCreating(true);
+    setBusyKey('create');
     try {
-      const payload = {
-        ...createForm,
-        email,
-        display_name: displayName,
-        permissions: createForm.permissions || [],
-      };
-      if (createMode === 'invite') {
-        const result = await inviteUser({
-          email: payload.email,
-          display_name: payload.display_name,
-          role: payload.role,
-          permissions: payload.permissions,
-        });
-        setInviteResult(result);
+      if (mode === 'invite') {
+        const result = await inviteUser({ email, display_name: displayName, role: form.role, permissions: form.permissions });
+        setCreateState((current) => ({ ...current, result }));
       } else {
-        await createUser(payload);
-        setShowCreate(false);
+        await createUser({ ...form, email, display_name: displayName });
+        setCreateState(null);
+        showFlash('success', `Đã tạo tài khoản ${email}.`);
       }
-      await refreshAll(1);
       setPage(1);
-    } catch (err) {
-      alert('Tạo tài khoản thất bại: ' + err.message);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const openEdit = (user) => {
-    setEditing(user);
-    setEditDisplayName(user.display_name || '');
-    setEditRole(user.role);
-    setEditActive(user.is_active);
-    setEditPermissions(user.permissions || permissionsForRole(user.role));
-  };
-
-  const closeEdit = () => {
-    if (saving) return;
-    setEditing(null);
-  };
-
-  const handleSaveEdit = async (e) => {
-    e.preventDefault();
-    if (!editing) return;
-    setSaving(true);
-    try {
-      await updateUser(editing.id, {
-        display_name: editDisplayName,
-        role: editRole,
-        is_active: editActive,
-        permissions: editPermissions,
-      });
-      setEditing(null);
       await refreshAll();
     } catch (err) {
-      alert('Cập nhật tài khoản thất bại: ' + err.message);
+      setCreateState((current) => ({ ...current, error: err.message || 'Tạo tài khoản thất bại.' }));
     } finally {
-      setSaving(false);
+      setBusyKey('');
     }
   };
 
-  const handleResetPassword = async (user) => {
-    setResettingId(user.id);
-    try {
-      const result = await resetUserPassword(user.id);
-      setResetResult(result);
-    } catch (err) {
-      alert('Tạo link reset mật khẩu thất bại: ' + err.message);
-    } finally {
-      setResettingId(null);
-    }
-  };
+  const importRows = useMemo(() => parseImportRows(importState?.text || ''), [importState?.text]);
+  const importValid = importRows.filter((row) => EMAIL_RE.test(row.email)).length;
 
-  const handleImportUsers = async (event) => {
-    event.preventDefault();
+  const submitImport = async () => {
     if (importRows.length === 0) {
-      alert('Vui lòng nhập ít nhất một dòng CSV.');
+      setImportState((current) => ({ ...current, error: 'Nhập ít nhất một dòng.' }));
       return;
     }
-    setImporting(true);
-    setImportResult(null);
+    if (importValid !== importRows.length) {
+      setImportState((current) => ({ ...current, error: `${importRows.length - importValid} dòng có email chưa hợp lệ. Sửa trước khi nhập.` }));
+      return;
+    }
+    setBusyKey('import');
     try {
       const result = await importUsers({ users: importRows });
-      setImportResult(result);
-      await refreshAll(1);
+      setImportState((current) => ({ ...current, result, error: '' }));
       setPage(1);
-    } catch (err) {
-      alert('Import tài khoản thất bại: ' + err.message);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const handleToggleActive = async (user) => {
-    const activate = !user.is_active;
-    const confirmMessage = activate
-      ? `Kích hoạt lại tài khoản "${user.display_name}" (${user.email})?`
-      : `Vô hiệu hoá tài khoản "${user.display_name}" (${user.email})?`;
-    if (!window.confirm(confirmMessage)) return;
-    setTogglingId(user.id);
-    try {
-      if (activate) {
-        await updateUser(user.id, { is_active: true });
-      } else {
-        await deleteUser(user.id);
-      }
       await refreshAll();
     } catch (err) {
-      alert((activate ? 'Kích hoạt' : 'Vô hiệu hoá') + ' tài khoản thất bại: ' + err.message);
+      setImportState((current) => ({ ...current, error: err.message || 'Nhập danh sách thất bại.' }));
     } finally {
-      setTogglingId(null);
+      setBusyKey('');
     }
   };
 
+  const openEdit = (target) => {
+    setEditState({
+      user: target,
+      error: '',
+      form: {
+        display_name: target.display_name || '',
+        role: target.role,
+        is_active: target.is_active,
+        permissions: target.permissions?.length ? target.permissions : permissionsForRole(target.role),
+      },
+    });
+  };
+
+  const updateEdit = (patch) => setEditState((current) => ({ ...current, form: { ...current.form, ...patch }, error: '' }));
+
+  const submitEdit = async () => {
+    const { user: target, form } = editState;
+    if (!form.display_name.trim()) {
+      setEditState((current) => ({ ...current, error: 'Họ tên không được để trống.' }));
+      return;
+    }
+    setBusyKey('edit');
+    try {
+      await updateUser(target.id, { ...form, display_name: form.display_name.trim() });
+      setEditState(null);
+      showFlash('success', `Đã cập nhật ${target.email}.`);
+      await refreshAll();
+    } catch (err) {
+      setEditState((current) => ({ ...current, error: err.message || 'Cập nhật thất bại.' }));
+    } finally {
+      setBusyKey('');
+    }
+  };
+
+  const handleResetPassword = async (target) => {
+    setBusyKey(`reset:${target.id}`);
+    clearFlash();
+    try {
+      setResetResult(await resetUserPassword(target.id));
+    } catch (err) {
+      showFlash('error', err.message || 'Không tạo được link đặt lại mật khẩu.');
+    } finally {
+      setBusyKey('');
+    }
+  };
+
+  const handleToggleActive = async (target) => {
+    const activate = !target.is_active;
+    const accepted = await confirm({
+      title: activate ? 'Mở khoá tài khoản' : 'Khoá tài khoản',
+      description: activate
+        ? `${target.display_name} (${target.email}) sẽ đăng nhập lại được.`
+        : `${target.display_name} (${target.email}) sẽ không đăng nhập được. Dữ liệu của tài khoản vẫn được giữ.`,
+      confirmLabel: activate ? 'Mở khoá' : 'Khoá tài khoản',
+      tone: activate ? 'primary' : 'danger',
+    });
+    if (!accepted) return;
+    setBusyKey(`toggle:${target.id}`);
+    clearFlash();
+    try {
+      if (activate) await updateUser(target.id, { is_active: true });
+      else await deleteUser(target.id);
+      showFlash('success', activate ? 'Đã mở khoá tài khoản.' : 'Đã khoá tài khoản.');
+      await refreshAll();
+    } catch (err) {
+      showFlash('error', err.message || 'Thao tác thất bại.');
+    } finally {
+      setBusyKey('');
+    }
+  };
+
+  const isSelf = (target) => String(target.id) === String(currentUser?.id || '');
+
   return (
-    <main className="admin-jobs-page users-page">
-      <section className="jobs-header">
-        <div>
-          <span>Khu vực quản trị</span>
-          <h1>Quản lý người dùng</h1>
-          <p>Quản lý tài khoản giảng viên, người duyệt và quản trị viên trong hệ thống ngân hàng câu hỏi.</p>
-        </div>
-        <div className="jobs-header-actions">
-          <button type="button" className="jobs-secondary-button" onClick={() => refreshAll()} disabled={loading}>
-            <FontAwesomeIcon icon={faRotateRight} />
-            <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
-          </button>
-          <button type="button" className="jobs-secondary-button" onClick={() => setShowImport(true)}>
-            <FontAwesomeIcon icon={faFileImport} />
-            <span>Import CSV</span>
-          </button>
-          <button type="button" className="jobs-secondary-button" onClick={() => openCreate('invite')}>
-            <FontAwesomeIcon icon={faEnvelope} />
-            <span>Mời qua email</span>
-          </button>
-          <button type="button" className="jobs-primary-button" onClick={() => openCreate('direct')}>
-            <FontAwesomeIcon icon={faPlus} />
-            <span>Tạo tài khoản</span>
-          </button>
-        </div>
-      </section>
-
-      <section className="jobs-summary">
-        <button type="button" className={`summary-tile ${roleFilter === 'all' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('all')}>
-          <b>{stats.all}</b>
-          <span>Tổng tài khoản</span>
-        </button>
-        <button type="button" className={`summary-tile ${roleFilter === 'Admin' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Admin')}>
-          <b>{stats.Admin}</b>
-          <span>Quản trị viên</span>
-        </button>
-        <button type="button" className={`summary-tile ${roleFilter === 'Teacher' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Teacher')}>
-          <b>{stats.Teacher}</b>
-          <span>Giảng viên</span>
-        </button>
-        <button type="button" className={`summary-tile ${roleFilter === 'Reviewer' ? 'summary-tile--active' : ''}`} onClick={() => selectRoleFilter('Reviewer')}>
-          <b>{stats.Reviewer}</b>
-          <span>Người duyệt</span>
-        </button>
-      </section>
-
-      <section className="jobs-toolbar jobs-toolbar--users" aria-label="Bộ lọc người dùng">
-        <div className="toolbar-field toolbar-field--search">
-          <label htmlFor="users-search">
-            <FontAwesomeIcon icon={faSearch} />
-            Tìm kiếm
-          </label>
-          <div className="search-input-wrap">
-            <input
-              id="users-search"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Tìm theo tên hoặc email..."
+    <main className="ws-page users-admin-page">
+      <WorkspaceHero
+        badge="Quản trị viên"
+        title="Người dùng"
+        description="Cấp tài khoản cho giảng viên, người duyệt và quản trị viên; điều chỉnh quyền và khoá tài khoản khi cần."
+        actions={(
+          <>
+            <MoreMenu
+              items={[
+                { key: 'import', label: 'Nhập danh sách từ CSV', icon: faFileImport, onClick: () => setImportState({ text: '', error: '', result: null }) },
+              ]}
             />
-            {searchInput && (
-              <button type="button" className="search-clear-btn" title="Xoá tìm kiếm" onClick={() => setSearchInput('')}>
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
+            <button type="button" className="btn btn--primary" onClick={() => openCreate('direct')}>
+              <FontAwesomeIcon icon={faPlus} />
+              Thêm người dùng
+            </button>
+          </>
+        )}
+      />
+
+      <section className="ws-body">
+        <div className="container ws-main">
+          {flash && <Notice tone={flash.tone} onDismiss={clearFlash}>{flash.message}</Notice>}
+
+          <section className="ws-card">
+            <div className="ws-card-head">
+              <div className="ws-card-title">
+                <h2>Tài khoản</h2>
+                <span className="ws-list-count tabular">{loading ? 'Đang tải...' : `${users.length} / ${total} tài khoản đang hiển thị`}</span>
+              </div>
+            </div>
+            <div className="ws-toolbar" style={{ marginBottom: 12 }}>
+              <label className="ws-search">
+                <span className="ws-sr-only">Tìm người dùng</span>
+                <FontAwesomeIcon icon={faMagnifyingGlass} />
+                <input className="ws-input" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Tìm theo tên hoặc email" />
+              </label>
+              <Segmented
+                label="Lọc theo vai trò"
+                value={roleFilter}
+                onChange={selectRole}
+                items={[
+                  { value: 'all', label: 'Tất cả', count: stats.all ?? undefined },
+                  { value: 'Admin', label: 'Quản trị', count: stats.Admin ?? undefined },
+                  { value: 'Teacher', label: 'Giảng viên', count: stats.Teacher ?? undefined },
+                  { value: 'Reviewer', label: 'Người duyệt', count: stats.Reviewer ?? undefined },
+                ]}
+              />
+            </div>
+
+            {loading && users.length === 0 ? (
+              <SkeletonRows rows={5} lines={2} />
+            ) : error ? (
+              <ErrorState message={error} onRetry={refreshAll} />
+            ) : users.length === 0 ? (
+              <EmptyState
+                icon={faUsers}
+                title={searchTerm || roleFilter !== 'all' ? 'Không có tài khoản khớp bộ lọc' : 'Chưa có tài khoản'}
+                description={searchTerm || roleFilter !== 'all' ? 'Thử đổi từ khoá hoặc vai trò.' : 'Thêm người dùng đầu tiên hoặc nhập danh sách từ CSV.'}
+              />
+            ) : (
+              <div className="ws-table-wrap">
+                <table className="ws-table">
+                  <thead>
+                    <tr>
+                      <th>Người dùng</th>
+                      <th>Vai trò</th>
+                      <th>Trạng thái</th>
+                      <th>Ngày tạo</th>
+                      <th aria-label="Thao tác" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((item) => {
+                      const avatar = normalizeAvatarUrl(item.profile?.avatar);
+                      const self = isSelf(item);
+                      return (
+                        <tr key={item.id}>
+                          <td>
+                            <div className="ad-user">
+                              {avatar ? (
+                                <img className="ad-avatar" src={avatar} alt="" referrerPolicy="no-referrer" />
+                              ) : (
+                                <span className={`ad-avatar ad-avatar--${item.role}`} aria-hidden="true">{initials(item.display_name)}</span>
+                              )}
+                              <div style={{ minWidth: 0 }}>
+                                <strong>{item.display_name}{self ? ' (bạn)' : ''}</strong>
+                                <small>{item.email}</small>
+                              </div>
+                            </div>
+                          </td>
+                          <td><span className={`ws-pill ws-pill--${ROLE_TONE[item.role] || 'outline'}`}>{ROLE_LABEL[item.role] || item.role}</span></td>
+                          <td>
+                            <span className={`ws-pill ${item.is_active ? 'ws-pill--success' : 'ws-pill--outline'}`}>
+                              {item.is_active ? 'Hoạt động' : 'Đã khoá'}
+                            </span>
+                          </td>
+                          <td>{formatDate(item.created_at)}</td>
+                          <td>
+                            <MoreMenu
+                              variant="icon"
+                              label={`Thao tác với ${item.email}`}
+                              items={[
+                                { key: 'edit', label: 'Sửa', icon: faPen, onClick: () => openEdit(item) },
+                                { key: 'reset', label: 'Tạo link đặt lại mật khẩu', icon: faKey, disabled: Boolean(busyKey), onClick: () => handleResetPassword(item) },
+                                {
+                                  key: 'toggle',
+                                  label: item.is_active ? 'Khoá tài khoản' : 'Mở khoá',
+                                  icon: item.is_active ? faLock : faLockOpen,
+                                  danger: item.is_active,
+                                  disabled: Boolean(busyKey) || self,
+                                  title: self ? 'Không thể tự khoá tài khoản của mình' : undefined,
+                                  onClick: () => handleToggleActive(item),
+                                },
+                              ]}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
-        </div>
-        <div className="toolbar-field">
-          <label htmlFor="users-role">
-            <FontAwesomeIcon icon={faFilter} />
-            Vai trò
-          </label>
-          <select id="users-role" value={roleFilter} onChange={(e) => selectRoleFilter(e.target.value)}>
-            <option value="all">Tất cả vai trò</option>
-            <option value="Admin">Quản trị viên</option>
-            <option value="Teacher">Giảng viên</option>
-            <option value="Reviewer">Người duyệt</option>
-          </select>
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} loading={loading} onChange={setPage} />
+          </section>
         </div>
       </section>
 
-      {error && <p className="jobs-error">{error}</p>}
-
-      <section className="jobs-layout jobs-layout--single">
-        <div className="jobs-table-panel">
-          <div className="jobs-table-header">
-            <div>
-              <h2>Danh sách người dùng</h2>
-              <span>{total} tài khoản</span>
-            </div>
-          </div>
-          <div className={`jobs-table-wrap ${loading && users.length > 0 ? 'is-loading' : ''}`}>
-            <table className="jobs-table users-table">
-              <thead>
-                <tr>
-                  <th>Người dùng</th>
-                  <th>Vai trò</th>
-                  <th>Quyền</th>
-                  <th>Trạng thái</th>
-                  <th>Ngày tạo</th>
-                  <th>Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td>
-                      <div className="user-cell">
-                        {normalizeAvatarUrl(u.profile?.avatar) ? (
-                          <img className="user-avatar-img" src={normalizeAvatarUrl(u.profile?.avatar)} alt="" referrerPolicy="no-referrer" />
-                        ) : (
-                          <span className="user-avatar-initials" style={{ background: ROLE_COLOR[u.role] || '#5c6f89' }}>
-                            {initials(u.display_name)}
-                          </span>
-                        )}
-                        <div>
-                          <strong>{u.display_name}</strong>
-                          <small>{u.email}</small>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`role-pill role-pill--${(u.role || '').toLowerCase()}`}>{ROLE_LABEL[u.role] || u.role}</span>
-                    </td>
-                    <td>{(u.permissions || []).length} quyền</td>
-                    <td>
-                      {u.is_active ? (
-                        <span className="status-pill status-pill--success">Hoạt động</span>
-                      ) : (
-                        <span className="status-pill status-pill--danger">Đã khoá</span>
-                      )}
-                    </td>
-                    <td>{formatDate(u.created_at)}</td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          title="Tạo link reset mật khẩu"
-                          disabled={resettingId === u.id}
-                          onClick={() => handleResetPassword(u)}
-                        >
-                          <FontAwesomeIcon icon={faKey} />
-                        </button>
-                        <button type="button" title="Chỉnh sửa" onClick={() => openEdit(u)}>
-                          <FontAwesomeIcon icon={faPen} />
-                        </button>
-                        <button
-                          type="button"
-                          className={u.is_active ? 'danger-action' : ''}
-                          title={u.is_active ? 'Vô hiệu hoá tài khoản' : 'Kích hoạt lại tài khoản'}
-                          disabled={togglingId === u.id}
-                          onClick={() => handleToggleActive(u)}
-                        >
-                          <FontAwesomeIcon icon={u.is_active ? faLock : faLockOpen} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!loading && users.length === 0 && (
-              <p className="jobs-empty">
-                {searchTerm || roleFilter !== 'all'
-                  ? 'Không có người dùng nào khớp với bộ lọc hiện tại.'
-                  : 'Chưa có người dùng nào trong hệ thống.'}
-              </p>
-            )}
-            {loading && users.length === 0 && (
-              <p className="jobs-empty">Đang tải danh sách người dùng...</p>
-            )}
-          </div>
-          <div className="jobs-pagination">
-            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
-              <FontAwesomeIcon icon={faChevronLeft} />
+      <Drawer
+        open={Boolean(createState)}
+        wide
+        title="Thêm người dùng"
+        onClose={() => setCreateState(null)}
+        busy={busyKey === 'create'}
+        as="form"
+        onSubmit={submitCreate}
+        footer={createState?.result ? (
+          <button type="button" className="btn btn--primary" onClick={() => setCreateState(null)}>Xong</button>
+        ) : (
+          <>
+            <button type="button" className="btn btn--outline" onClick={() => setCreateState(null)} disabled={busyKey === 'create'}>Huỷ</button>
+            <button type="submit" className="btn btn--primary" disabled={busyKey === 'create'}>
+              {busyKey === 'create' ? 'Đang lưu...' : (createState?.mode === 'invite' ? 'Tạo link mời' : 'Tạo tài khoản')}
             </button>
-            <span>Trang {page} / {pageCount}</span>
-            <button type="button" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
-              <FontAwesomeIcon icon={faChevronRight} />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {showCreate && (
-        <div className="modal-overlay" onClick={() => !creating && setShowCreate(false)}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
-            <h3 className="modal-title">{createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}</h3>
-
-            <div className="field-group">
-              <label className="field-label">Email</label>
-              <input
-                className="field-input"
-                type="email"
-                value={createForm.email}
-                onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
-              />
-            </div>
-
-            {createMode === 'direct' && (
-              <div className="field-group">
-                <label className="field-label">Mật khẩu</label>
-                <input
-                  className="field-input"
-                  type="password"
-                  value={createForm.password}
-                  onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                />
-                <p className="field-hint">Tối thiểu 6 ký tự.</p>
-              </div>
-            )}
-
-            <div className="field-group">
-              <label className="field-label">Họ và tên</label>
-              <input
-                className="field-input"
-                value={createForm.display_name}
-                onChange={(e) => setCreateForm({ ...createForm, display_name: e.target.value })}
-              />
-            </div>
-
-            <div className="field-group">
-              <label className="field-label">Vai trò</label>
-              <select
-                className="field-select"
-                value={createForm.role}
-                onChange={(e) => setCreateForm({
-                  ...createForm,
-                  role: e.target.value,
-                  permissions: permissionsForRole(e.target.value),
-                })}
-              >
-                <option value="Teacher">Giảng viên</option>
-                <option value="Reviewer">Người duyệt</option>
-                <option value="Admin">Quản trị viên</option>
-              </select>
-            </div>
-
-            <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
-              <div className="permission-grid">
-                {PERMISSION_OPTIONS.map((permission) => (
-                  <label className="field-checkbox" key={permission.value}>
-                    <input
-                      type="checkbox"
-                      checked={(createForm.permissions || []).includes(permission.value)}
-                      onChange={() => setCreateForm({
-                        ...createForm,
-                        permissions: togglePermission(createForm.permissions, permission.value),
-                      })}
-                    />
-                    {permission.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {inviteResult?.reset_link && (
-              <div className="users-result-box">
-                <div className="users-result-box-header">
-                  <b>Link đặt mật khẩu</b>
-                  <button type="button" className="copy-btn" onClick={() => copyToClipboard(inviteResult.reset_link, 'invite')}>
-                    <FontAwesomeIcon icon={faCopy} />
-                    {copiedKey === 'invite' ? 'Đã sao chép' : 'Sao chép'}
-                  </button>
-                </div>
-                <textarea className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={() => setShowCreate(false)} disabled={creating}>
-                Huỷ
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={creating}>
-                {creating ? 'Đang lưu...' : (createMode === 'invite' ? 'Tạo link mời' : 'Tạo tài khoản')}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {showImport && (
-        <div className="modal-overlay" onClick={() => !importing && setShowImport(false)}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleImportUsers}>
-            <h3 className="modal-title">Import người dùng</h3>
-            <div className="field-group">
-              <label className="field-label">CSV</label>
-              <textarea
-                className="field-input"
-                rows={8}
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder="email@ctu.edu.vn,Nguyễn Văn A,Teacher,questions.generate|questions.manage_own"
-              />
-              <p className="field-hint">Mỗi dòng: email, họ tên, vai trò (Teacher/Reviewer/Admin), quyền cách nhau bởi dấu "|" (tuỳ chọn).</p>
-              {importRows.length > 0 && (
-                <p className={`field-hint ${importInvalidCount > 0 ? 'field-hint--warn' : ''}`}>
-                  {importRows.length} dòng ({importValidCount} hợp lệ{importInvalidCount > 0 ? `, ${importInvalidCount} thiếu email hợp lệ` : ''})
-                </p>
+          </>
+        )}
+      >
+        {createState && (createState.result?.reset_link ? (
+          <>
+            <Notice tone="success">Đã tạo tài khoản {createState.form.email}.</Notice>
+            <SecretLink label="Link đặt mật khẩu" value={createState.result.reset_link} copied={copiedKey === 'invite'} onCopy={() => copy(createState.result.reset_link, 'invite')} />
+          </>
+        ) : (
+          <>
+            <Segmented
+              label="Cách tạo tài khoản"
+              value={createState.mode}
+              onChange={(mode) => setCreateState((current) => ({ ...current, mode, error: '' }))}
+              items={[
+                { value: 'direct', label: 'Tạo trực tiếp' },
+                { value: 'invite', label: 'Mời qua email' },
+              ]}
+            />
+            <p className="ws-hint" style={{ margin: 0 }}>
+              <FontAwesomeIcon icon={faEnvelope} style={{ marginRight: 6 }} />
+              {createState.mode === 'invite'
+                ? 'Hệ thống tạo tài khoản và một link để người dùng tự đặt mật khẩu.'
+                : 'Bạn đặt mật khẩu ban đầu và gửi cho người dùng.'}
+            </p>
+            <div className="ws-form-grid">
+              <label className="ws-field">
+                <span>Email</span>
+                <input className="ws-input" type="email" autoComplete="off" value={createState.form.email} onChange={(event) => updateCreate({ email: event.target.value })} placeholder="ten@ctu.edu.vn" />
+              </label>
+              <label className="ws-field">
+                <span>Họ và tên</span>
+                <input className="ws-input" value={createState.form.display_name} onChange={(event) => updateCreate({ display_name: event.target.value })} />
+              </label>
+              {createState.mode === 'direct' && (
+                <label className="ws-field">
+                  <span>Mật khẩu ban đầu</span>
+                  <input className="ws-input" type="password" autoComplete="new-password" value={createState.form.password} onChange={(event) => updateCreate({ password: event.target.value })} />
+                  <small>Tối thiểu 6 ký tự.</small>
+                </label>
               )}
-            </div>
-            {importResult && (
-              <div className="users-result-box">
-                <b>{importResult.created} tạo thành công, {importResult.failed} lỗi</b>
-                {(importResult.items || []).slice(0, 8).map((item) => (
-                  <p key={item.email}>{item.email}: {item.ok ? 'OK' : item.error}</p>
-                ))}
-              </div>
-            )}
-            <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={() => setShowImport(false)} disabled={importing}>
-                Đóng
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={importing || importRows.length === 0}>
-                {importing ? 'Đang import...' : 'Import'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {resetResult && (
-        <div className="modal-overlay" onClick={() => setResetResult(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Link reset mật khẩu</h3>
-            <p className="user-email">{resetResult.email}</p>
-            <div className="users-result-box-header">
-              <b>Link đặt lại mật khẩu</b>
-              <button type="button" className="copy-btn" onClick={() => copyToClipboard(resetResult.reset_link, 'reset')}>
-                <FontAwesomeIcon icon={faCopy} />
-                {copiedKey === 'reset' ? 'Đã sao chép' : 'Sao chép'}
-              </button>
-            </div>
-            <textarea className="field-input" readOnly rows={4} value={resetResult.reset_link} />
-            <div className="modal-actions">
-              <button type="button" className="btn btn--primary" onClick={() => setResetResult(null)}>
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editing && (
-        <div className="modal-overlay" onClick={closeEdit}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
-            <h3 className="modal-title">Chỉnh sửa tài khoản</h3>
-
-            <div className="field-group">
-              <label className="field-label">Email</label>
-              <input className="field-input" value={editing.email} disabled />
-            </div>
-
-            <div className="field-group">
-              <label className="field-label">Họ và tên</label>
-              <input
-                className="field-input"
-                value={editDisplayName}
-                onChange={(e) => setEditDisplayName(e.target.value)}
-              />
-            </div>
-
-            <div className="field-group">
-              <label className="field-label">Vai trò</label>
-              <select
-                className="field-select"
-                value={editRole}
-                onChange={(e) => {
-                  setEditRole(e.target.value);
-                  setEditPermissions(permissionsForRole(e.target.value));
-                }}
-              >
-                <option value="Teacher">Giảng viên</option>
-                <option value="Reviewer">Người duyệt</option>
-                <option value="Admin">Quản trị viên</option>
-              </select>
-            </div>
-
-            <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
-              <div className="permission-grid">
-                {PERMISSION_OPTIONS.map((permission) => (
-                  <label className="field-checkbox" key={permission.value}>
-                    <input
-                      type="checkbox"
-                      checked={(editPermissions || []).includes(permission.value)}
-                      onChange={() => setEditPermissions((current) => togglePermission(current, permission.value))}
-                    />
-                    {permission.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="field-group field-group--checkbox">
-              <label className="field-checkbox">
-                <input
-                  type="checkbox"
-                  checked={editActive}
-                  onChange={(e) => setEditActive(e.target.checked)}
-                />
-                Tài khoản đang hoạt động
+              <label className="ws-field">
+                <span>Vai trò</span>
+                <select className="ws-select" value={createState.form.role} onChange={(event) => updateCreate({ role: event.target.value, permissions: permissionsForRole(event.target.value) })}>
+                  {ROLE_OPTIONS.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                </select>
               </label>
             </div>
+            <PermissionPicker value={createState.form.permissions} onChange={(permissions) => updateCreate({ permissions })} />
+            {createState.error && <Notice tone="error">{createState.error}</Notice>}
+          </>
+        ))}
+      </Drawer>
 
-            <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={closeEdit} disabled={saving}>
-                Huỷ
-              </button>
-              <button type="submit" className="btn btn--primary" disabled={saving}>
-                {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
-              </button>
+      <Drawer
+        open={Boolean(importState)}
+        wide
+        title="Nhập danh sách từ CSV"
+        subtitle="Mỗi dòng: email, họ tên, vai trò (Teacher, Reviewer hoặc Admin), quyền cách nhau bằng dấu | (không bắt buộc)."
+        onClose={() => setImportState(null)}
+        busy={busyKey === 'import'}
+        as="form"
+        onSubmit={submitImport}
+        footer={(
+          <>
+            <button type="button" className="btn btn--outline" onClick={() => setImportState(null)} disabled={busyKey === 'import'}>Đóng</button>
+            <button type="submit" className="btn btn--primary" disabled={busyKey === 'import' || importRows.length === 0}>
+              {busyKey === 'import' ? 'Đang nhập...' : (importRows.length ? `Nhập ${importRows.length} tài khoản` : 'Nhập tài khoản')}
+            </button>
+          </>
+        )}
+      >
+        {importState && (
+          <>
+            <label className="ws-field">
+              <span>Dữ liệu CSV</span>
+              <textarea
+                className="ws-textarea ad-code-editor"
+                style={{ minHeight: 220 }}
+                value={importState.text}
+                onChange={(event) => setImportState((current) => ({ ...current, text: event.target.value, error: '', result: null }))}
+                placeholder={'nguyenvana@ctu.edu.vn,Nguyễn Văn An,Teacher\ntranthib@ctu.edu.vn,Trần Thị Bích,Reviewer'}
+              />
+              {importRows.length > 0 && (
+                <small className="tabular">
+                  {importRows.length} dòng, {importValid} hợp lệ{importRows.length - importValid ? `, ${importRows.length - importValid} email chưa hợp lệ` : ''}
+                </small>
+              )}
+            </label>
+            {importState.error && <Notice tone="error">{importState.error}</Notice>}
+            {importState.result && (
+              <Notice tone={importState.result.failed ? 'warn' : 'success'}>
+                {importState.result.created} tài khoản đã tạo, {importState.result.failed} lỗi.
+                {(importState.result.items || []).filter((item) => !item.ok).slice(0, 5).map((item) => ` ${item.email}: ${item.error}.`).join('')}
+              </Notice>
+            )}
+          </>
+        )}
+      </Drawer>
+
+      <Drawer
+        open={Boolean(editState)}
+        wide
+        title="Sửa tài khoản"
+        subtitle={editState?.user?.email}
+        onClose={() => setEditState(null)}
+        busy={busyKey === 'edit'}
+        as="form"
+        onSubmit={submitEdit}
+        footer={(
+          <>
+            <button type="button" className="btn btn--outline" onClick={() => setEditState(null)} disabled={busyKey === 'edit'}>Huỷ</button>
+            <button type="submit" className="btn btn--primary" disabled={busyKey === 'edit'}>{busyKey === 'edit' ? 'Đang lưu...' : 'Lưu thay đổi'}</button>
+          </>
+        )}
+      >
+        {editState && (
+          <>
+            <div className="ws-form-grid">
+              <label className="ws-field">
+                <span>Họ và tên</span>
+                <input className="ws-input" value={editState.form.display_name} onChange={(event) => updateEdit({ display_name: event.target.value })} />
+              </label>
+              <label className="ws-field">
+                <span>Vai trò</span>
+                <select
+                  className="ws-select"
+                  value={editState.form.role}
+                  disabled={isSelf(editState.user)}
+                  title={isSelf(editState.user) ? 'Không tự đổi vai trò của chính mình' : undefined}
+                  onChange={(event) => updateEdit({ role: event.target.value, permissions: permissionsForRole(event.target.value) })}
+                >
+                  {ROLE_OPTIONS.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                </select>
+              </label>
             </div>
-          </form>
-        </div>
-      )}
+            <PermissionPicker value={editState.form.permissions} onChange={(permissions) => updateEdit({ permissions })} />
+            <label className="ws-check">
+              <input type="checkbox" checked={editState.form.is_active} disabled={isSelf(editState.user)} onChange={(event) => updateEdit({ is_active: event.target.checked })} />
+              Tài khoản đang hoạt động
+            </label>
+            {editState.error && <Notice tone="error">{editState.error}</Notice>}
+          </>
+        )}
+      </Drawer>
+
+      <Drawer
+        open={Boolean(resetResult)}
+        title="Link đặt lại mật khẩu"
+        subtitle={resetResult?.email}
+        onClose={() => setResetResult(null)}
+        footer={<button type="button" className="btn btn--primary" onClick={() => setResetResult(null)}>Xong</button>}
+      >
+        {resetResult?.reset_link && (
+          <SecretLink label="Link đặt lại" value={resetResult.reset_link} copied={copiedKey === 'reset'} onCopy={() => copy(resetResult.reset_link, 'reset')} />
+        )}
+      </Drawer>
+      {confirmDialog}
     </main>
   );
 }

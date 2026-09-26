@@ -1,469 +1,206 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import {
-  faBookOpen,
-  faClipboardCheck,
-  faDatabase,
-  faPlugCircleCheck,
-  faRotateRight,
-  faServer,
-  faTriangleExclamation,
-  faUsers,
-} from '@fortawesome/free-solid-svg-icons';
+import { faArrowRight, faCircleCheck, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 import { getAdminOverview } from '../api/adminOverview';
-import '../css/AdminOverviewPage.css';
+import { getReviewDashboard, listQuestions } from '../api/questions';
+import WorkspaceHero from '../components/workspace/WorkspaceHero';
+import { EmptyState, ErrorState, SkeletonRows } from '../components/workspace/Feedback';
+import { auditActionLabel, auditEntityLabel, compactId, formatNumber } from '../features/admin/adminLabels';
+import { formatDateTime, formatPercent } from '../features/review/reviewModel';
+import '../css/workspace.css';
+import '../css/AdminPages.css';
 
-const JOB_TYPE_LABEL = {
-  generation: 'Sinh câu hỏi',
-  Generation: 'Sinh câu hỏi',
-  evaluation: 'Đánh giá',
-  Evaluation: 'Đánh giá',
-  document: 'Tài liệu',
-  DOCUMENT: 'Tài liệu',
+const KIND_TEXT = {
+  document: 'tài liệu (OCR/cắt đoạn)',
+  generation: 'sinh câu hỏi',
+  evaluation: 'đánh giá AI',
 };
-
-const ACTION_LABEL = {
-  'user.admin_update': 'Cập nhật người dùng',
-  'user.deactivate': 'Khóa người dùng',
-  'QUESTION_EVALUATED': 'Đánh giá câu hỏi',
-  'QUESTION_APPROVED': 'Duyệt câu hỏi',
-  'QUESTION_REJECTED': 'Từ chối câu hỏi',
-  'QUESTION_NEEDS_REVISION': 'Yêu cầu sửa',
-  'QUESTION_REVIEW_CLAIMED': 'Nhận kiểm duyệt',
-  'QUESTION_REVIEW_RELEASED': 'Trả câu kiểm duyệt',
-  'admin.job_retry': 'Chạy lại tác vụ',
-  'admin.job_cancel': 'Hủy tác vụ',
-  'admin.moodle_target_save': 'Lưu cấu hình Moodle',
-  'admin.moodle_target_deactivate': 'Tắt cấu hình Moodle',
-  'admin.moodle_target_check': 'Kiểm tra cấu hình Moodle',
-  'auth.demo_login': 'Đăng nhập demo',
-  'user.password_reset': 'Đặt lại mật khẩu',
-};
-
-const ENTITY_TYPE_LABEL = {
-  'user': 'Người dùng',
-  'QUESTION': 'Câu hỏi',
-  'question': 'Câu hỏi',
-  'generation': 'Sinh câu hỏi',
-  'evaluation': 'Đánh giá',
-  'document': 'Tài liệu',
-  'moodle_target': 'Cấu hình Moodle',
-  'subject': 'Môn học',
-};
-
-function formatNumber(value) {
-  return new Intl.NumberFormat('vi-VN').format(value || 0);
-}
-
-function formatDateTime(value) {
-  if (!value) return 'Chưa có';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Chưa có';
-  return new Intl.DateTimeFormat('vi-VN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(date);
-}
-
-function formatPercent(value) {
-  return typeof value === 'number' ? `${Math.round(value * 100)}%` : '--';
-}
 
 function formatLatency(value) {
   if (typeof value !== 'number') return '--';
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
-  return `${Math.round(value)}ms`;
+  return value >= 1000 ? `${(value / 1000).toFixed(1)} giây` : `${Math.round(value)} ms`;
 }
 
-function formatCurrency(value) {
+function formatCost(value) {
   if (typeof value !== 'number') return '--';
-  return new Intl.NumberFormat('vi-VN', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: value < 1 ? 4 : 2,
-  }).format(value);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: value > 0 && value < 1 ? 4 : 2 }).format(value);
 }
 
-function compactId(value) {
-  if (!value) return 'Chưa có';
-  const text = String(value);
-  if (text.length <= 12) return text;
-  return `${text.slice(0, 6)}...${text.slice(-4)}`;
+/** Danh sách việc cần xử lý, mỗi dòng dẫn tới đúng trang đã lọc. */
+function buildAttention(overview, dashboard, staleUnassigned) {
+  const items = [];
+  const breakdown = overview?.jobs?.breakdown || [];
+  breakdown.forEach((row) => {
+    if (row.failed) {
+      items.push({ key: `fail-${row.key}`, tone: 'danger', text: `${formatNumber(row.failed)} tác vụ ${KIND_TEXT[row.key] || row.label} lỗi`, to: `/quan-ly-job?type=${row.key}&status=retryable` });
+    }
+  });
+  if (!breakdown.length && overview?.jobs?.failed) {
+    items.push({ key: 'fail', tone: 'danger', text: `${formatNumber(overview.jobs.failed)} tác vụ lỗi`, to: '/quan-ly-job?status=retryable' });
+  }
+  const publicationsFailed = overview?.moodle?.publications?.failed || 0;
+  if (publicationsFailed) items.push({ key: 'moodle', tone: 'danger', text: `${formatNumber(publicationsFailed)} lần đồng bộ Moodle lỗi`, to: '/quan-ly-moodle?status=FAILED' });
+  const documentsFailed = overview?.documents?.failed || 0;
+  if (documentsFailed) items.push({ key: 'docs', tone: 'danger', text: `${formatNumber(documentsFailed)} tài liệu xử lý lỗi`, to: '/quan-ly-tai-lieu' });
+  if (staleUnassigned) items.push({ key: 'stale-review', tone: 'warn', text: `${formatNumber(staleUnassigned)} câu chờ duyệt quá 48 giờ chưa ai nhận`, to: '/kiem-duyet?tab=unassigned' });
+  const lockExpired = dashboard?.workload?.lock_expired || 0;
+  if (lockExpired) items.push({ key: 'lock', tone: 'warn', text: `${formatNumber(lockExpired)} câu bị giữ quá hạn khoá`, to: '/kiem-duyet?tab=overdue' });
+  const longRunning = overview?.jobs?.long_running || 0;
+  if (longRunning) items.push({ key: 'long', tone: 'warn', text: `${formatNumber(longRunning)} tác vụ chạy quá lâu`, to: '/quan-ly-job?stale_only=true' });
+  return items;
 }
 
 function AdminOverviewPage() {
   const [overview, setOverview] = useState(null);
+  const [dashboard, setDashboard] = useState(null);
+  const [staleUnassigned, setStaleUnassigned] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const loadOverview = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    try {
-      setOverview(await getAdminOverview());
-    } catch (err) {
-      setError(err.message || 'Không tải được tổng quan hệ thống');
-    } finally {
-      setLoading(false);
-    }
+    const [overviewResult, dashboardResult, staleResult] = await Promise.allSettled([
+      getAdminOverview(),
+      getReviewDashboard(),
+      listQuestions({ page: 1, pageSize: 1, reviewStatus: 'PENDING', assignmentStatus: 'UNASSIGNED', waitingHoursMin: 48 }),
+    ]);
+    if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
+    else setError(overviewResult.reason?.message || 'Không tải được tổng quan hệ thống.');
+    setDashboard(dashboardResult.status === 'fulfilled' ? dashboardResult.value : null);
+    setStaleUnassigned(staleResult.status === 'fulfilled' ? (staleResult.value.total || 0) : 0);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    loadOverview();
-  }, [loadOverview]);
+    load();
+  }, [load]);
 
-  const stats = useMemo(() => {
-    const users = overview?.users || {};
-    const questions = overview?.questions || {};
-    const documents = overview?.documents || {};
-    const jobs = overview?.jobs || {};
-    const moodle = overview?.moodle || {};
-    return [
-      {
-        key: 'users',
-        label: 'Người dùng hoạt động',
-        value: users.active,
-        detail: `${formatNumber(users.teachers)} giảng viên · ${formatNumber(users.reviewers)} người duyệt`,
-        icon: faUsers,
-      },
-      {
-        key: 'questions',
-        label: 'Câu hỏi đang dùng',
-        value: questions.total,
-        detail: `${formatNumber(questions.pending)} chờ duyệt · ${formatNumber(questions.approved)} đã duyệt`,
-        icon: faBookOpen,
-      },
-      {
-        key: 'documents',
-        label: 'Tài liệu',
-        value: documents.total,
-        detail: `${formatNumber(documents.processing)} đang xử lý · ${formatNumber(documents.failed)} lỗi`,
-        icon: faDatabase,
-      },
-      {
-        key: 'jobs',
-        label: 'Hàng đợi cần xử lý',
-        value: jobs.failed,
-        detail: `${formatNumber(jobs.active)} đang chạy · ${formatNumber(jobs.long_running)} quá ngưỡng`,
-        icon: faServer,
-      },
-      {
-        key: 'moodle',
-        label: 'Ghi mô phỏng Moodle',
-        value: moodle.publications?.total,
-        detail: `${formatNumber(moodle.publications?.simulated)} lượt mô phỏng · ${formatNumber(moodle.active_targets)} cấu hình hoạt động`,
-        icon: faPlugCircleCheck,
-      },
-    ];
-  }, [overview]);
+  const questions = overview?.questions || {};
+  const documents = overview?.documents || {};
+  const usage = overview?.model_usage_summary || {};
+  const models = overview?.model_performance || [];
+  const recentAudit = (overview?.recent_audit || []).slice(0, 5);
+  const attention = buildAttention(overview, dashboard, staleUnassigned);
 
-  const attention = overview?.attention || [];
-  const recentJobs = overview?.recent_jobs || [];
-  const recentAudit = overview?.recent_audit || [];
-  const quality = overview?.questions?.quality || {};
-  const publications = overview?.moodle?.publications || {};
-  const jobBreakdown = overview?.jobs?.breakdown || [];
-  const modelPerformance = overview?.model_performance || [];
-  const modelUsage = overview?.model_usage_summary || {};
+  const stages = [
+    { key: 'docs', label: 'Tài liệu đang xử lý', value: documents.processing, meta: `${formatNumber(documents.ready)} tài liệu sẵn sàng`, to: '/quan-ly-tai-lieu' },
+    { key: 'draft', label: 'Câu nháp', value: questions.draft, meta: 'Giảng viên đang soạn', to: '/quan-ly' },
+    { key: 'pending', label: 'Chờ duyệt', value: questions.pending, meta: `${formatNumber(dashboard?.workload?.unassigned)} chưa ai nhận`, to: '/kiem-duyet?tab=all', focus: true },
+    { key: 'revision', label: 'Cần sửa', value: questions.needs_revision, meta: 'Chờ giảng viên sửa và gửi lại', to: '/kiem-duyet?tab=processed' },
+    { key: 'approved', label: 'Đã duyệt', value: questions.approved, meta: `${formatNumber(questions.rejected)} câu bị từ chối`, to: '/kiem-duyet?tab=processed' },
+    { key: 'moodle', label: 'Đã lên Moodle', value: questions.published, meta: `${formatNumber(Math.max(0, (questions.approved || 0) - (questions.published || 0)))} câu chờ đồng bộ`, to: '/kiem-duyet?tab=moodle' },
+  ];
 
   return (
-    <main className="admin-overview-page">
-      <section className="overview-header">
-        <div>
-          <span>Quản trị hệ thống</span>
-          <h1>Tổng quan vận hành</h1>
-          <p>Theo dõi sức khỏe hệ thống, hàng đợi, kiểm duyệt và mô phỏng Moodle trong một màn hình.</p>
+    <main className="ws-page overview-workspace-page">
+      <WorkspaceHero
+        badge="Quản trị viên"
+        title="Tổng quan"
+        description="Việc cần xử lý ngay và dòng chảy câu hỏi từ tài liệu tới Moodle."
+        actions={(
+          <button type="button" className="btn btn--outline" onClick={load} disabled={loading}>
+            <FontAwesomeIcon icon={faRotateRight} />
+            Làm mới
+          </button>
+        )}
+      />
+
+      <section className="ws-body">
+        <div className="container ws-main">
+          {loading && !overview ? (
+            <div className="ws-card"><SkeletonRows rows={4} lines={2} /></div>
+          ) : error && !overview ? (
+            <div className="ws-card"><ErrorState message={error} onRetry={load} /></div>
+          ) : (
+            <>
+              <section className="ws-card">
+                <div className="ws-card-title" style={{ marginBottom: 12 }}>
+                  <h2>Cần xử lý ngay</h2>
+                </div>
+                {attention.length === 0 ? (
+                  <p className="ad-all-clear"><FontAwesomeIcon icon={faCircleCheck} /> Không có việc cần xử lý.</p>
+                ) : (
+                  <div className="ad-attention">
+                    {attention.map((item) => (
+                      <Link key={item.key} to={item.to} className={item.tone === 'danger' ? 'is-danger' : 'is-warning'}>
+                        <span>{item.text}</span>
+                        <FontAwesomeIcon icon={faArrowRight} />
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <nav className="ad-pipeline ad-pipeline--6" aria-label="Pipeline câu hỏi">
+                {stages.map((stage) => (
+                  <Link key={stage.key} to={stage.to} className={`ad-stage ${stage.focus && stage.value ? 'ad-stage--focus' : ''}`}>
+                    <span className="ad-stage__label">{stage.label}</span>
+                    <span className="ad-stage__value">{formatNumber(stage.value)}</span>
+                    <span className="ad-stage__meta">{stage.meta}</span>
+                  </Link>
+                ))}
+              </nav>
+
+              <div className="ws-split">
+                <section className="ws-card">
+                  <div className="ws-card-head">
+                    <div className="ws-card-title">
+                      <h2>Sử dụng mô hình 30 ngày</h2>
+                      <span>{formatNumber(usage.total_requests)} lượt gọi, {formatNumber(usage.total_tokens)} token, chi phí {formatCost(usage.cost_usd)}</span>
+                    </div>
+                    <Link className="ws-card-link" to="/cau-hinh-ai">Cấu hình AI</Link>
+                  </div>
+                  {models.length === 0 ? (
+                    <EmptyState compact title="Chưa có lượt gọi mô hình" description="Số liệu xuất hiện sau khi giảng viên sinh câu hỏi hoặc AI đánh giá câu hỏi." />
+                  ) : (
+                    <div className="ws-table-wrap">
+                      <table className="ws-table">
+                        <thead><tr><th>Mô hình</th><th className="ws-num">Lượt</th><th className="ws-num">Token</th><th className="ws-num">Độ trễ TB</th><th className="ws-num">Lỗi</th><th className="ws-num">Chi phí</th></tr></thead>
+                        <tbody>
+                          {models.map((item) => (
+                            <tr key={item.key}>
+                              <td><strong>{item.model_name || item.model_code}</strong><small>{item.kind_label}</small></td>
+                              <td className="ws-num">{formatNumber(item.total)}</td>
+                              <td className="ws-num">{formatNumber(item.total_tokens)}</td>
+                              <td className="ws-num">{formatLatency(item.avg_latency_ms)}</td>
+                              <td className="ws-num">{formatPercent(item.error_rate)}</td>
+                              <td className="ws-num">{formatCost(item.cost_usd)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+
+                <section className="ws-card">
+                  <div className="ws-card-head">
+                    <div className="ws-card-title">
+                      <h2>Thay đổi gần đây</h2>
+                    </div>
+                    <Link className="ws-card-link" to="/nhat-ky-he-thong">Xem nhật ký</Link>
+                  </div>
+                  {recentAudit.length === 0 ? (
+                    <p className="ws-hint" style={{ margin: 0 }}>Chưa có hoạt động.</p>
+                  ) : (
+                    <ul className="ad-feed">
+                      {recentAudit.map((item) => (
+                        <li key={item.id}>
+                          <span className="ad-sentence">
+                            <b>{item.actor?.user_name || 'Hệ thống'}</b> đã {auditActionLabel(item.action).toLowerCase()} {auditEntityLabel(item.entity?.type).toLowerCase()} {item.entity?.label || compactId(item.entity?.id)}
+                          </span>
+                          <small>{formatDateTime(item.created_at)}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            </>
+          )}
         </div>
-        <button type="button" className="overview-primary-button" onClick={loadOverview} disabled={loading}>
-          <FontAwesomeIcon icon={faRotateRight} />
-          <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
-        </button>
-      </section>
-
-      {error && <p className="overview-error">{error}</p>}
-
-      <section className="overview-stats" aria-label="Chỉ số vận hành">
-        {stats.map((item) => (
-          <article className={`overview-stat overview-stat--${item.key}`} key={item.key}>
-            <FontAwesomeIcon icon={item.icon} />
-            <div>
-              <span>{item.label}</span>
-              <b>{formatNumber(item.value)}</b>
-              <small>{item.detail}</small>
-            </div>
-          </article>
-        ))}
-      </section>
-
-      <section className="overview-grid">
-        <section className="overview-panel overview-panel--attention">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Cần chú ý</span>
-              <h2>Hàng đợi vận hành</h2>
-            </div>
-            <FontAwesomeIcon icon={faTriangleExclamation} />
-          </div>
-          <div className="attention-list">
-            {attention.map((item) => (
-              <Link className={`attention-row attention-row--${item.severity}`} to={item.path} key={item.key}>
-                <span>{item.label}</span>
-                <b>{formatNumber(item.count)}</b>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="overview-panel">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Ngân hàng câu hỏi</span>
-              <h2>Trạng thái kiểm duyệt</h2>
-            </div>
-            <FontAwesomeIcon icon={faClipboardCheck} />
-          </div>
-          <dl className="overview-breakdown overview-breakdown--three">
-            <div>
-              <dt>Nháp</dt>
-              <dd>{formatNumber(overview?.questions?.draft)}</dd>
-            </div>
-            <div>
-              <dt>Chờ duyệt</dt>
-              <dd>{formatNumber(overview?.questions?.pending)}</dd>
-            </div>
-            <div>
-              <dt>Đã duyệt</dt>
-              <dd>{formatNumber(overview?.questions?.approved)}</dd>
-            </div>
-            <div>
-              <dt>Cần sửa</dt>
-              <dd>{formatNumber(overview?.questions?.needs_revision)}</dd>
-            </div>
-            <div>
-              <dt>Từ chối</dt>
-              <dd>{formatNumber(overview?.questions?.rejected)}</dd>
-            </div>
-            <div>
-              <dt>Đã ghi Moodle</dt>
-              <dd>{formatNumber(overview?.questions?.published)}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="overview-panel">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Chất lượng (Quality)</span>
-              <h2>Màu đánh giá</h2>
-            </div>
-            <FontAwesomeIcon icon={faClipboardCheck} />
-          </div>
-          <dl className="overview-breakdown">
-            <div>
-              <dt>Xanh lá</dt>
-              <dd>{formatNumber(quality.green)}</dd>
-            </div>
-            <div>
-              <dt>Vàng</dt>
-              <dd>{formatNumber(quality.yellow)}</dd>
-            </div>
-            <div>
-              <dt>Đỏ</dt>
-              <dd>{formatNumber(quality.red)}</dd>
-            </div>
-            <div>
-              <dt>Chưa chấm</dt>
-              <dd>{formatNumber(quality.not_evaluated)}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="overview-panel">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Mô phỏng Moodle</span>
-              <h2>Trạng thái ghi nhận</h2>
-            </div>
-            <FontAwesomeIcon icon={faPlugCircleCheck} />
-          </div>
-          <dl className="overview-breakdown">
-            <div>
-              <dt>Đã ghi</dt>
-              <dd>{formatNumber(publications.published)}</dd>
-            </div>
-            <div>
-              <dt>Lỗi</dt>
-              <dd>{formatNumber(publications.failed)}</dd>
-            </div>
-            <div>
-              <dt>Đang chờ</dt>
-              <dd>{formatNumber(publications.pending)}</dd>
-            </div>
-            <div>
-              <dt>Mô phỏng</dt>
-              <dd>{formatNumber(publications.simulated)}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="overview-panel overview-panel--wide">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Hàng đợi</span>
-              <h2>Tác vụ theo loại</h2>
-            </div>
-            <Link to="/quan-ly-job">Mở hàng đợi</Link>
-          </div>
-          <div className="overview-table-wrap">
-            <table className="overview-table overview-table--compact">
-              <thead>
-                <tr>
-                  <th>Loại</th>
-                  <th>Tổng</th>
-                  <th>Đang chạy</th>
-                  <th>Lỗi</th>
-                  <th>Quá ngưỡng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobBreakdown.map((item) => (
-                  <tr key={item.key}>
-                    <td><strong>{item.label}</strong></td>
-                    <td>{formatNumber(item.total)}</td>
-                    <td>{formatNumber(item.active)}</td>
-                    <td>{formatNumber(item.failed)}</td>
-                    <td>{formatNumber(item.long_running)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!loading && jobBreakdown.length === 0 && <p className="overview-empty">Chưa có tác vụ vận hành.</p>}
-          </div>
-        </section>
-
-        <section className="overview-panel overview-panel--wide">
-          <div className="overview-panel-heading">
-            <div>
-              <span>30 ngày gần nhất</span>
-              <h2>Sử dụng mô hình, token và chi phí</h2>
-            </div>
-            <FontAwesomeIcon icon={faServer} />
-          </div>
-          <div className="model-usage-summary">
-            <div>
-              <span>Lượt gọi</span>
-              <b>{formatNumber(modelUsage.total_requests)}</b>
-            </div>
-            <div>
-              <span>Tokens</span>
-              <b>{formatNumber(modelUsage.total_tokens)}</b>
-              <small>{formatNumber(modelUsage.prompt_tokens)} in · {formatNumber(modelUsage.completion_tokens)} out</small>
-            </div>
-            <div>
-              <span>Chi phí</span>
-              <b>{formatCurrency(modelUsage.cost_usd)}</b>
-            </div>
-            <div>
-              <span>Độ trễ TB</span>
-              <b>{formatLatency(modelUsage.avg_latency_ms)}</b>
-            </div>
-          </div>
-          <div className="overview-table-wrap">
-            <table className="overview-table overview-table--compact">
-              <thead>
-                <tr>
-                  <th>Mô hình</th>
-                  <th>Luồng</th>
-                  <th>Tổng</th>
-                  <th>Hoàn tất</th>
-                  <th>Lỗi</th>
-                  <th>Tỉ lệ lỗi</th>
-                  <th>Độ trễ TB</th>
-                  <th>Token</th>
-                  <th>Chi phí</th>
-                </tr>
-              </thead>
-              <tbody>
-                {modelPerformance.map((item) => (
-                  <tr key={item.key}>
-                    <td><strong>{item.model_name || item.model_code}</strong></td>
-                    <td>{item.kind_label}</td>
-                    <td>{formatNumber(item.total)}</td>
-                    <td>{formatNumber(item.completed)}</td>
-                    <td>{formatNumber(item.failed)}</td>
-                    <td>{formatPercent(item.error_rate)}</td>
-                    <td>{formatLatency(item.avg_latency_ms)}</td>
-                    <td>
-                      {formatNumber(item.total_tokens)}
-                      <small>{formatNumber(item.prompt_tokens)} in · {formatNumber(item.completion_tokens)} out</small>
-                    </td>
-                    <td>{formatCurrency(item.cost_usd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!loading && modelPerformance.length === 0 && <p className="overview-empty">Chưa có dữ liệu model trong 30 ngày.</p>}
-          </div>
-        </section>
-
-        <section className="overview-panel overview-panel--wide">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Tác vụ lỗi gần đây</span>
-              <h2>Hàng đợi cần chạy lại</h2>
-            </div>
-            <Link to="/quan-ly-job?status=retryable">Mở hàng đợi</Link>
-          </div>
-          <div className="overview-table-wrap">
-            <table className="overview-table">
-              <thead>
-                <tr>
-                  <th>Loại</th>
-                  <th>Đối tượng</th>
-                  <th>Cập nhật</th>
-                  <th>Lỗi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentJobs.map((job) => (
-                  <tr key={`${job.kind}:${job.id}`}>
-                    <td>
-                      <strong>{JOB_TYPE_LABEL[job.type] || JOB_TYPE_LABEL[job.kind] || job.type || job.kind}</strong>
-                    </td>
-                    <td>{job.entity?.label || compactId(job.entity?.id)}</td>
-                    <td>{formatDateTime(job.updated_at || job.finished_at || job.started_at || job.queued_at)}</td>
-                    <td className="overview-error-cell">{job.error_message || 'Không có'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!loading && recentJobs.length === 0 && <p className="overview-empty">Không có tác vụ cần chạy lại.</p>}
-          </div>
-        </section>
-
-        <section className="overview-panel overview-panel--wide">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Nhật ký gần đây</span>
-              <h2>Thay đổi hệ thống</h2>
-            </div>
-            <Link to="/nhat-ky-he-thong">Mở nhật ký</Link>
-          </div>
-          <div className="audit-list-compact">
-            {recentAudit.map((item) => (
-              <article key={item.id}>
-                <strong>{ACTION_LABEL[item.action] || item.action}</strong>
-                <span>{ENTITY_TYPE_LABEL[item.entity?.type] || item.entity?.type || 'đối tượng'} · {item.entity?.label || compactId(item.entity?.id)}</span>
-                <small>{formatDateTime(item.created_at)}</small>
-              </article>
-            ))}
-            {!loading && recentAudit.length === 0 && <p className="overview-empty">Chưa có nhật ký.</p>}
-          </div>
-        </section>
       </section>
     </main>
   );
