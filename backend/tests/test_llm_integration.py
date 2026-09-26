@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 from modules.generation.llm.gemini import GeminiProvider
 from modules.generation.llm.ollama import OllamaProvider, close_ollama_client
-from modules.generation.llm.model_registry import GENERATION_CAPABILITY, resolve_direct_model_snapshot
+from modules.generation.llm.model_registry import (
+    GENERATION_CAPABILITY,
+    resolve_direct_model_snapshot,
+    resolve_model_snapshot,
+)
 
 
 class FakeOllamaHandler(BaseHTTPRequestHandler):
@@ -103,6 +107,23 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["model_received"], "qwen3:8b")
         self.assertIs(FakeOllamaHandler.last_payload["think"], False)
+
+
+class RemovedModelTests(unittest.TestCase):
+    def test_removed_qwen_version_cannot_be_selected_directly(self):
+        with self.assertRaisesRegex(ValueError, "đã được gỡ"):
+            resolve_direct_model_snapshot("ollama:qwen2.5:7b", GENERATION_CAPABILITY)
+
+    def test_removed_qwen_catalog_record_cannot_be_selected(self):
+        database = MagicMock()
+        database.ai_models.find_one.return_value = {
+            "model_code": "qwen",
+            "model_name": "qwen2.5:7b",
+            "runtime": "OLLAMA",
+            "is_active": True,
+        }
+        with self.assertRaisesRegex(ValueError, "đã được gỡ"):
+            resolve_model_snapshot("qwen", database=database)
 
 
 class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):

@@ -22,7 +22,7 @@ def provider_concurrency_group(provider_code: str) -> str:
     normalized = provider_code.strip().lower()
     if normalized == "gemini":
         return "gemini"
-    if normalized in {"qwen", "deepseek", "deepseek-r1", "deepseek-r1:8b"} or normalized.startswith(
+    if normalized in {"qwen3-8b", "deepseek", "deepseek-r1", "deepseek-r1:8b"} or normalized.startswith(
         "ollama:"
     ):
         return "ollama"

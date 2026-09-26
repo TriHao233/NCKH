@@ -10,8 +10,8 @@ GENERATION_CAPABILITY = "QUESTION_GENERATION"
 EVALUATION_CAPABILITY = "QUESTION_EVALUATION"
 
 DIRECT_MODEL_CODES_BY_CAPABILITY = {
-    GENERATION_CAPABILITY: ("qwen", "qwen3-8b", "deepseek", "gemini"),
-    EVALUATION_CAPABILITY: ("qwen", "deepseek", "deepseek-r1", "gemini"),
+    GENERATION_CAPABILITY: ("qwen3-8b", "deepseek", "gemini"),
+    EVALUATION_CAPABILITY: ("qwen3-8b", "deepseek", "deepseek-r1", "gemini"),
 }
 
 
@@ -77,6 +77,11 @@ def _snapshot_from_record(record: dict, requested_code: str, capability: str | N
     model_name = str(record.get("model_name") or "").strip()
     if not model_name:
         raise ValueError("Model chưa có tên phiên bản")
+    if model_name.lower() == "qwen2.5:7b":
+        raise ValueError("Qwen 2.5 (7B) đã được gỡ khỏi dự án")
+    config = dict(record.get("config") or {})
+    if model_name.lower() == "qwen3:8b":
+        config.setdefault("think", False)
     return {
         "catalog_id": str(record.get("_id")) if record.get("_id") is not None else None,
         "requested_code": requested_code,
@@ -88,17 +93,14 @@ def _snapshot_from_record(record: dict, requested_code: str, capability: str | N
         "revision": str(record.get("revision") or ""),
         "capabilities": capabilities,
         "is_local": bool(record.get("is_local", runtime == "OLLAMA")),
-        "parameters": _runtime_parameters(runtime, record.get("config") or {}),
+        "parameters": _runtime_parameters(runtime, config),
         "source": "catalog",
     }
 
 
 def resolve_direct_model_snapshot(model_code: str, capability: str | None = None) -> dict:
     normalized = model_code.strip().lower()
-    if normalized == "qwen":
-        runtime, model_name, display_name = "OLLAMA", settings.qwen_model_name, "Qwen"
-        config: dict[str, Any] = {}
-    elif normalized == "qwen3-8b":
+    if normalized == "qwen3-8b":
         runtime, model_name, display_name = "OLLAMA", "qwen3:8b", "Qwen3 (8B)"
         config = {"think": False}
     elif normalized in {"deepseek", "deepseek-r1"}:
@@ -130,6 +132,8 @@ def resolve_direct_model_snapshot(model_code: str, capability: str | None = None
         raise ValueError("Gemini chưa được cấu hình")
     if not model_name:
         raise ValueError("Mã model phải kèm tên phiên bản")
+    if model_name.lower() == "qwen2.5:7b":
+        raise ValueError("Qwen 2.5 (7B) đã được gỡ khỏi dự án")
     capabilities = [GENERATION_CAPABILITY, EVALUATION_CAPABILITY]
     return {
         "catalog_id": None,

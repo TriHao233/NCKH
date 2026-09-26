@@ -108,7 +108,7 @@ def _limit_evaluation_output(snapshot: dict | None) -> dict | None:
     if not snapshot or str(snapshot.get("runtime") or "").upper() != "OLLAMA":
         return snapshot
     model_code = str(snapshot.get("model_code") or "").strip().lower()
-    if model_code != "qwen":
+    if model_code != "qwen3-8b":
         return snapshot
     parameters = dict(snapshot.get("parameters") or {})
     configured = int(parameters.get("num_predict") or settings.evaluation_num_predict)

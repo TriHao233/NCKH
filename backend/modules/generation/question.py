@@ -674,11 +674,26 @@ def _build_retry_prompt(
         if error
     ]
     errors = "\n".join(f"- {error}" for error in error_messages) or "- Not enough valid questions were produced."
+    rejected_questions = [
+        error.question_excerpt
+        for error in validation_errors
+        if isinstance(error, GenerationRejection) and error.question_excerpt
+    ]
     avoid_list = "\n".join(
         f"- {question.strip()}"
-        for question in avoid_questions[-12:]
+        for question in [*avoid_questions, *rejected_questions][-12:]
         if question and question.strip()
     ) or "- None"
+    grounding_rule = (
+        "- source_context: copy one continuous passage exactly from after Nội dung: in CONTEXT. "
+        "Do not include the Nội dung: label, ellipses, or paraphrases; preserve every word. "
+        "Choose a different source passage and question if the previous quote cannot be found verbatim."
+        if any(
+            isinstance(error, GenerationRejection) and error.code == "SOURCE_CONTEXT_NOT_IN_CONTENT"
+            for error in validation_errors
+        )
+        else ""
+    )
     type_rule = QUESTION_TYPE_RETRY_RULES.get(question_type, "Follow the QUESTION TYPE rules exactly.")
     difficulty_rule = f"- difficulty: {difficulty}" if difficulty else "- difficulty: apply the difficulty rule"
     return f"""
@@ -693,6 +708,7 @@ STRICT TARGET:
 - bloom_level: {bloom_level}
 {difficulty_rule}
 - required structure: {type_rule}
+{grounding_rule}
 
 RECENT VALIDATION ERRORS TO FIX:
 {errors}

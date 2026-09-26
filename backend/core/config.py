@@ -111,14 +111,14 @@ class Settings(BaseModel):
     demo_session_secret: str = os.getenv("DEMO_SESSION_SECRET", "")
     demo_session_ttl_hours: int = int(os.getenv("DEMO_SESSION_TTL_HOURS", "8"))
 
-    # Provider LLM mặc định (qwen chạy local qua Ollama)
-    model_provider: str = os.getenv("MODEL_PROVIDER", "qwen")
+    # Provider LLM mặc định chạy local qua Ollama.
+    model_provider: str = os.getenv("MODEL_PROVIDER", "qwen3-8b")
     code_generation_model_provider: str = os.getenv(
-        "CODE_GENERATION_MODEL_PROVIDER", "qwen"
+        "CODE_GENERATION_MODEL_PROVIDER", "qwen3-8b"
     ).strip()
     evaluation_model_provider: str = _env_first(
         ("EVALUATION_MODEL_PROVIDER", "EVALUATOR_MODEL_CODE"),
-        "qwen",
+        "qwen3-8b",
     )
     generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
     evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
@@ -133,7 +133,6 @@ class Settings(BaseModel):
     ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0"))
     # RTX 4050 6 GB shares VRAM with Docling; keep Ollama warm briefly, not indefinitely.
     ollama_keep_alive: str = os.getenv("OLLAMA_KEEP_ALIVE", "5m").strip()
-    qwen_model_name: str = os.getenv("QWEN_MODEL_NAME", "qwen2.5:7b").strip()
     deepseek_model_name: str = _env_first(("DEEPSEEK_MODEL_NAME",), "deepseek-r1")
     deepseek_timeout_seconds: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "180"))
     deepseek_num_predict: int = int(os.getenv("DEEPSEEK_NUM_PREDICT", "900"))

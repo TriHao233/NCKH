@@ -21,7 +21,7 @@ async def run_test():
         {"bloom": "3_van_dung", "type": "tinh_huong", "num": 1}
     ]
     
-    provider = "qwen" 
+    provider = "qwen3-8b"
     llm = get_llm_service(provider)
     builder = PromptBuilder()
 

@@ -141,15 +141,15 @@ function DocumentManagePage() {
     }
   };
 
-  const archiveDocument = async (document) => {
-    if (!window.confirm(`Lưu trữ tài liệu “${document.title}”? Tài liệu sẽ bị ẩn khỏi danh sách sử dụng.`)) return;
+  const removeDocument = async (document) => {
+    if (!window.confirm(`Xóa tài liệu “${document.title}” khỏi danh sách sử dụng?`)) return;
     setBusyId(document.id);
     try {
       await deleteDocument(document.id);
-      setNotice('Đã lưu trữ tài liệu.');
+      setNotice('Đã xóa tài liệu khỏi danh sách sử dụng.');
       await loadDocuments();
     } catch (err) {
-      setError(err.message || 'Không thể lưu trữ tài liệu');
+      setError(err.message || 'Không thể xóa tài liệu');
     } finally {
       setBusyId('');
     }
@@ -248,7 +248,7 @@ function DocumentManagePage() {
                 <button type="button" onClick={() => openPreview(document)}><FontAwesomeIcon icon={faFileLines} /> Xem OCR</button>
                 <button type="button" disabled={!manageable} onClick={() => openEdit(document)}><FontAwesomeIcon icon={faPen} /> Chỉnh sửa</button>
                 <button type="button" disabled={!manageable || !canReindex || busyId === document.id} onClick={() => reindex(document)} title={!canReindex ? 'Tài liệu cần chunk thành công trước' : ''}><FontAwesomeIcon icon={faArrowsRotate} /> Re-index</button>
-                <button type="button" className="danger" disabled={!manageable || busyId === document.id} onClick={() => archiveDocument(document)}><FontAwesomeIcon icon={faTrashCan} /> Lưu trữ</button>
+                <button type="button" className="danger" disabled={!manageable || busyId === document.id} onClick={() => removeDocument(document)}><FontAwesomeIcon icon={faTrashCan} /> Xóa</button>
               </div>
             </article>
           );

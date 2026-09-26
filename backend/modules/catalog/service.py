@@ -536,7 +536,7 @@ class CatalogService:
                 "ollama_timeout_seconds": settings.ollama_timeout_seconds,
                 "ollama_num_predict": settings.ollama_num_predict,
                 "ollama_temperature": settings.ollama_temperature,
-                "qwen_model_name": settings.qwen_model_name,
+                "qwen3_model_name": "qwen3:8b",
                 "deepseek_model_name": settings.deepseek_model_name,
                 "deepseek_timeout_seconds": settings.deepseek_timeout_seconds,
                 "gemini_default_model": settings.gemini_model_name,
@@ -549,7 +549,7 @@ class CatalogService:
                 "active_evaluation_policy": active_policy or FALLBACK_EVALUATION_POLICY,
                 "warnings": warnings,
                 "supported_provider_patterns": [
-                    "qwen",
+                    "qwen3-8b",
                     "gemini",
                     "deepseek",
                     "deepseek-r1",

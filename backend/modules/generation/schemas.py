@@ -30,7 +30,7 @@ class QuestionPlanItem(BaseModel):
     question_type: QuestionType
     bloom_level: Optional[BloomLevel] = None
     difficulty: Optional[QuestionDifficulty] = None
-    num_questions: int = Field(default=1, ge=1, le=10)
+    num_questions: int = Field(default=1, ge=1, le=7)
     content_mode: Literal["auto", "code", "general"] = "auto"
 
 
@@ -59,7 +59,7 @@ class QuestionGenerateRequest(BaseModel):
         description="Độ khó ước lượng mong muốn; mỗi dòng trong question_plan có thể ghi đè giá trị này.",
     )
     question_type: QuestionType = QuestionType.TRAC_NGHIEM
-    num_questions: int = Field(default=1, ge=1, le=10)
+    num_questions: int = Field(default=1, ge=1, le=7)
     model_provider: str = Field(default_factory=lambda: settings.model_provider, min_length=1, max_length=160)
     code_model_provider: str = Field(
         default_factory=lambda: settings.code_generation_model_provider,
@@ -88,8 +88,8 @@ class QuestionGenerateRequest(BaseModel):
     @model_validator(mode="after")
     def validate_total_questions(self):
         total = sum(item.num_questions for item in self.question_plan) if self.question_plan else self.num_questions
-        if total < 1 or total > 20:
-            raise ValueError("Tổng số câu hỏi phải từ 1 đến 20.")
+        if total < 1 or total > 7:
+            raise ValueError("Tổng số câu hỏi phải từ 1 đến 7.")
         return self
 
     def effective_plan(self) -> List[QuestionPlanItem]:
