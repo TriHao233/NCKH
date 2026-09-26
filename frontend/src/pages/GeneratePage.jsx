@@ -46,7 +46,7 @@ const PHASE_LABELS = {
   failed: 'Thất bại',
 };
 
-const MAX_TOTAL_QUESTIONS = 20;
+const MAX_TOTAL_QUESTIONS = 7;
 const DRAFTS_PER_PAGE = 3;
 const SUPPORTED_SOURCE_EXTENSIONS = ['.pdf', '.doc', '.docx', '.md', '.markdown', '.txt'];
 const PRESET_STORAGE_KEY = 'qbank_generation_presets';
@@ -99,7 +99,7 @@ function formatDuration(value) {
 function normalizeCount(value) {
   const parsed = Number(value);
   if (Number.isNaN(parsed)) return 1;
-  return Math.min(10, Math.max(1, Math.trunc(parsed)));
+  return Math.min(MAX_TOTAL_QUESTIONS, Math.max(1, Math.trunc(parsed)));
 }
 
 function createPlanItem(overrides = {}) {
@@ -270,6 +270,7 @@ function generatedDraftPayload(draft, fallbackDocumentId) {
 
 function GeneratePage() {
   const abortRef = useRef(null);
+  const fileInputRef = useRef(null);
   const timingRef = useRef({});
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
@@ -1263,11 +1264,17 @@ function GeneratePage() {
     setSourceMode('upload');
     setFile(null);
     setFileName('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setSelectedDocumentId('');
+    setSelectedSubjectId('');
     setPlanItems(createInitialPlan());
     setSelectedPresetId('');
+    setPresetDialogOpen(false);
+    setPresetName('');
+    setPresetError('');
     setTeacherInstruction('');
     setTargetHeading('');
+    setSelectedModelCode(availableModels.find((model) => model.is_default)?.code || availableModels[0]?.code || '');
     setDocumentId(null);
     setActiveJobId('');
     setGenerationInfo(null);
@@ -1281,6 +1288,7 @@ function GeneratePage() {
     setSubmittingDraftId(null);
     setBulkSubmittingDrafts(false);
     setChunkReady(false);
+    setDraftPage(0);
   };
 
   const step1Active = ['uploading', 'ocr_queued', 'ocr_processing', 'chunking'].includes(phase);
@@ -1400,6 +1408,7 @@ function GeneratePage() {
               {sourceMode === 'upload' ? (
                 <label className={`upload-drop ${isBusy ? 'upload-drop--disabled' : ''}`}>
                   <input
+                    ref={fileInputRef}
                     type="file"
                     accept=".pdf,.doc,.docx,.md,.markdown,.txt"
                     disabled={isBusy}
@@ -1669,7 +1678,7 @@ function GeneratePage() {
                             className="field-input plan-count-input"
                             type="number"
                             min="1"
-                            max="10"
+                            max={MAX_TOTAL_QUESTIONS}
                             value={count}
                             disabled={isBusy}
                             onFocus={(e) => e.target.select()}
@@ -1797,6 +1806,13 @@ function GeneratePage() {
                     {bulkSubmittingDrafts ? 'Đang gửi...' : `Gửi ${submittableDraftCount} câu`}
                   </button>
                 )}
+                {phase === 'completed' && generationInfo && submittableDraftCount === 0
+                  && !editingDraftId && !savingDraftId && !removingDraftId
+                  && !submittingDraftId && !bulkSubmittingDrafts && (
+                    <button type="button" className="icon-btn" onClick={handleReset}>
+                      Làm mới
+                    </button>
+                  )}
               </div>
             </div>
 
@@ -2073,7 +2089,7 @@ function GeneratePage() {
                 value={presetName}
                 autoFocus
                 maxLength="80"
-                placeholder="Ví dụ: Ôn tập cây nhị phân - 10 câu"
+                placeholder="Ví dụ: Ôn tập cây nhị phân - 7 câu"
                 onChange={(e) => {
                   setPresetName(e.target.value);
                   setPresetError('');

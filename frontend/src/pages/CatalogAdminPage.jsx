@@ -109,9 +109,9 @@ function CatalogAdminPage() {
   const [chapterForm, setChapterForm] = useState(EMPTY_CHAPTER_FORM);
   const [cloForm, setCloForm] = useState(EMPTY_CLO_FORM);
   const [modelForm, setModelForm] = useState({
-    model_code: 'qwen',
-    model_name: 'qwen2.5:7b',
-    display_name: 'Qwen 2.5 (7B)',
+    model_code: 'qwen3-8b',
+    model_name: 'qwen3:8b',
+    display_name: 'Qwen3 (8B)',
     description: 'Nhanh và phù hợp để sinh câu hỏi.',
     runtime: 'OLLAMA',
     kind: 'CHAT',
@@ -613,15 +613,15 @@ function CatalogAdminPage() {
             <form className="catalog-form" onSubmit={handleSaveModel}>
               <label className="catalog-model-field">
                 <span>Tên hiển thị</span>
-                <input placeholder="Ví dụ: Qwen 2.5 (7B)" value={modelForm.display_name} onChange={(e) => setModelForm({ ...modelForm, display_name: e.target.value })} />
+                <input placeholder="Ví dụ: Qwen3 (8B)" value={modelForm.display_name} onChange={(e) => setModelForm({ ...modelForm, display_name: e.target.value })} />
               </label>
               <label className="catalog-model-field">
                 <span>Mã cấu hình</span>
-                <input placeholder="Ví dụ: qwen-7b" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
+                <input placeholder="Ví dụ: qwen3-8b" value={modelForm.model_code} onChange={(e) => setModelForm({ ...modelForm, model_code: e.target.value })} />
               </label>
               <label className="catalog-model-field">
                 <span>Tên model và phiên bản</span>
-                <input placeholder="Ví dụ: qwen2.5:7b" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
+                <input placeholder="Ví dụ: qwen3:8b" value={modelForm.model_name} onChange={(e) => setModelForm({ ...modelForm, model_name: e.target.value })} />
               </label>
               <label className="catalog-model-field">
                 <span>Nền tảng</span>

@@ -1,4 +1,35 @@
 services:
+  backend:
+    volumes:
+      - ./backend/modules/dictionary/dictionary.py:/app/modules/dictionary/dictionary.py:ro
+      - ./backend/core/config.py:/app/core/config.py:ro
+      - ./backend/core/bootstrap.py:/app/core/bootstrap.py:ro
+      - ./backend/core/job_recovery.py:/app/core/job_recovery.py:ro
+      - ./backend/modules/generation/llm:/app/modules/generation/llm:ro
+      - ./backend/modules/generation/generate.py:/app/modules/generation/generate.py:ro
+      - ./backend/modules/generation/mongodb.py:/app/modules/generation/mongodb.py:ro
+      - ./backend/modules/generation/schemas.py:/app/modules/generation/schemas.py:ro
+      - ./backend/modules/generation/postprocessing.py:/app/modules/generation/postprocessing.py:ro
+      - ./backend/modules/generation/question.py:/app/modules/generation/question.py:ro
+      - ./backend/modules/generation/prompt_builder.py:/app/modules/generation/prompt_builder.py:ro
+      - ./backend/modules/questions/workflow_service.py:/app/modules/questions/workflow_service.py:ro
+      - ./backend/modules/catalog/service.py:/app/modules/catalog/service.py:ro
+
+  worker:
+    volumes:
+      - ./backend/core/config.py:/app/core/config.py:ro
+      - ./backend/core/bootstrap.py:/app/core/bootstrap.py:ro
+      - ./backend/core/job_recovery.py:/app/core/job_recovery.py:ro
+      - ./backend/modules/generation/llm:/app/modules/generation/llm:ro
+      - ./backend/modules/generation/generate.py:/app/modules/generation/generate.py:ro
+      - ./backend/modules/generation/mongodb.py:/app/modules/generation/mongodb.py:ro
+      - ./backend/modules/generation/schemas.py:/app/modules/generation/schemas.py:ro
+      - ./backend/modules/generation/postprocessing.py:/app/modules/generation/postprocessing.py:ro
+      - ./backend/modules/generation/question.py:/app/modules/generation/question.py:ro
+      - ./backend/modules/generation/prompt_builder.py:/app/modules/generation/prompt_builder.py:ro
+      - ./backend/modules/questions/workflow_service.py:/app/modules/questions/workflow_service.py:ro
+      - ./backend/modules/catalog/service.py:/app/modules/catalog/service.py:ro
+
   frontend-dev:
     image: node:20-alpine
     container_name: nckh-frontend-dev

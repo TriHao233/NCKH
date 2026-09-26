@@ -224,7 +224,7 @@ class ModelRegistryTests(unittest.TestCase):
         )
         database.ai_models.find_one.return_value = {
             "model_code": "qwen-fast",
-            "model_name": "qwen2.5:7b",
+            "model_name": "qwen3:8b",
             "runtime": "OLLAMA",
             "capabilities": [GENERATION_CAPABILITY],
             "is_active": True,
@@ -270,7 +270,7 @@ class ModelRegistryTests(unittest.TestCase):
         database = MagicMock()
         database.ai_models.find_one.return_value = {
             "model_code": "paused",
-            "model_name": "qwen2.5:7b",
+            "model_name": "qwen3:8b",
             "runtime": "OLLAMA",
             "is_active": False,
         }
@@ -285,7 +285,7 @@ class ModelRegistryTests(unittest.TestCase):
             {
                 "model_code": "generation-model",
                 "display_name": "Model sinh câu hỏi",
-                "model_name": "qwen2.5:7b",
+                "model_name": "qwen3:8b",
                 "runtime": "OLLAMA",
                 "capabilities": [GENERATION_CAPABILITY],
                 "is_active": True,

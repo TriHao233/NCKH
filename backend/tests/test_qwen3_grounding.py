@@ -1,6 +1,8 @@
 import unittest
 
 from modules.generation.postprocessing import validate_source_grounding
+from modules.generation.question import _build_retry_prompt
+from modules.generation.schemas import GenerationRejection
 
 
 class SourceWrapperGroundingTests(unittest.TestCase):
@@ -33,3 +35,35 @@ class SourceWrapperGroundingTests(unittest.TestCase):
             candidate_index=1,
         )
         self.assertIn("SOURCE_CONTEXT_NOT_IN_CONTENT", [error.code for error in errors])
+
+    def test_paraphrased_quote_remains_rejected_after_wrapper_cleanup(self):
+        item = {
+            "question": "Chương trình máy tính được tạo ra từ đâu?",
+            "source_context": "Nội dung: Chương trình máy tính của một bài toán cụ thể được tạo ra từ các biểu diễn của giải thuật.",
+            "source_keywords": [],
+        }
+        errors = validate_source_grounding(
+            item,
+            context_text="Nội dung: Chương trình máy tính của một bài toán chính được tạo ra từ các biểu diễn của giải thuật.",
+            question_type="trac_nghiem",
+            candidate_index=1,
+        )
+        self.assertIn("SOURCE_CONTEXT_NOT_IN_CONTENT", [error.code for error in errors])
+
+    def test_retry_avoids_rejected_question_and_demands_verbatim_quote(self):
+        prompt = _build_retry_prompt(
+            original_prompt="CONTEXT: Nội dung: Đoạn nguồn hợp lệ.",
+            question_type="trac_nghiem",
+            bloom_level="1_nho",
+            missing_count=1,
+            validation_errors=[GenerationRejection(
+                code="SOURCE_CONTEXT_NOT_IN_CONTENT",
+                message="Trích dẫn không khớp nguồn.",
+                candidate_index=1,
+                question_excerpt="Câu hỏi đã bị loại?",
+                repairable=False,
+            )],
+            avoid_questions=[],
+        )
+        self.assertIn("Câu hỏi đã bị loại?", prompt)
+        self.assertIn("continuous passage exactly", prompt)

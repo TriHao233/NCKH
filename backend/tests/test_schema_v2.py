@@ -2425,10 +2425,10 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn(f"[MODEL_CONTEXT] {generation_context}", heuristic_context)
 
     def test_llm_factory_accepts_ollama_model_alias(self):
-        provider = get_llm_service("ollama:qwen2.5:7b")
+        provider = get_llm_service("ollama:qwen3:8b")
         self.assertIsInstance(provider, ConcurrencyLimitedProvider)
         self.assertIsInstance(provider.wrapped, OllamaProvider)
-        self.assertEqual(provider.model_name, "qwen2.5:7b")
+        self.assertEqual(provider.model_name, "qwen3:8b")
 
     def test_moodle_publication_request_has_demo_defaults(self):
         payload = MoodlePublicationRequest(expected_version=1)
@@ -5632,12 +5632,12 @@ class SchemaV2Tests(unittest.TestCase):
             bloom_level=BloomLevel.HIEU,
             question_plan=[
                 {"question_type": QuestionType.TRAC_NGHIEM, "bloom_level": BloomLevel.HIEU, "num_questions": 3},
-                {"question_type": QuestionType.DUNG_SAI, "bloom_level": BloomLevel.PHAN_TICH, "num_questions": 2},
+                {"question_type": QuestionType.DUNG_SAI, "bloom_level": BloomLevel.PHAN_TICH, "num_questions": 4},
             ],
             instruction="Tập trung vào cây nhị phân tìm kiếm.",
         )
 
-        self.assertEqual(sum(item.num_questions for item in req.effective_plan()), 5)
+        self.assertEqual(sum(item.num_questions for item in req.effective_plan()), 7)
         self.assertEqual(req.effective_plan()[1].bloom_level, BloomLevel.PHAN_TICH)
         self.assertEqual(req.instruction, "Tập trung vào cây nhị phân tìm kiếm.")
 
@@ -5647,9 +5647,8 @@ class SchemaV2Tests(unittest.TestCase):
                 document_id="507f1f77bcf86cd799439011",
                 bloom_level=BloomLevel.HIEU,
                 question_plan=[
-                    {"question_type": QuestionType.TRAC_NGHIEM, "num_questions": 10},
-                    {"question_type": QuestionType.DUNG_SAI, "num_questions": 10},
-                    {"question_type": QuestionType.DIEN_KHUYET, "num_questions": 1},
+                    {"question_type": QuestionType.TRAC_NGHIEM, "num_questions": 4},
+                    {"question_type": QuestionType.DUNG_SAI, "num_questions": 4},
                 ],
             )
 

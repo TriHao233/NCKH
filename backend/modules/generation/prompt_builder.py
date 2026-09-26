@@ -272,7 +272,7 @@ CONTEXT:
 {context}
 
 EVIDENCE RULES:
-- `source_context` must be copied verbatim only from text after `Nội dung:` in CONTEXT; never use a `Mục lục:` line as evidence.
+- `source_context` must be one continuous verbatim passage from text after `Nội dung:` in CONTEXT. Do not include the `Nội dung:` label, ellipses, or paraphrased words; never use a `Mục lục:` line as evidence.
 - Every `source_keyword` must appear verbatim in both `source_context` and the question text.
 - Use at most 2 short `source_keyword` values; use an empty list when no reliable keyword is needed.
 - Prefer a concise evidence sentence that directly proves the correct answer.
@@ -373,7 +373,7 @@ CHUẨN ĐẦU RA
 Chỉ chọn clo_codes từ danh sách trên; để [] nếu không phù hợp.
 
 QUY TẮC DẪN CHỨNG
-- source_context phải là trích dẫn nguyên văn từ phần sau "Nội dung:" trong CONTEXT, không lấy dòng "Mục lục:".
+- source_context phải là một đoạn liên tục chép nguyên văn từ phần sau "Nội dung:" trong CONTEXT; không chép nhãn "Nội dung:", không thêm dấu "..." hay đổi từ, không lấy dòng "Mục lục:".
 - source_keywords có tối đa 2 cụm xuất hiện nguyên văn trong source_context; dùng [] nếu không cần.
 - source_context phải trực tiếp chứng minh đáp án đúng.
 

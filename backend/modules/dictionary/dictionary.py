@@ -10,6 +10,34 @@ from modules.dictionary.mongodb import add_pending_keywords
 
 logger = logging.getLogger(__name__)
 
+KEYWORD_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "keywords": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["keywords"],
+    "additionalProperties": False,
+}
+
+
+def _parse_keywords(raw_text: str) -> list[str] | None:
+    cleaned = str(raw_text or "").strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    try:
+        parsed = json.loads(cleaned.strip())
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict):
+        parsed = parsed.get("keywords")
+    if not isinstance(parsed, list):
+        return None
+    return [keyword.strip() for keyword in parsed if isinstance(keyword, str) and keyword.strip()]
+
 
 def _document_page_query(document_id: str) -> dict:
     try:
@@ -56,13 +84,13 @@ Yêu cầu trích xuất:
 1. Từ khóa phải là thuật ngữ kỹ thuật chuyên sâu (Ví dụ: "con trỏ", "mảng động", "độ phức tạp thuật toán", "bộ nhớ đệm", "bảng băm", "danh sách liên kết").
 2. Chấp nhận cả thuật ngữ tiếng Việt thông dụng và tiếng Anh chuẩn kỹ thuật.
 3. KHÔNG lấy các từ ngữ đời sống phổ thông hoặc từ nối (Ví dụ: "chương trình", "máy tính", "sử dụng", "thực hiện" -> KHÔNG LẤY).
-4. Kết quả TRẢ VỀ DUY NHẤT một mảng JSON thuần túy gồm các chuỗi (Array of Strings), không bao gồm ký tự markdown ```json hay giải thích gì thêm.
+4. Kết quả TRẢ VỀ DUY NHẤT một JSON object có trường "keywords" là mảng chuỗi; không thêm markdown hay giải thích.
 
 VĂN BẢN GIÁO TRÌNH:
 {combined_text}
 
 JSON KẾT QUẢ ĐÚNG FORMAT MẪU:
-["từ khóa 1", "từ khóa 2", "từ khóa 3"]
+{{"keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3"]}}
 """
 
 
@@ -71,42 +99,21 @@ JSON KẾT QUẢ ĐÚNG FORMAT MẪU:
         from modules.generation.llm.factory import get_llm_service
         llm = get_llm_service()
 
-        raw_ai_text = await llm.generate_text(prompt)
+        raw_ai_text = await llm.generate_chat(
+            system_prompt="Trích xuất thuật ngữ kỹ thuật. Chỉ trả về JSON đúng schema được cung cấp.",
+            user_prompt=prompt,
+            output_schema=KEYWORD_OUTPUT_SCHEMA,
+        )
+        extracted_keywords = _parse_keywords(raw_ai_text)
 
-        # Làm sạch chuỗi trả về để tránh lỗi parse JSON do dính markdown
-        cleaned_text = raw_ai_text.strip()
-        if cleaned_text.startswith("```json"):
-            cleaned_text = cleaned_text[7:]
-        elif cleaned_text.startswith("```"):
-            cleaned_text = cleaned_text[3:]
-        if cleaned_text.endswith("```"):
-            cleaned_text = cleaned_text[:-3]
-        cleaned_text = cleaned_text.strip()
-
-        # Parse mảng từ khóa từ AI
-        parsed_data = json.loads(cleaned_text)
-
-        # Nếu AI trả về dict dạng {"keywords": [...]}, ta trích xuất mảng bên trong
-        if isinstance(parsed_data, dict):
-            for key, val in parsed_data.items():
-                if isinstance(val, list):
-                    parsed_data = val
-                    break
-
-        extracted_keywords = parsed_data
-
-        if isinstance(extracted_keywords, list):
-            # Lọc bỏ những thứ không phải string
-            extracted_keywords = [str(k) for k in extracted_keywords if isinstance(k, str) or isinstance(k, int)]
+        if extracted_keywords is not None:
             logger.info(f"AI đã học được {len(extracted_keywords)} từ khóa tiềm năng: {extracted_keywords}")
 
             # 4. Đẩy vào MongoDB vùng chờ duyệt (Pending)
-            add_pending_keywords(course_id=course_id, keywords=extracted_keywords)
-            logger.info("Đã cập nhật bộ từ khóa vào trạng thái Chờ duyệt (Pending) thành công!")
+            if extracted_keywords:
+                add_pending_keywords(course_id=course_id, keywords=extracted_keywords)
+                logger.info("Đã cập nhật bộ từ khóa vào trạng thái Chờ duyệt (Pending) thành công!")
         else:
-            logger.error("Đầu ra của AI không phải định dạng List chuẩn.")
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Lỗi parse JSON đầu ra của AI: {raw_ai_text} - {str(e)}")
+            logger.warning("AI không trả về danh sách keywords hợp lệ; bỏ qua lần học từ khóa này.")
     except Exception as e:
         logger.exception(f"Tiến trình Auto-Learning thất bại do sự cố: {str(e)}")

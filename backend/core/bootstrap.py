@@ -738,14 +738,15 @@ def _seed_reference_data() -> None:
     )
     for model in (
         {
-            "model_code": "qwen",
-            "model_name": settings.qwen_model_name,
-            "display_name": "Qwen 2.5 (7B)",
-            "description": "Nhanh và phù hợp để sinh câu hỏi.",
+            "model_code": "qwen3-8b",
+            "model_name": "qwen3:8b",
+            "display_name": "Qwen3 (8B)",
+            "description": "Sinh và đánh giá câu hỏi trên Ollama.",
             "runtime": "OLLAMA",
             "kind": "CHAT",
             "capabilities": ["QUESTION_GENERATION", "QUESTION_EVALUATION"],
             "priority": 10,
+            "config": {"think": False},
         },
         {
             "model_code": "deepseek",
@@ -787,7 +788,7 @@ def _seed_reference_data() -> None:
                     "schema_version": SCHEMA_VERSION,
                     **model,
                     "revision": "remote" if not is_local else "local",
-                    "config": {},
+                    "config": model.get("config", {}),
                     "is_local": is_local,
                     "is_active": True,
                     "created_at": now,
@@ -808,7 +809,7 @@ def _seed_reference_data() -> None:
         )
     db.ai_models.update_many(
         {
-            "model_code": {"$in": ["qwen", "deepseek", "deepseek-r1", "gemini"]},
+            "model_code": {"$in": ["qwen3-8b", "deepseek", "deepseek-r1", "gemini"]},
             "config.endpoint": "http://localhost:11434/api/generate",
         },
         {"$unset": {"config.endpoint": ""}},

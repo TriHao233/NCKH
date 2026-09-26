@@ -58,7 +58,7 @@ NCKH/
 │   │   ├── auth/                # register / login / profile (Firebase Auth)
 │   │   ├── ocr/                  # EasyOCR + PDFium selective scan OCR
 │   │   ├── rag/                   # chunking, chromadb vector store, search
-│   │   ├── generation/            # sinh câu hỏi, prompt builder, LLM factory (gemini/qwen/deepseek)
+│   │   ├── generation/            # sinh câu hỏi, prompt builder, LLM factory (gemini/qwen3/deepseek)
 │   │   └── dictionary/             # auto-learning từ khóa
 │   ├── prompts/                # system.txt, bloom/, question_type/, examples/
 │   └── data/                   # uploads, ocr_outputs, chunk_outputs, metadata, chroma_data

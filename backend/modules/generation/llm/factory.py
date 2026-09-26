@@ -76,7 +76,7 @@ def _get_single_provider(provider: str, snapshot: dict | None = None) -> LLMProv
 
 
 def get_llm_service(
-    provider: str = "qwen",
+    provider: str = "qwen3-8b",
     fallback_provider: str | None = None,
     *,
     model_snapshot: dict | None = None,
