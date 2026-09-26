@@ -5153,6 +5153,7 @@ class SchemaV2Tests(unittest.TestCase):
                 self.generation_jobs = InMemoryCollection(
                     [
                         {"_id": ObjectId(), "status": "processing", "updated_at": old},
+                        {"_id": ObjectId(), "status": "queued", "updated_at": old},
                         {"_id": fresh_generation_id, "status": "processing", "updated_at": fresh},
                     ]
                 )
@@ -5213,7 +5214,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            {"generation_failed": 1, "evaluation_stale": 1, "document_failed": 1},
+            {"generation_failed": 2, "evaluation_stale": 1, "document_failed": 1},
         )
         self.assertEqual(db.generation_jobs.find_one({"_id": fresh_generation_id})["status"], "processing")
         self.assertEqual(db.evaluation_jobs.find_one({"_id": evaluation_job_id})["status"], "STALE")

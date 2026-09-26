@@ -4,7 +4,7 @@ import { faChevronDown, faLayerGroup, faUpload } from '@fortawesome/free-solid-s
 import { chunkDocument } from '../api/chunk';
 import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listDocuments } from '../api/documents';
-import { enqueueGenerateQuestions, getGenerateStatus, streamGenerateStatus } from '../api/generate';
+import { enqueueGenerateQuestions, getGenerateStatus, streamGenerateStatus, cancelGenerateJob } from '../api/generate';
 import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
 import { createQuestion, deleteQuestion, submitQuestionForReview, updateQuestion } from '../api/questions';
 import { deleteGenerationPreset, listGenerationPresets, saveGenerationPreset } from '../api/users';
@@ -299,6 +299,7 @@ function GeneratePage() {
   const [selectedModelCode, setSelectedModelCode] = useState('');
   const [documentId, setDocumentId] = useState(null);
   const [activeJobId, setActiveJobId] = useState('');
+  const generationJobRef = useRef('');
   const [generationInfo, setGenerationInfo] = useState(null);
   const [drafts, setDrafts] = useState([]);
   const [generationSummary, setGenerationSummary] = useState([]);
@@ -381,6 +382,58 @@ function GeneratePage() {
   ].filter(Boolean);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    let saved;
+    try {
+      saved = JSON.parse(sessionStorage.getItem('active-generation-job') || 'null');
+    } catch {
+      return;
+    }
+    if (!saved?.jobId) return;
+    const controller = new AbortController();
+    generationJobRef.current = saved.jobId;
+    setActiveJobId(saved.jobId);
+    setDocumentId(saved.documentId || null);
+    setChunkReady(true);
+    setPhase('generate_processing');
+    watchJob(getGenerateStatus, saved.jobId, {
+      streamStatus: streamGenerateStatus,
+      signal: controller.signal,
+      timeoutMs: 20 * 60 * 1000,
+    }).then(async (terminal) => {
+      const result = terminal.status === 'completed'
+        ? await getGenerateStatus(saved.jobId, { signal: controller.signal })
+        : terminal;
+      if (controller.signal.aborted) return;
+      sessionStorage.removeItem('active-generation-job');
+      generationJobRef.current = '';
+      if (result.status !== 'completed' || !Array.isArray(result.data) || result.data.length === 0) {
+        setPhase('failed');
+        setError(result.error_message || `Job ${saved.jobId} không trả về câu hỏi`);
+        return;
+      }
+      setDrafts(mapGeneratedQuestions(result.data));
+      setGenerationSummary(result.summary || []);
+      setGenerationInfo({
+        jobId: saved.jobId,
+        documentId: saved.documentId,
+        requestedCount: saved.requestedCount,
+        generatedCount: result.data.length,
+        createdAt: result.created_at,
+        updatedAt: result.updated_at,
+        metrics: result.metrics,
+        model: result.model,
+      });
+      setStatusDetail(`Đã sinh ${result.data.length}/${saved.requestedCount || result.data.length} câu hỏi`);
+      setPhase('completed');
+    }).catch((err) => {
+      if (controller.signal.aborted) return;
+      setPhase('failed');
+      setError(err.message || 'Không tải được kết quả sinh câu hỏi');
+    });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     setDraftPage((current) => Math.min(current, draftPageCount - 1));
@@ -1023,9 +1076,13 @@ function GeneratePage() {
       || `generation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const enqueueResult = await enqueueGenerateQuestions(payload, idempotencyKey);
     const genJobId = enqueueResult.job_id;
+    generationJobRef.current = genJobId;
+    sessionStorage.setItem('active-generation-job', JSON.stringify({
+      jobId: genJobId, documentId: docId, requestedCount: totalQuestions,
+    }));
     setActiveJobId(genJobId);
 
-    const genResult = await watchJob(getGenerateStatus, genJobId, {
+    const streamedResult = await watchJob(getGenerateStatus, genJobId, {
       streamStatus: streamGenerateStatus,
       signal,
       timeoutMs: 20 * 60 * 1000,
@@ -1055,8 +1112,17 @@ function GeneratePage() {
       },
     });
 
-    if (genResult.status === 'failed') {
+    // Read the persisted result once more after the terminal event. This also
+    // catches a truncated or stale stream payload before clearing the preview.
+    const genResult = streamedResult.status === 'completed'
+      ? await getGenerateStatus(genJobId, { signal })
+      : streamedResult;
+
+    if (genResult.status === 'failed' || genResult.status === 'cancelled') {
       throw new Error(genResult.error_message || 'Sinh câu hỏi thất bại');
+    }
+    if (genResult.status !== 'completed' || !Array.isArray(genResult.data) || genResult.data.length === 0) {
+      throw new Error(`Job ${genJobId} báo hoàn tất nhưng không trả về câu hỏi. Vui lòng kiểm tra trạng thái job trên server.`);
     }
     markTiming('generateMs', generateStartedAt);
 
@@ -1076,6 +1142,8 @@ function GeneratePage() {
       model: genResult.model || selectedModel || null,
     });
     setPhase('completed');
+    generationJobRef.current = '';
+    sessionStorage.removeItem('active-generation-job');
     const generatedCount = (genResult.data || []).length;
     setStatusDetail(
       generatedCount > 0
@@ -1171,7 +1239,13 @@ function GeneratePage() {
   };
 
   const handleReset = () => {
+    const jobId = generationJobRef.current;
+    generationJobRef.current = '';
+    sessionStorage.removeItem('active-generation-job');
     abortRef.current?.abort();
+    if (jobId) {
+      cancelGenerateJob(jobId).catch((err) => setError(`Không hủy được job ${jobId}: ${err.message}`));
+    }
     setPhase('idle');
     setError('');
     setStatusDetail('');
@@ -1684,6 +1758,11 @@ function GeneratePage() {
                 </>
               )}
             </button>
+            {isBusy && generationJobRef.current && (
+              <button className="btn btn--ghost" type="button" onClick={handleReset}>
+                Dừng sinh câu hỏi
+              </button>
+            )}
             <p className="gen-form-note">
               Toàn bộ câu hỏi sinh ra sẽ ở trạng thái nháp để giảng viên rà soát trước khi gửi kiểm duyệt.
             </p>

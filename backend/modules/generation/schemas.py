@@ -175,6 +175,7 @@ class GenerationJobStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class JobAcceptedResponse(BaseModel):

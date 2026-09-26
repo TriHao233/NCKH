@@ -3,7 +3,7 @@ MỨC BLOOM: hieu - Hiểu
 
 YÊU CẦU:
 1. Kiểm tra khả năng nắm ý nghĩa, không chỉ nhận ra tên gọi hay định nghĩa.
-2. Hỏi vì sao/như thế nào một khái niệm, điều kiện, hành vi hoặc hệ quả xảy ra mà không dùng lời dẫn "theo đoạn văn", "theo tài liệu" hoặc tương tự.
+2. Hỏi vì sao/như thế nào một khái niệm, điều kiện, hành vi hoặc hệ quả xảy ra.
 3. Yêu cầu người học liên hệ khái niệm với mục đích, đặc điểm, vai trò hoặc kết quả trong CONTEXT.
 4. Phương án nhiễu nên phản ánh hiểu lầm thường gặp, không chỉ tráo từ khóa.
 5. Câu hỏi phải buộc người học nối ít nhất hai thành phần ý nghĩa (ví dụ cơ chế với hệ quả, đặc điểm với vai trò), không chỉ nhận lại một câu được chép hoặc diễn đạt lại từ CONTEXT.

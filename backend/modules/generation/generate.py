@@ -11,6 +11,7 @@ from core.dependencies import CurrentUser, has_permission, require_teacher_or_ad
 from core.job_worker import maintain_lease
 from modules.documents.service import DocumentService, get_document_service
 from modules.generation.mongodb import (
+    cancel_generation_job,
     claim_generation_job,
     count_active_generation_jobs,
     create_generation_job,
@@ -110,7 +111,9 @@ async def process_generate_background(job_id: str, worker_id: str):
         )
 
         async def report_progress(progress: dict) -> None:
-            await asyncio.to_thread(update_generation_progress, job_id, worker_id, progress)
+            updated = await asyncio.to_thread(update_generation_progress, job_id, worker_id, progress)
+            if not updated:
+                raise asyncio.CancelledError(f"Job {job_id} không còn được phép tiếp tục")
 
         result = await generate_questions_rag(
             req,
@@ -127,7 +130,7 @@ async def process_generate_background(job_id: str, worker_id: str):
             finished_at=finished_at,
             client_telemetry=client_telemetry,
         )
-        await asyncio.to_thread(
+        completed = await asyncio.to_thread(
             update_generation_job,
             job_id,
             status="completed",
@@ -139,7 +142,15 @@ async def process_generate_background(job_id: str, worker_id: str):
             metrics=metrics,
             worker_id=worker_id,
         )
-        logger.info("Job [%s] hoàn tất thành công", job_id)
+        if not completed:
+            logger.info("Job [%s] đã bị hủy trước khi lưu kết quả hoàn tất", job_id)
+            return
+        logger.info(
+            "Job [%s] hoàn tất thành công: model=%s, questions=%s",
+            job_id,
+            (job.get("model_snapshot") or {}).get("model_name") or req.model_provider,
+            len(result.data),
+        )
     except GenerationOutputError as ex:
         logger.error("Job [%s] thất bại do đầu ra mô hình: %s", job_id, ex)
         metrics = build_generation_metrics(
@@ -222,27 +233,15 @@ async def api_generate_questions(
             req.model_provider,
             capability=GENERATION_CAPABILITY,
         )
-        code_model_snapshot = (
-            model_snapshot
-            if req.code_model_provider == req.model_provider
-            else await asyncio.to_thread(
-                resolve_model_snapshot,
-                req.code_model_provider,
-                capability=GENERATION_CAPABILITY,
-            )
-        )
+        # A generation request must use exactly the model chosen by the user,
+        # including code questions. Never resolve a second provider here.
+        code_model_snapshot = model_snapshot
         fallback_snapshot = None
-        if settings.generation_fallback_provider:
-            fallback_snapshot = await asyncio.to_thread(
-                resolve_model_snapshot,
-                settings.generation_fallback_provider,
-                capability=GENERATION_CAPABILITY,
-            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = await asyncio.to_thread(
         create_generation_job,
-        req.model_dump(mode="json"),
+        req.model_copy(update={"code_model_provider": req.model_provider}).model_dump(mode="json"),
         current_user.id,
         normalized_key,
         model_snapshot=model_snapshot,
@@ -278,6 +277,21 @@ async def get_generation_job_status(
     return _build_generation_status_response(job)
 
 
+@router.post("/status/{job_id}/cancel", response_model=GenerationJobStatusResponse)
+async def cancel_generation_job_request(
+    job_id: str,
+    current_user: CurrentUser = Depends(require_teacher_or_admin),
+):
+    can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
+    owner_id = None if can_manage_all else current_user.id
+    job = await asyncio.to_thread(get_generation_job, job_id, requested_by_user_id=owner_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Job ID này trong hệ thống")
+    await asyncio.to_thread(cancel_generation_job, job_id, requested_by_user_id=owner_id)
+    job = await asyncio.to_thread(get_generation_job, job_id, requested_by_user_id=owner_id)
+    return _build_generation_status_response(job)
+
+
 def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
     response_kwargs = {
         "job_id": job["job_id"],
@@ -305,7 +319,7 @@ def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
             "runtime": snapshot.get("runtime"),
         }
 
-    if job["status"] == GenerationJobStatus.FAILED.value and job.get("error_message"):
+    if job["status"] in {GenerationJobStatus.FAILED.value, GenerationJobStatus.CANCELLED.value} and job.get("error_message"):
         response_kwargs["error_message"] = job["error_message"]
 
     return GenerationJobStatusResponse(**response_kwargs)
@@ -344,7 +358,7 @@ async def stream_generation_job_status(
             elif now >= heartbeat_deadline:
                 yield ": keep-alive\n\n"
                 heartbeat_deadline = now + 15
-            if job.get("status") in {"completed", "failed"}:
+            if job.get("status") in {"completed", "failed", "cancelled"}:
                 return
             await asyncio.sleep(1)
 

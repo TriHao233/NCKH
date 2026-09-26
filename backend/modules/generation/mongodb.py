@@ -400,6 +400,30 @@ def get_generation_job(job_id: str, *, requested_by_user_id=None) -> dict | None
     return _serialize_generation_job(doc)
 
 
+def cancel_generation_job(job_id: str, *, requested_by_user_id=None) -> bool:
+    try:
+        query = {"_id": ObjectId(job_id), "status": {"$in": ["queued", "processing"]}}
+    except (InvalidId, TypeError):
+        return False
+    if requested_by_user_id is not None:
+        query["requested_by_user_id"] = requested_by_user_id
+    now = utc_now()
+    result = get_database().generation_jobs.update_one(
+        query,
+        {
+            "$set": {
+                "status": "cancelled",
+                "error_message": "Đã dừng theo yêu cầu của người dùng",
+                "updated_at": now,
+                "expires_at": now + timedelta(days=settings.job_retention_days),
+                "progress": {"stage": "cancelled", "completed": 0, "total": 1},
+            },
+            "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": "", "next_attempt_at": ""},
+        },
+    )
+    return result.modified_count == 1
+
+
 def claim_generation_job(job_id: str, worker_id: str) -> dict | None:
     """Atomically claim one queued job so multiple workers cannot run it twice."""
     try:
