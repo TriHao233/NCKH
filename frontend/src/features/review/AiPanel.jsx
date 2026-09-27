@@ -9,6 +9,7 @@ import {
 } from '../../utils/reviewAiSuggestions';
 import {
   EVALUATION_STATUS_LABEL,
+  evaluationVerdictLabel,
   QUALITY_LABEL,
   REVIEW_CRITERIA,
   evaluationModeLabel,
@@ -43,7 +44,8 @@ function textList(value) {
 
 /** Gom kết quả AI mới nhất và các cờ cảnh báo thành một mô tả dễ dùng cho giao diện. */
 export function summarizeEvaluation(question, evaluations) {
-  const latest = evaluations?.[0] || null;
+  const current = ['PASSED', 'FAILED'].includes(question?.evaluation_status);
+  const latest = current ? (evaluations?.[0] || null) : null;
   const summary = question?.quality_summary || {};
   const hasError = Boolean(summary.error);
   const evidence = summary.evidence || latest?.evidence || {};
@@ -256,7 +258,7 @@ export function AiSuggestion({ question, ai, loading, onRetry, retrying }) {
           <strong>
             {busy
               ? 'AI đang đánh giá'
-              : (ai.latest ? (ai.latest.passed ? 'AI đề xuất đạt' : 'AI đề xuất xem lại') : (EVALUATION_STATUS_LABEL[status] || 'Chưa đánh giá'))}
+              : (ai.latest ? evaluationVerdictLabel(status, ai.color) : (EVALUATION_STATUS_LABEL[status] || 'Chưa đánh giá'))}
           </strong>
           <small>Chỉ là gợi ý, bạn là người quyết định.</small>
         </div>

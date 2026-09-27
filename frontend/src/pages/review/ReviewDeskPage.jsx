@@ -44,6 +44,7 @@ import { claimNextQuestion, preferredSubjectIds, useReviewLookups, userName } fr
 import {
   DECISION_DONE_TEXT,
   EVALUATION_STATUS_LABEL,
+  evaluationVerdictLabel,
   QUALITY_TONE,
   REVIEW_STATUS_LABEL,
   REVIEW_STATUS_TONE,
@@ -595,7 +596,7 @@ function ReviewDeskPage() {
                   {REVIEW_STATUS_LABEL[question.review_status] || question.review_status}
                 </span>
                 <span className={`ws-pill ${QUALITY_TONE[ai.color] ? `ws-pill--${QUALITY_TONE[ai.color]}` : ''}`}>
-                  {EVALUATION_STATUS_LABEL[question.evaluation_status] || 'Chưa đánh giá'}
+                  {evaluationVerdictLabel(question.evaluation_status, ai.color)}
                 </span>
                 {question.secondary_review?.status && !['NOT_REQUIRED', 'CANCELLED'].includes(question.secondary_review.status) && (
                   <span className="ws-pill ws-pill--info">{SECONDARY_STATUS_LABEL[question.secondary_review.status]}</span>

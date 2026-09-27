@@ -660,7 +660,10 @@ class AdminJobService:
                 "_id": result.get("question_id"),
                 "quality_summary.latest_evaluation_job_id": result["_id"],
             },
-            {"$set": {"evaluation_status": "NOT_STARTED", "quality_summary.error": error, "updated_at": now}},
+            {
+                "$set": {"evaluation_status": "NOT_STARTED", "quality_summary.error": error, "updated_at": now},
+                "$unset": {"quality_summary.overall_score": "", "quality_summary.color": "", "quality_summary.latest_evaluation_id": ""},
+            },
         )
         self._audit(current_user, "admin.job_cancel", "evaluation", job_id)
         return {"job": json_safe(result)}

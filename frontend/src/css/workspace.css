@@ -473,6 +473,7 @@ button.ws-stat:hover {
 .ws-tab {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   padding: 10px 14px 12px;

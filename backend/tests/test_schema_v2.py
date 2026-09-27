@@ -534,6 +534,14 @@ class InMemoryCollection:
                 item[field_key] = value
                 return
 
+    @staticmethod
+    def _unset_path(record, path):
+        current = record
+        parts = path.split(".")
+        for part in parts[:-1]:
+            current = current.get(part, {})
+        current.pop(parts[-1], None)
+
     def insert_one(self, record, *_args, **_kwargs):
         item = dict(record)
         self.records.append(item)
@@ -580,6 +588,9 @@ class InMemoryCollection:
             for path, value in (update.get("$set") or {}).items():
                 self._set_path(record, path, value, filter_query)
                 changed = True
+            for path in (update.get("$unset") or {}):
+                self._unset_path(record, path)
+                changed = True
             for path, value in (update.get("$push") or {}).items():
                 record.setdefault(path, []).append(value)
                 changed = True
@@ -602,6 +613,9 @@ class InMemoryCollection:
             changed = False
             for path, value in (update.get("$set") or {}).items():
                 self._set_path(record, path, value, filter_query)
+                changed = True
+            for path in (update.get("$unset") or {}):
+                self._unset_path(record, path)
                 changed = True
             for path, value in (update.get("$push") or {}).items():
                 record.setdefault(path, []).append(value)
@@ -5951,7 +5965,11 @@ class SchemaV2Tests(unittest.TestCase):
                         {
                             "_id": question_id,
                             "evaluation_status": "PROCESSING",
-                            "quality_summary": {"latest_evaluation_job_id": evaluation_job_id},
+                            "quality_summary": {
+                                "latest_evaluation_job_id": evaluation_job_id,
+                                "overall_score": 0.64,
+                                "color": "YELLOW",
+                            },
                             "updated_at": now,
                         }
                     ]
@@ -5973,6 +5991,8 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(evaluation_result["job"]["status"], "CANCELLED")
         question = db.questions.find_one({"_id": question_id})
         self.assertEqual(question["evaluation_status"], "NOT_STARTED")
+        self.assertNotIn("overall_score", question["quality_summary"])
+        self.assertNotIn("color", question["quality_summary"])
         self.assertIn("Cancelled by admin", question["quality_summary"]["error"]["message"])
         self.assertEqual([event["action"] for event in audit_events], ["admin.job_cancel", "admin.job_cancel"])
         self.assertEqual({event["entity_type"] for event in audit_events}, {"generation", "evaluation"})

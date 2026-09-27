@@ -5,6 +5,7 @@ import {
   isUnassigned,
   checklistForType,
   differsFromAi,
+  evaluationVerdictLabel,
   isResubmission,
   buildReviewPayload,
   canClaim,
@@ -17,6 +18,7 @@ import {
   isBlockedFromSecondary,
   isSlaBreached,
   policySecondaryReasons,
+  qualityOf,
   rankNextCandidates,
   restoreDraft,
   validateDraft,
@@ -53,6 +55,16 @@ test('childId accepts plain ids and objects', () => {
   assert.equal(childId({ id: 'x' }), 'x');
   assert.equal(childId({ _id: 'y' }), 'y');
   assert.equal(childId(null), '');
+});
+
+test('AI verdict explains a score band that differs from the decision', () => {
+  assert.equal(evaluationVerdictLabel('PASSED', 'YELLOW'), 'AI đề xuất đạt (mức điểm: cần xem lại)');
+  assert.equal(evaluationVerdictLabel('PASSED', 'GREEN'), 'AI đề xuất đạt');
+  assert.equal(evaluationVerdictLabel('FAILED', 'GREEN'), 'AI đề xuất xem lại (mức điểm: đạt tốt)');
+});
+
+test('an interrupted evaluation does not expose an older score as current', () => {
+  assert.deepEqual(qualityOf(question({ evaluation_status: 'NOT_STARTED', quality_summary: { overall_score: 0.64, color: 'YELLOW' } })), { score: null, color: null });
 });
 
 test('reviewer must hold a live lock to decide; admin always can', () => {

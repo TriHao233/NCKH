@@ -28,6 +28,7 @@ import {
   EVALUATION_RETRY_STATUSES,
   INBOX_CLIENT_FILTERS,
   EVALUATION_STATUS_LABEL,
+  evaluationVerdictLabel,
   PUBLICATION_STATUS_LABEL,
   QUALITY_LABEL,
   QUALITY_TONE,
@@ -761,7 +762,7 @@ function ReviewInboxPage() {
                             </td>
                             <td>
                               <span className={`ws-pill ${quality.color ? `ws-pill--${QUALITY_TONE[quality.color]}` : ''} tabular`}>
-                                {quality.score === null ? (EVALUATION_STATUS_LABEL[question.evaluation_status] || 'Chưa đánh giá') : `${formatScore(quality.score)} ${QUALITY_LABEL[quality.color] || ''}`}
+                                {quality.score === null ? evaluationVerdictLabel(question.evaluation_status, quality.color) : `${formatScore(quality.score)} · ${evaluationVerdictLabel(question.evaluation_status, quality.color)}`}
                               </span>
                             </td>
                             <td>

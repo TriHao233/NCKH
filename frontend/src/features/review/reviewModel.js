@@ -65,6 +65,14 @@ export const QUALITY_TONE = Object.freeze({
   RED: 'danger',
 });
 
+export function evaluationVerdictLabel(status, color) {
+  const verdict = EVALUATION_STATUS_LABEL[status] || 'Chưa đánh giá';
+  if ((status === 'PASSED' && color && color !== 'GREEN') || (status === 'FAILED' && color === 'GREEN')) {
+    return `${verdict} (mức điểm: ${QUALITY_LABEL[color]?.toLowerCase() || color})`;
+  }
+  return verdict;
+}
+
 export const PUBLICATION_STATUS_LABEL = Object.freeze({
   NOT_PUBLISHED: 'Chưa đồng bộ Moodle',
   PENDING: 'Đang đồng bộ Moodle',
@@ -398,7 +406,7 @@ export function assignmentTone(question, user, now = Date.now()) {
 
 export function qualityOf(question) {
   const summary = question?.quality_summary || {};
-  if (summary.error) return { score: null, color: null };
+  if (summary.error || !['PASSED', 'FAILED'].includes(question?.evaluation_status)) return { score: null, color: null };
   return {
     score: typeof summary.overall_score === 'number' ? summary.overall_score : null,
     color: summary.color || null,
