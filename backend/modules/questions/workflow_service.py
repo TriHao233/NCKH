@@ -11,6 +11,7 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from core.audit import build_audit_event, write_audit_event
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
@@ -23,6 +24,7 @@ from modules.notifications.service import (
     NotificationService,
     safe_notify_review_assigned,
     safe_notify_review_decision,
+    safe_notify_secondary_review_pending,
 )
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
 from modules.rag.search import get_evaluation_evidence
@@ -37,6 +39,7 @@ from modules.questions.workflow_schemas import (
     ReviewAssignmentRequest,
     ReviewCreateRequest,
     ReviewDraftUpsertRequest,
+    ReviewPolicyPayload,
     SecondaryReviewRequest,
 )
 
@@ -78,6 +81,8 @@ REVIEWER_FLAG_MIN_REVIEWS = 5
 HIGH_OVERRIDE_RATE = 0.3
 HIGH_BULK_RATE = 0.5
 SLA_REMINDER_BATCH_SIZE = 200
+REVIEW_POLICY_ID = "review_policy"
+SUBJECT_SUGGESTION_WINDOW_DAYS = 180
 OPTION_CHECK_VERDICTS = {"SUPPORTED", "CONTRADICTED", "NOT_IN_SOURCE", "AMBIGUOUS"}
 SINGLE_ANSWER_TYPES = {"TRAC_NGHIEM", "DUNG_SAI"}
 MULTIPLE_ANSWER_TYPES = {"NHIEU_LUA_CHON"}
@@ -1272,21 +1277,15 @@ class QuestionWorkflowService:
             "parser_version": "evaluation-json-v1",
             "created_at": now,
         }
-        audit = {
-            "schema_version": SCHEMA_VERSION,
-            "actor": {
-                "type": "USER",
-                "user_id": user_id,
-                "model_id": evaluation["evaluator_model"].get("id"),
-                "service_name": "question_evaluation",
-            },
-            "entity": {
-                "type": "QUESTION",
-                "id": question["_id"],
-                "version_id": version["_id"],
-            },
-            "action": "QUESTION_EVALUATED",
-            "changes": [
+        audit = build_audit_event(
+            action="QUESTION_EVALUATED",
+            entity_type="question",
+            entity_id=question["_id"],
+            entity_version_id=version["_id"],
+            actor_user_id=user_id,
+            model_id=evaluation["evaluator_model"].get("id"),
+            service_name="question_evaluation",
+            changes=[
                 {
                     "path": "quality_summary",
                     "old_value": question.get("quality_summary") or {},
@@ -1297,14 +1296,14 @@ class QuestionWorkflowService:
                     },
                 }
             ],
-            "before_hash": version["content_hash"],
-            "after_hash": version["content_hash"],
-            "metadata": {
+            before_hash=version["content_hash"],
+            after_hash=version["content_hash"],
+            metadata={
                 "evaluation_id": evaluation["_id"],
                 "correlation_id": str(evaluation["_id"]),
             },
-            "created_at": now,
-        }
+            created_at=now,
+        )
         with mongo_transaction() as session:
             self.db.question_evaluations.insert_one(evaluation, session=session)
             result = self.db.questions.update_one(
@@ -2233,34 +2232,20 @@ class QuestionWorkflowService:
         before: dict | None = None,
         after: dict | None = None,
         metadata: dict | None = None,
+        path: str = "review_assignment",
     ) -> None:
-        self.db.audit_logs.insert_one(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "actor": {
-                    "type": "USER",
-                    "user_id": current_user.id,
-                    "model_id": None,
-                    "service_name": None,
-                },
-                "entity": {
-                    "type": "QUESTION",
-                    "id": question["_id"],
-                    "version_id": version["_id"],
-                },
-                "action": action,
-                "changes": [
-                    {
-                        "path": "review_assignment",
-                        "old_value": before or {},
-                        "new_value": after or {},
-                    }
-                ],
-                "before_hash": version["content_hash"],
-                "after_hash": version["content_hash"],
-                "metadata": metadata or {},
-                "created_at": utc_now(),
-            }
+        write_audit_event(
+            self.db,
+            action=action,
+            entity_type="question",
+            entity_id=question["_id"],
+            entity_version_id=version["_id"],
+            actor_user_id=current_user.id,
+            actor_role=current_user.role,
+            changes=[{"path": path, "old_value": before or {}, "new_value": after or {}}],
+            before_hash=version["content_hash"],
+            after_hash=version["content_hash"],
+            metadata=metadata or {},
         )
 
     def claim_review(self, question_id: str, current_user: CurrentUser) -> dict:
@@ -2401,31 +2386,24 @@ class QuestionWorkflowService:
             if not updated:
                 continue
             released += 1
-            self.db.audit_logs.insert_one(
-                {
-                    "schema_version": SCHEMA_VERSION,
-                    "actor": {
-                        "type": "USER" if current_user else "SYSTEM",
-                        "user_id": current_user.id if current_user else None,
-                        "model_id": None,
-                        "service_name": None if current_user else "user_management",
-                    },
-                    "entity": {
-                        "type": "QUESTION",
-                        "id": question["_id"],
-                        "version_id": question.get("current_version_id"),
-                    },
-                    "action": "QUESTION_REVIEW_RELEASED",
-                    "changes": [
-                        {
-                            "path": "review_assignment",
-                            "old_value": question.get("review_assignment") or {},
-                            "new_value": assignment,
-                        }
-                    ],
-                    "metadata": {"reason": reason, "reviewer_user_id": reviewer_user_id},
-                    "created_at": now,
-                }
+            write_audit_event(
+                self.db,
+                action="QUESTION_REVIEW_RELEASED",
+                entity_type="question",
+                entity_id=question["_id"],
+                entity_version_id=question.get("current_version_id"),
+                actor_user_id=current_user.id if current_user else None,
+                actor_role=current_user.role if current_user else None,
+                service_name=None if current_user else "user_management",
+                changes=[
+                    {
+                        "path": "review_assignment",
+                        "old_value": question.get("review_assignment") or {},
+                        "new_value": assignment,
+                    }
+                ],
+                metadata={"reason": reason, "reviewer_user_id": reviewer_user_id},
+                created_at=now,
             )
         return released
 
@@ -2495,7 +2473,7 @@ class QuestionWorkflowService:
         return serialize_question(updated, version)
 
     def auto_assign_reviews(self, payload: AutoAssignRequest, current_user: CurrentUser) -> dict:
-        """Distribute open pending questions across active reviewers.
+        """Distribute open pending questions across active reviewers (and Admins on request).
 
         Open means unassigned, or held past its lock/assignment window. Each
         question goes to an eligible reviewer (not its author, not the primary
@@ -2523,12 +2501,19 @@ class QuestionWorkflowService:
             .limit(payload.limit)
         )
 
+        pool_roles = ["Reviewer", "Admin"] if payload.include_admins else ["Reviewer"]
         reviewers = list(
             self.db.users.find(
-                {"role": "Reviewer", "is_active": True},
-                {"display_name": 1, "review_subject_ids": 1},
+                {"role": {"$in": pool_roles}, "is_active": True},
+                {"display_name": 1, "review_subject_ids": 1, "role": 1},
             )
         )
+        strict = payload.subject_mode == "strict"
+        covered_subjects = {
+            subject_id
+            for reviewer in reviewers
+            for subject_id in reviewer.get("review_subject_ids") or []
+        }
         loads = {reviewer["_id"]: 0 for reviewer in reviewers}
         for held in self.db.questions.find(
             {
@@ -2576,9 +2561,16 @@ class QuestionWorkflowService:
                 if subjects and subject_id not in subjects:
                     continue
                 specialist = bool(subjects)
+                if strict and not specialist:
+                    continue
                 candidates.append((0 if specialist else 1, loads[reviewer["_id"]], str(reviewer["_id"]), reviewer))
             if not candidates:
-                skipped.append({"question_id": question["_id"], "question_code": code, "reason": "NO_ELIGIBLE_REVIEWER"})
+                reason = (
+                    "NO_SUBJECT_SPECIALIST"
+                    if strict and subject_id not in covered_subjects
+                    else "NO_ELIGIBLE_REVIEWER"
+                )
+                skipped.append({"question_id": question["_id"], "question_code": code, "reason": reason})
                 continue
             reviewer = min(candidates, key=lambda item: item[:3])[3]
             try:
@@ -2603,6 +2595,113 @@ class QuestionWorkflowService:
                 }
             )
         return json_safe({"assigned": assigned, "skipped": skipped})
+
+    def suggest_review_subjects(self, reviewer_user_id: str, limit: int = 5) -> dict:
+        """Subjects a reviewer has actually reviewed recently, most frequent first."""
+        reviewer_oid = object_id(reviewer_user_id, "reviewer_user_id")
+        since = utc_now() - timedelta(days=SUBJECT_SUGGESTION_WINDOW_DAYS)
+        version_ids = [
+            review.get("question_version_id")
+            for review in self.db.question_reviews.find(
+                {"reviewer_user_id": reviewer_oid, "reviewed_at": {"$gte": since}},
+                {"question_version_id": 1},
+            )
+            if review.get("question_version_id")
+        ]
+        counts: dict = {}
+        if version_ids:
+            for version in self.db.question_versions.find(
+                {"_id": {"$in": version_ids}},
+                {"classification.subject": 1},
+            ):
+                subject = (version.get("classification") or {}).get("subject") or {}
+                subject_id = subject.get("id") if isinstance(subject, dict) else None
+                if subject_id:
+                    counts[subject_id] = counts.get(subject_id, 0) + 1
+        top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
+        labels = {
+            record["_id"]: record
+            for record in self.db.subjects.find(
+                {"_id": {"$in": [subject_id for subject_id, _count in top]}},
+                {"subject_code": 1, "subject_name": 1},
+            )
+        } if top else {}
+        return json_safe(
+            {
+                "items": [
+                    {
+                        "subject_id": subject_id,
+                        "subject_code": (labels.get(subject_id) or {}).get("subject_code", ""),
+                        "subject_name": (labels.get(subject_id) or {}).get("subject_name", ""),
+                        "reviews": count,
+                    }
+                    for subject_id, count in top
+                ],
+                "window_days": SUBJECT_SUGGESTION_WINDOW_DAYS,
+            }
+        )
+
+    def get_review_policy(self) -> dict:
+        stored = self.db.review_settings.find_one({"_id": REVIEW_POLICY_ID}) or {}
+        policy = ReviewPolicyPayload(
+            secondary_on_override=bool(stored.get("secondary_on_override", False)),
+            secondary_below_score=stored.get("secondary_below_score"),
+            secondary_subject_ids=[str(item) for item in stored.get("secondary_subject_ids") or []],
+        ).model_dump()
+        policy["updated_at"] = stored.get("updated_at")
+        policy["updated_by_user_id"] = stored.get("updated_by_user_id")
+        return json_safe(policy)
+
+    def update_review_policy(self, payload: ReviewPolicyPayload, current_user: CurrentUser) -> dict:
+        before = self.get_review_policy()
+        now = utc_now()
+        subject_ids = []
+        for value in payload.secondary_subject_ids:
+            oid = object_id(value, "secondary_subject_ids")
+            if oid not in subject_ids:
+                subject_ids.append(oid)
+        self.db.review_settings.update_one(
+            {"_id": REVIEW_POLICY_ID},
+            {
+                "$set": {
+                    "secondary_on_override": payload.secondary_on_override,
+                    "secondary_below_score": payload.secondary_below_score,
+                    "secondary_subject_ids": subject_ids,
+                    "updated_at": now,
+                    "updated_by_user_id": current_user.id,
+                }
+            },
+            upsert=True,
+        )
+        after = self.get_review_policy()
+        write_audit_event(
+            self.db,
+            action="REVIEW_POLICY_UPDATED",
+            entity_type="review_policy",
+            entity_id=REVIEW_POLICY_ID,
+            actor_user_id=current_user.id,
+            actor_role=current_user.role,
+            before={key: value for key, value in before.items() if not key.startswith("updated_")},
+            after={key: value for key, value in after.items() if not key.startswith("updated_")},
+            created_at=now,
+        )
+        return after
+
+    def _policy_secondary_reasons(self, question: dict, payload: ReviewCreateRequest) -> list[str]:
+        """Why the review policy forces this approval into a second review, if at all."""
+        if not hasattr(self.db, "review_settings"):
+            return []
+        policy = self.db.review_settings.find_one({"_id": REVIEW_POLICY_ID}) or {}
+        reasons = []
+        if policy.get("secondary_on_override") and payload.override.applied:
+            reasons.append("duyệt khác gợi ý AI (override)")
+        threshold = policy.get("secondary_below_score")
+        score = (question.get("quality_summary") or {}).get("overall_score")
+        if isinstance(threshold, (int, float)) and isinstance(score, (int, float)) and score < threshold:
+            reasons.append(f"điểm AI {score:.2f} dưới ngưỡng {threshold:.2f}")
+        if question.get("subject_id") and question.get("subject_id") in (policy.get("secondary_subject_ids") or []):
+            reasons.append("học phần bắt buộc duyệt hai lần")
+        return reasons
 
     def get_review_draft(self, question_id: str, current_user: CurrentUser) -> dict | None:
         question, version = self._pair(question_id)
@@ -2699,6 +2798,13 @@ class QuestionWorkflowService:
             and (payload.secondary_required or secondary.get("status") == "REQUESTED")
             and not awaiting_secondary
         )
+        secondary_reason = payload.secondary_reason or secondary.get("reason") or ""
+        if payload.decision == "APPROVED" and not awaiting_secondary:
+            policy_reasons = self._policy_secondary_reasons(question, payload)
+            if policy_reasons:
+                request_secondary = True
+                policy_text = "Theo chính sách kiểm duyệt: " + "; ".join(policy_reasons)
+                secondary_reason = f"{secondary_reason}. {policy_text}" if secondary_reason else policy_text
         review_form = payload.review_form.model_dump()
         review_note = payload.note or payload.review_form.overall_note
         review = {
@@ -2716,7 +2822,7 @@ class QuestionWorkflowService:
             "review_stage": "SECONDARY" if awaiting_secondary else "PRIMARY",
             "bulk": bool(payload.bulk),
             "secondary_required": bool(request_secondary or awaiting_secondary),
-            "secondary_reason": payload.secondary_reason or secondary.get("reason") or "",
+            "secondary_reason": secondary_reason,
             "supersedes_review_id": question.get("latest_review_id"),
             "previous_status": question["review_status"],
             "resulting_status": "PENDING" if request_secondary else payload.decision,
@@ -2742,7 +2848,7 @@ class QuestionWorkflowService:
             question_fields["secondary_review"] = {
                 "required": True,
                 "status": "AWAITING_SECONDARY",
-                "reason": payload.secondary_reason or secondary.get("reason") or review_note,
+                "reason": secondary_reason or review_note,
                 "primary_review_id": review["_id"],
                 "primary_reviewer_user_id": current_user.id,
                 "secondary_review_id": None,
@@ -2789,38 +2895,31 @@ class QuestionWorkflowService:
             if request_secondary
             else f"QUESTION_{payload.decision}"
         )
-        audit = {
-            "schema_version": SCHEMA_VERSION,
-            "actor": {
-                "type": "USER",
-                "user_id": current_user.id,
-                "model_id": None,
-                "service_name": None,
-            },
-            "entity": {
-                "type": "QUESTION",
-                "id": question["_id"],
-                "version_id": version["_id"],
-            },
-            "action": audit_action,
-            "changes": [
+        audit = build_audit_event(
+            action=audit_action,
+            entity_type="question",
+            entity_id=question["_id"],
+            entity_version_id=version["_id"],
+            actor_user_id=current_user.id,
+            actor_role=current_user.role,
+            changes=[
                 {
                     "path": "review_status",
                     "old_value": question["review_status"],
                     "new_value": question_fields["review_status"],
                 }
             ],
-            "before_hash": version["content_hash"],
-            "after_hash": version["content_hash"],
-            "metadata": {
+            before_hash=version["content_hash"],
+            after_hash=version["content_hash"],
+            metadata={
                 "review_id": review["_id"],
                 "correlation_id": str(review["_id"]),
                 "review_assignment": json_safe(question.get("review_assignment") or {}),
                 "review_form": review_form,
                 "secondary_review": json_safe(question_fields.get("secondary_review") or secondary or {}),
             },
-            "created_at": now,
-        }
+            created_at=now,
+        )
         with mongo_transaction() as session:
             self.db.question_reviews.insert_one(review, session=session)
             result = self.db.questions.update_one(
@@ -2844,14 +2943,22 @@ class QuestionWorkflowService:
                 review=review,
                 actor_user_id=current_user.id,
             )
-        elif question_fields["review_assignment"].get("status") == "ASSIGNED":
-            safe_notify_review_assigned(
+        else:
+            safe_notify_secondary_review_pending(
                 database=self.db,
                 question=question,
                 version=version,
-                reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
+                reason=question_fields["secondary_review"].get("reason") or "",
                 actor_user_id=current_user.id,
             )
+            if question_fields["review_assignment"].get("status") == "ASSIGNED":
+                safe_notify_review_assigned(
+                    database=self.db,
+                    question=question,
+                    version=version,
+                    reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
+                    actor_user_id=current_user.id,
+                )
         if hasattr(self.db, "question_review_drafts"):
             self.db.question_review_drafts.delete_one(
                 {
@@ -2860,6 +2967,29 @@ class QuestionWorkflowService:
                 }
             )
         return json_safe(review)
+
+    def _comment_audit(
+        self,
+        action: str,
+        question: dict,
+        version: dict,
+        current_user: CurrentUser,
+        metadata: dict,
+        now,
+    ) -> None:
+        write_audit_event(
+            self.db,
+            action=action,
+            entity_type="question",
+            entity_id=question["_id"],
+            entity_version_id=version["_id"],
+            actor_user_id=current_user.id,
+            actor_role=current_user.role,
+            before_hash=version["content_hash"],
+            after_hash=version["content_hash"],
+            metadata=metadata,
+            created_at=now,
+        )
 
     def list_comments(self, question_id: str, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
@@ -2905,27 +3035,13 @@ class QuestionWorkflowService:
             "updated_at": now,
         }
         self.db.question_comments.insert_one(comment)
-        self.db.audit_logs.insert_one(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "actor": {
-                    "type": "USER",
-                    "user_id": current_user.id,
-                    "model_id": None,
-                    "service_name": None,
-                },
-                "entity": {
-                    "type": "QUESTION",
-                    "id": question["_id"],
-                    "version_id": version["_id"],
-                },
-                "action": "QUESTION_COMMENT_ADDED",
-                "changes": [],
-                "before_hash": version["content_hash"],
-                "after_hash": version["content_hash"],
-                "metadata": {"comment_id": comment["_id"], "mentions": json_safe(mention_ids)},
-                "created_at": now,
-            }
+        self._comment_audit(
+            "QUESTION_COMMENT_ADDED",
+            question,
+            version,
+            current_user,
+            {"comment_id": comment["_id"], "mentions": json_safe(mention_ids)},
+            now,
         )
         NotificationService(self.db).create_many(
             [
@@ -2977,19 +3093,7 @@ class QuestionWorkflowService:
         )
         if not updated:
             raise PermissionError("Bạn chỉ có thể sửa bình luận của mình")
-        self.db.audit_logs.insert_one(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "actor": {"type": "USER", "user_id": current_user.id, "model_id": None, "service_name": None},
-                "entity": {"type": "QUESTION", "id": question["_id"], "version_id": version["_id"]},
-                "action": "QUESTION_COMMENT_UPDATED",
-                "changes": [],
-                "before_hash": version["content_hash"],
-                "after_hash": version["content_hash"],
-                "metadata": {"comment_id": updated["_id"]},
-                "created_at": now,
-            }
-        )
+        self._comment_audit("QUESTION_COMMENT_UPDATED", question, version, current_user, {"comment_id": updated["_id"]}, now)
         return json_safe(updated)
 
     def delete_comment(
@@ -3015,19 +3119,7 @@ class QuestionWorkflowService:
         )
         if not updated:
             raise PermissionError("Bạn chỉ có thể xóa bình luận của mình")
-        self.db.audit_logs.insert_one(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "actor": {"type": "USER", "user_id": current_user.id, "model_id": None, "service_name": None},
-                "entity": {"type": "QUESTION", "id": question["_id"], "version_id": version["_id"]},
-                "action": "QUESTION_COMMENT_DELETED",
-                "changes": [],
-                "before_hash": version["content_hash"],
-                "after_hash": version["content_hash"],
-                "metadata": {"comment_id": updated["_id"]},
-                "created_at": now,
-            }
-        )
+        self._comment_audit("QUESTION_COMMENT_DELETED", question, version, current_user, {"comment_id": updated["_id"]}, now)
         return True
 
     def set_secondary_review(
@@ -3142,6 +3234,7 @@ class QuestionWorkflowService:
             before=question.get("secondary_review") or {},
             after=secondary,
             metadata={"reason": payload.reason},
+            path="secondary_review",
         )
         if reviewer and (fields.get("review_assignment") or {}).get("status") == "ASSIGNED":
             safe_notify_review_assigned(
@@ -3858,7 +3951,7 @@ class QuestionWorkflowService:
                         {"_id": {"$in": [key for key in {*per_reviewer, *holding} if key is not None]}},
                     ]
                 },
-                {"display_name": 1, "email": 1, "role": 1, "is_active": 1},
+                {"display_name": 1, "email": 1, "role": 1, "is_active": 1, "review_subject_ids": 1},
             )
         }
         rows = []
@@ -3880,6 +3973,9 @@ class QuestionWorkflowService:
                 flags.append("HIGH_BULK")
             if load.get("holding_sla_breached"):
                 flags.append("SLA_BREACHED")
+            subject_ids = user.get("review_subject_ids") or []
+            if user.get("role") == "Reviewer" and user.get("is_active") and not subject_ids:
+                flags.append("NO_SUBJECTS")
             rows.append(
                 {
                     "user_id": reviewer_id,
@@ -3887,6 +3983,7 @@ class QuestionWorkflowService:
                     "email": user.get("email"),
                     "role": user.get("role"),
                     "is_active": user.get("is_active", False),
+                    "review_subject_ids": subject_ids,
                     "reviews_7d": stats.get("reviews_7d", 0),
                     "reviews_30d": total,
                     "decisions": stats.get(

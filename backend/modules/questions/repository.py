@@ -134,6 +134,7 @@ class QuestionRepository(Protocol):
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
+        override_only: bool = False,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         submitted_from: datetime | None = None,
@@ -296,6 +297,7 @@ class MongoQuestionRepository:
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
+        override_only: bool = False,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         submitted_from: datetime | None = None,
@@ -341,6 +343,13 @@ class MongoQuestionRepository:
             match["review_assignment.lock_expires_at"] = {"$lte": overdue_at}
         if secondary_status:
             match["secondary_review.status"] = secondary_status
+        if override_only:
+            # Questions whose latest decision was taken against the AI suggestion.
+            override_review_ids = [
+                review["_id"]
+                for review in self.db.question_reviews.find({"override.applied": True}, {"_id": 1})
+            ]
+            match["latest_review_id"] = {"$in": override_review_ids}
         if created_from is not None or created_to is not None:
             created_at_match: dict = {}
             if created_from is not None:

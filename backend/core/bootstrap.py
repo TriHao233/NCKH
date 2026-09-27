@@ -655,6 +655,10 @@ def _ensure_indexes() -> None:
         name="ix_audit_actor_flat",
     )
     rag_db.audit_logs.create_index(
+        [("actor.user_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_audit_actor",
+    )
+    rag_db.audit_logs.create_index(
         [("action", ASCENDING), ("created_at", DESCENDING)],
         name="ix_audit_action",
     )

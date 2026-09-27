@@ -164,6 +164,7 @@ export const INBOX_TABS = Object.freeze([
   { value: 'late', label: 'Trễ hạn duyệt', query: { reviewStatus: 'PENDING', slaBreachedOnly: true } },
   { value: 'processed', label: 'Đã xử lý', query: { reviewStatus: 'PROCESSED' } },
   { value: 'moodle', label: 'Chờ lên Moodle', query: { reviewStatus: 'APPROVED', publicationStatus: 'NOT_PUBLISHED' } },
+  { value: 'override', label: 'Duyệt khác AI', query: { reviewStatus: 'APPROVED', overrideOnly: true }, adminOnly: true },
   { value: 'all', label: 'Tất cả', query: { reviewStatus: 'PENDING' }, adminOnly: true },
 ]);
 
@@ -504,6 +505,24 @@ export function effectiveCriteria(draft) {
 
 export function needsOverride(question, draft) {
   return draft?.decision === 'APPROVED' && question?.evaluation_status !== 'PASSED';
+}
+
+/**
+ * Lý do chính sách kiểm duyệt sẽ buộc lần duyệt đạt này chuyển sang chờ duyệt lần 2.
+ * Phản chiếu `_policy_secondary_reasons` phía backend để báo trước cho người duyệt.
+ */
+export function policySecondaryReasons(question, draft, policy) {
+  if (!policy || draft?.decision !== 'APPROVED' || isAwaitingSecondary(question)) return [];
+  const reasons = [];
+  if (policy.secondary_on_override && needsOverride(question, draft)) reasons.push('duyệt khác gợi ý AI (override)');
+  const threshold = policy.secondary_below_score;
+  const score = question?.quality_summary?.overall_score;
+  if (typeof threshold === 'number' && typeof score === 'number' && score < threshold) {
+    reasons.push(`điểm AI ${score.toFixed(2)} dưới ngưỡng ${threshold.toFixed(2)}`);
+  }
+  const subjectId = refId(question?.subject_id);
+  if (subjectId && (policy.secondary_subject_ids || []).includes(subjectId)) reasons.push('học phần bắt buộc duyệt hai lần');
+  return reasons;
 }
 
 /** Trả về thông báo lỗi đầu tiên, hoặc chuỗi rỗng nếu phiếu hợp lệ. */

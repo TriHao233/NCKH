@@ -55,9 +55,14 @@ function buildAttention(overview, dashboard, staleUnassigned) {
       to: '/kiem-duyet?tab=late',
     });
   }
-  const flaggedReviewers = (dashboard?.reviewers || []).filter((row) => row.flags?.some((flag) => flag !== 'SLA_BREACHED')).length;
+  const reviewerRows = dashboard?.reviewers || [];
+  const flaggedReviewers = reviewerRows.filter((row) => row.flags?.some((flag) => ['HIGH_OVERRIDE', 'HIGH_BULK'].includes(flag))).length;
   if (flaggedReviewers) {
     items.push({ key: 'reviewer-flags', tone: 'warn', text: `${formatNumber(flaggedReviewers)} người duyệt có dấu hiệu cần xem lại`, to: '/kiem-duyet/hieu-suat' });
+  }
+  const withoutSubjects = reviewerRows.filter((row) => row.flags?.includes('NO_SUBJECTS')).length;
+  if (withoutSubjects) {
+    items.push({ key: 'reviewer-subjects', tone: 'warn', text: `${formatNumber(withoutSubjects)} người duyệt chưa được gán học phần phụ trách`, to: '/quan-ly-nguoi-dung' });
   }
   const longRunning = overview?.jobs?.long_running || 0;
   if (longRunning) items.push({ key: 'long', tone: 'warn', text: `${formatNumber(longRunning)} tác vụ chạy quá lâu`, to: '/quan-ly-job?stale_only=true' });

@@ -257,8 +257,16 @@ function reviewIssuesOf(review) {
   return [];
 }
 
-function latestRevisionReview(reviews = []) {
-  return reviews.find((review) => review?.decision === 'NEEDS_REVISION') || null;
+// Câu "Cần sửa" và "Từ chối" đều có phản hồi của người duyệt; sửa xong có thể gửi duyệt lại.
+const FEEDBACK_REVIEW_STATUSES = new Set(['NEEDS_REVISION', 'REJECTED']);
+
+const FEEDBACK_TITLE = {
+  NEEDS_REVISION: 'Phản hồi cần sửa',
+  REJECTED: 'Lý do bị từ chối',
+};
+
+function latestFeedbackReview(reviews = [], status = 'NEEDS_REVISION') {
+  return reviews.find((review) => review?.decision === status) || null;
 }
 
 function revisionIssueText(issue) {
@@ -1127,8 +1135,8 @@ function ManagePage() {
   const compareLeftVersion = versionHistory.find((version) => version.id === versionCompare.left) || null;
   const compareRightVersion = versionHistory.find((version) => version.id === versionCompare.right) || null;
   const compareRows = versionDiffRows(compareLeftVersion, compareRightVersion);
-  const activeRevisionReview = selectedQuestion?.review_status === 'NEEDS_REVISION'
-    ? latestRevisionReview(reviewHistory)
+  const activeRevisionReview = FEEDBACK_REVIEW_STATUSES.has(selectedQuestion?.review_status)
+    ? latestFeedbackReview(reviewHistory, selectedQuestion.review_status)
     : null;
   const activeRevisionIssues = activeRevisionReview ? reviewIssuesOf(activeRevisionReview) : [];
   const viewingEntries = viewingQuestion
@@ -1143,7 +1151,7 @@ function ManagePage() {
   const editingRevisionReview = editing
     && selectedQuestion
     && editing.id === selectedQuestion.id
-    && editing.review_status === 'NEEDS_REVISION'
+    && FEEDBACK_REVIEW_STATUSES.has(editing.review_status)
     ? activeRevisionReview
     : null;
   const editingRevisionIssues = editingRevisionReview ? reviewIssuesOf(editingRevisionReview) : [];
@@ -1156,7 +1164,7 @@ function ManagePage() {
     setEditExplanation(item.question_data?.explanation ?? '');
     setEditCloIds(questionCloIds(item));
     setEditChangeNote('');
-    if (item.review_status === 'NEEDS_REVISION') {
+    if (FEEDBACK_REVIEW_STATUSES.has(item.review_status)) {
       await loadWorkflowHistory(item);
     }
   };
@@ -1185,9 +1193,10 @@ function ManagePage() {
     }
     setSaving(true);
     try {
-      const defaultChangeNote = editing.review_status === 'NEEDS_REVISION'
-        ? 'Chỉnh sửa theo phản hồi kiểm duyệt'
-        : 'Cập nhật câu hỏi';
+      const defaultChangeNote = {
+        NEEDS_REVISION: 'Chỉnh sửa theo phản hồi kiểm duyệt',
+        REJECTED: 'Chỉnh sửa sau khi bị từ chối',
+      }[editing.review_status] || 'Cập nhật câu hỏi';
       await updateQuestion(editing.id, {
         expected_version: editing.current_version,
         content: editContent,
@@ -2068,6 +2077,10 @@ function ManagePage() {
                 <b>{counts.NEEDS_REVISION}</b>
                 <span>Cần sửa</span>
               </button>
+              <button type="button" className={`stat-card ${statusFilter === 'REJECTED' ? 'stat-card--active' : ''}`} onClick={() => setStatusFilter('REJECTED')}>
+                <b>{counts.REJECTED}</b>
+                <span>Từ chối</span>
+              </button>
             </div>
 
             <div className={`coverage-panel ${coverageOpen ? '' : 'coverage-panel--collapsed'}`}>
@@ -2527,6 +2540,12 @@ function ManagePage() {
                             <span>Mở Chi tiết để xem phản hồi, chỉnh sửa câu hỏi rồi gửi duyệt lại.</span>
                           </div>
                         )}
+                        {item.review_status === 'REJECTED' && (
+                          <div className="revision-inline-note">
+                            <b>Người duyệt đã từ chối</b>
+                            <span>Mở Chi tiết để xem lý do. Có thể sửa lại rồi gửi duyệt, hoặc đưa vào lưu trữ.</span>
+                          </div>
+                        )}
                       </div>
                       <div className="question-side">
                         <span className={`status-badge ${REVIEW_STATUS_CLASS[item.review_status] || ''}`}>
@@ -2865,10 +2884,10 @@ function ManagePage() {
                     </div>
                   )}
 	                  {workflowMessage && <p className="workflow-message">{workflowMessage}</p>}
-	                  {selectedQuestion.review_status === 'NEEDS_REVISION' && (
+	                  {FEEDBACK_REVIEW_STATUSES.has(selectedQuestion.review_status) && (
 	                    <div className="revision-feedback-panel">
 	                      <div className="revision-feedback-head">
-	                        <b>Phản hồi cần sửa</b>
+	                        <b>{FEEDBACK_TITLE[selectedQuestion.review_status]}</b>
 	                        {activeRevisionReview?.reviewed_at && <span>{formatDateTime(activeRevisionReview.reviewed_at)}</span>}
 	                      </div>
 	                      {activeRevisionReview ? (
@@ -2892,7 +2911,17 @@ function ManagePage() {
 	                      )}
 	                      {canEditQuestions && (
 	                        <button type="button" className="mini-action mini-action--approve" onClick={() => openEdit(selectedQuestion)}>
-	                          Sửa câu hỏi
+	                          {selectedQuestion.review_status === 'REJECTED' ? 'Sửa để gửi duyệt lại' : 'Sửa câu hỏi'}
+	                        </button>
+	                      )}
+	                      {canEditQuestions && selectedQuestion.review_status === 'REJECTED' && (
+	                        <button
+	                          type="button"
+	                          className="mini-action mini-action--danger"
+	                          onClick={() => handleDelete(selectedQuestion)}
+	                          disabled={deletingId === selectedQuestion.id}
+	                        >
+	                          Đưa vào lưu trữ
 	                        </button>
 	                      )}
 	                    </div>
@@ -3273,10 +3302,10 @@ function ManagePage() {
 	        <div className="modal-overlay" onClick={closeEdit}>
 	          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
 	            <h3 className="profile-card-title">Chỉnh sửa câu hỏi {editing.question_code}</h3>
-	            {editing.review_status === 'NEEDS_REVISION' && (
+	            {FEEDBACK_REVIEW_STATUSES.has(editing.review_status) && (
 	              <div className="revision-feedback-panel revision-feedback-panel--modal">
 	                <div className="revision-feedback-head">
-	                  <b>Phản hồi cần sửa</b>
+	                  <b>{FEEDBACK_TITLE[editing.review_status]}</b>
 	                  {editingRevisionReview?.reviewed_at && <span>{formatDateTime(editingRevisionReview.reviewed_at)}</span>}
 	                </div>
 	                {editingRevisionReview ? (
@@ -3357,7 +3386,7 @@ function ManagePage() {
 	              <label className="field-label">Ghi chú thay đổi</label>
 	              <input
 	                className="field-input"
-	                placeholder={editing.review_status === 'NEEDS_REVISION' ? 'Chỉnh sửa theo phản hồi kiểm duyệt' : 'Cập nhật câu hỏi'}
+	                placeholder={{ NEEDS_REVISION: 'Chỉnh sửa theo phản hồi kiểm duyệt', REJECTED: 'Chỉnh sửa sau khi bị từ chối' }[editing.review_status] || 'Cập nhật câu hỏi'}
 	                value={editChangeNote}
 	                onChange={(e) => setEditChangeNote(e.target.value)}
 	              />

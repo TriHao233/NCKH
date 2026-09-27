@@ -34,6 +34,7 @@ export function listQuestions({
   waitingHoursMin,
   overdueOnly = false,
   slaBreachedOnly = false,
+  overrideOnly = false,
   createdFrom,
   createdTo,
   submittedFrom,
@@ -65,6 +66,7 @@ export function listQuestions({
   if (waitingHoursMin) params.set('waiting_hours_min', waitingHoursMin);
   if (overdueOnly) params.set('overdue_only', 'true');
   if (slaBreachedOnly) params.set('sla_breached_only', 'true');
+  if (overrideOnly) params.set('override_only', 'true');
   if (createdFrom) params.set('created_from', localDateBoundary(createdFrom));
   if (createdTo) params.set('created_to', localDateBoundary(createdTo, true));
   if (submittedFrom) params.set('submitted_from', localDateBoundary(submittedFrom));
@@ -175,6 +177,18 @@ export function releaseQuestionReview(id) {
 
 export function renewQuestionReview(id) {
   return apiRequest(`/questions/${id}/review-assignment/renew`, { method: 'POST' });
+}
+
+export function getReviewPolicy() {
+  return apiRequest('/questions/review-policy');
+}
+
+export function updateReviewPolicy(payload) {
+  return apiRequest('/questions/review-policy', { method: 'PUT', body: payload });
+}
+
+export function getReviewSubjectSuggestions(reviewerUserId) {
+  return apiRequest(`/questions/review-subject-suggestions?reviewer_user_id=${encodeURIComponent(reviewerUserId)}`);
 }
 
 export function autoAssignReviews(payload = {}) {

@@ -68,7 +68,7 @@
 }
 
 /* ─── Stats ──────────────────────────────────────────────────── */
-.manage-page .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 22px; }
+.manage-page .stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 22px; }
 .manage-page .stat-card {
   background: #fff;
   border: 1.5px solid #a7c8e6;

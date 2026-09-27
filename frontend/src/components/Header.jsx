@@ -169,7 +169,8 @@ const Header = () => {
     // Theo thứ tự pipeline; mỗi mục một tên duy nhất dùng thống nhất ở mọi nơi.
     items: [
       { path: '/tong-quan', label: 'Tổng quan' },
-      { path: '/kiem-duyet', label: 'Kiểm duyệt' },
+      { path: '/kiem-duyet', label: 'Kiểm duyệt', exclude: ['/kiem-duyet/hieu-suat'] },
+      { path: '/kiem-duyet/hieu-suat', label: 'Hiệu suất duyệt' },
       { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
       { path: '/danh-muc', label: 'Học phần' },
       { path: '/cau-hinh-ai', label: 'Cấu hình AI' },

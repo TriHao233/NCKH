@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRotateRight } from '@fortawesome/free-solid-svg-icons';
-import { getReviewDashboard } from '../../api/questions';
+import { getReviewDashboard, getReviewPolicy, updateReviewPolicy } from '../../api/questions';
 import WorkspaceHero from '../../components/workspace/WorkspaceHero';
-import { EmptyState, ErrorState, SkeletonRows } from '../../components/workspace/Feedback';
+import { EmptyState, ErrorState, Notice, SkeletonRows } from '../../components/workspace/Feedback';
+import { useReviewLookups } from '../../features/review/reviewData';
 import { REVIEW_CRITERIA, formatPercent } from '../../features/review/reviewModel';
 import '../../css/workspace.css';
 import '../../css/ReviewPage.css';
@@ -18,13 +19,116 @@ const REVIEWER_FLAG_LABEL = {
   HIGH_OVERRIDE: 'Hay duyệt khác AI',
   HIGH_BULK: 'Duyệt hàng loạt nhiều',
   SLA_BREACHED: 'Giữ câu trễ hạn',
+  NO_SUBJECTS: 'Chưa gán học phần',
 };
 
 const REVIEWER_FLAG_TONE = {
   HIGH_OVERRIDE: 'warn',
   HIGH_BULK: 'warn',
   SLA_BREACHED: 'danger',
+  NO_SUBJECTS: 'outline',
 };
+
+function ReviewPolicyCard({ subjects }) {
+  const [policy, setPolicy] = useState(null);
+  const [form, setForm] = useState(null);
+  const [state, setState] = useState({ saving: false, error: '', saved: false });
+
+  useEffect(() => {
+    getReviewPolicy()
+      .then((value) => {
+        setPolicy(value);
+        setForm({
+          secondaryOnOverride: Boolean(value.secondary_on_override),
+          belowScore: typeof value.secondary_below_score === 'number' ? String(value.secondary_below_score) : '',
+          subjectIds: value.secondary_subject_ids || [],
+        });
+      })
+      .catch((err) => setState({ saving: false, error: err.message || 'Không tải được chính sách.', saved: false }));
+  }, []);
+
+  if (!form) {
+    return state.error ? <Notice tone="error">{state.error}</Notice> : <SkeletonRows rows={2} lines={1} />;
+  }
+
+  const toggleSubject = (id) => {
+    const next = new Set(form.subjectIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setForm({ ...form, subjectIds: [...next] });
+  };
+
+  const save = async (event) => {
+    event.preventDefault();
+    const raw = form.belowScore.trim().replace(',', '.');
+    const score = raw === '' ? null : Number(raw);
+    if (score !== null && !(score >= 0 && score <= 1)) {
+      setState({ saving: false, error: 'Ngưỡng điểm AI phải nằm trong khoảng 0 đến 1.', saved: false });
+      return;
+    }
+    setState({ saving: true, error: '', saved: false });
+    try {
+      const saved = await updateReviewPolicy({
+        secondary_on_override: form.secondaryOnOverride,
+        secondary_below_score: score,
+        secondary_subject_ids: form.subjectIds,
+      });
+      setPolicy(saved);
+      setState({ saving: false, error: '', saved: true });
+    } catch (err) {
+      setState({ saving: false, error: err.message || 'Không lưu được chính sách.', saved: false });
+    }
+  };
+
+  return (
+    <form onSubmit={save}>
+      <label className="ws-check">
+        <input
+          type="checkbox"
+          checked={form.secondaryOnOverride}
+          onChange={(event) => setForm({ ...form, secondaryOnOverride: event.target.checked })}
+        />
+        Bắt buộc duyệt lần 2 khi người duyệt duyệt khác gợi ý AI (override)
+      </label>
+      <label className="ws-field" style={{ maxWidth: 360 }}>
+        <span>Bắt buộc duyệt lần 2 khi điểm AI dưới (0 đến 1, để trống là tắt)</span>
+        <input
+          className="ws-input"
+          inputMode="decimal"
+          placeholder="Ví dụ 0.7"
+          value={form.belowScore}
+          onChange={(event) => setForm({ ...form, belowScore: event.target.value })}
+        />
+      </label>
+      <div className="ws-field">
+        <span>Học phần luôn phải duyệt hai lần</span>
+        {subjects.length === 0 ? (
+          <p className="ws-hint">Chưa có học phần.</p>
+        ) : (
+          <div className="ad-permission-grid">
+            {subjects.map((subject) => {
+              const id = String(subject.id || subject._id);
+              return (
+                <label className="ws-check" key={id}>
+                  <input type="checkbox" checked={form.subjectIds.includes(id)} onChange={() => toggleSubject(id)} />
+                  {[subject.subject_code, subject.subject_name].filter(Boolean).join(' - ')}
+                </label>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {state.error && <Notice tone="error">{state.error}</Notice>}
+      {state.saved && <Notice tone="success">Đã lưu. Áp dụng cho các lần duyệt từ bây giờ.</Notice>}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+        <button type="submit" className="btn btn--primary" disabled={state.saving}>
+          {state.saving ? 'Đang lưu...' : 'Lưu chính sách'}
+        </button>
+        {policy?.updated_at && <small className="ws-muted">Cập nhật lần cuối {new Date(policy.updated_at).toLocaleString('vi-VN')}</small>}
+      </div>
+    </form>
+  );
+}
 
 function shortHours(value) {
   return typeof value === 'number' ? `${value.toFixed(1).replace('.', ',')} giờ` : '--';
@@ -58,6 +162,8 @@ function ReviewStatsPage() {
   const subjects = dashboard?.subjects || [];
   const reviewers = dashboard?.reviewers || [];
   const isAdminScope = dashboard?.scope === 'all_reviewers';
+  const lookups = useReviewLookups();
+  const subjectCodes = (ids) => (ids || []).map((id) => lookups.subjectsById.get(id)?.subject_code || '?').join(', ');
   const scopeText = dashboard?.scope === 'all_reviewers' ? 'toàn bộ người duyệt' : 'các phiếu do bạn chốt';
 
   return (
@@ -187,8 +293,21 @@ function ReviewStatsPage() {
               {isAdminScope && (
                 <section className="ws-card">
                   <div className="ws-card-title" style={{ marginBottom: 14 }}>
+                    <h2>Chính sách duyệt lần 2</h2>
+                    <span>Khi điều kiện khớp, lần duyệt đạt đầu tiên tự chuyển sang chờ một người duyệt khác xác nhận.</span>
+                  </div>
+                  <ReviewPolicyCard subjects={lookups.subjects || []} />
+                </section>
+              )}
+
+              {isAdminScope && (
+                <section className="ws-card">
+                  <div className="ws-card-title" style={{ marginBottom: 14 }}>
                     <h2>Theo người duyệt</h2>
-                    <span>Khối lượng đang giữ và chất lượng kết luận 30 ngày. Cảnh báo chỉ xét khi có từ 5 phiếu.</span>
+                    <span>
+                      Khối lượng đang giữ và chất lượng kết luận 30 ngày. Cảnh báo chỉ xét khi có từ 5 phiếu.
+                      {' '}<Link to="/quan-ly-nguoi-dung">Gán học phần phụ trách</Link>
+                    </span>
                   </div>
                   {reviewers.length === 0 ? (
                     <EmptyState compact title="Chưa có người duyệt" description="Tạo tài khoản vai trò Người duyệt ở trang Người dùng." />
@@ -198,6 +317,7 @@ function ReviewStatsPage() {
                         <thead>
                           <tr>
                             <th>Người duyệt</th>
+                            <th>Phụ trách</th>
                             <th className="ws-num">Đang giữ</th>
                             <th className="ws-num">Phiếu 30 ngày</th>
                             <th className="ws-num">Tỷ lệ duyệt</th>
@@ -216,6 +336,11 @@ function ReviewStatsPage() {
                                   {row.role === 'Admin' ? 'Quản trị' : 'Người duyệt'}
                                   {row.is_active ? '' : ' · đã khoá'}
                                 </small>
+                              </td>
+                              <td>
+                                {(row.review_subject_ids || []).length
+                                  ? subjectCodes(row.review_subject_ids)
+                                  : <span className="ws-muted">Mọi học phần</span>}
                               </td>
                               <td className="ws-num">
                                 {row.holding}

@@ -82,13 +82,17 @@ const EMPTY_FILTERS = {
 const AUTO_ASSIGN_SKIP_REASON = {
   NO_REVIEWERS: 'chưa có người duyệt đang hoạt động',
   NO_ELIGIBLE_REVIEWER: 'không còn người phù hợp (khác tác giả, đúng học phần, chưa đủ tải)',
+  NO_SUBJECT_SPECIALIST: 'học phần chưa có người phụ trách',
 };
+
+const AUTO_ASSIGN_DEFAULTS = { subjectMode: 'prefer', includeAdmins: false, maxLoad: 20 };
 
 const TAB_EMPTY = {
   mine: ['Bạn chưa giữ câu nào', 'Bấm "Duyệt câu tiếp theo" để nhận câu ưu tiên cao nhất.'],
   unassigned: ['Không còn câu chưa ai nhận', 'Câu giảng viên gửi duyệt sẽ xuất hiện ở đây kèm gợi ý của AI.'],
   resubmitted: ['Chưa có câu gửi lại', 'Câu bị yêu cầu sửa và được giảng viên gửi lại sẽ nằm ở đây.'],
   overdue: ['Không có câu quá hạn giữ', 'Câu bị giữ quá thời gian khoá hoặc hạn phân công sẽ hiện ở đây để người khác nhận lại.'],
+  override: ['Chưa có câu duyệt khác AI', 'Câu được duyệt dù AI đề xuất xem lại sẽ nằm ở đây để quản trị rà soát.'],
   late: ['Không có câu trễ hạn', 'Câu chờ duyệt quá hạn xử lý kể từ lúc giảng viên gửi sẽ hiện ở đây.'],
   processed: ['Chưa có câu đã xử lý', 'Câu đã duyệt, yêu cầu sửa hoặc từ chối sẽ nằm ở đây.'],
   moodle: ['Không còn câu chờ lên Moodle', 'Câu đã duyệt nhưng chưa đồng bộ Moodle sẽ nằm ở đây.'],
@@ -150,6 +154,7 @@ function ReviewInboxPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [assignDrawer, setAssignDrawer] = useState(null);
   const [evalDialog, setEvalDialog] = useState(null);
+  const [autoAssignDialog, setAutoAssignDialog] = useState(null);
   const [evalModels, setEvalModels] = useState([]);
 
   useEffect(() => {
@@ -162,11 +167,12 @@ function ReviewInboxPage() {
 
   // Bộ đếm cho các tab.
   const loadCounts = useCallback(async () => {
-    const [dashboard, processed, moodle, pendingAll] = await Promise.allSettled([
+    const [dashboard, processed, moodle, pendingAll, overridden] = await Promise.allSettled([
       getReviewDashboard(),
       listQuestions({ page: 1, pageSize: 1, reviewStatus: 'PROCESSED' }),
       listQuestions({ page: 1, pageSize: 1, reviewStatus: 'APPROVED', publicationStatus: 'NOT_PUBLISHED' }),
       fetchAllQuestions({ reviewStatus: 'PENDING' }),
+      isAdminUser ? listQuestions({ page: 1, pageSize: 1, reviewStatus: 'APPROVED', overrideOnly: true }) : Promise.resolve(null),
     ]);
     const workload = dashboard.status === 'fulfilled' ? (dashboard.value.workload || {}) : {};
     const next = {
@@ -177,13 +183,14 @@ function ReviewInboxPage() {
       all: workload.pending,
       processed: processed.status === 'fulfilled' ? processed.value.total || 0 : undefined,
       moodle: moodle.status === 'fulfilled' ? moodle.value.total || 0 : undefined,
+      override: overridden.status === 'fulfilled' && overridden.value ? overridden.value.total || 0 : undefined,
       resubmitted: pendingAll.status === 'fulfilled' ? pendingAll.value.filter(isResubmission).length : undefined,
     };
     setCounts(next);
     setSlaHours(workload.sla_hours || 0);
     setCountsLoaded(true);
     return next;
-  }, []);
+  }, [isAdminUser]);
 
   useEffect(() => {
     loadCounts().then((next) => {
@@ -414,18 +421,19 @@ function ReviewInboxPage() {
   };
 
   // ─── Đánh giá lại bằng AI ───────────────────────────────────
-  const handleAutoAssign = async () => {
-    const accepted = await confirm({
-      title: 'Tự chia việc cho người duyệt',
-      description: 'Giao các câu chưa ai nhận hoặc quá hạn giữ (tối đa 100 câu, cũ nhất trước). Ưu tiên người phụ trách đúng học phần, '
-        + 'rồi người đang giữ ít câu nhất; không giao cho tác giả câu hỏi, mỗi người giữ tối đa 20 câu.',
-      confirmLabel: 'Chia việc',
-    });
-    if (!accepted) return;
+  const openAutoAssign = () => setAutoAssignDialog({ ...AUTO_ASSIGN_DEFAULTS });
+
+  const submitAutoAssign = async () => {
+    const options = autoAssignDialog;
+    setAutoAssignDialog(null);
     setBusy('auto-assign');
     clearFlash();
     try {
-      const result = await autoAssignReviews({});
+      const result = await autoAssignReviews({
+        subject_mode: options.subjectMode,
+        include_admins: options.includeAdmins,
+        max_load_per_reviewer: Math.max(1, Number(options.maxLoad) || AUTO_ASSIGN_DEFAULTS.maxLoad),
+      });
       const assigned = result.assigned?.length || 0;
       const skipped = result.skipped?.length || 0;
       const reasons = [...new Set((result.skipped || []).map((item) => AUTO_ASSIGN_SKIP_REASON[item.reason] || item.reason))];
@@ -483,7 +491,7 @@ function ReviewInboxPage() {
     return <Navigate to={`/kiem-duyet/${legacyQuestionId}`} replace />;
   }
 
-  const pendingTab = !['processed', 'moodle'].includes(tab);
+  const pendingTab = !['processed', 'moodle', 'override'].includes(tab);
   const [emptyTitle, emptyText] = TAB_EMPTY[tab] || TAB_EMPTY.all;
 
   return (
@@ -498,7 +506,7 @@ function ReviewInboxPage() {
               items={[
                 { key: 'eval', label: 'Đánh giá lại bằng AI', icon: faRobot, onClick: openEvaluate, disabled: Boolean(busy) },
                 ...(isAdminUser
-                  ? [{ key: 'auto-assign', label: 'Tự chia việc cho người duyệt', icon: faShuffle, onClick: handleAutoAssign, disabled: Boolean(busy) }]
+                  ? [{ key: 'auto-assign', label: 'Tự chia việc cho người duyệt', icon: faShuffle, onClick: openAutoAssign, disabled: Boolean(busy) }]
                   : []),
               ]}
             />
@@ -871,6 +879,55 @@ function ReviewInboxPage() {
                 {evalModels.length === 0 && <option value="">Mô hình mặc định của hệ thống</option>}
                 {evalModels.map((model) => <option key={model.code} value={model.code}>{model.name || model.code}</option>)}
               </select>
+            </label>
+          </>
+        )}
+      </Dialog>
+      <Dialog
+        open={Boolean(autoAssignDialog)}
+        title="Tự chia việc cho người duyệt"
+        description="Giao các câu chưa ai nhận hoặc quá hạn giữ (tối đa 100 câu, cũ nhất trước). Không bao giờ giao cho tác giả câu hỏi hay người đã duyệt lần 1."
+        onClose={() => setAutoAssignDialog(null)}
+        as="form"
+        onSubmit={submitAutoAssign}
+        footer={(
+          <>
+            <button type="button" className="btn btn--outline" onClick={() => setAutoAssignDialog(null)}>Huỷ</button>
+            <button type="submit" className="btn btn--primary">Chia việc</button>
+          </>
+        )}
+      >
+        {autoAssignDialog && (
+          <>
+            <label className="ws-field">
+              <span>Theo học phần phụ trách</span>
+              <select
+                className="ws-select"
+                value={autoAssignDialog.subjectMode}
+                onChange={(event) => setAutoAssignDialog({ ...autoAssignDialog, subjectMode: event.target.value })}
+              >
+                <option value="prefer">Ưu tiên người đúng học phần, thiếu người thì giao cho người chưa gán học phần</option>
+                <option value="strict">Chỉ giao cho người được gán đúng học phần</option>
+              </select>
+            </label>
+            <label className="ws-field">
+              <span>Số câu tối đa mỗi người đang giữ</span>
+              <input
+                className="ws-input"
+                type="number"
+                min={1}
+                max={500}
+                value={autoAssignDialog.maxLoad}
+                onChange={(event) => setAutoAssignDialog({ ...autoAssignDialog, maxLoad: event.target.value })}
+              />
+            </label>
+            <label className="ws-check">
+              <input
+                type="checkbox"
+                checked={autoAssignDialog.includeAdmins}
+                onChange={(event) => setAutoAssignDialog({ ...autoAssignDialog, includeAdmins: event.target.checked })}
+              />
+              Chia cả cho tài khoản Quản trị đang hoạt động
             </label>
           </>
         )}

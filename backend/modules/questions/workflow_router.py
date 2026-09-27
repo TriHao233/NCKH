@@ -19,6 +19,7 @@ from modules.questions.workflow_schemas import (
     ReviewAssignmentRequest,
     ReviewCreateRequest,
     ReviewDraftUpsertRequest,
+    ReviewPolicyPayload,
     SecondaryReviewRequest,
 )
 from modules.questions.workflow_service import (
@@ -60,6 +61,38 @@ def auto_assign_reviews(
 ):
     try:
         return service.auto_assign_reviews(payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/review-subject-suggestions")
+def review_subject_suggestions(
+    reviewer_user_id: str = Query(..., min_length=1, max_length=120),
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.suggest_review_subjects(reviewer_user_id)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/review-policy")
+def get_review_policy(
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    return service.get_review_policy()
+
+
+@router.put("/review-policy")
+def update_review_policy(
+    payload: ReviewPolicyPayload,
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.update_review_policy(payload, current_user)
     except Exception as exc:
         _translate_workflow_error(exc)
 

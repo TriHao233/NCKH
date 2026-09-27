@@ -18,6 +18,7 @@ import {
   getQuestion,
   getQuestionReviewDraft,
   getQuestionSources,
+  getReviewPolicy,
   listQuestionEvaluations,
   listQuestionMoodlePublications,
   listQuestionReviews,
@@ -141,6 +142,7 @@ function ReviewDeskPage() {
   const [now, setNow] = useState(() => Date.now());
   const [continueNext, setContinueNext] = useState(readContinuePreference);
   const [assignDrawer, setAssignDrawer] = useState(null);
+  const [reviewPolicy, setReviewPolicy] = useState(null);
   const draftDirtyRef = useRef(false);
   const lastSavedRef = useRef('');
   const autoClaimRef = useRef('');
@@ -154,6 +156,10 @@ function ReviewDeskPage() {
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    getReviewPolicy().then(setReviewPolicy).catch(() => setReviewPolicy(null));
   }, []);
 
   const refreshQuestion = useCallback(async () => {
@@ -425,10 +431,12 @@ function ReviewDeskPage() {
     setFormError('');
     clearFlash();
     try {
-      await reviewQuestion(questionId, buildReviewPayload(question, candidate));
+      const saved = await reviewQuestion(questionId, buildReviewPayload(question, candidate));
       draftDirtyRef.current = false;
       await deleteQuestionReviewDraft(questionId).catch(() => null);
-      const doneMessage = `${DECISION_DONE_TEXT[decision]} ${question.question_code}.`;
+      const doneMessage = decision === 'APPROVED' && saved?.resulting_status === 'PENDING'
+        ? `Đã duyệt vòng 1 ${question.question_code}; câu chuyển sang chờ người khác duyệt lần 2.`
+        : `${DECISION_DONE_TEXT[decision]} ${question.question_code}.`;
       if (continueNext) {
         await moveOn(doneMessage);
         return;
@@ -688,6 +696,7 @@ function ReviewDeskPage() {
                       onApplyAi={applyAiSuggestions}
                       canApplyAi={Boolean(ai.latest) && !ai.hasError}
                       onDiscard={discardDraft}
+                      reviewPolicy={reviewPolicy}
                     />
                   ) : (
                     <div className="rv-locked">

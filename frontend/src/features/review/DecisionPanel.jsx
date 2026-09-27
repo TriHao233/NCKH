@@ -20,6 +20,7 @@ import {
   isEvaluationBusy,
   needsOverride,
   pageRangeLabel,
+  policySecondaryReasons,
 } from './reviewModel';
 
 function readTemplates(user) {
@@ -72,6 +73,7 @@ function DecisionPanel({
   onApplyAi,
   canApplyAi,
   onDiscard,
+  reviewPolicy,
 }) {
   const [customTemplates, setCustomTemplates] = useState(() => readTemplates(user));
   const [compareOpen, setCompareOpen] = useState(false);
@@ -89,6 +91,7 @@ function DecisionPanel({
   const awaitingSecondary = isAwaitingSecondary(question);
   const aiBusy = isEvaluationBusy(question);
   const checkedCount = (draft.checklist || []).filter((item) => item.passed).length;
+  const policyReasons = policySecondaryReasons(question, draft, reviewPolicy);
 
   const update = (patch) => onDraftChange({ ...draft, ...patch });
   const updateCriterion = (key, patch) => update({
@@ -328,6 +331,11 @@ function DecisionPanel({
             />
           )}
         </div>
+      )}
+      {policyReasons.length > 0 && (
+        <Notice tone="info">
+          Theo chính sách kiểm duyệt, duyệt câu này sẽ chuyển sang chờ một người khác duyệt lần 2: {policyReasons.join('; ')}.
+        </Notice>
       )}
       {awaitingSecondary && (
         <Notice tone="info">

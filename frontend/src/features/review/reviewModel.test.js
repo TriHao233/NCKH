@@ -16,6 +16,7 @@ import {
   defaultDraft,
   isBlockedFromSecondary,
   isSlaBreached,
+  policySecondaryReasons,
   rankNextCandidates,
   restoreDraft,
   validateDraft,
@@ -224,4 +225,17 @@ test('rankNextCandidates puts my assignments, then my subjects, first', () => {
   const ranked = rankNextCandidates([open('a', 'x'), open('b', 'ctdl'), mine, open('c', 'ctdl')], reviewer, ['ctdl']);
   assert.deepEqual(ranked.map((item) => item.id), ['mine', 'b', 'c', 'a']);
   assert.deepEqual(rankNextCandidates([open('a', 'x'), open('b', 'y')], reviewer).map((item) => item.id), ['a', 'b']);
+});
+
+test('policySecondaryReasons mirrors the backend review policy', () => {
+  const policy = { secondary_on_override: true, secondary_below_score: 0.85, secondary_subject_ids: ['ctdl'] };
+  const failed = question({ evaluation_status: 'FAILED', subject_id: 'ctdl' });
+  const reasons = policySecondaryReasons(failed, { decision: 'APPROVED' }, policy);
+  assert.equal(reasons.length, 3);
+  assert.deepEqual(policySecondaryReasons(failed, { decision: 'REJECTED' }, policy), []);
+  assert.deepEqual(policySecondaryReasons(question(), { decision: 'APPROVED' }, null), []);
+  assert.deepEqual(
+    policySecondaryReasons(question({ secondary_review: { status: 'AWAITING_SECONDARY' } }), { decision: 'APPROVED' }, policy),
+    [],
+  );
 });

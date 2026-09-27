@@ -14,6 +14,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
 import { listSubjects } from '../api/catalog';
+import { getReviewSubjectSuggestions } from '../api/questions';
 import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
 import { AuthContext } from '../context/AuthContext';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -150,7 +151,13 @@ function PermissionPicker({ value, onChange }) {
   );
 }
 
-function ReviewSubjectPicker({ subjects, value, onChange }) {
+const REVIEWING_ROLES = new Set(['Reviewer', 'Admin']);
+
+function subjectLabel(subject) {
+  return [subject.subject_code, subject.subject_name].filter(Boolean).join(' - ');
+}
+
+function ReviewSubjectPicker({ subjects, value, onChange, suggestions, onSuggest, suggesting }) {
   const selected = new Set(value || []);
   const toggle = (id) => {
     const next = new Set(selected);
@@ -162,8 +169,34 @@ function ReviewSubjectPicker({ subjects, value, onChange }) {
     <div className="ws-field">
       <span className="ws-label">Học phần phụ trách duyệt</span>
       <small>
-        Dùng khi tự chia việc và khi chọn câu tiếp theo. Để trống nghĩa là duyệt được mọi học phần.
+        Dùng khi tự chia việc và khi chọn câu tiếp theo. Để trống nghĩa là duyệt được mọi học phần,
+        nhưng khi chia việc theo chế độ "chỉ đúng học phần" người này sẽ không được giao câu.
       </small>
+      {onSuggest && (
+        <div className="ws-hint">
+          <button type="button" className="ws-link-btn" onClick={onSuggest} disabled={suggesting}>
+            {suggesting ? 'Đang tìm...' : 'Gợi ý theo lịch sử duyệt 180 ngày'}
+          </button>
+          {suggestions && suggestions.length === 0 && ' Chưa có phiếu duyệt nào để gợi ý.'}
+          {suggestions && suggestions.length > 0 && (
+            <>
+              {' '}
+              {suggestions.map((item) => (
+                <button
+                  key={item.subject_id}
+                  type="button"
+                  className="ws-pill ws-pill--info"
+                  style={{ border: 0, cursor: 'pointer', marginLeft: 4 }}
+                  onClick={() => onChange([...new Set([...(value || []), item.subject_id])])}
+                  title="Thêm vào học phần phụ trách"
+                >
+                  + {item.subject_code || item.subject_name} ({item.reviews})
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
       {subjects === null ? (
         <p className="ws-hint">Đang tải học phần...</p>
       ) : subjects.length === 0 ? (
@@ -175,7 +208,7 @@ function ReviewSubjectPicker({ subjects, value, onChange }) {
             return (
               <label className="ws-check" key={id}>
                 <input type="checkbox" checked={selected.has(id)} onChange={() => toggle(id)} />
-                {[subject.subject_code, subject.subject_name].filter(Boolean).join(' - ')}
+                {subjectLabel(subject)}
               </label>
             );
           })}
@@ -219,6 +252,16 @@ function UsersAdminPage() {
   const [importState, setImportState] = useState(null);
   const [editState, setEditState] = useState(null);
   const [subjectOptions, setSubjectOptions] = useState(null);
+  const subjectsById = useMemo(
+    () => new Map((subjectOptions || []).map((subject) => [String(subject.id || subject._id), subject])),
+    [subjectOptions],
+  );
+
+  useEffect(() => {
+    listSubjects()
+      .then((items) => setSubjectOptions(Array.isArray(items) ? items : (items?.items || [])))
+      .catch(() => setSubjectOptions([]));
+  }, []);
   const [resetResult, setResetResult] = useState(null);
   const [busyKey, setBusyKey] = useState('');
   const [copiedKey, setCopiedKey] = useState('');
@@ -365,10 +408,17 @@ function UsersAdminPage() {
         review_subject_ids: target.review_subject_ids || [],
       },
     });
-    if (subjectOptions === null) {
-      listSubjects()
-        .then((items) => setSubjectOptions(Array.isArray(items) ? items : (items?.items || [])))
-        .catch(() => setSubjectOptions([]));
+  };
+
+  const suggestSubjects = async () => {
+    const target = editState?.user;
+    if (!target) return;
+    setEditState((current) => ({ ...current, suggesting: true }));
+    try {
+      const result = await getReviewSubjectSuggestions(target.id);
+      setEditState((current) => (current ? { ...current, suggesting: false, suggestions: result.items || [] } : current));
+    } catch (err) {
+      setEditState((current) => (current ? { ...current, suggesting: false, error: err.message || 'Không lấy được gợi ý.' } : current));
     }
   };
 
@@ -386,8 +436,8 @@ function UsersAdminPage() {
       await updateUser(target.id, {
         ...rest,
         display_name: form.display_name.trim(),
-        // Chỉ người duyệt mới dùng học phần phụ trách; đổi sang vai trò khác thì xoá.
-        review_subject_ids: form.role === 'Reviewer' ? reviewSubjectIds : [],
+        // Chỉ người duyệt và quản trị mới dùng học phần phụ trách; đổi sang vai trò khác thì xoá.
+        review_subject_ids: REVIEWING_ROLES.has(form.role) ? reviewSubjectIds : [],
       });
       setEditState(null);
       showFlash('success', `Đã cập nhật ${target.email}.`);
@@ -530,7 +580,18 @@ function UsersAdminPage() {
                               </div>
                             </div>
                           </td>
-                          <td><span className={`ws-pill ws-pill--${ROLE_TONE[item.role] || 'outline'}`}>{ROLE_LABEL[item.role] || item.role}</span></td>
+                          <td>
+                            <span className={`ws-pill ws-pill--${ROLE_TONE[item.role] || 'outline'}`}>{ROLE_LABEL[item.role] || item.role}</span>
+                            {REVIEWING_ROLES.has(item.role) && (
+                              (item.review_subject_ids || []).length > 0 ? (
+                                <small title={(item.review_subject_ids || []).map((id) => subjectLabel(subjectsById.get(id) || {}) || id).join(', ')}>
+                                  Duyệt: {(item.review_subject_ids || []).map((id) => subjectsById.get(id)?.subject_code || '?').join(', ')}
+                                </small>
+                              ) : item.role === 'Reviewer' ? (
+                                <small className="ws-muted">Chưa gán học phần phụ trách</small>
+                              ) : null
+                            )}
+                          </td>
                           <td>
                             <span className={`ws-pill ${item.is_active ? 'ws-pill--success' : 'ws-pill--outline'}`}>
                               {item.is_active ? 'Hoạt động' : 'Đã khoá'}
@@ -721,11 +782,14 @@ function UsersAdminPage() {
               </label>
             </div>
             <PermissionPicker value={editState.form.permissions} onChange={(permissions) => updateEdit({ permissions })} />
-            {editState.form.role === 'Reviewer' && (
+            {REVIEWING_ROLES.has(editState.form.role) && (
               <ReviewSubjectPicker
                 subjects={subjectOptions}
                 value={editState.form.review_subject_ids}
                 onChange={(ids) => updateEdit({ review_subject_ids: ids })}
+                suggestions={editState.suggestions}
+                suggesting={editState.suggesting}
+                onSuggest={suggestSubjects}
               />
             )}
             <label className="ws-check">

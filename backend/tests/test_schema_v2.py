@@ -91,6 +91,7 @@ from modules.questions.workflow_schemas import (
     ReviewCreateRequest,
     ReviewDraftUpsertRequest,
     ReviewOverride,
+    ReviewPolicyPayload,
     SecondaryReviewRequest,
 )
 from modules.questions import workflow_service as question_workflow_module
@@ -223,6 +224,61 @@ class FakeExamQuestionRepository:
         total = len(pairs)
         start = (page - 1) * page_size
         return pairs[start:start + page_size], total
+
+
+def _pending_question_pair(code, subject_id, submitted_at, author, now, **extra):
+    """A pending question aggregate and its version, ready for review workflow tests."""
+    question_id, version_id = ObjectId(), ObjectId()
+    return (
+        {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": code,
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "PENDING",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {},
+            "latest_review_id": None,
+            "subject_id": subject_id,
+            "created_by_user_id": author,
+            "review_assignment": {"status": "UNASSIGNED", "lock_expires_at": None},
+            "review_submission": {"submitted_at": submitted_at},
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+            **extra,
+        },
+        {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": author,
+            "generated_by_model_id": None,
+            "classification": {
+                "subject": {"id": subject_id},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 1},
+                "difficulty": None,
+            },
+            "clos": [],
+            "content": code,
+            "question_data": {"options": {"A": "x"}, "correct_answer": "A"},
+            "sources": [],
+            "keywords": [],
+            "content_hash": f"hash-{code}",
+            "change_note": "",
+            "created_at": now,
+        },
+    )
 
 
 def _user_doc(role="Admin", is_active=True):
@@ -374,6 +430,9 @@ def _matches_query(record, query):
             for operator, operand in expected.items():
                 if operator == "$in":
                     if not any(value in operand for value in values):
+                        return False
+                elif operator == "$nin":
+                    if any(value in operand for value in values):
                         return False
                 elif operator == "$ne":
                     if any(value == operand for value in values):
@@ -2052,10 +2111,10 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(busy["holding_sla_breached"], 1)
         self.assertEqual(busy["ai_sample_size"], 5)
         self.assertEqual(busy["ai_agreement_rate"], 0.0)
-        self.assertEqual(busy["flags"], ["HIGH_OVERRIDE", "SLA_BREACHED"])
+        self.assertEqual(busy["flags"], ["HIGH_OVERRIDE", "SLA_BREACHED", "NO_SUBJECTS"])
         idle = rows[str(idle_reviewer)]
         self.assertEqual(idle["reviews_30d"], 0)
-        self.assertEqual(idle["flags"], [])
+        self.assertEqual(idle["flags"], ["NO_SUBJECTS"])
         self.assertEqual(dashboard["reviewers"][0]["user_id"], str(busy_reviewer))
 
         reviewer_view = QuestionWorkflowService(FakeDashboardDatabase()).review_dashboard(
@@ -2144,56 +2203,8 @@ class SchemaV2Tests(unittest.TestCase):
         inactive = ObjectId()
 
         def question(code, subject_id, minutes_ago, *, author=teacher, **extra):
-            question_id, version_id = ObjectId(), ObjectId()
-            return (
-                {
-                    "_id": question_id,
-                    "schema_version": SCHEMA_VERSION,
-                    "question_code": code,
-                    "current_version": 1,
-                    "current_version_id": version_id,
-                    "approved_version_id": None,
-                    "lifecycle_status": "ACTIVE",
-                    "evaluation_status": "PASSED",
-                    "review_status": "PENDING",
-                    "publication_status": "NOT_PUBLISHED",
-                    "quality_summary": {},
-                    "latest_review_id": None,
-                    "subject_id": subject_id,
-                    "created_by_user_id": author,
-                    "review_assignment": {"status": "UNASSIGNED", "lock_expires_at": None},
-                    "review_submission": {"submitted_at": now - timedelta(minutes=minutes_ago)},
-                    "created_at": now,
-                    "updated_at": now,
-                    "archived_at": None,
-                    **extra,
-                },
-                {
-                    "_id": version_id,
-                    "schema_version": SCHEMA_VERSION,
-                    "question_id": question_id,
-                    "version": 1,
-                    "origin": "MANUAL",
-                    "generation_run_id": None,
-                    "document_id": None,
-                    "created_by_user_id": author,
-                    "generated_by_model_id": None,
-                    "classification": {
-                        "subject": {"id": subject_id},
-                        "chapter": {"id": None},
-                        "assessment_type": "TRAC_NGHIEM",
-                        "bloom": {"level": 1},
-                        "difficulty": None,
-                    },
-                    "clos": [],
-                    "content": code,
-                    "question_data": {"options": {"A": "x"}, "correct_answer": "A"},
-                    "sources": [],
-                    "keywords": [],
-                    "content_hash": f"hash-{code}",
-                    "change_note": "",
-                    "created_at": now,
-                },
+            return _pending_question_pair(
+                code, subject_id, now - timedelta(minutes=minutes_ago), author, now, **extra
             )
 
         pairs = [
@@ -2267,6 +2278,244 @@ class SchemaV2Tests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_auto_assign_strict_subject_mode_and_optional_admin_pool(self):
+        now = datetime.now(timezone.utc)
+        admin_user = _current_user("Admin")
+        teacher = ObjectId()
+        subject_ctdl, subject_mmt = ObjectId(), ObjectId()
+        admin_reviewer = ObjectId()  # created first, so it wins load ties
+        specialist = ObjectId()
+        generalist = ObjectId()
+        pairs = [
+            _pending_question_pair("Q-CTDL", subject_ctdl, now - timedelta(minutes=30), teacher, now),
+            _pending_question_pair("Q-MMT", subject_mmt, now - timedelta(minutes=20), teacher, now),
+            _pending_question_pair("Q-MMT-ADMIN", subject_mmt, now - timedelta(minutes=10), admin_reviewer, now),
+        ]
+
+        def database():
+            class FakeAssignDatabase:
+                questions = InMemoryCollection([item[0] for item in pairs])
+                question_versions = InMemoryCollection([item[1] for item in pairs])
+                users = InMemoryCollection(
+                    [
+                        {"_id": admin_reviewer, "role": "Admin", "is_active": True, "display_name": "Admin"},
+                        {"_id": specialist, "role": "Reviewer", "is_active": True, "display_name": "CTDL",
+                         "review_subject_ids": [subject_ctdl]},
+                        {"_id": generalist, "role": "Reviewer", "is_active": True, "display_name": "Chung"},
+                    ]
+                )
+                audit_logs = InMemoryCollection()
+                notifications = InMemoryCollection()
+
+            return FakeAssignDatabase()
+
+        strict = QuestionWorkflowService(database()).auto_assign_reviews(
+            AutoAssignRequest(subject_mode="strict"),
+            admin_user,
+        )
+        self.assertEqual(
+            [(item["question_code"], item["reviewer_user_id"]) for item in strict["assigned"]],
+            [("Q-CTDL", str(specialist))],
+        )
+        self.assertEqual(
+            {item["question_code"]: item["reason"] for item in strict["skipped"]},
+            {"Q-MMT": "NO_SUBJECT_SPECIALIST", "Q-MMT-ADMIN": "NO_SUBJECT_SPECIALIST"},
+        )
+
+        with_admins = QuestionWorkflowService(database()).auto_assign_reviews(
+            AutoAssignRequest(include_admins=True),
+            admin_user,
+        )
+        by_code = {item["question_code"]: item["reviewer_user_id"] for item in with_admins["assigned"]}
+        self.assertEqual(by_code["Q-CTDL"], str(specialist))
+        self.assertEqual(by_code["Q-MMT"], str(admin_reviewer))
+        # The Admin authored this one, so it goes to the other generalist.
+        self.assertEqual(by_code["Q-MMT-ADMIN"], str(generalist))
+
+    def test_review_policy_forces_secondary_review_and_notifies_teacher(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer],
+        )
+        # Real Mongo upserts the _id from the equality filter; the in-memory fake needs it seeded.
+        db.review_settings = InMemoryCollection([{"_id": "review_policy"}])
+
+        def scenario(service):
+            policy = service.update_review_policy(
+                ReviewPolicyPayload(secondary_on_override=True, secondary_below_score=0.95),
+                admin,
+            )
+            service.claim_review(str(question_id), reviewer)
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    override={"applied": True, "reason": "Nguồn đủ, AI chấm sai"},
+                ),
+                reviewer,
+            )
+            return policy, review
+
+        policy, review = self._with_workflow_service(db, scenario)
+        self.assertTrue(policy["secondary_on_override"])
+        self.assertEqual(policy["secondary_below_score"], 0.95)
+        self.assertEqual(review["resulting_status"], "PENDING")
+        self.assertIn("override", review["secondary_reason"])
+        self.assertIn("dưới ngưỡng 0.95", review["secondary_reason"])
+        stored = db.questions.find_one({"_id": question_id})
+        self.assertEqual(stored["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(stored["secondary_review"]["primary_reviewer_user_id"], reviewer.id)
+        teacher_notes = [item for item in db.notifications.records if item["recipient_user_id"] == teacher.id]
+        self.assertEqual([item["type"] for item in teacher_notes], ["QUESTION_SECONDARY_REVIEW_PENDING"])
+        self.assertIn("REVIEW_POLICY_UPDATED", [event["action"] for event in db.audit_logs.records])
+
+    def test_review_subject_suggestions_rank_reviewed_subjects(self):
+        now = datetime.now(timezone.utc)
+        reviewer_id = ObjectId()
+        subject_a, subject_b = ObjectId(), ObjectId()
+        versions = [ObjectId() for _ in range(4)]
+
+        class FakeSuggestionDatabase:
+            question_reviews = InMemoryCollection(
+                [
+                    {"_id": ObjectId(), "reviewer_user_id": reviewer_id, "question_version_id": version_id,
+                     "reviewed_at": now - timedelta(days=3)}
+                    for version_id in versions
+                ]
+                + [
+                    {"_id": ObjectId(), "reviewer_user_id": reviewer_id, "question_version_id": ObjectId(),
+                     "reviewed_at": now - timedelta(days=400)},
+                ]
+            )
+            question_versions = InMemoryCollection(
+                [
+                    {"_id": versions[0], "classification": {"subject": {"id": subject_a}}},
+                    {"_id": versions[1], "classification": {"subject": {"id": subject_a}}},
+                    {"_id": versions[2], "classification": {"subject": {"id": subject_a}}},
+                    {"_id": versions[3], "classification": {"subject": {"id": subject_b}}},
+                ]
+            )
+            subjects = InMemoryCollection(
+                [
+                    {"_id": subject_a, "subject_code": "CTDL", "subject_name": "Cấu trúc dữ liệu"},
+                    {"_id": subject_b, "subject_code": "MMT", "subject_name": "Mạng máy tính"},
+                ]
+            )
+
+        result = QuestionWorkflowService(FakeSuggestionDatabase()).suggest_review_subjects(str(reviewer_id))
+        self.assertEqual(
+            [(item["subject_code"], item["reviews"]) for item in result["items"]],
+            [("CTDL", 3), ("MMT", 1)],
+        )
+
+    def test_editing_question_notifies_owners_of_open_exams(self):
+        question_id = ObjectId()
+        editor = ObjectId()
+        owner = ObjectId()
+
+        class FakeExamDatabase:
+            exams = InMemoryCollection(
+                [
+                    {"_id": ObjectId(), "name": "Giữa kỳ", "status": "DRAFT", "created_by_user_id": owner,
+                     "questions": [{"question_id": question_id}]},
+                    {"_id": ObjectId(), "name": "Đã chốt", "status": "FINALIZED", "created_by_user_id": owner,
+                     "questions": [{"question_id": question_id}]},
+                    {"_id": ObjectId(), "name": "Của người sửa", "status": "READY", "created_by_user_id": editor,
+                     "questions": [{"question_id": question_id}]},
+                    {"_id": ObjectId(), "name": "Không liên quan", "status": "DRAFT", "created_by_user_id": owner,
+                     "questions": [{"question_id": ObjectId()}]},
+                ]
+            )
+            notifications = InMemoryCollection()
+
+        db = FakeExamDatabase()
+        created = NotificationService(db).notify_exam_owners_question_reopened(
+            question_id=question_id,
+            question_code="Q-EDIT",
+            actor_user_id=editor,
+        )
+        self.assertEqual(len(created), 1)
+        self.assertEqual(db.notifications.records[0]["recipient_user_id"], owner)
+        self.assertEqual(db.notifications.records[0]["type"], "EXAM_QUESTION_NEEDS_REVIEW")
+        self.assertIn("Giữa kỳ", db.notifications.records[0]["title"])
+
+    def test_question_repository_override_filter_uses_latest_review(self):
+        overridden = ObjectId()
+
+        class FakeQuestionsCollection:
+            def __init__(self):
+                self.pipelines = []
+
+            def aggregate(self, pipeline):
+                self.pipelines.append(pipeline)
+                return [{"items": [], "count": [{"total": 0}]}]
+
+        class FakeDatabase:
+            questions = FakeQuestionsCollection()
+            question_reviews = InMemoryCollection(
+                [
+                    {"_id": overridden, "override": {"applied": True}},
+                    {"_id": ObjectId(), "override": {"applied": False}},
+                ]
+            )
+
+        db = FakeDatabase()
+        MongoQuestionRepository(db).list(1, 10, "APPROVED", None, override_only=True)
+        self.assertEqual(db.questions.pipelines[0][0]["$match"]["latest_review_id"], {"$in": [overridden]})
+
+    def test_audit_writers_share_one_canonical_shape(self):
+        from core import audit as audit_module
+
+        actor_id = ObjectId()
+        target_id = ObjectId()
+        db = type("FakeAuditDb", (), {"audit_logs": InMemoryCollection()})()
+        original_db = audit_module.get_rag_db
+        try:
+            audit_module.get_rag_db = lambda: db
+            audit_module.record_audit_event(
+                action="user.admin_update",
+                entity_type="user",
+                entity_id=str(target_id),
+                actor_user_id=str(actor_id),
+                actor_role="Admin",
+                before={"role": "Reviewer", "is_active": True},
+                after={"role": "Teacher", "is_active": True},
+            )
+        finally:
+            audit_module.get_rag_db = original_db
+        audit_module.write_audit_event(
+            db,
+            action="QUESTION_COMMENT_ADDED",
+            entity_type="QUESTION",
+            entity_id=target_id,
+            actor_user_id=actor_id,
+            actor_role="Reviewer",
+            metadata={"comment_id": "c1"},
+        )
+
+        flat_style, workflow_style = db.audit_logs.records
+        for event in (flat_style, workflow_style):
+            self.assertEqual(
+                set(event),
+                {"schema_version", "action", "actor", "entity", "changes", "before", "after",
+                 "before_hash", "after_hash", "metadata", "created_at"},
+            )
+            self.assertEqual(event["actor"]["user_id"], actor_id)
+            self.assertEqual(event["entity"]["id"], target_id)
+            self.assertNotIn("actor_user_id", event)
+        self.assertEqual(flat_style["entity"]["type"], "user")
+        self.assertEqual(workflow_style["entity"]["type"], "question")
+        # Flat-style callers get a field-level change list derived from before/after.
+        self.assertEqual(
+            flat_style["changes"],
+            [{"path": "role", "old_value": "Reviewer", "new_value": "Teacher"}],
+        )
+        self.assertEqual(flat_style["actor"]["role"], "Admin")
 
     def test_admin_can_set_reviewer_subjects(self):
         admin_doc = _user_doc("Admin", True)
@@ -6232,6 +6481,7 @@ class SchemaV2Tests(unittest.TestCase):
                             "_id": review_id,
                             "question_id": question_id,
                             "reviewer_user_id": reviewer.id,
+                            "decision": "NEEDS_REVISION",
                             "reviewed_at": datetime.now(timezone.utc),
                         }
                     ]
@@ -6240,23 +6490,42 @@ class SchemaV2Tests(unittest.TestCase):
         db = FakeDatabase()
         service = NotificationService(db)
 
-        ignored = service.notify_question_resubmitted(
+        already_pending = service.notify_question_resubmitted(
+            question_id=question_id,
+            previous_review_status="PENDING",
+            actor_user_id=teacher.id,
+        )
+        # The usual path: the teacher edits (status becomes DRAFT) and then resubmits.
+        notifications = service.notify_question_resubmitted(
             question_id=question_id,
             previous_review_status="DRAFT",
             actor_user_id=teacher.id,
         )
-        notifications = service.notify_question_resubmitted(
-            question_id=question_id,
-            previous_review_status="NEEDS_REVISION",
-            actor_user_id=teacher.id,
-        )
 
-        self.assertEqual(ignored, [])
+        self.assertEqual(already_pending, [])
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0]["type"], "QUESTION_RESUBMITTED")
         self.assertEqual(notifications[0]["link"], f"/kiem-duyet?questionId={question_id}")
         self.assertEqual(notifications[0]["entity"]["version_id"], str(version_id))
         self.assertEqual(service.unread_count(reviewer), 1)
+
+        db.question_reviews.records[0]["decision"] = "REJECTED"
+        rejected = service.notify_question_resubmitted(
+            question_id=question_id,
+            previous_review_status="DRAFT",
+            actor_user_id=teacher.id,
+        )
+        self.assertIn("sau khi bị từ chối", rejected[0]["title"])
+
+        db.question_reviews.records[0]["decision"] = "APPROVED"
+        self.assertEqual(
+            service.notify_question_resubmitted(
+                question_id=question_id,
+                previous_review_status="DRAFT",
+                actor_user_id=teacher.id,
+            ),
+            [],
+        )
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(
