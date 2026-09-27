@@ -47,7 +47,7 @@ import {
 } from '../api/documents';
 import { listSubjects, saveSubject } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
-import { permissionsForUser } from '../auth/permissions';
+import { canAccessPath, permissionsForUser } from '../auth/permissions';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
@@ -2852,9 +2852,11 @@ function ManagePage() {
 	                    )}
 	                  </div>
 	                )}
-	                <button type="button" className="btn btn--outline doc-upload-btn" onClick={() => navigate('/sinh-cau-hoi')}>
-	                  + Tải tài liệu mới
-	                </button>
+	                {canAccessPath(user, '/sinh-cau-hoi') && (
+	                  <button type="button" className="btn btn--outline doc-upload-btn" onClick={() => navigate('/sinh-cau-hoi')}>
+	                    + Tải tài liệu mới
+	                  </button>
+	                )}
 	              </div>
 	            )}
 

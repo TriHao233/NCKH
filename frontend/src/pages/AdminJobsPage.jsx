@@ -86,6 +86,7 @@ const EXPORT_COLUMNS = [
   { header: 'Trạng thái', value: (job) => jobStatusLabel(job.status) },
   { header: 'Đối tượng', value: entityText },
   { header: 'Mã đối tượng', value: (job) => job.entity?.id || '' },
+  { header: 'Học phần', value: (job) => job.entity?.subject_label || '' },
   { header: 'Người tạo', value: (job) => job.actor_user_name || job.actor_user_id || '' },
   { header: 'Vào hàng đợi', value: (job) => job.queued_at || '' },
   { header: 'Bắt đầu', value: (job) => job.started_at || '' },
@@ -195,8 +196,11 @@ function AdminJobsPage() {
     setBusy(`retry:${jobKey(job)}`);
     clearFlash();
     try {
-      await retryAdminJob(job.kind, job.id);
-      showFlash('success', 'Đã đưa tác vụ vào hàng đợi chạy lại.');
+      const result = await retryAdminJob(job.kind, job.id);
+      showFlash(
+        result?.already_queued ? 'info' : 'success',
+        result?.already_queued ? 'Tác vụ này đã có một lượt đang chờ chạy lại.' : 'Đã đưa tác vụ vào hàng đợi chạy lại.',
+      );
       await fetchJobs();
     } catch (err) {
       showFlash('error', err.message || 'Chạy lại thất bại.');
@@ -363,7 +367,10 @@ function AdminJobsPage() {
                               <strong>{JOB_TYPE_LABEL[job.type] || JOB_KIND_LABEL[job.kind] || job.type}</strong>
                               <small>{JOB_KIND_LABEL[job.kind] || job.kind}</small>
                             </td>
-                            <td><span className="ws-cell-clip">{entityText(job)}</span></td>
+                            <td>
+                              <span className="ws-cell-clip">{entityText(job)}</span>
+                              {job.entity?.subject_label && <small className="ws-muted" style={{ display: 'block' }}>{job.entity.subject_label}</small>}
+                            </td>
                             <td>{job.actor_user_name || 'Hệ thống'}</td>
                             <td>
                               <span className={`ws-pill ${tone ? `ws-pill--${tone}` : ''}`}>{jobStatusLabel(job.status)}</span>
@@ -420,6 +427,7 @@ function AdminJobsPage() {
             </span>
             <dl className="ws-kv">
               <div><dt>Đối tượng</dt><dd>{entityText(detail)}</dd></div>
+              {detail.entity?.subject_label && <div><dt>Học phần</dt><dd>{detail.entity.subject_label}</dd></div>}
               <div><dt>Người tạo</dt><dd>{detail.actor_user_name || 'Hệ thống'}</dd></div>
               <div><dt>Vào hàng đợi</dt><dd>{formatDateTime(detail.queued_at)}</dd></div>
               <div><dt>Bắt đầu</dt><dd>{formatDateTime(detail.started_at)}</dd></div>

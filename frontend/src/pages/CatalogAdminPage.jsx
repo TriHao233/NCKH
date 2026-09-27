@@ -69,6 +69,10 @@ function CatalogAdminPage() {
   const active = subjects.find((subject) => subject.id === activeId) || filtered[0] || null;
   const chapters = [...(active?.chapters || [])].sort((a, b) => (a.sequence_no || 0) - (b.sequence_no || 0));
   const clos = active?.learning_outcomes || [];
+  // Trọng số CLO là tương đối: cùng cách chuẩn hoá với utils/questionCoverage.js.
+  const cloWeightTotal = clos
+    .filter((clo) => clo.is_active !== false)
+    .reduce((sum, clo) => sum + Math.max(0, Number(clo.target_weight ?? 1) || 0), 0);
 
   const openDrawer = (kind, item = null) => {
     const forms = {
@@ -112,6 +116,17 @@ function CatalogAdminPage() {
     try {
       if (kind === 'subject') {
         const cleaned = { ...payload, subject_code: payload.subject_code.trim(), subject_name: payload.subject_name.trim() };
+        const original = id ? subjects.find((subject) => subject.id === id) : null;
+        const inUse = Object.values(original?.usage_counts || {}).some((value) => Number(value) > 0);
+        if (original && inUse && original.subject_code !== cleaned.subject_code) {
+          const accepted = await confirm({
+            title: `Đổi mã học phần ${original.subject_code} thành ${cleaned.subject_code}?`,
+            description: 'Các câu hỏi, tài liệu và đề thi hiện có vẫn gắn với học phần này, nhưng các phiên bản câu hỏi đã lưu trước đây vẫn ghi mã cũ. Chỉ đổi mã khi thật sự cần (ví dụ sửa lỗi gõ).',
+            confirmLabel: 'Đổi mã',
+          });
+          if (!accepted) return;
+          cleaned.confirm_code_change = true;
+        }
         const saved = id ? await updateSubject(id, cleaned) : await saveSubject(cleaned);
         if (saved?.id) setActiveId(saved.id);
       } else if (kind === 'chapter') {
@@ -300,12 +315,17 @@ function CatalogAdminPage() {
                         ) : (
                           <div className="ws-table-wrap">
                             <table className="ws-table">
-                              <thead><tr><th>CLO</th><th className="ws-num">Trọng số</th><th>Đang dùng</th><th aria-label="Thao tác" /></tr></thead>
+                              <thead><tr><th>CLO</th><th className="ws-num" title="Trọng số tương đối; tỷ lệ là phần mục tiêu trên tổng các CLO đang dùng">Trọng số (tỷ lệ)</th><th>Đang dùng</th><th aria-label="Thao tác" /></tr></thead>
                               <tbody>
                                 {clos.map((clo) => (
                                   <tr key={childId(clo)} style={{ opacity: clo.is_active === false ? 0.6 : 1 }}>
                                     <td><strong>{clo.clo_code}</strong> <span className="ws-muted">{clo.description}</span></td>
-                                    <td className="ws-num">{clo.target_weight ?? 1}</td>
+                                    <td className="ws-num">
+                                      {clo.target_weight ?? 1}
+                                      {clo.is_active !== false && cloWeightTotal > 0 && (
+                                        <small className="ws-muted"> ({Math.round(((Number(clo.target_weight ?? 1) || 0) / cloWeightTotal) * 100)}%)</small>
+                                      )}
+                                    </td>
                                     <td>{clo.is_active === false ? <span className="ws-pill ws-pill--outline">Tạm khoá</span> : usageText(clo.usage_counts)}</td>
                                     <td>
                                       <div className="ws-row-actions">
@@ -373,9 +393,9 @@ function CatalogAdminPage() {
             <label className="ws-field"><span>Mã CLO</span><input className="ws-input" value={drawer.form.clo_code} onChange={(event) => setField({ clo_code: event.target.value })} /></label>
             <label className="ws-field"><span>Mô tả</span><textarea className="ws-textarea" value={drawer.form.description} onChange={(event) => setField({ description: event.target.value })} /></label>
             <label className="ws-field">
-              <span>Trọng số mục tiêu (0 đến 1)</span>
+              <span>Trọng số tương đối (0 đến 1)</span>
               <input className="ws-input" type="number" min="0" max="1" step="0.05" value={drawer.form.target_weight} onChange={(event) => setField({ target_weight: event.target.value })} />
-              <small>Dùng để tính độ phủ ngân hàng câu hỏi theo CLO.</small>
+              <small>So với các CLO khác trong học phần: tỷ lệ mục tiêu = trọng số ÷ tổng trọng số các CLO đang dùng. Các CLO cùng trọng số thì chia đều.</small>
             </label>
             <label className="ws-check"><input type="checkbox" checked={drawer.form.is_active} onChange={(event) => setField({ is_active: event.target.checked })} />Đang dùng</label>
           </>

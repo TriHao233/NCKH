@@ -58,6 +58,7 @@ import {
   questionTypeKey,
   refId,
   reviewHoldDurations,
+  isHeldByOther,
 } from '../../features/review/reviewModel';
 import '../../css/workspace.css';
 import '../../css/ReviewPage.css';
@@ -382,10 +383,16 @@ function ReviewInboxPage() {
     refresh();
   };
 
+  // Nhận câu đang có người khác giữ là lấy việc của họ: nói rõ trước khi làm.
+  const takeoverNote = (items) => {
+    const held = items.filter((row) => !canDecide(row, user) && isHeldByOther(row, user)).length;
+    return held ? ` ${held} câu đang có người khác giữ sẽ được chuyển sang bạn.` : '';
+  };
+
   const bulkApprove = async () => {
     const accepted = await confirm({
       title: `Duyệt ${approvable.length} câu AI đề xuất đạt`,
-      description: 'Mỗi câu được ghi nhận là bạn đã duyệt, với đủ mục kiểm tra và tiêu chí "Đạt". Chỉ dùng khi bạn đã xem qua các câu này.',
+      description: `Mỗi câu được ghi nhận là bạn đã duyệt, với đủ mục kiểm tra và tiêu chí "Đạt". Chỉ dùng khi bạn đã xem qua các câu này.${takeoverNote(approvable)}`,
       confirmLabel: `Duyệt ${approvable.length} câu`,
     });
     if (!accepted) return;
@@ -411,7 +418,18 @@ function ReviewInboxPage() {
     ));
   };
 
-  const bulkClaim = () => runBulk('claim', claimable, (question) => claimQuestionReview(question.id), 'Đã nhận');
+  const bulkClaim = async () => {
+    const note = takeoverNote(claimable);
+    if (note) {
+      const accepted = await confirm({
+        title: `Nhận ${claimable.length} câu`,
+        description: `${note.trim()} Phiếu nháp của họ không được áp dụng.`,
+        confirmLabel: 'Nhận câu',
+      });
+      if (!accepted) return;
+    }
+    await runBulk('claim', claimable, (question) => claimQuestionReview(question.id), 'Đã nhận');
+  };
 
   const bulkPublish = async () => {
     const accepted = await confirm({

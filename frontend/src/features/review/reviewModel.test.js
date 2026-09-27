@@ -18,6 +18,8 @@ import {
   isBlockedFromSecondary,
   isSlaBreached,
   policySecondaryReasons,
+  isHeldByOther,
+  needsSelfReviewReason,
   qualityOf,
   reviewDurationLabel,
   rankNextCandidates,
@@ -278,4 +280,25 @@ test('score-based secondary policy ignores scores without a valid AI verdict', (
   assert.deepEqual(policySecondaryReasons(errored, checkAll(defaultDraft(errored, 'APPROVED')), policy), []);
   const valid = question({ evaluation_status: 'PASSED', quality_summary: { overall_score: 0.64, color: 'YELLOW' } });
   assert.deepEqual(policySecondaryReasons(valid, checkAll(defaultDraft(valid, 'APPROVED')), policy), ['điểm AI 0.64 dưới ngưỡng 0.70']);
+});
+
+test('admin taking over a question held by someone else is detected', () => {
+  const heldByR1 = question();
+  assert.equal(isHeldByOther(heldByR1, admin, NOW), true);
+  assert.equal(isHeldByOther(heldByR1, reviewer, NOW), false);
+  const expired = question({ review_assignment: { status: 'IN_REVIEW', reviewer_user_id: 'r1', lock_expires_at: '2026-09-26T09:00:00Z' } });
+  assert.equal(isHeldByOther(expired, admin, NOW), false);
+  assert.equal(isHeldByOther(question({ review_assignment: { status: 'UNASSIGNED' } }), admin, NOW), false);
+});
+
+test('admins reviewing their own question must give a self-review reason', () => {
+  const own = question({ author_user_ids: ['a1'], review_assignment: { status: 'IN_REVIEW', reviewer_user_id: 'a1', lock_expires_at: '2026-09-26T10:20:00Z' } });
+  assert.equal(needsSelfReviewReason(own, admin), true);
+  assert.equal(needsSelfReviewReason(own, reviewer), false);
+  const draft = checkAll(defaultDraft(own, 'APPROVED'));
+  assert.match(validateDraft(own, draft, admin, NOW), /tự duyệt/);
+  const withReason = { ...draft, selfReviewReason: 'Không còn người duyệt khác' };
+  assert.equal(validateDraft(own, withReason, admin, NOW), '');
+  assert.equal(buildReviewPayload(own, withReason).self_review_reason, 'Không còn người duyệt khác');
+  assert.equal(buildReviewPayload(own, withReason).override, undefined);
 });

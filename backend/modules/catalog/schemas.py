@@ -41,6 +41,8 @@ class SubjectUpdatePayload(BaseModel):
     subject_name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
     is_active: bool | None = None
+    # Bắt buộc khi đổi mã học phần đang được dùng: bản lưu cũ của câu hỏi vẫn giữ mã cũ.
+    confirm_code_change: bool = False
 
 
 class ChapterUpdatePayload(BaseModel):

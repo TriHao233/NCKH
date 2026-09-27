@@ -2849,9 +2849,13 @@ class QuestionWorkflowService:
             raise ValueError(
                 "AI đề xuất xem lại: phải ghi rõ lý do (override) khi vẫn duyệt"
             )
-        if current_user.role != "Admin" or not payload.override.applied:
-            # Admins may only review their own question with an explicit,
-            # audited override; everyone else is always blocked.
+        self_review_reason = payload.self_review_reason.strip()
+        is_author = current_user.id in {question.get("created_by_user_id"), version.get("created_by_user_id")}
+        if is_author and current_user.role == "Admin":
+            # Quản trị viên chỉ tự duyệt câu của mình khi ghi rõ lý do (hoặc override cũ).
+            if not (self_review_reason or payload.override.applied):
+                raise PermissionError("Bạn là người tạo/sửa câu này: ghi lý do tự duyệt để tiếp tục")
+        else:
             self._ensure_not_author(question, version, current_user)
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
@@ -2889,6 +2893,7 @@ class QuestionWorkflowService:
             "note": review_note,
             "override": payload.override.model_dump(),
             "review_form": review_form,
+            "self_review_reason": self_review_reason if is_author else "",
             "revision_issues": review_form.get("revision_issues", []),
             "review_stage": "SECONDARY" if awaiting_secondary else "PRIMARY",
             "bulk": bool(payload.bulk),
@@ -3004,6 +3009,7 @@ class QuestionWorkflowService:
                 "review_form": review_form,
                 "secondary_review": json_safe(question_fields.get("secondary_review") or secondary or {}),
                 "interrupted_evaluation_job_ids": interrupted_job_ids,
+                "self_review_reason": review["self_review_reason"],
             },
             created_at=now,
         )
@@ -4283,9 +4289,16 @@ async def process_evaluation_job_background(job_id: str, worker_id: str) -> None
                 try:
                     await processing_task
                 except asyncio.CancelledError:
+                    stopped = await asyncio.to_thread(
+                        service.db.evaluation_jobs.find_one,
+                        {"_id": object_id(job_id, "evaluation_job_id")},
+                        {"status": 1, "error.stage": 1},
+                    ) or {}
                     logger.info(
-                        "Evaluation job %s stopped because a newer question version superseded it",
+                        "Evaluation job %s stopped early: status=%s reason=%s",
                         job_id,
+                        stopped.get("status"),
+                        (stopped.get("error") or {}).get("stage") or "superseded",
                     )
             else:
                 await processing_task

@@ -346,6 +346,16 @@ export function isBlockedFromSecondary(question, user) {
   return Boolean(primary && user?.id && primary === String(user.id));
 }
 
+/** Câu đang được giao hoặc giữ bởi người khác (khoá còn hạn): nhận câu lúc này là lấy của họ. */
+export function isHeldByOther(question, user, now = Date.now()) {
+  const { status, reviewerUserId } = assignmentOf(question);
+  const userId = refId(user?.id || user?._id);
+  return ['ASSIGNED', 'IN_REVIEW'].includes(status)
+    && Boolean(reviewerUserId)
+    && reviewerUserId !== userId
+    && !isLockExpired(question, now);
+}
+
 export function canClaim(question, user, now = Date.now()) {
   if (!isPending(question) || isBlockedFromSecondary(question, user)) return false;
   const { status } = assignmentOf(question);
@@ -439,6 +449,7 @@ export function defaultDraft(question, decision) {
     decision,
     overallNote: '',
     overrideReason: '',
+    selfReviewReason: '',
     secondaryRequired: false,
     secondaryReason: '',
     criteria: REVIEW_CRITERIA.map((item) => ({
@@ -466,6 +477,7 @@ export function restoreDraft(question, decision, saved) {
     }),
     overallNote: typeof saved.overallNote === 'string' ? saved.overallNote : '',
     overrideReason: typeof saved.overrideReason === 'string' ? saved.overrideReason : '',
+    selfReviewReason: typeof saved.selfReviewReason === 'string' ? saved.selfReviewReason : '',
     secondaryRequired: Boolean(saved.secondaryRequired),
     secondaryReason: typeof saved.secondaryReason === 'string' ? saved.secondaryReason : '',
     criteria: fallback.criteria.map((item) => {
@@ -545,6 +557,17 @@ export function policySecondaryReasons(question, draft, policy) {
 }
 
 /** Trả về thông báo lỗi đầu tiên, hoặc chuỗi rỗng nếu phiếu hợp lệ. */
+/** Câu do chính người này tạo hoặc sửa phiên bản hiện tại. */
+export function isAuthorOf(question, user) {
+  const userId = refId(user?.id || user?._id);
+  return Boolean(userId) && (question?.author_user_ids || []).map(refId).includes(userId);
+}
+
+/** Chỉ quản trị viên được tự duyệt câu của mình, và phải ghi lý do. */
+export function needsSelfReviewReason(question, user) {
+  return isAdmin(user) && isAuthorOf(question, user);
+}
+
 export function validateDraft(question, draft, user, now = Date.now()) {
   if (!question || !draft) return 'Chưa có phiếu kiểm duyệt.';
   if (!canDecide(question, user, now)) return 'Bạn cần nhận câu hỏi và giữ khoá còn hạn trước khi chốt kết quả.';
@@ -561,6 +584,9 @@ export function validateDraft(question, draft, user, now = Date.now()) {
   }
   if (needsOverride(question, draft) && !String(draft.overrideReason || '').trim()) {
     return 'AI chưa đề xuất đạt. Ghi lý do bạn vẫn duyệt câu này.';
+  }
+  if (needsSelfReviewReason(question, user) && !String(draft.selfReviewReason || '').trim()) {
+    return 'Bạn là người tạo hoặc sửa câu này. Ghi lý do tự duyệt để tiếp tục.';
   }
   const issues = compactIssues(draft.issues);
   if (draft.decision === 'NEEDS_REVISION' && issues.length === 0) {
@@ -603,6 +629,8 @@ export function buildReviewPayload(question, draft) {
       revision_issues: compactIssues(draft.issues),
     },
   };
+  const selfReviewReason = String(draft.selfReviewReason || '').trim();
+  if (selfReviewReason) payload.self_review_reason = selfReviewReason;
   if (draft.decision === 'APPROVED' && draft.secondaryRequired && !isAwaitingSecondary(question)) {
     payload.secondary_required = true;
     payload.secondary_reason = String(draft.secondaryReason || overallNote).trim();

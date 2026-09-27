@@ -19,6 +19,7 @@ import {
   isBlockedFromSecondary,
   isEvaluationBusy,
   needsOverride,
+  needsSelfReviewReason,
   pageRangeLabel,
   policySecondaryReasons,
 } from './reviewModel';
@@ -257,6 +258,20 @@ function DecisionPanel({
             onChange={(event) => update({ overrideReason: event.target.value })}
             placeholder="Ví dụ: Đã đối chiếu trang 12, đáp án đúng; AI thiếu ngữ cảnh."
           />
+        </label>
+      )}
+
+      {needsSelfReviewReason(question, user) && (
+        <label className="ws-field">
+          <span>Lý do tự duyệt câu do bạn tạo hoặc sửa (bắt buộc)</span>
+          <textarea
+            className="ws-textarea"
+            value={draft.selfReviewReason || ''}
+            maxLength={500}
+            onChange={(event) => update({ selfReviewReason: event.target.value })}
+            placeholder="Ví dụ: Không còn người duyệt khác phụ trách học phần này."
+          />
+          <small>Lý do được lưu cùng phiếu duyệt và ghi vào nhật ký.</small>
         </label>
       )}
 

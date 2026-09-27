@@ -118,6 +118,7 @@ class UserService:
         overrides = permission_overrides(
             payload.role.value, self._normalize_permissions(payload.permissions) or None
         )
+        self._ensure_email_available(str(payload.email))
         firebase_user = self.identity.create_user(
             email=str(payload.email),
             password=payload.password,
@@ -142,6 +143,11 @@ class UserService:
             self.identity.delete_user(firebase_user.uid)
             raise
         return serialize_user(user)
+
+    def _ensure_email_available(self, email: str) -> None:
+        # Kiểm tra trước khi tạo tài khoản Firebase để không tạo rồi phải xoá lại.
+        if self.repository.find_by_email(email):
+            raise ValueError(f"Email {email} đã có tài khoản trong hệ thống")
 
     @staticmethod
     def _normalize_object_ids(values: list[str] | None) -> list[ObjectId]:
@@ -175,6 +181,7 @@ class UserService:
         overrides = permission_overrides(
             payload.role.value, self._normalize_permissions(payload.permissions) or None
         )
+        self._ensure_email_available(str(payload.email))
         temporary_password = secrets.token_urlsafe(18)
         firebase_user = self.identity.create_user(
             email=str(payload.email),
@@ -207,7 +214,7 @@ class UserService:
             actor_user_id=actor.id if actor else None,
             actor_role=actor.role if actor else None,
             after=self._user_audit_snapshot(user),
-            metadata={"email": str(payload.email), "role": payload.role.value},
+            metadata={"email": str(payload.email), "role": payload.role.value, "label": str(payload.email)},
         )
         return {"user": serialize_user(user), "reset_link": reset_link}
 
@@ -226,7 +233,7 @@ class UserService:
             entity_id=user["_id"],
             actor_user_id=actor.id if actor else None,
             actor_role=actor.role if actor else None,
-            metadata={"email": user.get("email")},
+            metadata={"email": user.get("email"), "label": user.get("email")},
         )
         return {
             "user_id": str(user["_id"]),
@@ -547,7 +554,7 @@ class UserService:
                 actor_role=actor.role if actor else None,
                 before=before,
                 after=after,
-                metadata={"changed_fields": changed_fields},
+                metadata={"changed_fields": changed_fields, "label": user.get("email")},
             )
         return serialize_user(updated)
 
@@ -575,6 +582,7 @@ class UserService:
                 actor_role=actor.role if actor else None,
                 before=before,
                 after=self._user_audit_snapshot(updated),
+                metadata={"label": user.get("email")},
             )
         return updated is not None
 

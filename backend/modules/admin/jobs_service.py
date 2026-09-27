@@ -199,19 +199,31 @@ class AdminJobService:
 
         subject_ids = set()
         doc_subject_map = {}
+        # Nhãn đối tượng là chính tài liệu/câu hỏi; học phần hiển thị kèm ở subject_label.
+        entity_labels = {}
         if document_ids:
-            for doc in self.db.documents.find({"_id": {"$in": document_ids}}, {"subject_id": 1}):
+            for doc in self.db.documents.find({"_id": {"$in": document_ids}}, {"subject_id": 1, "title": 1, "original_filename": 1}):
+                entity_labels[("document", str(doc["_id"]))] = doc.get("title") or doc.get("original_filename")
                 if doc.get("subject_id"):
                     subject_ids.add(doc["subject_id"])
                     doc_subject_map[str(doc["_id"])] = doc["subject_id"]
 
         question_subject_map = {}
         if question_ids:
+            questions = getattr(self.db, "questions", None)
+            for question in (questions.find({"_id": {"$in": question_ids}}, {"question_code": 1}) if questions is not None else []):
+                entity_labels[("question", str(question["_id"]))] = question.get("question_code")
             for qv in self.db.question_versions.find({"question_id": {"$in": question_ids}}, {"question_id": 1, "classification.subject.id": 1}):
                 subj_id = (qv.get("classification") or {}).get("subject", {}).get("id")
                 if subj_id:
                     subject_ids.add(subj_id)
                     question_subject_map[str(qv["question_id"])] = subj_id
+
+        for job in jobs:
+            entity = job.get('entity', {})
+            label = entity_labels.get((entity.get('type'), str(entity.get('id'))))
+            if label:
+                entity['label'] = label
 
         if subject_ids:
             subjects_map = {
@@ -226,7 +238,7 @@ class AdminJobService:
                 elif entity.get('type') == 'question' and entity.get('id'):
                     subj_id = question_subject_map.get(str(entity['id']))
                 if subj_id and str(subj_id) in subjects_map:
-                    entity['label'] = subjects_map[str(subj_id)]
+                    entity['subject_label'] = subjects_map[str(subj_id)]
 
         if stale_only:
             jobs = [job for job in jobs if job["is_long_running"]]
@@ -592,6 +604,13 @@ class AdminJobService:
         question = self.db.questions.find_one({"_id": job.get("question_id")})
         if not question:
             raise LookupError("Không tìm thấy câu hỏi của job")
+        already_active = {
+            str(item["_id"])
+            for item in self.db.evaluation_jobs.find(
+                {"question_id": question["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                {"_id": 1},
+            )
+        }
         queued = QuestionWorkflowService(self.db).enqueue_auto_evaluation(
             str(question["_id"]),
             expected_version=question["current_version"],
@@ -602,8 +621,11 @@ class AdminJobService:
             fallback_model_snapshot=job.get("fallback_model_snapshot"),
             fallback_to_heuristic=bool(job.get("fallback_to_heuristic")),
         )
-        self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
-        return {"job": json_safe(queued)}
+        # Bấm chạy lại khi đã có lượt đang chờ thì chỉ trả về lượt đó, không ghi nhật ký lặp.
+        already_queued = str(queued.get("_id")) in already_active
+        if not already_queued:
+            self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
+        return {"job": json_safe(queued), "already_queued": already_queued}
 
     def _retry_document(
         self,

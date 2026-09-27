@@ -91,7 +91,7 @@ from modules.questions.schemas import (
 )
 from modules.questions import repository as question_repository_module
 from modules.questions import router as question_router_module
-from modules.questions.repository import MongoQuestionRepository
+from modules.questions.repository import MongoQuestionRepository, serialize_question
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
     AutoAssignRequest,
@@ -320,6 +320,12 @@ class FakeUserRepository:
     def find_by_firebase_uid(self, firebase_uid):
         return next(
             (user for user in self.users.values() if user.get("firebase_uid") == firebase_uid),
+            None,
+        )
+
+    def find_by_email(self, email):
+        return next(
+            (user for user in self.users.values() if str(user.get("email", "")).lower() == email.lower()),
             None,
         )
 
@@ -2083,6 +2089,24 @@ class SchemaV2Tests(unittest.TestCase):
 
         review = self._with_workflow_service(db, admin_scenario)
         self.assertTrue(review["override"]["applied"])
+
+        # Cách mới: Admin tự duyệt bằng lý do riêng, không bị tính là "duyệt khác AI".
+        db, question_id, _ = self._review_guard_fixture(author=admin, users=[admin, reviewer])
+        review = self._with_workflow_service(
+            db,
+            lambda service: service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    self_review_reason="Không còn người duyệt khác phụ trách học phần",
+                ),
+                admin,
+            ),
+        )
+        self.assertFalse(review["override"]["applied"])
+        self.assertEqual(review["self_review_reason"], "Không còn người duyệt khác phụ trách học phần")
+        self.assertEqual(db.audit_logs.records[-1]["metadata"]["self_review_reason"], review["self_review_reason"])
 
         teacher = _current_user("Teacher")
         db, question_id, _ = self._review_guard_fixture(
@@ -5436,6 +5460,16 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(imported["created"], 1)
         self.assertEqual(imported["failed"], 0)
 
+        # Email đã có: báo lỗi dễ hiểu và không tạo tài khoản Firebase nào.
+        created_before = len(identity.created)
+        duplicate = service.import_users(
+            UserImportRequest(users=[{"email": "NEW.teacher@example.com", "display_name": "Dup", "role": "Teacher"}]),
+            admin,
+        )
+        self.assertEqual(duplicate["failed"], 1)
+        self.assertIn("đã có tài khoản", duplicate["items"][0]["error"])
+        self.assertEqual(len(identity.created), created_before)
+
     def test_user_admin_update_persists_fine_grained_permissions(self):
         teacher = _user_doc("Teacher", True)
         identity = FakeIdentityGateway()
@@ -5570,6 +5604,46 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertEqual(updated["learning_outcomes"][0]["target_weight"], 0.75)
         self.assertFalse(updated["learning_outcomes"][0]["is_active"])
+
+    def test_changing_code_of_subject_in_use_requires_confirmation(self):
+        subject_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        db = FakeCatalogDatabase(
+            subjects=[{
+                "_id": subject_id, "subject_code": "CTDL", "subject_name": "Cấu trúc dữ liệu",
+                "chapters": [], "learning_outcomes": [], "is_active": True,
+                "created_at": now, "updated_at": now,
+            }],
+            documents=[{"_id": ObjectId(), "subject_id": subject_id, "archived_at": None}],
+        )
+        service = CatalogService(db)
+        with self.assertRaisesRegex(ValueError, "xác nhận"):
+            service.update_subject(str(subject_id), SubjectUpdatePayload(subject_code="CTDL2"))
+        self.assertEqual(db.subjects.find_one({"_id": subject_id})["subject_code"], "CTDL")
+
+        # Giữ nguyên mã (chỉ đổi tên) không cần xác nhận.
+        service.update_subject(str(subject_id), SubjectUpdatePayload(subject_code="CTDL", subject_name="CTDL mới"))
+        updated = service.update_subject(
+            str(subject_id), SubjectUpdatePayload(subject_code="CTDL2", confirm_code_change=True)
+        )
+        self.assertEqual(updated["subject_code"], "CTDL2")
+
+    def test_legacy_question_without_submitter_falls_back_to_creator(self):
+        creator_id, question_id, version_id = ObjectId(), ObjectId(), ObjectId()
+        base = {
+            "_id": question_id, "question_code": "Q-OLD", "current_version": 1, "current_version_id": version_id,
+            "lifecycle_status": "ACTIVE", "evaluation_status": "NOT_STARTED", "publication_status": "NOT_PUBLISHED",
+            "created_by_user_id": creator_id, "review_submission": {},
+            "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+        }
+        version = {"_id": version_id, "question_id": question_id, "version": 1, "content": "x",
+                   "question_data": {}, "classification": {}, "created_by_user_id": creator_id,
+                   "content_hash": "hash-old", "created_at": datetime.now(timezone.utc)}
+        pending = serialize_question({**base, "review_status": "PENDING"}, version)
+        self.assertEqual(pending["submitted_by_user_id"], str(creator_id))
+        self.assertEqual(pending["author_user_ids"], [str(creator_id)])
+        draft = serialize_question({**base, "review_status": "DRAFT"}, version)
+        self.assertIsNone(draft["submitted_by_user_id"])
 
     def test_ai_model_create_rejects_existing_code_without_overwriting(self):
         db = FakeCatalogDatabase()
@@ -6184,6 +6258,21 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(audit_events[0]["action"], "admin.job_retry")
         self.assertEqual(audit_events[0]["entity_type"], "evaluation")
         self.assertEqual(audit_events[0]["metadata"]["new_job_id"], queued_job_id)
+        self.assertFalse(result["already_queued"])
+
+        # Bấm chạy lại lần nữa khi lượt trước còn đang chờ: không tạo lượt mới, không ghi nhật ký lặp.
+        db.evaluation_jobs.insert_one(
+            {"_id": queued_job_id, "status": "QUEUED", "question_id": question_id, "updated_at": now}
+        )
+        try:
+            admin_jobs_module.QuestionWorkflowService = FakeWorkflowService
+            admin_jobs_module.record_audit_event = lambda **kwargs: audit_events.append(kwargs)
+            again = AdminJobService(db).retry_job("evaluation", str(job_id), background_tasks, admin)
+        finally:
+            admin_jobs_module.QuestionWorkflowService = original_workflow_service
+            admin_jobs_module.record_audit_event = original_audit
+        self.assertTrue(again["already_queued"])
+        self.assertEqual(len(audit_events), 1)
 
     def test_admin_overview_summarizes_operational_state(self):
         now = datetime.now(timezone.utc)

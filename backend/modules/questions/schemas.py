@@ -55,6 +55,7 @@ class QuestionSharingRequest(BaseModel):
 class QuestionResponse(BaseModel):
     id: str
     question_code: str
+    author_user_ids: list[str] = Field(default_factory=list)
     current_version: int
     current_version_id: str
     approved_version_id: str | None

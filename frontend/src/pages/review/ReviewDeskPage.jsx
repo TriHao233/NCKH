@@ -69,6 +69,7 @@ import {
   reviewIssuesOf,
   validateDraft,
   reviewHoldDurations,
+  isHeldByOther,
 } from '../../features/review/reviewModel';
 import '../../css/workspace.css';
 import '../../css/ReviewPage.css';
@@ -341,9 +342,20 @@ function ReviewDeskPage() {
   const holding = ownsLock && !isLockExpired(question, now);
   const holdDurations = reviewHoldDurations(reviewPolicy);
 
-  const handleClaim = () => runAction('claim', async () => {
-    setQuestion(holding ? await renewQuestionReview(questionId) : await claimQuestionReview(questionId));
-  }, holding ? `Đã gia hạn khoá thêm ${holdDurations.lock}.` : 'Bạn đã nhận câu hỏi này.');
+  const handleClaim = async () => {
+    if (!holding && isHeldByOther(question, user, now)) {
+      const holder = userName(lookups.reviewersById?.get(assignmentOf(question).reviewerUserId), 'người duyệt khác');
+      const accepted = await confirm({
+        title: 'Nhận câu đang có người giữ',
+        description: `Câu này đang được giao cho ${holder}. Nhận câu sẽ chuyển quyền chấm sang bạn; phiếu nháp của họ không được áp dụng.`,
+        confirmLabel: 'Nhận câu',
+      });
+      if (!accepted) return;
+    }
+    await runAction('claim', async () => {
+      setQuestion(holding ? await renewQuestionReview(questionId) : await claimQuestionReview(questionId));
+    }, holding ? `Đã gia hạn khoá thêm ${holdDurations.lock}.` : 'Bạn đã nhận câu hỏi này.');
+  };
 
   // Tự gia hạn khoá khi bàn duyệt đang mở và hiển thị, để phiếu dài không bị mất khoá giữa chừng.
   const renewingRef = useRef(false);
@@ -538,8 +550,10 @@ function ReviewDeskPage() {
   const pending = isPending(question);
   const decideAllowed = canDecide(question, user, now);
   const lockMinutes = assignment.lockExpiresAt ? (new Date(assignment.lockExpiresAt).getTime() - now) / 60000 : null;
+  // Câu cũ có thể do quản trị viên tạo: tìm cả trong danh sách người duyệt (có Admin).
   const submitter = question.review_submission?.submitted_by
-    || lookups.teachersById.get(refId(question.submitted_by_user_id));
+    || lookups.teachersById.get(refId(question.submitted_by_user_id))
+    || lookups.reviewersById.get(refId(question.submitted_by_user_id));
   const reviewer = lookups.reviewersById.get(assignment.reviewerUserId);
   const subject = lookups.subjectsById.get(refId(question.subject_id || question.classification?.subject));
   const chapter = (subject?.chapters || []).find((item) => childId(item) === refId(question.classification?.chapter));

@@ -231,6 +231,22 @@ class ReviewWorkflowMongoIntegrationTests(unittest.TestCase):
         self.assertEqual(stored["review_status"], "APPROVED")
         self.assertEqual(stored["evaluation_status"], "NOT_STARTED")
 
+    def test_priority_sort_puts_sla_breached_questions_before_red_scores(self):
+        teacher = self._user("Teacher")
+        red = self._question(
+            teacher,
+            submitted_hours_ago=1,
+            evaluation_status="FAILED",
+            quality_summary={"overall_score": 0.3, "color": "RED"},
+        )
+        late = self._question(teacher, submitted_hours_ago=settings.review_sla_hours + 5)
+        fresh = self._question(teacher, submitted_hours_ago=2)
+        repo = MongoQuestionRepository(self.db)
+        pairs, _total = repo.list(1, 50, "PENDING", None, subject_id=str(self.subject_id), sort_by="priority")
+        order = [question["_id"] for question, _version in pairs]
+        self.assertLess(order.index(late), order.index(red))
+        self.assertLess(order.index(red), order.index(fresh))
+
     def test_list_filters_match_missing_assignment_overrides_and_sla(self):
         teacher = self._user("Teacher")
         never_assigned = self._question(teacher, submitted_hours_ago=settings.review_sla_hours + 2)

@@ -377,11 +377,24 @@ class CatalogService:
         self._ensure_can_manage(subject, viewer)
         previous = _audit_snapshot(subject, SUBJECT_AUDIT_FIELDS)
         fields = payload.model_dump(exclude_unset=True, exclude_none=True)
+        confirm_code_change = fields.pop("confirm_code_change", False)
         if "subject_code" in fields:
             fields["subject_code"] = self._ensure_subject_code_available(
                 fields["subject_code"],
                 current_subject_id=subject["_id"],
             )
+            if fields["subject_code"] == subject.get("subject_code"):
+                fields.pop("subject_code")
+            elif not confirm_code_change:
+                usage = self._usage_counts(subject)["subject"]
+                used = {key: value for key, value in usage.items() if value}
+                if used:
+                    labels = {"questions": "câu hỏi", "documents": "tài liệu", "exams": "đề thi"}
+                    detail = ", ".join(f"{count} {labels.get(key, key)}" for key, count in used.items())
+                    raise CatalogConflictError(
+                        f"Học phần đang được dùng ({detail}). Các phiên bản câu hỏi đã lưu vẫn ghi mã cũ; "
+                        "xác nhận nếu vẫn muốn đổi mã."
+                    )
         if not fields:
             return _subject_response(subject, self._usage_counts(subject), viewer)
         fields["updated_at"] = utc_now()

@@ -114,6 +114,8 @@ class ReviewCreateRequest(BaseModel):
     # Set by list-level bulk approval: the checklist was not filled per item,
     # so these reviews are kept out of human-vs-AI calibration.
     bulk: bool = False
+    # Quản trị viên tự duyệt câu do chính mình tạo/sửa phải ghi lý do (được lưu và ghi nhật ký).
+    self_review_reason: str = Field("", max_length=500)
 
     @model_validator(mode="after")
     def require_structured_reason(self):

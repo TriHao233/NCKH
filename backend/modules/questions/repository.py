@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from bson import ObjectId
@@ -9,6 +9,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import mongo_transaction
 
 
@@ -69,6 +70,9 @@ def serialize_question(question: dict, version: dict) -> dict:
             "subject": subject_snapshot,
         }
     submitted_by_user_id = review_submission.get("submitted_by_user_id")
+    if not submitted_by_user_id and question.get("review_status") != "DRAFT":
+        # Câu cũ không lưu người gửi duyệt: người tạo câu là người gửi.
+        submitted_by_user_id = question.get("created_by_user_id") or version.get("created_by_user_id")
     submitted_at = review_submission.get("submitted_at")
     return json_safe(
         {
@@ -83,6 +87,14 @@ def serialize_question(question: dict, version: dict) -> dict:
             "review_submission": review_submission,
             "submitted_by_user_id": submitted_by_user_id,
             "submitted_at": submitted_at,
+            # Người tạo câu và người tạo phiên bản hiện tại: không được tự duyệt (trừ Admin có lý do).
+            "author_user_ids": list(
+                dict.fromkeys(
+                    str(item)
+                    for item in (question.get("created_by_user_id"), version.get("created_by_user_id"))
+                    if item
+                )
+            ),
             "lifecycle_status": question["lifecycle_status"],
             "evaluation_status": question["evaluation_status"],
             "review_status": question["review_status"],
@@ -504,6 +516,8 @@ class MongoQuestionRepository:
             "updated": {"updated_at": -1, "_id": -1},
         }.get(sort_by)
         if sort_spec is None:
+            now = utc_now()
+            sla_cutoff = now - timedelta(hours=max(1, settings.review_sla_hours))
             pipeline.append(
                 {
                     "$addFields": {
@@ -514,16 +528,35 @@ class MongoQuestionRepository:
                                         "case": {
                                             "$and": [
                                                 {"$eq": ["$review_assignment.status", "IN_REVIEW"]},
-                                                {"$lte": ["$review_assignment.lock_expires_at", utc_now()]},
+                                                {"$lte": ["$review_assignment.lock_expires_at", now]},
                                             ]
                                         },
                                         "then": 0,
                                     },
-                                    {"case": {"$eq": ["$secondary_review.status", "AWAITING_SECONDARY"]}, "then": 1},
-                                    {"case": {"$eq": ["$quality_summary.color", "RED"]}, "then": 2},
-                                    {"case": {"$in": ["$evaluation_status", ["NOT_STARTED", "ERROR", "STALE"]]}, "then": 3},
+                                    # Câu đã chờ quá hạn duyệt (SLA) được đưa lên ngay sau câu mất khoá.
+                                    {
+                                        "case": {
+                                            "$and": [
+                                                {"$eq": ["$review_status", "PENDING"]},
+                                                {"$ne": [{"$ifNull": ["$review_submission.submitted_at", None]}, None]},
+                                                {"$lte": ["$review_submission.submitted_at", sla_cutoff]},
+                                            ]
+                                        },
+                                        "then": 1,
+                                    },
+                                    {"case": {"$eq": ["$secondary_review.status", "AWAITING_SECONDARY"]}, "then": 2},
+                                    {
+                                        "case": {
+                                            "$and": [
+                                                {"$eq": ["$quality_summary.color", "RED"]},
+                                                {"$in": ["$evaluation_status", ["PASSED", "FAILED"]]},
+                                            ]
+                                        },
+                                        "then": 3,
+                                    },
+                                    {"case": {"$in": ["$evaluation_status", ["NOT_STARTED", "ERROR", "STALE"]]}, "then": 4},
                                 ],
-                                "default": 4,
+                                "default": 5,
                             }
                         }
                     }
