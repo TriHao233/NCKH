@@ -48,6 +48,7 @@ export function summarizeEvaluation(question, evaluations) {
   const latest = current ? (evaluations?.[0] || null) : null;
   const summary = question?.quality_summary || {};
   const hasError = Boolean(summary.error);
+  const hasCurrentResult = current && !hasError;
   const evidence = summary.evidence || latest?.evidence || {};
   const feedback = latest?.feedback || summary.feedback || {};
   const scores = hasError ? {} : (latest?.scores || {});
@@ -60,8 +61,8 @@ export function summarizeEvaluation(question, evaluations) {
     feedback,
     scores,
     weights: latest?.policy?.weights || {},
-    overall: hasError ? undefined : (scores.overall ?? summary.overall_score),
-    color: hasError ? undefined : (latest?.color || summary.color),
+    overall: hasCurrentResult ? (scores.overall ?? summary.overall_score) : undefined,
+    color: hasCurrentResult ? (latest?.color || summary.color) : undefined,
     insights: evaluationInsights(merged, REVIEW_CRITERIA),
     answerGuardrail: answerGuardrailInsights(merged),
     metadataGuardrail: metadataGuardrailInsights(merged),
