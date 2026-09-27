@@ -348,7 +348,7 @@ function ReviewInboxPage() {
   const claimable = selectedRows.filter((row) => canClaim(row, user) && !(isAssignedToUser(row, user) && assignmentOf(row).status === 'IN_REVIEW'));
   const publishable = selectedRows.filter((row) => row.review_status === 'APPROVED' && row.publication_status !== 'PUBLISHED');
 
-  const runBulk = async (key, items, action, doneLabel) => {
+  const runBulk = async (key, items, action, doneLabel, summarize = () => '') => {
     setBusy(key);
     clearFlash();
     let failed = 0;
@@ -365,8 +365,8 @@ function ReviewInboxPage() {
     showFlash(
       failed ? 'warn' : 'success',
       failed
-        ? `${doneLabel} ${items.length - failed}/${items.length} câu. Lỗi: ${errors.join('; ')}`
-        : `${doneLabel} ${items.length} câu.`,
+        ? `${doneLabel} ${items.length - failed}/${items.length} câu.${summarize()} Lỗi: ${errors.join('; ')}`
+        : `${doneLabel} ${items.length} câu.${summarize()}`,
     );
     refresh();
   };
@@ -378,11 +378,12 @@ function ReviewInboxPage() {
       confirmLabel: `Duyệt ${approvable.length} câu`,
     });
     if (!accepted) return;
+    let sentToSecondary = 0;
     await runBulk('approve', approvable, async (question) => {
       let current = question;
       if (!canDecide(current, user)) current = await claimQuestionReview(current.id);
       const draft = defaultDraft(current, 'APPROVED');
-      await reviewQuestion(current.id, {
+      const saved = await reviewQuestion(current.id, {
         ...buildReviewPayload(current, {
           ...draft,
           checklist: draft.checklist.map((item) => ({ ...item, passed: true })),
@@ -391,7 +392,12 @@ function ReviewInboxPage() {
         // Phiếu duyệt hàng loạt không chấm từng tiêu chí nên bị loại khỏi thống kê khớp với AI.
         bulk: true,
       });
-    }, 'Đã duyệt');
+      if (saved?.resulting_status === 'PENDING') sentToSecondary += 1;
+    }, 'Đã duyệt', () => (
+      sentToSecondary
+        ? ` Trong đó ${sentToSecondary} câu chuyển sang chờ người khác duyệt lần 2 theo chính sách kiểm duyệt.`
+        : ''
+    ));
   };
 
   const bulkClaim = () => runBulk('claim', claimable, (question) => claimQuestionReview(question.id), 'Đã nhận');

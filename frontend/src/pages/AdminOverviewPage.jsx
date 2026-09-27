@@ -43,7 +43,14 @@ function buildAttention(overview, dashboard, staleUnassigned) {
   if (publicationsFailed) items.push({ key: 'moodle', tone: 'danger', text: `${formatNumber(publicationsFailed)} lần đồng bộ Moodle lỗi`, to: '/quan-ly-moodle?status=FAILED' });
   const documentsFailed = overview?.documents?.failed || 0;
   if (documentsFailed) items.push({ key: 'docs', tone: 'danger', text: `${formatNumber(documentsFailed)} tài liệu xử lý lỗi`, to: '/quan-ly-tai-lieu' });
-  if (staleUnassigned) items.push({ key: 'stale-review', tone: 'warn', text: `${formatNumber(staleUnassigned)} câu chờ duyệt quá 48 giờ chưa ai nhận`, to: '/kiem-duyet?tab=unassigned' });
+  if (staleUnassigned) {
+    items.push({
+      key: 'stale-review',
+      tone: 'warn',
+      text: `${formatNumber(staleUnassigned)} câu trễ hạn duyệt (quá ${dashboard?.workload?.sla_hours || 48} giờ) mà chưa ai nhận`,
+      to: '/kiem-duyet?tab=unassigned',
+    });
+  }
   const lockExpired = dashboard?.workload?.lock_expired || 0;
   if (lockExpired) items.push({ key: 'lock', tone: 'warn', text: `${formatNumber(lockExpired)} câu bị giữ quá hạn khoá`, to: '/kiem-duyet?tab=overdue' });
   const slaBreached = dashboard?.workload?.sla_breached || 0;
@@ -82,7 +89,7 @@ function AdminOverviewPage() {
     const [overviewResult, dashboardResult, staleResult] = await Promise.allSettled([
       getAdminOverview(),
       getReviewDashboard(),
-      listQuestions({ page: 1, pageSize: 1, reviewStatus: 'PENDING', assignmentStatus: 'UNASSIGNED', waitingHoursMin: 48 }),
+      listQuestions({ page: 1, pageSize: 1, reviewStatus: 'PENDING', assignmentStatus: 'UNASSIGNED', slaBreachedOnly: true }),
     ]);
     if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
     else setError(overviewResult.reason?.message || 'Không tải được tổng quan hệ thống.');

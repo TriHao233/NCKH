@@ -13,6 +13,7 @@ from modules.generation.generate import router
 from modules.generation.mongodb import _resolve_clo_ids
 from modules.generation.prompt_builder import ChatPromptPackage, PromptBuilder
 from modules.generation.question import (
+    GenerationOutputError,
     _content_mode,
     _focused_context_snapshot,
     _generate_questions_for_plan_item,
@@ -509,7 +510,7 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["completed"] for item in progress_updates], [0, 1, 2, 3])
         self.assertEqual([len(item["data"]) for item in progress_updates], [0, 1, 2, 3])
 
-    async def test_invalid_json_only_rejects_the_current_question(self):
+    async def test_invalid_json_fails_after_retrying_the_current_question(self):
         request = QuestionGenerateRequest(
             document_id=str(ObjectId()),
             bloom_level="2_hieu",
@@ -534,30 +535,30 @@ class IncrementalGenerationTests(unittest.IsolatedAsyncioTestCase):
             patch("modules.generation.question.reset_llm_execution_tracking"),
             patch("modules.generation.question.get_llm_execution_snapshot", return_value={}),
         ):
-            questions, summary = await _generate_questions_for_plan_item(
-                request,
-                plan_item,
-                plan_index=1,
-                avoid_questions=[],
-                seen_question_fingerprints=set(),
-                context_snapshot={
-                    "results": [],
-                    "chunk_set_id": None,
-                    "vector_collection_id": None,
-                },
-                context_text="Nội dung: Kiến thức dùng để sinh câu hỏi.",
-                prompt_builder=prompt_builder,
-                llm=llm,
-                model_snapshot={},
-                model_provider="qwen",
-                content_mode="general",
-                learning_outcomes=[],
-            )
+            with self.assertRaises(GenerationOutputError):
+                await _generate_questions_for_plan_item(
+                    request,
+                    plan_item,
+                    plan_index=1,
+                    avoid_questions=[],
+                    seen_question_fingerprints=set(),
+                    context_snapshot={
+                        "results": [],
+                        "chunk_set_id": None,
+                        "vector_collection_id": None,
+                    },
+                    context_text="Nội dung: Kiến thức dùng để sinh câu hỏi.",
+                    prompt_builder=prompt_builder,
+                    llm=llm,
+                    model_snapshot={},
+                    model_provider="qwen",
+                    content_mode="general",
+                    learning_outcomes=[],
+                )
 
-        self.assertEqual(questions, [])
-        self.assertEqual(summary.saved_count, 0)
-        self.assertEqual(summary.retry_attempt_count, 2)
-        self.assertEqual(summary.rejection_reasons[0].code, "INVALID_JSON_RESPONSE")
+        self.assertEqual(finish_run.call_args.kwargs["status"], "FAILED")
+        self.assertEqual(finish_run.call_args.kwargs["post_processing"]["retry_attempt_count"], 2)
+        self.assertEqual(finish_run.call_args.kwargs["validation_errors"][0]["code"], "INVALID_JSON_RESPONSE")
         self.assertEqual(llm.generate_chat.call_count, 3)
         finish_run.assert_called_once()
         self.assertEqual(finish_run.call_args.kwargs["status"], "FAILED")

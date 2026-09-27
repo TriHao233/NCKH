@@ -279,13 +279,17 @@ async def queue_document_upload(
         raise HTTPException(status_code=400, detail="Dung lượng tối đa 50 MB")
 
     title = Path(safe_filename).stem.replace("_", " ")
-    document_id = create_document_record(
-        filename=safe_filename,
-        title=title,
-        uploaded_by_user_id=current_user.id,
-        subject_id=subject_id,
-        chapter_id=chapter_id,
-    )
+    try:
+        document_id = create_document_record(
+            filename=safe_filename,
+            title=title,
+            uploaded_by_user_id=current_user.id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
+        )
+    except ValueError as exc:
+        file.file.close()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = create_ocr_job(document_id, config={"source_format": upload_type["source_format"]})
     upload_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
     output_path = _OUTPUT_DIR / f"{document_id}_{job_id}_result.md"

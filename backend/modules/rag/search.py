@@ -456,11 +456,11 @@ def get_evaluation_evidence(
         raise ValueError("Không thể truy xuất nguồn vì nội dung đánh giá rỗng")
 
     resolved_collection = collection_name or settings.chromadb_collection_name
-    chunk_set_id, vector_collection_id = _active_vector_snapshot(
+    chunk_set_id, vector_collection_id, active_collection_name = _active_vector_snapshot(
         document_id,
         resolved_collection,
     )
-    collection = get_collection(resolved_collection)
+    collection = get_collection(active_collection_name)
     where_filter = {
         "$and": [
             {"document_id": document_id},
@@ -594,6 +594,6 @@ def get_evaluation_evidence(
         "document_id": document_id,
         "chunk_set_id": chunk_set_id,
         "vector_collection_id": vector_collection_id,
-        "collection_name": resolved_collection,
+        "collection_name": active_collection_name,
         "results": verified_results,
     }

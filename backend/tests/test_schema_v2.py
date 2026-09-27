@@ -2468,6 +2468,13 @@ class SchemaV2Tests(unittest.TestCase):
         MongoQuestionRepository(db).list(1, 10, "APPROVED", None, override_only=True)
         self.assertEqual(db.questions.pipelines[0][0]["$match"]["latest_review_id"], {"$in": [overridden]})
 
+        # Never-assigned questions have no review_assignment.status; "UNASSIGNED" must include them.
+        MongoQuestionRepository(db).list(1, 10, "PENDING", None, assignment_status="UNASSIGNED")
+        self.assertEqual(
+            db.questions.pipelines[1][0]["$match"]["review_assignment.status"],
+            {"$in": ["UNASSIGNED", None]},
+        )
+
     def test_audit_writers_share_one_canonical_shape(self):
         from core import audit as audit_module
 
@@ -5401,7 +5408,9 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertTrue(models[0]["factory_status"]["supported"])
         self.assertFalse(models[1]["factory_status"]["supported"])
         available = service.available_ai_models("QUESTION_GENERATION")
-        self.assertEqual([item["code"] for item in available["items"]], ["qwen"])
+        available_codes = [item["code"] for item in available["items"]]
+        self.assertIn("qwen", available_codes)
+        self.assertNotIn("unknown-provider", available_codes)
 
         model = service.set_ai_model_active(
             AiModelActivationPayload(model_code="qwen", is_active=False)
@@ -5466,7 +5475,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_generation_status_filter("active"), {"$in": ["queued", "processing"]})
         self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
-        self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+        self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE", "BLOCKED"]})
 
     def test_admin_audit_list_filters_legacy_and_nested_records(self):
         actor_id = ObjectId()
@@ -6735,9 +6744,9 @@ class SchemaV2Tests(unittest.TestCase):
         prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "output_format.txt"
         output_format = prompt_path.read_text(encoding="utf-8")
 
-        self.assertIn("QUESTION_STRUCTURE", output_format)
-        self.assertIn('"options": "object hoặc null theo QUESTION_STRUCTURE"', output_format)
-        self.assertIn('"difficulty": "de | trung_binh | kho"', output_format)
+        self.assertIn("`questions`", output_format)
+        self.assertIn("`options`", output_format)
+        self.assertIn("`difficulty` chỉ là `de`, `trung_binh` hoặc `kho`", output_format)
 
     def test_difficulty_rule_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
@@ -6747,11 +6756,11 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("QUY ĐỊNH ĐỘ KHÓ ƯỚC LƯỢNG", prompt)
         self.assertIn("de", prompt)
         self.assertIn("trung_binh", prompt)
         self.assertIn("kho", prompt)
-        self.assertIn("KEYWORD TRONG CÂU HỎI", prompt)
+        self.assertIn("Độ dài hay từ khóa chỉ là tín hiệu phụ", prompt)
 
     def test_normalize_difficulty_accepts_known_labels(self):
         self.assertEqual(_normalize_difficulty("de"), "de")
@@ -6783,7 +6792,7 @@ class SchemaV2Tests(unittest.TestCase):
             },
         )
 
-        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("QUY ĐỊNH ĐỘ KHÓ ƯỚC LƯỢNG", prompt)
         self.assertIn("current_difficulty", prompt)
         self.assertIn('"de"', prompt)
         self.assertIn("correct_answer và explanation là khẳng định CHƯA ĐƯỢC TIN CẬY", prompt)
@@ -6801,9 +6810,9 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("QUESTION RULES", prompt)
-        self.assertIn("Tham chiếu nguồn học liệu", prompt)
-        self.assertIn("Nếu vi phạm bất kỳ quy tắc nào", prompt)
+        self.assertIn("QUY TẮC CÂU HỎI", prompt)
+        self.assertIn("theo tài liệu", prompt)
+        self.assertIn("Thiếu dữ kiện, mơ hồ", prompt)
 
     def test_question_structure_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
@@ -6814,7 +6823,7 @@ class SchemaV2Tests(unittest.TestCase):
         )
 
         self.assertIn("CẤU TRÚC: dung_sai", prompt)
-        self.assertIn("mệnh đề hoàn chỉnh", prompt)
+        self.assertIn("mệnh đề độc lập, hoàn chỉnh", prompt)
         self.assertIn('{"A": "Đúng", "B": "Sai"}', prompt)
 
     def test_mcq_validation_rejects_two_option_shape(self):

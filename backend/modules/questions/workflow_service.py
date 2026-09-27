@@ -3835,11 +3835,16 @@ class QuestionWorkflowService:
                 {"classification.subject": 1},
             )
         ) if version_ids else []
-        subject_counts: dict[str, int] = {}
+        version_subjects: dict[ObjectId, str] = {}
         for version in versions:
             subject = ((version.get("classification") or {}).get("subject") or {})
             subject_id = subject.get("id") if isinstance(subject, dict) else None
-            key = str(subject_id) if subject_id else "unknown"
+            version_subjects[version["_id"]] = str(subject_id) if subject_id else "unknown"
+        subject_counts: dict[str, int] = {}
+        for review in reviews:
+            key = version_subjects.get(review.get("question_version_id"))
+            if key is None:
+                continue
             subject_counts[key] = subject_counts.get(key, 0) + 1
         subject_oids = [
             ObjectId(subject_id)

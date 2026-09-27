@@ -45,6 +45,7 @@ function entityLink(entity = {}) {
   if (!entity.id) return null;
   if (['QUESTION', 'question'].includes(entity.type)) return `/kiem-duyet/${entity.id}`;
   if (entity.type === 'user') return '/quan-ly-nguoi-dung';
+  if (entity.type === 'review_policy') return '/kiem-duyet/hieu-suat';
   if (entity.type === 'document') return '/quan-ly-tai-lieu';
   if (['moodle_target', 'moodle_publication'].includes(entity.type)) return '/quan-ly-moodle';
   if (['generation', 'evaluation'].includes(entity.type)) return `/quan-ly-job?type=${entity.type}`;

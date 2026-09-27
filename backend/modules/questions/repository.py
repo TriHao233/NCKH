@@ -329,7 +329,11 @@ class MongoQuestionRepository:
                 if len(evaluation_statuses) > 1
                 else evaluation_statuses[0]
             )
-        if assignment_status:
+        if assignment_status == "UNASSIGNED":
+            # Questions never assigned have no review_assignment.status at all;
+            # {$in: [None, ...]} matches the missing field as well.
+            match["review_assignment.status"] = {"$in": ["UNASSIGNED", None]}
+        elif assignment_status:
             match["review_assignment.status"] = assignment_status
         if assigned_reviewer_user_id is not None:
             match["review_assignment.reviewer_user_id"] = assigned_reviewer_user_id

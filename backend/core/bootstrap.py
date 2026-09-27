@@ -704,6 +704,9 @@ def _seed_reference_data() -> None:
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     }
+    has_active_policy = db.evaluation_policies.find_one(
+        {"is_active": True}, {"_id": 1}
+    ) is not None
     db.evaluation_policies.update_one(
         {"policy_name": "Default question quality policy", "version": 2},
         {
@@ -712,7 +715,7 @@ def _seed_reference_data() -> None:
                 "weights": weights,
                 "weights_hash": hashlib.sha256(str(sorted(weights.items())).encode()).hexdigest(),
                 "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
-                "is_active": True,
+                "is_active": not has_active_policy,
                 "created_at": now,
             }
         },

@@ -22,6 +22,7 @@ export const AUDIT_ACTION_LABEL = Object.freeze({
   QUESTION_COMMENT_ADDED: 'Thêm trao đổi',
   QUESTION_COMMENT_UPDATED: 'Sửa trao đổi',
   QUESTION_COMMENT_DELETED: 'Xoá trao đổi',
+  REVIEW_POLICY_UPDATED: 'Đổi chính sách duyệt lần 2',
   'admin.job_retry': 'Chạy lại tác vụ',
   'admin.job_cancel': 'Huỷ tác vụ',
   'admin.moodle_target_save': 'Lưu cấu hình Moodle',
@@ -40,6 +41,7 @@ export const AUDIT_ENTITY_LABEL = Object.freeze({
   moodle_target: 'Cấu hình Moodle',
   moodle_publication: 'Lượt ghi Moodle',
   subject: 'Học phần',
+  review_policy: 'Chính sách kiểm duyệt',
 });
 
 export const JOB_KIND_LABEL = Object.freeze({
