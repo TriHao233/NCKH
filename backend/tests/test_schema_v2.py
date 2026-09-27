@@ -991,6 +991,44 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(result["items"][0]["pages"][0]["page_number"], 2)
         self.assertEqual(references.page_query, (document_id, ocr_job_id, [2, 3]))
 
+    def test_manual_excerpt_source_viewer_resolves_ocr_page(self):
+        question_id = ObjectId()
+        document_id = ObjectId()
+        ocr_job_id = ObjectId()
+        question = {"_id": question_id, "question_code": "Q-EXCERPT"}
+        version = {
+            "_id": ObjectId(),
+            "version": 1,
+            "document_id": document_id,
+            "sources": [{"source_type": "MANUAL_EXCERPT", "context_excerpt": "Bình B3 là trung gian."}],
+        }
+        document = {
+            "_id": document_id,
+            "title": "Giáo trình",
+            "original_filename": "giaotrinh.pdf",
+            "current_processing": {"ocr_job_id": ocr_job_id},
+            "artifacts": [],
+        }
+
+        class PairRepository:
+            def find_pair(self, _question_id):
+                return question, version
+
+        class References:
+            def find_document(self, _document_id):
+                return document
+
+            def find_excerpt_pages(self, _document_id, _ocr_job_id, _text):
+                return [5]
+
+            def find_pages(self, _document_id, _ocr_job_id, page_numbers):
+                assert page_numbers == [5]
+                return [{"page_number": 5, "cleaned_text": "Bình B3 là trung gian."}]
+
+        result = QuestionService(PairRepository(), References()).source_viewer(str(question_id))
+        self.assertEqual(result["items"][0]["page_range"]["pages"], [5])
+        self.assertEqual(result["items"][0]["pages"][0]["page_number"], 5)
+
     def test_submit_for_review_moves_draft_or_revision_to_pending(self):
         teacher = _current_user("Teacher")
 
@@ -1689,14 +1727,8 @@ class SchemaV2Tests(unittest.TestCase):
                 reviewer,
             )
             after_primary = dict(db.questions.find_one({"_id": question_id}))
-            service.claim_review(str(question_id), reviewer)
-            with self.assertRaises(ValueError):
-                service.review(
-                    str(question_id),
-                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
-                    reviewer,
-                )
-            service.release_review(str(question_id), reviewer)
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), reviewer)
             service.claim_review(str(question_id), second_reviewer)
             secondary = service.review(
                 str(question_id),
@@ -1889,14 +1921,8 @@ class SchemaV2Tests(unittest.TestCase):
                 SecondaryReviewRequest(required=True, reason="Câu thi cuối kỳ"),
                 admin,
             )
-            service.claim_review(str(question_id), reviewer)
-            with self.assertRaises(ValueError):
-                service.review(
-                    str(question_id),
-                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
-                    reviewer,
-                )
-            service.release_review(str(question_id), reviewer)
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), reviewer)
             service.claim_review(str(question_id), second_reviewer)
             secondary = service.review(
                 str(question_id),

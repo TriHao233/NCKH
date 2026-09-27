@@ -191,6 +191,13 @@ class QuestionReferenceRepository(Protocol):
         page_numbers: list[int],
     ) -> list[dict]: ...
 
+    def find_excerpt_pages(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId,
+        text: str,
+    ) -> list[int]: ...
+
     def find_subject(self, subject_id: ObjectId) -> dict | None: ...
 
 
@@ -247,6 +254,38 @@ class MongoQuestionReferenceRepository:
         if ocr_job_id is not None:
             query["ocr_job_id"] = ocr_job_id
         return list(self.db.document_pages.find(query).sort("page_number", 1))
+
+    def find_excerpt_pages(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId,
+        text: str,
+    ) -> list[int]:
+        excerpt = " ".join(str(text or "").split()).casefold()
+        if not excerpt:
+            return []
+        pages = self.db.document_pages.find(
+            {"document_id": document_id, "ocr_job_id": ocr_job_id},
+            {"page_number": 1, "cleaned_text": 1, "raw_text": 1},
+        ).sort("page_number", 1)
+        parts: list[str] = []
+        spans: list[tuple[int, int, int]] = []
+        offset = 0
+        for page in pages:
+            content = " ".join(str(page.get("cleaned_text") or page.get("raw_text") or "").split()).casefold()
+            if not content:
+                continue
+            if parts:
+                offset += 1
+            start = offset
+            offset += len(content)
+            parts.append(content)
+            spans.append((start, offset, int(page["page_number"])))
+        match_start = " ".join(parts).find(excerpt)
+        if match_start < 0:
+            return []
+        match_end = match_start + len(excerpt)
+        return [number for start, end, number in spans if start < match_end and end > match_start]
 
     def find_subject(self, subject_id: ObjectId) -> dict | None:
         return self.db.subjects.find_one({"_id": subject_id, "is_active": True})

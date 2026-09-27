@@ -21,6 +21,7 @@ from modules.notifications.service import NotificationService
 from modules.questions.repository import MongoQuestionRepository
 from modules.questions.workflow_schemas import (
     AutoAssignRequest,
+    ReviewAssignmentRequest,
     ReviewCreateRequest,
     ReviewPolicyPayload,
 )
@@ -166,6 +167,14 @@ class ReviewWorkflowMongoIntegrationTests(unittest.TestCase):
         self.assertEqual(stored["review_status"], "PENDING")
         self.assertEqual(stored["secondary_review"]["status"], "AWAITING_SECONDARY")
         self.assertEqual(stored["secondary_review"]["primary_reviewer_user_id"], reviewer.id)
+        with self.assertRaisesRegex(PermissionError, "lần hai"):
+            self.service.claim_review(str(question_id), reviewer)
+        with self.assertRaisesRegex(ValueError, "lần đầu"):
+            self.service.assign_review(
+                str(question_id),
+                ReviewAssignmentRequest(reviewer_user_id=str(reviewer.id)),
+                admin,
+            )
         audit = self.db.audit_logs.find_one(
             {"entity.id": question_id, "action": "QUESTION_SECONDARY_REVIEW_REQUESTED"}
         )

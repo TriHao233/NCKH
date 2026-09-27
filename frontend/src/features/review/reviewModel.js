@@ -330,7 +330,7 @@ export function isBlockedFromSecondary(question, user) {
 }
 
 export function canClaim(question, user, now = Date.now()) {
-  if (!isPending(question)) return false;
+  if (!isPending(question) || isBlockedFromSecondary(question, user)) return false;
   const { status } = assignmentOf(question);
   return status === 'UNASSIGNED'
     || isAssignedToUser(question, user)

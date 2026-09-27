@@ -111,6 +111,7 @@ test('primary reviewer cannot approve the secondary round', () => {
     secondary_review: { status: 'AWAITING_SECONDARY', primary_reviewer_user_id: 'r1' },
   });
   assert.equal(isBlockedFromSecondary(q, reviewer), true);
+  assert.equal(canClaim(q, reviewer, NOW), false);
   assert.match(validateDraft(q, checkAll(defaultDraft(q, 'APPROVED')), reviewer, NOW), /lần 2/);
   assert.equal(validateDraft(q, defaultDraft(q, 'NEEDS_REVISION'), reviewer, NOW).includes('lần 2'), false);
 });

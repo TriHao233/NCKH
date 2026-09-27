@@ -853,6 +853,17 @@ class QuestionService:
                     source_warnings.append("Nội dung chunk đã thay đổi so với snapshot câu hỏi")
 
             page_numbers = _source_page_numbers(source, chunk)
+            if (
+                not page_numbers
+                and source.get("source_type") == "MANUAL_EXCERPT"
+                and document
+                and current_ocr_job_id
+            ):
+                page_numbers = self.references.find_excerpt_pages(
+                    document["_id"],
+                    current_ocr_job_id,
+                    source.get("context_excerpt") or "",
+                )
             page_records = []
             if document and current_ocr_job_id:
                 page_records = self.references.find_pages(
@@ -887,7 +898,9 @@ class QuestionService:
                     "chunk_content_hash": source_hash,
                     "current_content_hash": current_hash,
                     "content_hash_matches": content_hash_matches,
-                    "page_range": (chunk or {}).get("page_range") or {},
+                    "page_range": (chunk or {}).get("page_range") or source.get("page_range") or (
+                        {"pages": page_numbers} if page_numbers else {}
+                    ),
                     "heading": (chunk or {}).get("heading") or {},
                     "content_type": (chunk or {}).get("content_type"),
                     "semantic_type": (chunk or {}).get("semantic_type"),

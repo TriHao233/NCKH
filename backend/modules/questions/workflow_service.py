@@ -2253,6 +2253,12 @@ class QuestionWorkflowService:
         question, version = pair
         if question["review_status"] != "PENDING":
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể claim")
+        secondary = question.get("secondary_review") or {}
+        if (
+            secondary.get("status") == "AWAITING_SECONDARY"
+            and secondary.get("primary_reviewer_user_id") == current_user.id
+        ):
+            raise PermissionError("Người duyệt lần đầu không được nhận lượt duyệt lần hai")
         if current_user.role != "Admin":
             self._ensure_not_author(question, version, current_user)
         now = utc_now()
@@ -2425,6 +2431,12 @@ class QuestionWorkflowService:
                 version.get("created_by_user_id"),
             }:
                 raise ValueError("Không thể giao câu hỏi cho chính tác giả kiểm duyệt")
+            secondary = question.get("secondary_review") or {}
+            if (
+                secondary.get("status") == "AWAITING_SECONDARY"
+                and reviewer["_id"] == secondary.get("primary_reviewer_user_id")
+            ):
+                raise ValueError("Không thể giao lượt duyệt lần hai cho người duyệt lần đầu")
             assignment = {
                 "status": "ASSIGNED",
                 "reviewer_user_id": reviewer["_id"],
