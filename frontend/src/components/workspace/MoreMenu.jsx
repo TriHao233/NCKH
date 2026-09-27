@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faEllipsis } from '@fortawesome/free-solid-svg-icons';
 
@@ -10,7 +10,26 @@ import { faChevronDown, faEllipsis } from '@fortawesome/free-solid-svg-icons';
 function MoreMenu({ items, label = 'Thêm', variant = 'button', align = 'right', disabled = false }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
+  const menuRef = useRef(null);
   const menuId = useId();
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const placeMenu = () => {
+      const root = rootRef.current;
+      const menu = menuRef.current;
+      if (!root || !menu) return;
+      const rect = root.getBoundingClientRect();
+      const width = menu.offsetWidth;
+      const preferredLeft = align === 'left' ? rect.left : rect.right - width;
+      const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - width - 8));
+      menu.style.left = `${left - rect.left}px`;
+      menu.style.right = 'auto';
+    };
+    placeMenu();
+    window.addEventListener('resize', placeMenu);
+    return () => window.removeEventListener('resize', placeMenu);
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -82,7 +101,7 @@ function MoreMenu({ items, label = 'Thêm', variant = 'button', align = 'right',
         </button>
       )}
       {open && (
-        <div className={`ws-more__menu ws-more__menu--${align}`} role="menu" id={menuId}>
+        <div className={`ws-more__menu ws-more__menu--${align}`} role="menu" id={menuId} ref={menuRef}>
           {visibleItems.map((item) => (item.divider ? (
             <hr key={item.key} className="ws-more__divider" />
           ) : (

@@ -195,12 +195,30 @@ def list_available_ai_models(
 
 
 @router.post("/ai-models", status_code=status.HTTP_201_CREATED)
-def upsert_ai_model(
+def create_ai_model(
     payload: AiModelPayload,
     _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.upsert_ai_model(payload)
+    try:
+        return service.save_ai_model(payload, create=True)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.put("/ai-models/{model_code}")
+def update_ai_model(
+    model_code: str,
+    payload: AiModelPayload,
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    if model_code.strip().lower() != payload.model_code:
+        raise HTTPException(status_code=400, detail="Mã mô hình không khớp")
+    try:
+        return service.save_ai_model(payload, create=False)
+    except Exception as exc:
+        _translate(exc)
 
 
 @router.post("/ai-models/active")

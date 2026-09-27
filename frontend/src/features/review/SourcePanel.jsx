@@ -24,7 +24,7 @@ function SourcePanel({ questionId, viewer, loading, error, active }) {
   }, [questionId, viewer]);
 
   useEffect(() => {
-    if (!active || !pdfAvailable || pdf.status !== 'idle') return undefined;
+    if (!active || !pdfAvailable) return undefined;
     let cancelled = false;
     setPdf({ status: 'loading', url: '', error: '' });
     fetchQuestionSourcePdf(questionId)
@@ -41,7 +41,7 @@ function SourcePanel({ questionId, viewer, loading, error, active }) {
     return () => {
       cancelled = true;
     };
-  }, [active, pdfAvailable, pdf.status, questionId]);
+  }, [active, pdfAvailable, questionId, viewer]);
 
   useEffect(() => () => {
     if (pdf.url) URL.revokeObjectURL(pdf.url);

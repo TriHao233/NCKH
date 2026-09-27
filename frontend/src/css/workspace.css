@@ -1255,6 +1255,8 @@ button.ws-stat:hover {
   top: calc(100% + 6px);
   z-index: 60;
   min-width: 220px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
   padding: 6px;
   border-radius: 12px;
   background: #fff;

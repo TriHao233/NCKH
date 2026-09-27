@@ -41,12 +41,14 @@ from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.admin.overview_service import AdminOverviewService
 from modules.catalog.schemas import (
     AiModelActivationPayload,
+    AiModelPayload,
     ChapterPayload,
     ChapterUpdatePayload,
     EvaluationPolicyActivationPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
     PromptTemplateActivationPayload,
+    PromptTemplateTestPayload,
     SubjectPayload,
     SubjectUpdatePayload,
 )
@@ -557,10 +559,12 @@ class InMemoryCollection:
     def update_one(self, filter_query, update, *, upsert=False, **_kwargs):
         matched = 0
         modified = 0
+        upserted_id = None
         record = self.find_one(filter_query)
         if record is None and upsert:
             record = dict(update.get("$setOnInsert") or {})
             self.records.append(record)
+            upserted_id = record.get("_id")
             matched = 1
             modified = 1
         elif record is not None:
@@ -580,7 +584,7 @@ class InMemoryCollection:
         return type(
             "Result",
             (),
-            {"matched_count": matched, "modified_count": modified},
+            {"matched_count": matched, "modified_count": modified, "upserted_id": upserted_id},
         )()
 
     def update_many(self, filter_query, update, **_kwargs):
@@ -5513,6 +5517,52 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertEqual(updated["learning_outcomes"][0]["target_weight"], 0.75)
         self.assertFalse(updated["learning_outcomes"][0]["is_active"])
+
+    def test_ai_model_create_rejects_existing_code_without_overwriting(self):
+        db = FakeCatalogDatabase()
+        service = CatalogService(db)
+        payload = AiModelPayload(
+            model_code="qa-model", model_name="Original", runtime="OLLAMA",
+            capabilities=["QUESTION_GENERATION"],
+        )
+        created = service.save_ai_model(payload, create=True)
+        self.assertEqual(created["model_name"], "Original")
+
+        duplicate = payload.model_copy(update={"model_name": "Replacement"})
+        with self.assertRaisesRegex(ValueError, "Mã mô hình đã tồn tại"):
+            service.save_ai_model(duplicate, create=True)
+        self.assertEqual(db.ai_models.find_one({"model_code": "qa-model"})["model_name"], "Original")
+
+        updated = service.save_ai_model(duplicate, create=False)
+        self.assertEqual(updated["model_name"], "Replacement")
+        self.assertEqual(len(db.ai_models.records), 1)
+
+    def test_prompt_preview_uses_selected_version(self):
+        db = FakeCatalogDatabase(prompt_templates=[
+            {
+                "_id": ObjectId(), "template_key": "system", "version": 1,
+                "prompt_body": "SELECTED_SYSTEM_V1", "is_active": False,
+            },
+            {
+                "_id": ObjectId(), "template_key": "system", "version": 2,
+                "prompt_body": "ACTIVE_SYSTEM_V2", "is_active": True,
+            },
+            {
+                "_id": ObjectId(), "template_key": "evaluation:question_quality", "version": 1,
+                "prompt_body": "SELECTED_EVALUATION", "is_active": True,
+            },
+        ])
+        service = CatalogService(db)
+        preview = service.test_prompt_template(PromptTemplateTestPayload(template_key="system", version=1))
+        self.assertIn("SELECTED_SYSTEM_V1", preview["rendered_prompt"])
+        self.assertNotIn("ACTIVE_SYSTEM_V2", preview["rendered_prompt"])
+        self.assertEqual(preview["effective_sources"]["system"], "selected")
+
+        evaluation = service.test_prompt_template(
+            PromptTemplateTestPayload(template_key="evaluation:question_quality", version=1)
+        )
+        self.assertEqual(evaluation["rendered_prompt"], "SELECTED_EVALUATION")
+        self.assertEqual(evaluation["preview_mode"], "template")
 
     def test_catalog_runtime_controls_prompt_policy_and_model_state(self):
         db = FakeCatalogDatabase(

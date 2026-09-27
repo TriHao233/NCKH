@@ -559,21 +559,30 @@ class CatalogService:
             }
         )
 
-    def upsert_ai_model(self, payload: AiModelPayload) -> dict:
+    def save_ai_model(self, payload: AiModelPayload, *, create: bool) -> dict:
         now = utc_now()
-        record = self.db.ai_models.find_one_and_update(
-            {"model_code": payload.model_code},
-            {
-                "$set": {
-                    "schema_version": SCHEMA_VERSION,
-                    **payload.model_dump(),
-                    "updated_at": now,
-                },
-                "$setOnInsert": {"_id": ObjectId(), "created_at": now},
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
+        values = {"schema_version": SCHEMA_VERSION, **payload.model_dump(), "updated_at": now}
+        query = {"model_code": payload.model_code}
+        if create:
+            try:
+                result = self.db.ai_models.update_one(
+                    query,
+                    {"$setOnInsert": {"_id": ObjectId(), **values, "created_at": now}},
+                    upsert=True,
+                )
+            except DuplicateKeyError as exc:
+                raise CatalogConflictError("Mã mô hình đã tồn tại") from exc
+            if result.upserted_id is None:
+                raise CatalogConflictError("Mã mô hình đã tồn tại")
+            record = self.db.ai_models.find_one({"_id": result.upserted_id})
+        else:
+            record = self.db.ai_models.find_one_and_update(
+                query,
+                {"$set": values},
+                return_document=ReturnDocument.AFTER,
+            )
+            if not record:
+                raise LookupError("Không tìm thấy mô hình")
         return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
 
     def set_ai_model_active(self, payload: AiModelActivationPayload) -> dict:
@@ -700,12 +709,29 @@ class CatalogService:
         return json_safe(record)
 
     def test_prompt_template(self, payload: PromptTemplateTestPayload) -> dict:
+        if bool(payload.template_key) != bool(payload.version):
+            raise ValueError("Chọn cả mã prompt và phiên bản để chạy thử")
+        selected = None
+        if payload.template_key:
+            selected = self.db.prompt_templates.find_one(
+                {"template_key": payload.template_key, "version": payload.version}
+            )
+            if not selected:
+                raise LookupError("Không tìm thấy phiên bản prompt")
+        selected_key = selected["template_key"] if selected else None
+        bloom_level = payload.bloom_level
+        question_type = payload.question_type
+        if selected_key and selected_key.startswith("bloom:"):
+            bloom_level = selected_key.split(":", 1)[1]
+        if selected_key and selected_key.startswith(("question_type:", "question_structure:")):
+            question_type = selected_key.split(":", 1)[1]
         template_keys = [
             "system",
             "question_rule",
-            f"bloom:{payload.bloom_level}",
-            f"question_type:{payload.question_type}",
-            f"question_structure:{payload.question_type}",
+            f"bloom:{bloom_level}",
+            "quy_dinh_do_kho",
+            f"question_type:{question_type}",
+            f"question_structure:{question_type}",
             "output_format",
         ]
         effective_sources = {}
@@ -719,25 +745,37 @@ class CatalogService:
                 if settings.prompt_source == "db" and active_db
                 else "file"
             )
+        preview_mode = "assembled" if not selected_key or selected_key in template_keys else "template"
         try:
-            rendered = PromptBuilder().build(
-                context=payload.context,
-                bloom_level=payload.bloom_level,
-                question_type=payload.question_type,
-                num_questions=payload.num_questions,
-                instruction=payload.instruction,
+            rendered = (
+                PromptBuilder().build(
+                    context=payload.context,
+                    bloom_level=bloom_level,
+                    question_type=question_type,
+                    num_questions=payload.num_questions,
+                    instruction=payload.instruction,
+                    template_overrides={selected_key: selected["prompt_body"]} if selected else None,
+                )
+                if preview_mode == "assembled" else selected["prompt_body"]
             )
         except Exception as exc:
             raise ValueError(f"Không build được prompt mẫu: {exc}") from exc
         warnings = []
         if settings.prompt_source != "db":
             warnings.append("Prompt DB chưa có hiệu lực vì PROMPT_SOURCE không phải db.")
+        if selected:
+            effective_sources[selected_key] = "selected"
+        if preview_mode == "template":
+            warnings.append("Mẫu này không nằm trong prompt sinh câu hỏi; đang xem nội dung phiên bản đã chọn.")
         return {
             "prompt_source": settings.prompt_source,
             "effective_sources": effective_sources,
             "rendered_prompt": rendered,
             "length": len(rendered),
             "warnings": warnings,
+            "preview_mode": preview_mode,
+            "template_key": selected_key,
+            "version": selected.get("version") if selected else None,
         }
 
     def list_evaluation_policies(self) -> list[dict]:

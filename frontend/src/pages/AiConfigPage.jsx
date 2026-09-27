@@ -190,7 +190,7 @@ function AiConfigPage() {
   const updateModelConfig = (patch) => setModelDrawer((current) => ({ ...current, error: '', form: { ...current.form, config: { ...current.form.config, ...patch } } }));
 
   const saveModel = async () => {
-    const { form } = modelDrawer;
+    const { form, isNew } = modelDrawer;
     let error = '';
     if (!form.display_name.trim() || !form.model_code.trim() || !form.model_name.trim()) error = 'Nhập tên hiển thị, mã cấu hình và tên mô hình.';
     else if (!form.capabilities.length) error = 'Chọn ít nhất một mục đích sử dụng.';
@@ -217,7 +217,7 @@ function AiConfigPage() {
         priority: Number(form.priority) || 0,
         config,
         is_local: form.runtime === 'OLLAMA',
-      });
+      }, { isNew });
       setModelDrawer(null);
       showFlash('success', 'Đã lưu mô hình.');
       await load();
@@ -307,10 +307,12 @@ function AiConfigPage() {
   };
 
   const previewPrompt = async () => {
+    const version = selectedGroup?.versions.find((item) => item.is_active) || selectedGroup?.versions[0];
+    if (!version) return;
     setBusy('preview');
     clearFlash();
     try {
-      setPromptPreview(await testPromptTemplate({}));
+      setPromptPreview(await testPromptTemplate({ template_key: version.template_key, version: version.version }));
     } catch (err) {
       showFlash('error', err.message || 'Không chạy thử được prompt.');
     } finally {
@@ -598,7 +600,8 @@ function AiConfigPage() {
                         {promptPreview && (
                           <>
                             <hr className="ws-divider" />
-                            <h4 className="ws-subhead">Kết quả chạy thử ({promptPreview.length} ký tự, nguồn {promptPreview.prompt_source === 'db' ? 'cơ sở dữ liệu' : 'mã nguồn'})</h4>
+                            <h4 className="ws-subhead">{promptPreview.preview_mode === 'template' ? 'Nội dung mẫu' : 'Kết quả chạy thử'} {promptPreview.template_key}, v{promptPreview.version} ({promptPreview.length} ký tự)</h4>
+                            {(promptPreview.warnings || []).map((warning) => <p className="ws-hint" key={warning}>{warning}</p>)}
                             <pre className="ws-pre" style={{ maxHeight: 360 }}>{promptPreview.rendered_prompt}</pre>
                           </>
                         )}
