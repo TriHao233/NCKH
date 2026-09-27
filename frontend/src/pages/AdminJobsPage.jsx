@@ -72,7 +72,9 @@ function entityText(job) {
 
 function durationSeconds(job) {
   const start = new Date(job.started_at || job.queued_at).getTime();
-  const end = job.finished_at ? new Date(job.finished_at).getTime() : Date.now();
+  const terminal = ['COMPLETED', 'FAILED', 'ERROR', 'CANCELLED', 'STALE', 'BLOCKED'].includes(String(job.status || '').toUpperCase());
+  const endValue = job.finished_at || (terminal ? job.updated_at : null);
+  const end = endValue ? new Date(endValue).getTime() : (terminal ? NaN : Date.now());
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
   return Math.round((end - start) / 1000);
 }

@@ -286,8 +286,6 @@ function AdminAuditPage() {
                           <td className="ad-sentence">
                             <b>{actorText(log)}</b> đã {auditActionLabel(log.action).toLowerCase()}
                             {' '}
-                            <span className="ws-muted">{auditEntityLabel(log.entity?.type).toLowerCase()}</span>
-                            {' '}
                             <span className="ws-code">{entityName(log)}</span>
                           </td>
                           <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }} className="ws-muted">{formatDateTime(log.created_at)}</td>

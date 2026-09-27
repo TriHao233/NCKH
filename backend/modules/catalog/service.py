@@ -627,6 +627,10 @@ class CatalogService:
             )
             status = "OK"
             error = None
+        except asyncio.TimeoutError:
+            response_text = ""
+            status = "FAILED"
+            error = f"Quá thời gian chờ {payload.timeout_seconds:g} giây"
         except Exception as exc:
             response_text = ""
             status = "FAILED"

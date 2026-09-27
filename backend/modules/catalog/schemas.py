@@ -170,6 +170,16 @@ class EvaluationPolicyPayload(BaseModel):
     create_new_version: bool = True
     is_active: bool = True
 
+    @model_validator(mode="after")
+    def validate_thresholds(self):
+        keys = ("yellow_min", "pass_min", "green_min")
+        values = [self.thresholds.get(key) for key in keys]
+        if any(value is None or not math.isfinite(value) or value < 0 or value > 1 for value in values):
+            raise ValueError("Ba ngưỡng đánh giá phải là số từ 0 đến 1")
+        if not (values[0] <= values[1] <= values[2]):
+            raise ValueError("Ngưỡng phải theo thứ tự: Cần xem lại ≤ Điểm đạt ≤ Đạt tốt")
+        return self
+
 
 class EvaluationPolicyActivationPayload(BaseModel):
     policy_name: str = Field(..., min_length=1, max_length=160)

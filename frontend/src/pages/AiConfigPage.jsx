@@ -232,7 +232,7 @@ function AiConfigPage() {
     setBusy(`health:${model.model_code}`);
     clearFlash();
     try {
-      const result = await checkAiModelHealth({ model_code: model.model_code, timeout_seconds: 10 });
+      const result = await checkAiModelHealth({ model_code: model.model_code, timeout_seconds: 30 });
       showFlash(result.status === 'OK' ? 'success' : 'warn', result.status === 'OK'
         ? `${model.display_name || model.model_code} phản hồi sau ${result.latency_ms || 0} ms.`
         : `${model.display_name || model.model_code} chưa sẵn sàng${result.error ? `: ${result.error}` : '.'}`);
@@ -247,9 +247,15 @@ function AiConfigPage() {
   const toggleModel = async (model) => {
     const turningOff = model.is_active !== false;
     if (turningOff) {
+      const uses = [
+        runtime.generation_model_provider === model.model_code && 'sinh câu hỏi',
+        runtime.evaluation_model_provider === model.model_code && 'đánh giá câu hỏi',
+      ].filter(Boolean);
       const accepted = await confirm({
         title: 'Tắt mô hình',
-        description: `${model.display_name || model.model_code} sẽ không còn trong lựa chọn khi sinh hoặc đánh giá câu hỏi. Các tác vụ đang chạy không bị ảnh hưởng.`,
+        description: uses.length
+          ? `${model.display_name || model.model_code} đang là mô hình mặc định cho ${uses.join(' và ')}. Tác vụ mới có thể không chạy cho tới khi đổi mô hình mặc định. Các tác vụ đang chạy không bị ảnh hưởng.`
+          : `${model.display_name || model.model_code} sẽ không còn trong lựa chọn khi sinh hoặc đánh giá câu hỏi. Các tác vụ đang chạy không bị ảnh hưởng.`,
         confirmLabel: 'Tắt mô hình',
         tone: 'danger',
       });
@@ -338,7 +344,7 @@ function AiConfigPage() {
     if (!policyEditor.policy_name.trim()) error = 'Nhập tên bộ tiêu chí.';
     else if ([...Object.values(weights), ...Object.values(thresholds)].some((value) => !Number.isFinite(value) || value < 0 || value > 1)) error = 'Trọng số và ngưỡng phải là số từ 0 đến 1.';
     else if (Math.abs(weightSum - 1) > 0.01) error = `Tổng trọng số phải bằng 1 (hiện là ${weightSum.toFixed(2)}).`;
-    else if (thresholds.yellow_min > thresholds.green_min) error = 'Ngưỡng "Cần xem lại" phải nhỏ hơn hoặc bằng ngưỡng "Đạt tốt".';
+    else if (thresholds.yellow_min > thresholds.pass_min || thresholds.pass_min > thresholds.green_min) error = 'Ngưỡng phải theo thứ tự: Cần xem lại ≤ Điểm đạt ≤ Đạt tốt.';
     if (error) {
       setPolicyEditor((current) => ({ ...current, error }));
       return;
@@ -514,6 +520,7 @@ function AiConfigPage() {
                           return (
                             <button type="button" key={group.key} className="ad-subject-item" aria-current={selectedGroup?.key === group.key} onClick={() => setPromptKey(group.key)}>
                               <b>{group.versions[0].name || group.key}</b>
+                              {group.versions[0].name !== group.key && <small className="ws-code">{group.key}</small>}
                               <span>{group.versions.length} phiên bản, {active ? `đang dùng v${active.version}` : 'chưa bật'}</span>
                             </button>
                           );

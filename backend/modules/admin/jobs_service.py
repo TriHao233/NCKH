@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from bson import ObjectId
@@ -19,6 +19,7 @@ from modules.questions.workflow_service import QuestionWorkflowService
 
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
 RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "BLOCKED", "failed"}
+LEGACY_ADMIN_CANCEL_PATTERN = "^Cancelled by admin "
 
 
 def utc_now() -> datetime:
@@ -375,8 +376,15 @@ class AdminJobService:
     def _evaluation_query(self, status, user_oid, date_from, date_to) -> dict:
         query: dict = {}
         status_filter = _uppercase_status_filter(status)
-        if status_filter is not None:
+        if status_filter == "CANCELLED":
+            query["$or"] = [
+                {"status": "CANCELLED"},
+                {"status": "STALE", "error.message": {"$regex": LEGACY_ADMIN_CANCEL_PATTERN}},
+            ]
+        elif status_filter is not None:
             query["status"] = status_filter
+            if status_filter == "STALE" or (isinstance(status_filter, dict) and "STALE" in status_filter.get("$in", [])):
+                query["$nor"] = [{"status": "STALE", "error.message": {"$regex": LEGACY_ADMIN_CANCEL_PATTERN}}]
         if user_oid:
             query["requested_by_user_id"] = user_oid
         self._apply_date_query(query, "updated_at", date_from, date_to)
@@ -442,6 +450,8 @@ class AdminJobService:
 
     def _normalize_evaluation(self, job: dict) -> dict:
         status = job.get("status", "")
+        if status == "STALE" and (_error_message(job.get("error")) or "").startswith("Cancelled by admin "):
+            status = "CANCELLED"
         updated_at = _job_time(job)
         return {
             "kind": "evaluation",
@@ -634,9 +644,10 @@ class AdminJobService:
             {"_id": _parse_object_id(job_id, "job_id"), "status": {"$in": ["QUEUED", "PROCESSING"]}},
             {
                 "$set": {
-                    "status": "STALE",
+                    "status": "CANCELLED",
                     "error": error,
                     "finished_at": now,
+                    "expires_at": now + timedelta(days=settings.job_retention_days),
                     "updated_at": now,
                 }
             },
@@ -649,7 +660,7 @@ class AdminJobService:
                 "_id": result.get("question_id"),
                 "quality_summary.latest_evaluation_job_id": result["_id"],
             },
-            {"$set": {"evaluation_status": "STALE", "quality_summary.error": error, "updated_at": now}},
+            {"$set": {"evaluation_status": "NOT_STARTED", "quality_summary.error": error, "updated_at": now}},
         )
         self._audit(current_user, "admin.job_cancel", "evaluation", job_id)
         return {"job": json_safe(result)}

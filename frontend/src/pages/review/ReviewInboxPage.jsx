@@ -419,6 +419,18 @@ function ReviewInboxPage() {
   const submitAssign = async () => {
     const targets = assignDrawer.items;
     const reviewerId = assignDrawer.reviewerId;
+    const reassigned = targets.filter((question) => {
+      const currentReviewerId = assignmentOf(question).reviewerUserId;
+      return currentReviewerId && currentReviewerId !== reviewerId;
+    }).length;
+    if (reassigned) {
+      const accepted = await confirm({
+        title: 'Thay đổi người duyệt đang giữ câu',
+        description: `${reassigned} câu đã có người duyệt. Lưu phân công sẽ thay thế lượt giữ hiện tại của các câu đó.`,
+        confirmLabel: 'Thay đổi phân công',
+      });
+      if (!accepted) return;
+    }
     setAssignDrawer(null);
     await runBulk('assign', targets, (question) => assignQuestionReview(question.id, {
       reviewer_user_id: reviewerId || null,
@@ -846,7 +858,7 @@ function ReviewInboxPage() {
                 <option value="">Bỏ giao, trả về hàng chờ chung</option>
                 {lookups.reviewers.map((reviewer) => <option key={refId(reviewer)} value={refId(reviewer)}>{userName(reviewer)}</option>)}
               </select>
-              <small>Người được giao nhận thông báo và giữ câu trong 30 phút kể từ lúc giao.</small>
+              <small>Người được giao nhận thông báo và giữ câu trong 72 giờ kể từ lúc giao.</small>
             </label>
             <label className="ws-field">
               <span>Ghi chú</span>

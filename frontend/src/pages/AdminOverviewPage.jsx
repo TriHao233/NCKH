@@ -6,7 +6,7 @@ import { getAdminOverview } from '../api/adminOverview';
 import { getReviewDashboard, listQuestions } from '../api/questions';
 import WorkspaceHero from '../components/workspace/WorkspaceHero';
 import { EmptyState, ErrorState, SkeletonRows } from '../components/workspace/Feedback';
-import { auditActionLabel, auditEntityLabel, compactId, formatNumber } from '../features/admin/adminLabels';
+import { auditActionLabel, compactId, formatNumber } from '../features/admin/adminLabels';
 import { formatDateTime, formatPercent } from '../features/review/reviewModel';
 import '../css/workspace.css';
 import '../css/AdminPages.css';
@@ -214,7 +214,7 @@ function AdminOverviewPage() {
                       {recentAudit.map((item) => (
                         <li key={item.id}>
                           <span className="ad-sentence">
-                            <b>{item.actor?.user_name || 'Hệ thống'}</b> đã {auditActionLabel(item.action).toLowerCase()} {auditEntityLabel(item.entity?.type).toLowerCase()} {item.entity?.label || compactId(item.entity?.id)}
+                            <b>{item.actor?.user_name || 'Hệ thống'}</b> đã {auditActionLabel(item.action).toLowerCase()} {item.entity?.label || compactId(item.entity?.id)}
                           </span>
                           <small>{formatDateTime(item.created_at)}</small>
                         </li>

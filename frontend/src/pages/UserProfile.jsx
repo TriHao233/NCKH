@@ -22,6 +22,7 @@ import {
 } from 'firebase/auth';
 import { AuthContext } from '../context/AuthContext';
 import { auth } from '../firebase';
+import { readDemoSession } from '../auth/demoSession';
 import { getMe, getMyStats, updateMe, uploadMyAvatar } from '../api/users';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/UserProfile.css';
@@ -350,6 +351,7 @@ function InfoTab({ user, onProfileUpdated }) {
 }
 
 function SecurityTab() {
+  const isDemoAccount = Boolean(readDemoSession()?.token);
   const isPasswordAccount = (auth?.currentUser?.providerData || []).some(
     (provider) => provider.providerId === 'password',
   );
@@ -396,10 +398,12 @@ function SecurityTab() {
 
       <div className="field-group">
         <label className="field-label">Phương thức đăng nhập hiện tại</label>
-        <input className="field-input" value={isPasswordAccount ? 'Email/Mật khẩu' : 'Google'} disabled />
+        <input className="field-input" value={isDemoAccount ? 'Tài khoản demo' : (isPasswordAccount ? 'Email/Mật khẩu' : 'Google')} disabled />
       </div>
 
-      {!isPasswordAccount ? (
+      {isDemoAccount ? (
+        <p className="field-hint">Tài khoản demo dùng để thử hệ thống. Không đổi mật khẩu tại trang này.</p>
+      ) : !isPasswordAccount ? (
         <p className="field-hint">
           Tài khoản này đăng nhập bằng Google nên mật khẩu được quản lý bởi Google.
           Vui lòng đổi mật khẩu tại{' '}

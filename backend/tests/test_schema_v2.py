@@ -45,6 +45,7 @@ from modules.catalog.schemas import (
     ChapterPayload,
     ChapterUpdatePayload,
     EvaluationPolicyActivationPayload,
+    EvaluationPolicyPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
     PromptTemplateActivationPayload,
@@ -434,6 +435,10 @@ def _matches_query(record, query):
             continue
         if key == "$and":
             if not all(_matches_query(record, item) for item in expected):
+                return False
+            continue
+        if key == "$nor":
+            if any(_matches_query(record, item) for item in expected):
                 return False
             continue
         values = _path_values(record, key)
@@ -5564,6 +5569,24 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(evaluation["rendered_prompt"], "SELECTED_EVALUATION")
         self.assertEqual(evaluation["preview_mode"], "template")
 
+    def test_evaluation_policy_rejects_out_of_order_thresholds(self):
+        weights = {"faithfulness": 1.0}
+        valid = {"yellow_min": 0.5, "pass_min": 0.65, "green_min": 0.75}
+        self.assertEqual(
+            EvaluationPolicyPayload(policy_name="QA", weights=weights, thresholds=valid).thresholds,
+            valid,
+        )
+        with self.assertRaises(ValidationError):
+            EvaluationPolicyPayload(
+                policy_name="QA", weights=weights,
+                thresholds={"yellow_min": 0.7, "pass_min": 0.65, "green_min": 0.75},
+            )
+        with self.assertRaises(ValidationError):
+            EvaluationPolicyPayload(
+                policy_name="QA", weights=weights,
+                thresholds={"yellow_min": 0.5, "pass_min": 0.8, "green_min": 0.75},
+            )
+
     def test_catalog_runtime_controls_prompt_policy_and_model_state(self):
         db = FakeCatalogDatabase(
             ai_models=[
@@ -5947,12 +5970,23 @@ class SchemaV2Tests(unittest.TestCase):
 
         self.assertEqual(generation_result["job"]["status"], "failed")
         self.assertIn("Cancelled by admin", generation_result["job"]["error_message"])
-        self.assertEqual(evaluation_result["job"]["status"], "STALE")
+        self.assertEqual(evaluation_result["job"]["status"], "CANCELLED")
         question = db.questions.find_one({"_id": question_id})
-        self.assertEqual(question["evaluation_status"], "STALE")
+        self.assertEqual(question["evaluation_status"], "NOT_STARTED")
         self.assertIn("Cancelled by admin", question["quality_summary"]["error"]["message"])
         self.assertEqual([event["action"] for event in audit_events], ["admin.job_cancel", "admin.job_cancel"])
         self.assertEqual({event["entity_type"] for event in audit_events}, {"generation", "evaluation"})
+
+        legacy = {
+            "_id": ObjectId(), "status": "STALE",
+            "error": {"message": "Cancelled by admin old@qbankctu.edu.vn"},
+            "updated_at": now,
+        }
+        legacy_db = type("LegacyJobDatabase", (), {"evaluation_jobs": InMemoryCollection([legacy])})()
+        legacy_service = AdminJobService(legacy_db)
+        self.assertEqual(legacy_service._evaluation_jobs("CANCELLED", None)[0]["status"], "CANCELLED")
+        self.assertEqual(legacy_service._evaluation_jobs("STALE", None), [])
+        self.assertEqual(legacy_service._evaluation_jobs("retryable", None), [])
 
     def test_admin_job_retry_evaluation_queues_for_worker_and_audit(self):
         admin = _current_user("Admin")

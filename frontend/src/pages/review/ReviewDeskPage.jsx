@@ -378,6 +378,15 @@ function ReviewDeskPage() {
 
   const submitAssign = async () => {
     const { reviewerId, note } = assignDrawer;
+    const previousReviewerId = assignmentOf(question).reviewerUserId;
+    if (previousReviewerId && previousReviewerId !== reviewerId) {
+      const accepted = await confirm({
+        title: 'Thay đổi người duyệt đang giữ câu',
+        description: 'Câu này đã có người duyệt. Lưu phân công sẽ thay thế lượt giữ hiện tại và thông báo cho người được giao mới.',
+        confirmLabel: 'Thay đổi phân công',
+      });
+      if (!accepted) return;
+    }
     setBusy('assign');
     try {
       setQuestion(await assignQuestionReview(questionId, { reviewer_user_id: reviewerId || null, note: note.trim() }));
@@ -777,7 +786,7 @@ function ReviewDeskPage() {
                   <option value={assignDrawer.reviewerId}>Người duyệt hiện tại (không còn hoạt động)</option>
                 )}
               </select>
-              <small>Người được giao nhận thông báo và giữ câu trong 30 phút.</small>
+              <small>Người được giao nhận thông báo và giữ câu trong 72 giờ.</small>
             </label>
             <label className="ws-field">
               <span>Ghi chú</span>
