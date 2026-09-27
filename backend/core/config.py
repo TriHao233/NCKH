@@ -64,6 +64,11 @@ class Settings(BaseModel):
     api_prefix: str = os.getenv("API_PREFIX", "/api/v1")
 
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    postgres_dsn: str = os.getenv("POSTGRES_DSN", "")
+    postgres_pool_min_size: int = int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1"))
+    postgres_pool_max_size: int = int(os.getenv("POSTGRES_POOL_MAX_SIZE", "10"))
+    user_store: str = os.getenv("USER_STORE", "mongo").strip().lower()
+    ai_config_store: str = os.getenv("AI_CONFIG_STORE", "mongo").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",

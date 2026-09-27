@@ -216,9 +216,15 @@ class AdminOverviewService:
             str(s['_id']): s.get('subject_name') or s.get('subject_code')
             for s in self.db.subjects.find({}, {'subject_name': 1, 'subject_code': 1})
         }
+        from core.config import settings
+        if settings.ai_config_store == "postgres":
+            from modules.catalog.postgres_ai_repository import PostgresAiRepository
+            model_records = PostgresAiRepository().models()
+        else:
+            model_records = self.db.ai_models.find({}, {'model_name': 1, 'model_code': 1})
         models_map = {
             str(m.get('model_code')): m.get('model_name') or m.get('model_code')
-            for m in self.db.ai_models.find({}, {'model_name': 1, 'model_code': 1})
+            for m in model_records
         }
 
         user_entity_ids = []

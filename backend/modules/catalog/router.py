@@ -9,6 +9,7 @@ from core.dependencies import (
 )
 from modules.catalog.schemas import (
     AiModelActivationPayload,
+    AiModelVersionActivationPayload,
     AiModelHealthCheckPayload,
     AiModelPayload,
     ChapterPayload,
@@ -229,6 +230,30 @@ def set_ai_model_active(
 ):
     try:
         return service.set_ai_model_active(payload, viewer=admin)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.get("/ai-models/{model_code}/versions")
+def list_ai_model_versions(
+    model_code: str,
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return {"items": service.list_ai_model_versions(model_code)}
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.post("/ai-models/version/active")
+def activate_ai_model_version(
+    payload: AiModelVersionActivationPayload,
+    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    try:
+        return service.activate_ai_model_version(payload, actor_id=_admin.id)
     except Exception as exc:
         _translate(exc)
 

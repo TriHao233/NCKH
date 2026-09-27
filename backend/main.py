@@ -13,6 +13,7 @@ from core.limiter import limiter
 from core.bootstrap import bootstrap_database
 from core.config import settings
 from core.database import close_database, ping_database
+from core.postgres import close_postgres, ping_postgres
 from core.dependencies import require_teacher_or_admin
 from core.firebase import init_firebase
 from core.job_recovery import recover_stale_jobs
@@ -41,11 +42,18 @@ async def lifespan(_app: FastAPI):
     init_firebase()
     await asyncio.to_thread(ping_database)
     await asyncio.to_thread(bootstrap_database)
+    if settings.user_store == "postgres" or settings.ai_config_store == "postgres":
+        await asyncio.to_thread(ping_postgres)
+        from db.migrate import apply_migrations
+        from core.postgres import postgres_connection
+        with postgres_connection() as connection:
+            apply_migrations(connection, check=True)
     await asyncio.to_thread(recover_stale_jobs)
     try:
         yield
     finally:
         close_database()
+        close_postgres()
 
 
 app = FastAPI(
