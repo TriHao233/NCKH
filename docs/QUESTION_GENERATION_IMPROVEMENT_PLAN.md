@@ -21,8 +21,8 @@ Prompt thử nghiệm đã được rút lại. Các sửa lỗi contract, hậu
 Tài liệu liên quan:
 
 - [Báo cáo benchmark ban đầu và cập nhật](MODEL_QUESTION_BENCHMARK_LOCAL.md).
-- [Kết quả A/B ba model](artifacts/benchmarks/three-model-comparison-20260908.md).
-- [Phạm vi artifact và cách chạy benchmark](artifacts/benchmarks/README.md).
+- [Kết quả A/B ba model](../artifacts/benchmarks/three-model-comparison-20260908.md).
+- [Phạm vi artifact và cách chạy benchmark](../artifacts/benchmarks/README.md).
 
 ## 2. Nguyên tắc triển khai
 
