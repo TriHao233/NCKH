@@ -73,6 +73,15 @@ export function evaluationVerdictLabel(status, color) {
   return verdict;
 }
 
+export function reviewDurationLabel(hours) {
+  if (typeof hours !== 'number' || !Number.isFinite(hours)) return null;
+  const seconds = Math.max(0, hours * 3600);
+  if (seconds < 1) return 'dưới 1 giây';
+  if (seconds < 60) return `${Math.round(seconds)} giây`;
+  if (seconds < 3600) return `${(seconds / 60).toFixed(1).replace('.', ',')} phút`;
+  return `${hours.toFixed(1).replace('.', ',')} giờ`;
+}
+
 export const PUBLICATION_STATUS_LABEL = Object.freeze({
   NOT_PUBLISHED: 'Chưa đồng bộ Moodle',
   PENDING: 'Đang đồng bộ Moodle',

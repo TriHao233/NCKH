@@ -19,6 +19,7 @@ import {
   isSlaBreached,
   policySecondaryReasons,
   qualityOf,
+  reviewDurationLabel,
   rankNextCandidates,
   restoreDraft,
   validateDraft,
@@ -65,6 +66,13 @@ test('AI verdict explains a score band that differs from the decision', () => {
 
 test('an interrupted evaluation does not expose an older score as current', () => {
   assert.deepEqual(qualityOf(question({ evaluation_status: 'NOT_STARTED', quality_summary: { overall_score: 0.64, color: 'YELLOW' } })), { score: null, color: null });
+});
+
+test('short review times are shown in seconds or minutes', () => {
+  assert.equal(reviewDurationLabel(10 / 3600), '10 giây');
+  assert.equal(reviewDurationLabel(5 / 60), '5,0 phút');
+  assert.equal(reviewDurationLabel(1.5), '1,5 giờ');
+  assert.equal(reviewDurationLabel(null), null);
 });
 
 test('reviewer must hold a live lock to decide; admin always can', () => {

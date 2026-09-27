@@ -6,13 +6,14 @@ import { getReviewDashboard, getReviewPolicy, updateReviewPolicy } from '../../a
 import WorkspaceHero from '../../components/workspace/WorkspaceHero';
 import { EmptyState, ErrorState, Notice, SkeletonRows } from '../../components/workspace/Feedback';
 import { useReviewLookups } from '../../features/review/reviewData';
-import { REVIEW_CRITERIA, formatPercent } from '../../features/review/reviewModel';
+import { REVIEW_CRITERIA, formatPercent, reviewDurationLabel } from '../../features/review/reviewModel';
 import '../../css/workspace.css';
 import '../../css/ReviewPage.css';
 import '../../css/ReviewDesk.css';
 
 function hoursText(value) {
-  return typeof value === 'number' ? `${value.toFixed(1).replace('.', ',')} giờ/câu` : 'chưa đủ dữ liệu thời gian';
+  const duration = reviewDurationLabel(value);
+  return duration ? `${duration}/câu` : 'chưa đủ dữ liệu thời gian';
 }
 
 const REVIEWER_FLAG_LABEL = {
@@ -131,7 +132,7 @@ function ReviewPolicyCard({ subjects }) {
 }
 
 function shortHours(value) {
-  return typeof value === 'number' ? `${value.toFixed(1).replace('.', ',')} giờ` : '--';
+  return reviewDurationLabel(value) || '--';
 }
 
 function ReviewStatsPage() {

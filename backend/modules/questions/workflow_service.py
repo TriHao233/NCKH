@@ -3917,7 +3917,7 @@ class QuestionWorkflowService:
                     if actor_id in per_reviewer:
                         per_reviewer[actor_id]["durations"].append(hours)
         average_review_hours = (
-            round(sum(durations) / len(durations), 2)
+            round(sum(durations) / len(durations), 6)
             if durations
             else None
         )
@@ -4105,7 +4105,7 @@ class QuestionWorkflowService:
                     ),
                     "ai_sample_size": sample,
                     "average_review_hours": (
-                        round(sum(durations) / len(durations), 2) if durations else None
+                        round(sum(durations) / len(durations), 6) if durations else None
                     ),
                     "holding": load.get("holding", 0),
                     "holding_sla_breached": load.get("holding_sla_breached", 0),

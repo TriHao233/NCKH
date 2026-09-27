@@ -24,6 +24,8 @@ import { AuthContext } from '../context/AuthContext';
 import { auth } from '../firebase';
 import { readDemoSession } from '../auth/demoSession';
 import { getMe, getMyStats, updateMe, uploadMyAvatar } from '../api/users';
+import { getReviewDashboard } from '../api/questions';
+import { reviewDurationLabel } from '../features/review/reviewModel';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/UserProfile.css';
 
@@ -469,7 +471,9 @@ function ProfileSidebar({ user }) {
 
   useEffect(() => {
     let active = true;
-    getMyStats()
+    setStats(null);
+    setStatsError(null);
+    (user?.role === 'Reviewer' ? getReviewDashboard() : getMyStats())
       .then((data) => {
         if (active) setStats(data);
       })
@@ -479,7 +483,7 @@ function ProfileSidebar({ user }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [user?.role]);
 
   const displayStatus = user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động';
   const joinedAt = user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—';
@@ -510,18 +514,19 @@ function ProfileSidebar({ user }) {
         {!statsError && !stats && <p className="side-note">Đang tải...</p>}
         {stats && (
           <ul className="info-list">
-            <li>
-              <span className="info-list-label">Tài liệu đã tải lên</span>
-              <span>{stats.documents_count}</span>
-            </li>
-            <li>
-              <span className="info-list-label">Câu hỏi đã tạo</span>
-              <span>{stats.questions_count}</span>
-            </li>
-            <li>
-              <span className="info-list-label">Câu hỏi chờ duyệt</span>
-              <span>{stats.pending_questions_count}</span>
-            </li>
+            {user?.role === 'Reviewer' ? (
+              <>
+                <li><span className="info-list-label">Lượt duyệt trong 30 ngày</span><span>{stats.performance?.reviews_30d || 0}</span></li>
+                <li><span className="info-list-label">Câu đang được giao</span><span>{stats.workload?.mine || 0}</span></li>
+                <li><span className="info-list-label">Thời gian duyệt trung bình</span><span>{reviewDurationLabel(stats.performance?.average_review_hours) || 'Chưa đủ dữ liệu'}</span></li>
+              </>
+            ) : (
+              <>
+                <li><span className="info-list-label">Tài liệu đã tải lên</span><span>{stats.documents_count}</span></li>
+                <li><span className="info-list-label">Câu hỏi đã tạo</span><span>{stats.questions_count}</span></li>
+                <li><span className="info-list-label">Câu hỏi chờ duyệt</span><span>{stats.pending_questions_count}</span></li>
+              </>
+            )}
           </ul>
         )}
       </div>
