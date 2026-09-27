@@ -38,7 +38,7 @@ function actorText(log) {
 }
 
 function entityName(log) {
-  return log.entity?.label || compactId(log.entity?.id);
+  return log.entity?.label || log.metadata?.label || compactId(log.entity?.id);
 }
 
 function entityLink(entity = {}) {
@@ -46,6 +46,8 @@ function entityLink(entity = {}) {
   if (['QUESTION', 'question'].includes(entity.type)) return `/kiem-duyet/${entity.id}`;
   if (entity.type === 'user') return '/quan-ly-nguoi-dung';
   if (entity.type === 'review_policy') return '/kiem-duyet/hieu-suat';
+  if (['subject', 'chapter', 'clo'].includes(entity.type)) return '/danh-muc';
+  if (['ai_model', 'prompt_template', 'evaluation_policy'].includes(entity.type)) return '/cau-hinh-ai';
   if (entity.type === 'document') return '/quan-ly-tai-lieu';
   if (['moodle_target', 'moodle_publication'].includes(entity.type)) return '/quan-ly-moodle';
   if (['generation', 'evaluation'].includes(entity.type)) return `/quan-ly-job?type=${entity.type}`;
@@ -199,7 +201,7 @@ function AdminAuditPage() {
       <WorkspaceHero
         badge="Vận hành hệ thống"
         title="Nhật ký"
-        description="Tra cứu ai đã làm gì, khi nào, trên đối tượng nào: duyệt câu hỏi, đổi quyền, cấu hình Moodle, chạy lại tác vụ."
+        description="Tra cứu ai đã làm gì, khi nào, trên đối tượng nào: duyệt câu hỏi, đổi quyền, học phần, cấu hình AI và tác vụ."
         actions={(
           <>
             <MoreMenu

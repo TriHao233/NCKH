@@ -1,5 +1,7 @@
 import asyncio
 import hashlib
+import json
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +11,7 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION
+from core.audit import write_audit_event
 from core.config import settings
 from core.database import get_database
 from modules.catalog.schemas import (
@@ -36,6 +39,36 @@ from modules.generation.llm.model_registry import (
 )
 from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import json_safe, object_id
+
+logger = logging.getLogger(__name__)
+
+SUBJECT_AUDIT_FIELDS = ("subject_code", "subject_name", "description", "is_active")
+CHAPTER_AUDIT_FIELDS = ("chapter_code", "chapter_name", "sequence_no", "is_active")
+CLO_AUDIT_FIELDS = ("clo_code", "description", "target_weight", "is_active")
+MODEL_AUDIT_FIELDS = (
+    "model_code", "model_name", "display_name", "description", "runtime", "kind",
+    "revision", "capabilities", "priority", "is_local", "is_active",
+)
+PROMPT_AUDIT_FIELDS = ("template_key", "version", "kind", "name", "content_hash", "is_active")
+POLICY_AUDIT_FIELDS = ("policy_name", "version", "weights", "thresholds", "is_active")
+
+
+def _audit_snapshot(record: dict | None, fields: tuple[str, ...]) -> dict:
+    if not record:
+        return {}
+    snapshot = {key: record.get(key) for key in fields}
+    if fields == MODEL_AUDIT_FIELDS:
+        # Model config can contain credentials. Record a fingerprint, never its values.
+        if "config_hash" in record:
+            snapshot["config_hash"] = record["config_hash"]
+        else:
+            config = json.dumps(record.get("config") or {}, sort_keys=True, default=str)
+            snapshot["config_hash"] = hashlib.sha256(config.encode("utf-8")).hexdigest()
+    return json_safe(snapshot)
+
+
+def _child(record: dict, key: str, identifier: ObjectId) -> dict | None:
+    return next((item for item in record.get(key) or [] if _subdoc_id(item) == identifier), None)
 
 
 def utc_now() -> datetime:
@@ -129,6 +162,41 @@ def _subject_response(
 class CatalogService:
     def __init__(self, database):
         self.db = database
+
+    def _audit(
+        self, action: str, entity_type: str, record: dict, viewer: Any,
+        fields: tuple[str, ...], *, before: dict | None = None,
+        label: str = "", metadata: dict | None = None,
+    ) -> None:
+        previous = _audit_snapshot(before, fields)
+        current = _audit_snapshot(record, fields)
+        if previous == current:
+            return
+        try:
+            write_audit_event(
+                self.db,
+                action=action,
+                entity_type=entity_type,
+                entity_id=record["_id"],
+                actor_user_id=getattr(viewer, "id", None),
+                actor_role=getattr(viewer, "role", None),
+                before=previous,
+                after=current,
+                metadata={"label": label, **(metadata or {})},
+            )
+        except Exception as exc:
+            logger.warning("Failed to write catalog audit event %s: %s", action, exc)
+
+    def _audit_deactivated_versions(
+        self, active: list[dict], selected_id: ObjectId, viewer: Any,
+        *, entity_type: str, fields: tuple[str, ...], action: str, name_key: str,
+    ) -> None:
+        for old in active:
+            if old["_id"] == selected_id:
+                continue
+            current = {**old, "is_active": False}
+            self._audit(action, entity_type, current, viewer, fields, before=old,
+                        label=f'{old[name_key]} v{old["version"]}')
 
     def _count(self, collection_name: str, query: dict) -> int:
         collection = getattr(self.db, collection_name, None)
@@ -281,17 +349,22 @@ class CatalogService:
             # The pre-check gives a friendly case-insensitive error; the unique
             # index remains the final guard for concurrent requests.
             raise CatalogConflictError("Mã môn học đã tồn tại") from exc
+        self._audit("catalog.subject_create", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
+                    label=record["subject_code"])
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def deactivate_subject(self, subject_id: str, viewer: Any = None) -> dict:
         """Xoá mềm học phần: giữ nguyên dữ liệu lịch sử, chỉ ẩn khỏi danh sách chọn."""
         subject = self._subject_or_404(subject_id)
         self._ensure_can_manage(subject, viewer)
+        previous = _audit_snapshot(subject, SUBJECT_AUDIT_FIELDS)
         record = self.db.subjects.find_one_and_update(
             {"_id": subject["_id"]},
             {"$set": {"is_active": False, "updated_at": utc_now()}},
             return_document=ReturnDocument.AFTER,
         )
+        self._audit("catalog.subject_deactivate", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
+                    before=previous, label=record["subject_code"])
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_subject(
@@ -302,6 +375,7 @@ class CatalogService:
     ) -> dict:
         subject = self._subject_or_404(subject_id)
         self._ensure_can_manage(subject, viewer)
+        previous = _audit_snapshot(subject, SUBJECT_AUDIT_FIELDS)
         fields = payload.model_dump(exclude_unset=True, exclude_none=True)
         if "subject_code" in fields:
             fields["subject_code"] = self._ensure_subject_code_available(
@@ -316,6 +390,8 @@ class CatalogService:
             {"$set": fields},
             return_document=ReturnDocument.AFTER,
         )
+        self._audit("catalog.subject_update", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
+                    before=previous, label=record["subject_code"])
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def add_chapter(
@@ -347,6 +423,8 @@ class CatalogService:
             {"$push": {"chapters": chapter}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
+        self._audit("catalog.chapter_create", "chapter", chapter, viewer, CHAPTER_AUDIT_FIELDS,
+                    label=chapter["chapter_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_chapter(
@@ -361,6 +439,7 @@ class CatalogService:
         chapter_oid = object_id(chapter_id, "chapter_id")
         if not any(_subdoc_id(item) == chapter_oid for item in subject.get("chapters") or []):
             raise LookupError("Không tìm thấy chương")
+        previous = _audit_snapshot(_child(subject, "chapters", chapter_oid), CHAPTER_AUDIT_FIELDS)
         fields = payload.model_dump(exclude_unset=True, exclude_none=True)
         if "chapter_code" in fields:
             fields["chapter_code"] = self._ensure_child_code_available(
@@ -386,6 +465,10 @@ class CatalogService:
         )
         if not record:
             raise LookupError("Không tìm thấy chương")
+        updated_chapter = _child(record, "chapters", chapter_oid)
+        self._audit("catalog.chapter_update", "chapter", updated_chapter, viewer, CHAPTER_AUDIT_FIELDS,
+                    before=previous,
+                    label=updated_chapter["chapter_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def add_learning_outcome(
@@ -417,6 +500,8 @@ class CatalogService:
             {"$push": {"learning_outcomes": outcome}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
+        self._audit("catalog.clo_create", "clo", outcome, viewer, CLO_AUDIT_FIELDS,
+                    label=outcome["clo_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_learning_outcome(
@@ -434,6 +519,7 @@ class CatalogService:
             for item in subject.get("learning_outcomes") or []
         ):
             raise LookupError("Không tìm thấy CLO")
+        previous = _audit_snapshot(_child(subject, "learning_outcomes", clo_oid), CLO_AUDIT_FIELDS)
         fields = payload.model_dump(exclude_unset=True, exclude_none=True)
         if "clo_code" in fields:
             fields["clo_code"] = self._ensure_child_code_available(
@@ -459,6 +545,10 @@ class CatalogService:
         )
         if not record:
             raise LookupError("Không tìm thấy CLO")
+        updated_clo = _child(record, "learning_outcomes", clo_oid)
+        self._audit("catalog.clo_update", "clo", updated_clo, viewer, CLO_AUDIT_FIELDS,
+                    before=previous,
+                    label=updated_clo["clo_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def list_ai_models(self) -> list[dict]:
@@ -559,10 +649,11 @@ class CatalogService:
             }
         )
 
-    def save_ai_model(self, payload: AiModelPayload, *, create: bool) -> dict:
+    def save_ai_model(self, payload: AiModelPayload, *, create: bool, viewer: Any = None) -> dict:
         now = utc_now()
         values = {"schema_version": SCHEMA_VERSION, **payload.model_dump(), "updated_at": now}
         query = {"model_code": payload.model_code}
+        previous = _audit_snapshot(self.db.ai_models.find_one(query), MODEL_AUDIT_FIELDS)
         if create:
             try:
                 result = self.db.ai_models.update_one(
@@ -583,10 +674,14 @@ class CatalogService:
             )
             if not record:
                 raise LookupError("Không tìm thấy mô hình")
+        self._audit("catalog.ai_model_create" if create else "catalog.ai_model_update",
+                    "ai_model", record, viewer, MODEL_AUDIT_FIELDS,
+                    before=previous, label=record["model_code"])
         return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
 
-    def set_ai_model_active(self, payload: AiModelActivationPayload) -> dict:
+    def set_ai_model_active(self, payload: AiModelActivationPayload, viewer: Any = None) -> dict:
         now = utc_now()
+        previous = _audit_snapshot(self.db.ai_models.find_one({"model_code": payload.model_code}), MODEL_AUDIT_FIELDS)
         record = self.db.ai_models.find_one_and_update(
             {"model_code": payload.model_code},
             {"$set": {"is_active": payload.is_active, "updated_at": now}},
@@ -594,6 +689,9 @@ class CatalogService:
         )
         if not record:
             raise LookupError("Không tìm thấy model")
+        self._audit("catalog.ai_model_activate" if payload.is_active else "catalog.ai_model_deactivate",
+                    "ai_model", record, viewer, MODEL_AUDIT_FIELDS,
+                    before=previous, label=record["model_code"])
         return json_safe({**record, "factory_status": self._model_factory_status(record["model_code"])})
 
     async def check_ai_model_health(self, payload: AiModelHealthCheckPayload) -> dict:
@@ -661,13 +759,19 @@ class CatalogService:
         cursor = self.db.prompt_templates.find().sort([("template_key", 1), ("version", -1)])
         return [json_safe(item) for item in cursor]
 
-    def save_prompt_template(self, payload: PromptTemplatePayload) -> dict:
+    def save_prompt_template(self, payload: PromptTemplatePayload, viewer: Any = None) -> dict:
         now = utc_now()
         latest = self.db.prompt_templates.find_one(
             {"template_key": payload.template_key},
             sort=[("version", -1)],
         )
         version = int(latest.get("version", 0)) + 1 if latest and payload.create_new_version else int((latest or {}).get("version", 1))
+        query = {"template_key": payload.template_key, "version": version}
+        previous = _audit_snapshot(self.db.prompt_templates.find_one(query), PROMPT_AUDIT_FIELDS)
+        old_active = [
+            {"_id": item["_id"], **_audit_snapshot(item, PROMPT_AUDIT_FIELDS)}
+            for item in self.db.prompt_templates.find({"template_key": payload.template_key, "is_active": True})
+        ] if payload.is_active else []
         if payload.is_active:
             self.db.prompt_templates.update_many(
                 {"template_key": payload.template_key},
@@ -675,7 +779,7 @@ class CatalogService:
             )
         body_hash = hashlib.sha256(payload.prompt_body.encode("utf-8")).hexdigest()
         record = self.db.prompt_templates.find_one_and_update(
-            {"template_key": payload.template_key, "version": version},
+            query,
             {
                 "$set": {
                     "schema_version": SCHEMA_VERSION,
@@ -693,13 +797,25 @@ class CatalogService:
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
+        self._audit_deactivated_versions(old_active, record["_id"], viewer,
+                                         entity_type="prompt_template", fields=PROMPT_AUDIT_FIELDS,
+                                         action="catalog.prompt_deactivate", name_key="template_key")
+        self._audit("catalog.prompt_create" if not previous else "catalog.prompt_update",
+                    "prompt_template", record, viewer, PROMPT_AUDIT_FIELDS,
+                    before=previous, label=f'{record["template_key"]} v{record["version"]}')
         return json_safe(record)
 
-    def activate_prompt_template(self, payload: PromptTemplateActivationPayload) -> dict:
+    def activate_prompt_template(self, payload: PromptTemplateActivationPayload, viewer: Any = None) -> dict:
         now = utc_now()
         query = {"template_key": payload.template_key, "version": payload.version}
-        if not self.db.prompt_templates.find_one(query):
+        target = self.db.prompt_templates.find_one(query)
+        if not target:
             raise LookupError("Không tìm thấy prompt version")
+        previous = _audit_snapshot(target, PROMPT_AUDIT_FIELDS)
+        old_active = [
+            {"_id": item["_id"], **_audit_snapshot(item, PROMPT_AUDIT_FIELDS)}
+            for item in self.db.prompt_templates.find({"template_key": payload.template_key, "is_active": True})
+        ] if payload.is_active else []
         if payload.is_active:
             self.db.prompt_templates.update_many(
                 {"template_key": payload.template_key},
@@ -710,6 +826,12 @@ class CatalogService:
             {"$set": {"is_active": payload.is_active, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
+        self._audit_deactivated_versions(old_active, record["_id"], viewer,
+                                         entity_type="prompt_template", fields=PROMPT_AUDIT_FIELDS,
+                                         action="catalog.prompt_deactivate", name_key="template_key")
+        self._audit("catalog.prompt_activate" if payload.is_active else "catalog.prompt_deactivate",
+                    "prompt_template", record, viewer, PROMPT_AUDIT_FIELDS,
+                    before=previous, label=f'{record["template_key"]} v{record["version"]}')
         return json_safe(record)
 
     def test_prompt_template(self, payload: PromptTemplateTestPayload) -> dict:
@@ -786,13 +908,19 @@ class CatalogService:
         cursor = self.db.evaluation_policies.find().sort([("policy_name", 1), ("version", -1)])
         return [json_safe(item) for item in cursor]
 
-    def save_evaluation_policy(self, payload: EvaluationPolicyPayload) -> dict:
+    def save_evaluation_policy(self, payload: EvaluationPolicyPayload, viewer: Any = None) -> dict:
         now = utc_now()
         latest = self.db.evaluation_policies.find_one(
             {"policy_name": payload.policy_name},
             sort=[("version", -1)],
         )
         version = int(latest.get("version", 0)) + 1 if latest and payload.create_new_version else int((latest or {}).get("version", 1))
+        query = {"policy_name": payload.policy_name, "version": version}
+        previous = _audit_snapshot(self.db.evaluation_policies.find_one(query), POLICY_AUDIT_FIELDS)
+        old_active = [
+            {"_id": item["_id"], **_audit_snapshot(item, POLICY_AUDIT_FIELDS)}
+            for item in self.db.evaluation_policies.find({"policy_name": payload.policy_name, "is_active": True})
+        ] if payload.is_active else []
         if payload.is_active:
             self.db.evaluation_policies.update_many(
                 {"policy_name": payload.policy_name},
@@ -800,7 +928,7 @@ class CatalogService:
             )
         weights_hash = hashlib.sha256(str(sorted(payload.weights.items())).encode()).hexdigest()
         record = self.db.evaluation_policies.find_one_and_update(
-            {"policy_name": payload.policy_name, "version": version},
+            query,
             {
                 "$set": {
                     "schema_version": SCHEMA_VERSION,
@@ -817,13 +945,25 @@ class CatalogService:
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
+        self._audit_deactivated_versions(old_active, record["_id"], viewer,
+                                         entity_type="evaluation_policy", fields=POLICY_AUDIT_FIELDS,
+                                         action="catalog.evaluation_policy_deactivate", name_key="policy_name")
+        self._audit("catalog.evaluation_policy_create" if not previous else "catalog.evaluation_policy_update",
+                    "evaluation_policy", record, viewer, POLICY_AUDIT_FIELDS,
+                    before=previous, label=f'{record["policy_name"]} v{record["version"]}')
         return json_safe(record)
 
-    def activate_evaluation_policy(self, payload: EvaluationPolicyActivationPayload) -> dict:
+    def activate_evaluation_policy(self, payload: EvaluationPolicyActivationPayload, viewer: Any = None) -> dict:
         now = utc_now()
         query = {"policy_name": payload.policy_name, "version": payload.version}
-        if not self.db.evaluation_policies.find_one(query):
+        target = self.db.evaluation_policies.find_one(query)
+        if not target:
             raise LookupError("Không tìm thấy policy version")
+        previous = _audit_snapshot(target, POLICY_AUDIT_FIELDS)
+        old_active = [
+            {"_id": item["_id"], **_audit_snapshot(item, POLICY_AUDIT_FIELDS)}
+            for item in self.db.evaluation_policies.find({"policy_name": payload.policy_name, "is_active": True})
+        ] if payload.is_active else []
         if payload.is_active:
             self.db.evaluation_policies.update_many(
                 {"policy_name": payload.policy_name},
@@ -834,6 +974,12 @@ class CatalogService:
             {"$set": {"is_active": payload.is_active, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
+        self._audit_deactivated_versions(old_active, record["_id"], viewer,
+                                         entity_type="evaluation_policy", fields=POLICY_AUDIT_FIELDS,
+                                         action="catalog.evaluation_policy_deactivate", name_key="policy_name")
+        self._audit("catalog.evaluation_policy_activate" if payload.is_active else "catalog.evaluation_policy_deactivate",
+                    "evaluation_policy", record, viewer, POLICY_AUDIT_FIELDS,
+                    before=previous, label=f'{record["policy_name"]} v{record["version"]}')
         return json_safe(record)
 
     def overview(self, viewer: Any = None) -> dict[str, Any]:

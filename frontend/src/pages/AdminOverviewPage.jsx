@@ -214,7 +214,7 @@ function AdminOverviewPage() {
                       {recentAudit.map((item) => (
                         <li key={item.id}>
                           <span className="ad-sentence">
-                            <b>{item.actor?.user_name || 'Hệ thống'}</b> đã {auditActionLabel(item.action).toLowerCase()} {item.entity?.label || compactId(item.entity?.id)}
+                            <b>{item.actor?.user_name || 'Hệ thống'}</b> đã {auditActionLabel(item.action).toLowerCase()} {item.entity?.label || item.metadata?.label || compactId(item.entity?.id)}
                           </span>
                           <small>{formatDateTime(item.created_at)}</small>
                         </li>

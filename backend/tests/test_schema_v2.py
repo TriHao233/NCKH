@@ -49,6 +49,7 @@ from modules.catalog.schemas import (
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
     PromptTemplateActivationPayload,
+    PromptTemplatePayload,
     PromptTemplateTestPayload,
     SubjectPayload,
     SubjectUpdatePayload,
@@ -651,6 +652,7 @@ class FakeCatalogDatabase:
         self.ai_models = InMemoryCollection(ai_models)
         self.prompt_templates = InMemoryCollection(prompt_templates)
         self.evaluation_policies = InMemoryCollection(evaluation_policies)
+        self.audit_logs = InMemoryCollection()
 
 
 class SchemaV2Tests(unittest.TestCase):
@@ -5555,6 +5557,71 @@ class SchemaV2Tests(unittest.TestCase):
         updated = service.save_ai_model(duplicate, create=False)
         self.assertEqual(updated["model_name"], "Replacement")
         self.assertEqual(len(db.ai_models.records), 1)
+
+    def test_catalog_mutations_record_actor_and_field_changes(self):
+        db = FakeCatalogDatabase()
+        service = CatalogService(db)
+        admin = _current_user("Admin")
+        subject = service.create_subject(SubjectPayload(subject_code="CTDL", subject_name="Cấu trúc dữ liệu"), admin)
+        subject_id = subject["id"]
+        service.update_subject(subject_id, SubjectUpdatePayload(subject_name="CTDL mới"), admin)
+        chapter = service.add_chapter(subject_id, ChapterPayload(chapter_code="CH1", chapter_name="Ngăn xếp"), admin)
+        chapter_id = chapter["chapters"][0]["id"]
+        service.update_chapter(subject_id, chapter_id, ChapterUpdatePayload(chapter_name="Stack"), admin)
+        outcome = service.add_learning_outcome(subject_id, LearningOutcomePayload(clo_code="CLO1", description="Hiểu stack"), admin)
+        clo_id = outcome["learning_outcomes"][0]["id"]
+        service.update_learning_outcome(subject_id, clo_id, LearningOutcomeUpdatePayload(description="Hiểu queue"), admin)
+        service.deactivate_subject(subject_id, admin)
+
+        actions = [item["action"] for item in db.audit_logs.records]
+        self.assertEqual(actions, [
+            "catalog.subject_create", "catalog.subject_update", "catalog.chapter_create",
+            "catalog.chapter_update", "catalog.clo_create", "catalog.clo_update",
+            "catalog.subject_deactivate",
+        ])
+        changed = db.audit_logs.records[1]
+        self.assertEqual(changed["actor"]["user_id"], admin.id)
+        self.assertEqual(changed["before"]["subject_name"], "Cấu trúc dữ liệu")
+        self.assertEqual(changed["after"]["subject_name"], "CTDL mới")
+        self.assertEqual(db.audit_logs.records[3]["entity"]["id"], ObjectId(chapter_id))
+        self.assertEqual(db.audit_logs.records[5]["entity"]["id"], ObjectId(clo_id))
+
+    def test_ai_prompt_and_evaluation_policy_audit_tracks_versions_without_secrets(self):
+        db = FakeCatalogDatabase()
+        service = CatalogService(db)
+        admin = _current_user("Admin")
+        model = AiModelPayload(
+            model_code="qa-model", model_name="QA", runtime="OLLAMA",
+            capabilities=["QUESTION_GENERATION"], config={"api_key": "hidden-secret"},
+        )
+        service.save_ai_model(model, create=True, viewer=admin)
+        service.save_ai_model(model.model_copy(update={"model_name": "QA 2"}), create=False, viewer=admin)
+        service.set_ai_model_active(AiModelActivationPayload(model_code="qa-model", is_active=False), admin)
+        prompt = PromptTemplatePayload(template_key="system", kind="SYSTEM", name="System", prompt_body="private prompt")
+        service.save_prompt_template(prompt, admin)
+        service.save_prompt_template(prompt.model_copy(update={"prompt_body": "new private prompt"}), admin)
+        service.activate_prompt_template(PromptTemplateActivationPayload(template_key="system", version=1), admin)
+        policy = EvaluationPolicyPayload(
+            policy_name="QA", weights={"faithfulness": 1.0},
+            thresholds={"yellow_min": 0.5, "pass_min": 0.65, "green_min": 0.75},
+        )
+        service.save_evaluation_policy(policy, admin)
+        service.save_evaluation_policy(policy.model_copy(update={"weights": {"faithfulness": 0.8}}), admin)
+        service.activate_evaluation_policy(EvaluationPolicyActivationPayload(policy_name="QA", version=1), admin)
+
+        actions = [item["action"] for item in db.audit_logs.records]
+        for action in (
+            "catalog.ai_model_create", "catalog.ai_model_update", "catalog.ai_model_deactivate",
+            "catalog.prompt_create", "catalog.prompt_activate", "catalog.prompt_deactivate",
+            "catalog.evaluation_policy_create", "catalog.evaluation_policy_activate",
+            "catalog.evaluation_policy_deactivate",
+        ):
+            self.assertIn(action, actions)
+        serialized = str(db.audit_logs.records)
+        self.assertNotIn("hidden-secret", serialized)
+        self.assertNotIn("private prompt", serialized)
+        self.assertEqual(actions.count("catalog.prompt_deactivate"), 2)
+        self.assertEqual(actions.count("catalog.evaluation_policy_deactivate"), 2)
 
     def test_prompt_preview_uses_selected_version(self):
         db = FakeCatalogDatabase(prompt_templates=[
