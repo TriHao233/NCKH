@@ -504,7 +504,8 @@ export function effectiveCriteria(draft) {
 }
 
 export function needsOverride(question, draft) {
-  return draft?.decision === 'APPROVED' && question?.evaluation_status !== 'PASSED';
+  // AI chỉ hỗ trợ: chỉ tính là duyệt khác AI khi AI đã kết luận "xem lại".
+  return draft?.decision === 'APPROVED' && question?.evaluation_status === 'FAILED';
 }
 
 /**
@@ -529,7 +530,6 @@ export function policySecondaryReasons(question, draft, policy) {
 export function validateDraft(question, draft, user, now = Date.now()) {
   if (!question || !draft) return 'Chưa có phiếu kiểm duyệt.';
   if (!canDecide(question, user, now)) return 'Bạn cần nhận câu hỏi và giữ khoá còn hạn trước khi chốt kết quả.';
-  if (isEvaluationBusy(question) && draft.decision === 'APPROVED') return 'AI đang đánh giá câu này. Chờ có kết quả trước khi duyệt.';
   if (draft.decision === 'APPROVED' && isBlockedFromSecondary(question, user)) {
     return 'Bạn đã duyệt lần 1 câu này, cần một người duyệt khác duyệt lần 2.';
   }

@@ -17,7 +17,16 @@ from pydantic import ValidationError
 from main import app
 from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
-from core.dependencies import CurrentUser, effective_permissions, require_permissions
+from core.dependencies import (
+    ALL_PERMISSIONS,
+    CurrentUser,
+    effective_permissions,
+    permission_overrides,
+    require_admin,
+    require_exam_manager,
+    require_permissions,
+    require_reviewer_or_admin,
+)
 from core import job_recovery
 from modules.admin import jobs_service as admin_jobs_module
 from modules.admin.jobs_service import (
@@ -116,7 +125,7 @@ def _current_user(role="Teacher", user_id=None, permissions=None):
         email=f"{role.lower()}@example.com",
         role=role,
         is_active=True,
-        permissions=tuple(permissions or ()),
+        permissions=tuple(effective_permissions({"role": role}) if permissions is None else permissions),
         display_name=f"{role} User",
     )
 
@@ -625,14 +634,41 @@ class SchemaV2Tests(unittest.TestCase):
     def test_only_admin_teacher_and_reviewer_roles_exist(self):
         self.assertEqual({role.value for role in RoleEnum}, {"Admin", "Teacher", "Reviewer"})
 
-    def test_require_permissions_allows_explicit_permission_without_admin_role(self):
-        permissions = effective_permissions({"role": "Teacher", "permissions": ["admin.users"]})
-        user_admin = _current_user("Teacher", permissions=permissions)
-
-        self.assertIs(require_permissions("admin.users")(user_admin), user_admin)
+    def test_admin_permissions_belong_only_to_admin_role(self):
+        # Dữ liệu cũ từng cấp quyền quản trị cho giảng viên: không còn hiệu lực.
+        legacy_teacher = effective_permissions({"role": "Teacher", "permissions": ["admin.users"]})
+        self.assertNotIn("admin.users", legacy_teacher)
+        teacher = _current_user("Teacher", permissions=legacy_teacher)
         with self.assertRaises(HTTPException) as ctx:
-            require_permissions("admin.catalog")(user_admin)
+            require_permissions("admin.users")(teacher)
         self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("Quản lý người dùng", ctx.exception.detail)
+
+        with self.assertRaisesRegex(ValueError, "Quản trị viên"):
+            permission_overrides("Reviewer", ["reviews.manage", "admin.overview"])
+
+        self.assertEqual(set(effective_permissions({"role": "Admin"})), set(ALL_PERMISSIONS))
+        self.assertEqual(
+            set(effective_permissions({"role": "Admin", "permission_revokes": ["admin.users"]})),
+            set(ALL_PERMISSIONS),
+        )
+
+    def test_permission_overrides_grant_and_revoke_relative_to_role(self):
+        overrides = permission_overrides("Reviewer", ["questions.export_moodle", "exams.manage_own"])
+        self.assertEqual(overrides, {"permission_grants": ["exams.manage_own"], "permission_revokes": ["reviews.manage"]})
+        permissions = set(effective_permissions({"role": "Reviewer", **overrides}))
+        self.assertEqual(permissions, {"questions.export_moodle", "exams.manage_own"})
+
+        reviewer = _current_user("Reviewer", permissions=tuple(permissions))
+        with self.assertRaises(HTTPException):
+            require_reviewer_or_admin(reviewer)
+        self.assertIs(require_exam_manager(reviewer), reviewer)
+
+    def test_role_guards_do_not_infer_roles_from_permissions(self):
+        teacher_with_review = _current_user("Teacher", permissions=("reviews.manage",))
+        self.assertIs(require_reviewer_or_admin(teacher_with_review), teacher_with_review)
+        with self.assertRaises(HTTPException):
+            require_admin(teacher_with_review)
 
     def test_public_register_cannot_choose_role(self):
         with self.assertRaises(ValidationError):
@@ -1581,6 +1617,7 @@ class SchemaV2Tests(unittest.TestCase):
                     ]
                 )
                 self.question_reviews = InMemoryCollection()
+                self.evaluation_jobs = InMemoryCollection()
                 self.audit_logs = InMemoryCollection()
                 self.notifications = InMemoryCollection()
 
@@ -1705,6 +1742,7 @@ class SchemaV2Tests(unittest.TestCase):
                     ]
                 )
                 self.question_reviews = InMemoryCollection()
+                self.evaluation_jobs = InMemoryCollection()
                 self.question_comments = InMemoryCollection()
                 self.audit_logs = InMemoryCollection()
                 self.notifications = InMemoryCollection()
@@ -1816,6 +1854,7 @@ class SchemaV2Tests(unittest.TestCase):
                     [{"_id": user.id, "role": user.role, "is_active": True} for user in users]
                 )
                 self.question_reviews = InMemoryCollection()
+                self.evaluation_jobs = InMemoryCollection()
                 self.question_comments = InMemoryCollection()
                 self.audit_logs = InMemoryCollection()
                 self.notifications = InMemoryCollection()
@@ -2038,6 +2077,122 @@ class SchemaV2Tests(unittest.TestCase):
                 )
 
         self._with_workflow_service(db, reviewer_scenario)
+
+    def test_reviewer_decides_without_override_when_ai_has_no_verdict(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+
+        def approve(service, question_id, **fields):
+            service.claim_review(str(question_id), reviewer)
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED", **fields),
+                reviewer,
+            )
+
+        for status in ("NOT_STARTED", "ERROR", "STALE", "INSUFFICIENT_EVIDENCE"):
+            db, question_id, _ = self._review_guard_fixture(
+                author=teacher,
+                users=[teacher, reviewer],
+                evaluation_status=status,
+            )
+            review = self._with_workflow_service(db, lambda service: approve(service, question_id))
+            self.assertFalse(review["override"]["applied"], status)
+            self.assertEqual(review["resulting_status"], "APPROVED", status)
+
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer],
+            evaluation_status="FAILED",
+        )
+
+        def failed_scenario(service):
+            with self.assertRaisesRegex(ValueError, "override"):
+                approve(service, question_id)
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    override={"applied": True, "reason": "Đã đối chiếu nguồn"},
+                ),
+                reviewer,
+            )
+
+        review = self._with_workflow_service(db, failed_scenario)
+        self.assertTrue(review["override"]["applied"])
+
+    def test_reviewer_decision_interrupts_running_ai_evaluation(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        db, question_id, version_id = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer],
+            evaluation_status="PROCESSING",
+        )
+        job_id = ObjectId()
+        db.evaluation_jobs = InMemoryCollection(
+            [
+                {
+                    "_id": job_id,
+                    "question_id": question_id,
+                    "question_version_id": version_id,
+                    "status": "PROCESSING",
+                    "locked_by": "worker-1",
+                }
+            ]
+        )
+        db.question_evaluations = InMemoryCollection()
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            # Worker trả kết quả sau khi người duyệt đã chốt: kết quả bị bỏ.
+            with self.assertRaises(question_workflow_module.EvaluationInterruptedError):
+                service.evaluate(
+                    str(question_id),
+                    EvaluationCreateRequest(
+                        expected_version=1,
+                        scores=EvaluationScores(
+                            faithfulness=0.9,
+                            contextual_relevancy=0.9,
+                            answer_relevancy=0.9,
+                            bloom_alignment=0.9,
+                            clo_alignment=0.9,
+                        ),
+                        model_snapshot={"model_code": "test", "model_name": "Test"},
+                        policy_snapshot={
+                            "version": 1,
+                            "weights": {
+                                "faithfulness": 0.35,
+                                "contextual_relevancy": 0.20,
+                                "answer_relevancy": 0.15,
+                                "bloom_alignment": 0.15,
+                                "clo_alignment": 0.15,
+                            },
+                            "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+                        },
+                        evaluation_job_id=str(job_id),
+                    ),
+                    None,
+                    require_active_job=True,
+                )
+            return review
+
+        review = self._with_workflow_service(db, scenario)
+        self.assertFalse(review["override"]["applied"])
+        self.assertEqual(review["resulting_status"], "APPROVED")
+        job = db.evaluation_jobs.find_one({"_id": job_id})
+        self.assertEqual(job["status"], "CANCELLED")
+        self.assertEqual(job["error"]["stage"], "REVIEWER_DECIDED")
+        stored = db.questions.find_one({"_id": question_id})
+        self.assertEqual(stored["review_status"], "APPROVED")
+        self.assertEqual(stored["evaluation_status"], "NOT_STARTED")
+        self.assertEqual(db.question_evaluations.records, [])
 
     def test_releasing_reviewer_work_returns_held_questions_to_queue(self):
         admin = _current_user("Admin")

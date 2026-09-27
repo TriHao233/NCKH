@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_bank_sharing, require_document_manager
 from modules.documents.schemas import (
     DocumentCreateRequest,
     DocumentJobActionResponse,
@@ -28,7 +28,7 @@ def list_documents(
     document_status: DocumentStatus | None = Query(None, alias="status"),
     search: str | None = None,
     subject_id: str | None = None,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     return service.list(
@@ -44,7 +44,7 @@ def list_documents(
 @router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 def create_document(
     payload: DocumentCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -59,7 +59,7 @@ async def upload_document_source(
     file: UploadFile = File(...),
     subject_id: str | None = Form(None),
     chapter_id: str | None = Form(None),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
 ):
     return await queue_pdf_ocr_upload(
         background_tasks,
@@ -73,7 +73,7 @@ async def upload_document_source(
 @router.get("/{document_id}", response_model=DocumentResponse)
 def get_document(
     document_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -91,7 +91,7 @@ def get_document(
 def list_document_jobs(
     document_id: str,
     limit: int = Query(20, ge=1, le=100),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -109,7 +109,7 @@ def list_document_jobs(
 def list_document_pages(
     document_id: str,
     limit: int = Query(100, ge=1, le=300),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -128,7 +128,7 @@ def update_document_page(
     document_id: str,
     page_id: str,
     payload: DocumentPageUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -151,7 +151,7 @@ def retry_document_job(
     document_id: str,
     job_id: str,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -168,7 +168,7 @@ def retry_document_job(
 def cancel_document_job(
     document_id: str,
     job_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -189,7 +189,7 @@ def cancel_document_job(
 def reindex_document(
     document_id: str,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -206,7 +206,7 @@ def reindex_document(
 def update_document(
     document_id: str,
     payload: DocumentUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -224,7 +224,7 @@ def update_document(
 def update_document_sharing(
     document_id: str,
     payload: DocumentSharingRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_bank_sharing),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -241,7 +241,7 @@ def update_document_sharing(
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     service: DocumentService = Depends(get_document_service),
 ):
     try:

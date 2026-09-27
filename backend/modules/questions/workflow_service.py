@@ -15,7 +15,7 @@ from core.audit import build_audit_event, write_audit_event
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
-from core.dependencies import CurrentUser, has_permission
+from core.dependencies import CurrentUser, effective_permissions, has_permission
 from modules.admin.moodle_service import MoodleTargetService
 from modules.generation.llm.factory import get_llm_execution_snapshot, get_llm_service
 from modules.generation.llm.model_registry import EVALUATION_CAPABILITY, resolve_model_snapshot
@@ -63,6 +63,17 @@ EVALUATION_TYPE_PROMPT_PREFIX = "evaluation:question_type"
 EVALUATION_TYPE_PROMPT_DIR = "evaluation/question_type"
 DEFAULT_EVALUATOR_MODEL_CODE = settings.evaluation_model_provider
 EVALUATION_ACTIVE_STATUSES = {"QUEUED", "PROCESSING"}
+# Ai có thể kiểm duyệt được xác định bằng quyền reviews.manage (không chỉ theo vai trò).
+REVIEWER_CANDIDATE_FILTER = [
+    {"role": {"$in": ["Reviewer", "Admin"]}},
+    {"permission_grants": "reviews.manage"},
+    {"permissions": "reviews.manage"},
+]
+REVIEWER_PERMISSION_FIELDS = {"role": 1, "permission_grants": 1, "permission_revokes": 1, "permissions": 1}
+
+
+def _user_can_review(user: dict) -> bool:
+    return bool(user.get("is_active", True)) and "reviews.manage" in effective_permissions(user)
 EVALUATION_RETRYABLE_STATUSES = {
     "NOT_STARTED",
     "FAILED",
@@ -163,6 +174,10 @@ class EvidenceGateError(ValueError):
         self.evidence = evidence or {}
 
 
+class EvaluationInterruptedError(Exception):
+    """Tác vụ AI đánh giá đã bị dừng (ví dụ người duyệt đã chốt kết quả) nên bỏ kết quả."""
+
+
 def _empty_review_assignment(now=None, reason: str | None = None) -> dict:
     return {
         "status": "UNASSIGNED",
@@ -221,7 +236,7 @@ class QuestionWorkflowService:
 
     @staticmethod
     def _can_review_all(current_user: CurrentUser) -> bool:
-        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+        return has_permission(current_user, "reviews.manage")
 
     @staticmethod
     def _can_manage_all(current_user: CurrentUser) -> bool:
@@ -229,6 +244,8 @@ class QuestionWorkflowService:
 
     @staticmethod
     def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
+        if not has_permission(current_user, "questions.use_shared_bank"):
+            return False
         shared_with = set(question.get("shared_with_user_ids") or [])
         return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
 
@@ -1196,7 +1213,14 @@ class QuestionWorkflowService:
         }
         return scores, feedback, evidence
 
-    def evaluate(self, question_id: str, payload: EvaluationCreateRequest, user_id) -> dict:
+    def evaluate(
+        self,
+        question_id: str,
+        payload: EvaluationCreateRequest,
+        user_id,
+        *,
+        require_active_job: bool = False,
+    ) -> dict:
         question, version = self._pair(question_id)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
@@ -1305,6 +1329,16 @@ class QuestionWorkflowService:
             created_at=now,
         )
         with mongo_transaction() as session:
+            if require_active_job:
+                # Ghi vào job trong cùng transaction để xung đột với lúc người duyệt
+                # dừng AI; job không còn PROCESSING thì bỏ kết quả.
+                job_touch = self.db.evaluation_jobs.update_one(
+                    {"_id": evaluation_job_id, "status": "PROCESSING"},
+                    {"$set": {"updated_at": now}},
+                    session=session,
+                )
+                if not job_touch.matched_count:
+                    raise EvaluationInterruptedError("Tác vụ AI đánh giá đã bị dừng")
             self.db.question_evaluations.insert_one(evaluation, session=session)
             result = self.db.questions.update_one(
                 {
@@ -2092,6 +2126,7 @@ class QuestionWorkflowService:
                 str(question["_id"]),
                 evaluation_payload,
                 job.get("requested_by_user_id"),
+                require_active_job=True,
             )
             finished_at = utc_now()
             await asyncio.to_thread(
@@ -2125,6 +2160,9 @@ class QuestionWorkflowService:
                 },
             )
             return evaluation
+        except EvaluationInterruptedError:
+            # Job đã được đánh dấu dừng ở nơi khác; không ghi đè trạng thái.
+            return json_safe({**job, "status": "CANCELLED"})
         except EvidenceGateError as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             blocked_evidence = dict(exc.evidence)
@@ -2211,14 +2249,10 @@ class QuestionWorkflowService:
     def _find_assignable_reviewer(self, reviewer_user_id: str) -> dict:
         reviewer_oid = object_id(reviewer_user_id, "reviewer_user_id")
         reviewer = self.db.users.find_one(
-            {
-                "_id": reviewer_oid,
-                "role": {"$in": ["Reviewer", "Admin"]},
-                "is_active": True,
-            },
-            {"_id": 1, "display_name": 1, "email": 1, "role": 1},
+            {"_id": reviewer_oid, "is_active": True},
+            {"_id": 1, "display_name": 1, "email": 1, "is_active": 1, **REVIEWER_PERMISSION_FIELDS},
         )
-        if not reviewer:
+        if not reviewer or not _user_can_review(reviewer):
             raise ValueError("Reviewer không tồn tại hoặc không còn hoạt động")
         return reviewer
 
@@ -2513,13 +2547,14 @@ class QuestionWorkflowService:
             .limit(payload.limit)
         )
 
-        pool_roles = ["Reviewer", "Admin"] if payload.include_admins else ["Reviewer"]
-        reviewers = list(
-            self.db.users.find(
-                {"role": {"$in": pool_roles}, "is_active": True},
-                {"display_name": 1, "review_subject_ids": 1, "role": 1},
+        reviewers = [
+            reviewer
+            for reviewer in self.db.users.find(
+                {"is_active": True, "$or": REVIEWER_CANDIDATE_FILTER},
+                {"display_name": 1, "review_subject_ids": 1, "is_active": 1, **REVIEWER_PERMISSION_FIELDS},
             )
-        )
+            if _user_can_review(reviewer) and (payload.include_admins or reviewer.get("role") != "Admin")
+        ]
         strict = payload.subject_mode == "strict"
         covered_subjects = {
             subject_id
@@ -2782,13 +2817,16 @@ class QuestionWorkflowService:
             raise RuntimeError("VERSION_CONFLICT")
         if question.get("review_status") != "PENDING":
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể được kiểm duyệt")
+        # AI chỉ hỗ trợ: người duyệt là người quyết định. Chỉ khi AI đã kết luận
+        # "xem lại" mà người duyệt vẫn duyệt thì mới tính là override và cần lý do;
+        # câu chưa có gợi ý AI hợp lệ thì người duyệt tự đánh giá.
         if (
             payload.decision == "APPROVED"
-            and question["evaluation_status"] != "PASSED"
+            and question.get("evaluation_status") == "FAILED"
             and not payload.override.applied
         ):
             raise ValueError(
-                "Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override"
+                "AI đề xuất xem lại: phải ghi rõ lý do (override) khi vẫn duyệt"
             )
         if current_user.role != "Admin" or not payload.override.applied:
             # Admins may only review their own question with an explicit,
@@ -2902,6 +2940,21 @@ class QuestionWorkflowService:
                 "status": "CANCELLED" if secondary else "NOT_REQUIRED",
                 "completed_at": now if secondary else None,
             }
+        # Người duyệt là người quyết định: chốt kết quả khi AI còn đang chạy thì
+        # dừng lượt đánh giá đó thay vì bắt người duyệt chờ.
+        interrupted_job_ids = [
+            job["_id"]
+            for job in self.db.evaluation_jobs.find(
+                {
+                    "question_id": question["_id"],
+                    "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
+                },
+                {"_id": 1},
+            )
+        ]
+        if interrupted_job_ids or question.get("evaluation_status") in EVALUATION_ACTIVE_STATUSES:
+            question_fields["evaluation_status"] = "NOT_STARTED"
+            review["interrupted_evaluation_job_ids"] = interrupted_job_ids
         audit_action = (
             "QUESTION_SECONDARY_REVIEW_REQUESTED"
             if request_secondary
@@ -2929,10 +2982,38 @@ class QuestionWorkflowService:
                 "review_assignment": json_safe(question.get("review_assignment") or {}),
                 "review_form": review_form,
                 "secondary_review": json_safe(question_fields.get("secondary_review") or secondary or {}),
+                "interrupted_evaluation_job_ids": interrupted_job_ids,
             },
             created_at=now,
         )
         with mongo_transaction() as session:
+            if interrupted_job_ids:
+                self.db.evaluation_jobs.update_many(
+                    {
+                        "_id": {"$in": interrupted_job_ids},
+                        "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
+                    },
+                    {
+                        "$set": {
+                            "status": "CANCELLED",
+                            "error": {
+                                "message": "Người duyệt đã chốt kết quả nên dừng AI đánh giá",
+                                "stage": "REVIEWER_DECIDED",
+                                "at": now,
+                            },
+                            "finished_at": now,
+                            "expires_at": now + timedelta(days=settings.job_retention_days),
+                            "updated_at": now,
+                        },
+                        "$unset": {
+                            "locked_by": "",
+                            "lease_expires_at": "",
+                            "heartbeat_at": "",
+                            "next_attempt_at": "",
+                        },
+                    },
+                    session=session,
+                )
             self.db.question_reviews.insert_one(review, session=session)
             result = self.db.questions.update_one(
                 {
@@ -3027,7 +3108,7 @@ class QuestionWorkflowService:
         mentioned_users = list(
             self.db.users.find(
                 {"_id": {"$in": mention_ids}, "is_active": True},
-                {"_id": 1, "role": 1},
+                {"_id": 1, "is_active": 1, **REVIEWER_PERMISSION_FIELDS},
             )
         ) if mention_ids else []
         if len(mentioned_users) != len(mention_ids):
@@ -3065,7 +3146,7 @@ class QuestionWorkflowService:
                     "body": comment["body"][:200],
                     "link": (
                         f"/kiem-duyet?questionId={question['_id']}"
-                        if user.get("role") in {"Reviewer", "Admin"}
+                        if _user_can_review(user)
                         else f"/quan-ly?questionId={question['_id']}"
                     ),
                     "entity": {
@@ -3964,15 +4045,21 @@ class QuestionWorkflowService:
             for user in self.db.users.find(
                 {
                     "$or": [
-                        {"role": "Reviewer", "is_active": True},
+                        {"is_active": True, "$or": REVIEWER_CANDIDATE_FILTER},
                         {"_id": {"$in": [key for key in {*per_reviewer, *holding} if key is not None]}},
                     ]
                 },
-                {"display_name": 1, "email": 1, "role": 1, "is_active": 1, "review_subject_ids": 1},
+                {"display_name": 1, "email": 1, "is_active": 1, "review_subject_ids": 1, **REVIEWER_PERMISSION_FIELDS},
             )
         }
+        # Admin chỉ hiện khi có hoạt động duyệt; người có quyền duyệt khác luôn hiện.
+        candidate_ids = {
+            user_id
+            for user_id, user in users.items()
+            if user.get("role") != "Admin" and _user_can_review(user)
+        }
         rows = []
-        for reviewer_id in {*users, *per_reviewer, *holding}:
+        for reviewer_id in {*candidate_ids, *per_reviewer, *holding}:
             if reviewer_id is None:
                 continue
             user = users.get(reviewer_id) or {}
@@ -3991,7 +4078,7 @@ class QuestionWorkflowService:
             if load.get("holding_sla_breached"):
                 flags.append("SLA_BREACHED")
             subject_ids = user.get("review_subject_ids") or []
-            if user.get("role") == "Reviewer" and user.get("is_active") and not subject_ids:
+            if user and user.get("role") != "Admin" and _user_can_review(user) and not subject_ids:
                 flags.append("NO_SUBJECTS")
             rows.append(
                 {

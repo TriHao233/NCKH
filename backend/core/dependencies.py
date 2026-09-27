@@ -17,8 +17,26 @@ logger = logging.getLogger(__name__)
 # Keep in sync with modules/auth/login.py's TOKEN_CLOCK_SKEW_SECONDS.
 TOKEN_CLOCK_SKEW_SECONDS = 60
 
-DEFAULT_ROLE_PERMISSIONS = {
-    "Admin": {
+# Mô hình quyền:
+# - Vai trò quyết định bộ quyền mặc định.
+# - Admin luôn có toàn bộ quyền; quyền quản trị chỉ thuộc vai trò Admin.
+# - Giảng viên/Người duyệt có thể được THÊM hoặc BỎ từng quyền nghiệp vụ so với
+#   mặc định của vai trò (lưu ở permission_grants / permission_revokes).
+# Mỗi quyền dưới đây đều được kiểm tra thật ở backend.
+TEACHER_PERMISSIONS = frozenset(
+    {
+        "documents.manage_own",
+        "questions.generate",
+        "questions.manage_own",
+        "questions.share_bank",
+        "questions.use_shared_bank",
+        "exams.manage_own",
+        "catalog.subjects.manage_own",
+    }
+)
+REVIEW_PERMISSIONS = frozenset({"reviews.manage", "questions.export_moodle"})
+ADMIN_ONLY_PERMISSIONS = frozenset(
+    {
         "admin.overview",
         "admin.users",
         "admin.catalog",
@@ -27,42 +45,75 @@ DEFAULT_ROLE_PERMISSIONS = {
         "admin.moodle",
         "documents.manage_all",
         "questions.manage_all",
-        "reviews.manage",
-        "questions.use_shared_bank",
-    },
-    "Teacher": {
-        "documents.manage_own",
-        "questions.generate",
-        "questions.manage_own",
-        "questions.share_bank",
-        "questions.use_shared_bank",
-        "exams.manage_own",
-        "catalog.subjects.manage_own",
-    },
-    "Reviewer": {
-        "reviews.manage",
-        "questions.read_review_queue",
-        "questions.comment",
-        "questions.export_moodle",
-    },
+    }
+)
+# Quyền có thể thêm/bỏ riêng cho Giảng viên và Người duyệt.
+ASSIGNABLE_PERMISSIONS = TEACHER_PERMISSIONS | REVIEW_PERMISSIONS
+ALL_PERMISSIONS = ASSIGNABLE_PERMISSIONS | ADMIN_ONLY_PERMISSIONS
+
+DEFAULT_ROLE_PERMISSIONS = {
+    "Admin": set(ALL_PERMISSIONS),
+    "Teacher": set(TEACHER_PERMISSIONS),
+    "Reviewer": set(REVIEW_PERMISSIONS),
 }
 
-ROLE_PERMISSION_ALIASES = {
-    "Admin": "admin.overview",
-    "Teacher": "questions.manage_own",
-    "Reviewer": "reviews.manage",
+
+PERMISSION_LABELS = {
+    "documents.manage_own": "Quản lý tài liệu của mình",
+    "questions.generate": "Sinh câu hỏi bằng AI",
+    "questions.manage_own": "Soạn và quản lý câu hỏi của mình",
+    "questions.share_bank": "Chia sẻ câu hỏi và tài liệu",
+    "questions.use_shared_bank": "Dùng câu hỏi, tài liệu được chia sẻ",
+    "exams.manage_own": "Làm đề thi",
+    "catalog.subjects.manage_own": "Tạo và sửa học phần của mình",
+    "reviews.manage": "Kiểm duyệt câu hỏi",
+    "questions.export_moodle": "Đưa câu đã duyệt lên Moodle",
+    "admin.overview": "Xem tổng quan",
+    "admin.users": "Quản lý người dùng",
+    "admin.catalog": "Quản lý học phần và cấu hình AI",
+    "admin.audit": "Xem nhật ký",
+    "admin.jobs": "Quản lý tác vụ",
+    "admin.moodle": "Quản lý Moodle",
+    "documents.manage_all": "Quản lý mọi tài liệu",
+    "questions.manage_all": "Quản lý mọi câu hỏi",
 }
+
+
+def _permission_text(permissions) -> str:
+    return ", ".join(PERMISSION_LABELS.get(item, item) for item in sorted(permissions))
+
+
+def _permission_set(values) -> set[str]:
+    return {value.strip() for value in values or [] if isinstance(value, str) and value.strip()}
 
 
 def effective_permissions(user: dict) -> tuple[str, ...]:
     role = user.get("role")
+    if role == "Admin":
+        return tuple(sorted(ALL_PERMISSIONS))
     permissions = set(DEFAULT_ROLE_PERMISSIONS.get(role, set()))
-    permissions.update(
-        permission
-        for permission in (user.get("permissions") or [])
-        if isinstance(permission, str) and permission.strip()
-    )
-    return tuple(sorted(permissions))
+    # `permissions` là dữ liệu cũ (chỉ cộng thêm); ghi mới dùng grants/revokes.
+    grants = _permission_set(user.get("permission_grants")) | _permission_set(user.get("permissions"))
+    permissions -= _permission_set(user.get("permission_revokes"))
+    permissions |= grants
+    return tuple(sorted(permissions & ASSIGNABLE_PERMISSIONS))
+
+
+def permission_overrides(role: str, desired: list[str] | None) -> dict[str, list[str]]:
+    """Chuyển danh sách quyền mong muốn thành phần thêm/bỏ so với mặc định của vai trò."""
+    if role == "Admin" or desired is None:
+        return {"permission_grants": [], "permission_revokes": []}
+    wanted = _permission_set(desired)
+    not_allowed = wanted - ASSIGNABLE_PERMISSIONS
+    if not_allowed:
+        raise ValueError(
+            "Quyền quản trị chỉ dành cho vai trò Quản trị viên: " + ", ".join(sorted(not_allowed))
+        )
+    defaults = DEFAULT_ROLE_PERMISSIONS.get(role, set())
+    return {
+        "permission_grants": sorted(wanted - defaults),
+        "permission_revokes": sorted(defaults - wanted),
+    }
 
 
 def has_permission(current_user: "CurrentUser", permission: str) -> bool:
@@ -131,15 +182,11 @@ def get_current_user(
 
 
 def require_roles(*roles: str) -> Callable:
+    """Chỉ kiểm tra vai trò. Không suy vai trò từ quyền để tránh leo quyền ngầm."""
     allowed = set(roles)
-    allowed_permissions = {
-        ROLE_PERMISSION_ALIASES[role]
-        for role in allowed
-        if role in ROLE_PERMISSION_ALIASES
-    }
 
     def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if current_user.role not in allowed and not (set(current_user.permissions) & allowed_permissions):
+        if current_user.role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Yêu cầu role: {', '.join(sorted(allowed))}",
@@ -156,7 +203,7 @@ def require_permissions(*permissions: str) -> Callable:
         if not allowed.issubset(set(current_user.permissions)):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Yêu cầu quyền: {', '.join(sorted(allowed))}",
+                detail=f"Yêu cầu quyền: {_permission_text(allowed)}",
             )
         return current_user
 
@@ -170,7 +217,7 @@ def require_any_permission(*permissions: str) -> Callable:
         if not allowed & set(current_user.permissions):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Yêu cầu một trong các quyền: {', '.join(sorted(allowed))}",
+                detail=f"Yêu cầu một trong các quyền: {_permission_text(allowed)}",
             )
         return current_user
 
@@ -178,6 +225,14 @@ def require_any_permission(*permissions: str) -> Callable:
 
 
 require_admin = require_roles("Admin")
+require_authenticated = require_roles("Admin", "Teacher", "Reviewer")
+require_teacher_reviewer_or_admin = require_authenticated
+# Kiểm duyệt: theo quyền reviews.manage (Admin luôn có) để thêm/bỏ quyền có hiệu lực thật.
+require_reviewer_or_admin = require_permissions("reviews.manage")
+# Không gian giảng viên: theo từng quyền nghiệp vụ.
 require_teacher_or_admin = require_roles("Admin", "Teacher")
-require_reviewer_or_admin = require_roles("Admin", "Reviewer")
-require_teacher_reviewer_or_admin = require_roles("Admin", "Teacher", "Reviewer")
+require_document_manager = require_any_permission("documents.manage_own", "documents.manage_all")
+require_question_generator = require_permissions("questions.generate")
+require_question_author = require_any_permission("questions.manage_own", "questions.manage_all")
+require_bank_sharing = require_permissions("questions.share_bank")
+require_exam_manager = require_permissions("exams.manage_own")

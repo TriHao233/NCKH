@@ -7,7 +7,8 @@ from fastapi.responses import FileResponse
 from core.config import settings
 from core.dependencies import (
     CurrentUser,
-    require_teacher_or_admin,
+    require_bank_sharing,
+    require_question_author,
     require_teacher_reviewer_or_admin,
 )
 from modules.questions.schemas import (
@@ -109,7 +110,7 @@ def list_questions(
 @router.post("", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
 def create_question(
     payload: QuestionCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -149,7 +150,7 @@ def get_question(
 )
 def duplicate_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -225,7 +226,7 @@ def get_question_source_pdf(
 def update_question(
     question_id: str,
     payload: QuestionUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
@@ -262,7 +263,7 @@ def update_question(
 def update_question_sharing(
     question_id: str,
     payload: QuestionSharingRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_bank_sharing),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -279,7 +280,7 @@ def update_question_sharing(
 @router.post("/{question_id}/submit-review", response_model=QuestionResponse)
 def submit_question_for_review(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
@@ -342,7 +343,7 @@ def submit_question_for_review(
 @router.delete("/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:

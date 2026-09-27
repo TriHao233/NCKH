@@ -126,11 +126,13 @@ function DecisionPanel({
     writeTemplates(user, next);
   };
 
-  const aiLine = question.evaluation_status === 'PASSED'
-    ? 'AI đề xuất đạt.'
-    : question.evaluation_status === 'FAILED'
-      ? 'AI đề xuất xem lại. Nếu vẫn duyệt, bạn cần ghi lý do.'
-      : 'Chưa có gợi ý AI hợp lệ. Bạn tự đánh giá theo danh sách kiểm tra.';
+  const aiLine = aiBusy
+    ? 'AI đang đánh giá. Bạn vẫn có thể chốt kết quả; khi đó lượt đánh giá AI sẽ được dừng.'
+    : question.evaluation_status === 'PASSED'
+      ? 'AI đề xuất đạt.'
+      : question.evaluation_status === 'FAILED'
+        ? 'AI đề xuất xem lại. Nếu vẫn duyệt, bạn cần ghi lý do.'
+        : 'Chưa có gợi ý AI hợp lệ. Bạn tự đánh giá theo danh sách kiểm tra.';
 
   return (
     <div className="rv-decision">
@@ -355,8 +357,8 @@ function DecisionPanel({
         <button
           type="button"
           className="btn btn--primary"
-          disabled={submitting || secondaryBlocked || aiBusy}
-          title={secondaryBlocked ? 'Bạn đã duyệt vòng 1, cần người khác duyệt vòng 2' : (aiBusy ? 'Chờ AI đánh giá xong' : 'Phím tắt A')}
+          disabled={submitting || secondaryBlocked}
+          title={secondaryBlocked ? 'Bạn đã duyệt vòng 1, cần người khác duyệt vòng 2' : 'Phím tắt A'}
           onClick={() => onDecide('APPROVED')}
         >
           {submitting && mode === 'APPROVED' ? 'Đang lưu...' : 'Duyệt'}

@@ -189,6 +189,48 @@ class ReviewWorkflowMongoIntegrationTests(unittest.TestCase):
             1,
         )
 
+    def test_reviewer_decision_cancels_running_ai_evaluation_atomically(self):
+        teacher = self._user("Teacher")
+        reviewer = self._user("Reviewer")
+        question_id = self._question(teacher, evaluation_status="PROCESSING", quality_summary={})
+        version_id = self.db.questions.find_one({"_id": question_id})["current_version_id"]
+        job_id = ObjectId()
+        self.db.evaluation_jobs.insert_one(
+            {
+                "_id": job_id,
+                "schema_version": SCHEMA_VERSION,
+                "question_id": question_id,
+                "question_version_id": version_id,
+                "question_version": 1,
+                "status": "PROCESSING",
+                "evaluator_model_code": "test",
+                "trigger": "SUBMIT_FOR_REVIEW",
+                "attempt_no": 1,
+                "locked_by": "worker-1",
+                "lease_expires_at": self.now + timedelta(minutes=5),
+                "queued_at": self.now,
+                "updated_at": self.now,
+            }
+        )
+        self._track("evaluation_jobs", job_id)
+
+        self.service.claim_review(str(question_id), reviewer)
+        review = self.service.review(
+            str(question_id),
+            ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+            reviewer,
+        )
+
+        self.assertFalse(review["override"]["applied"])
+        job = self.db.evaluation_jobs.find_one({"_id": job_id})
+        self.assertEqual(job["status"], "CANCELLED")
+        self.assertEqual(job["error"]["stage"], "REVIEWER_DECIDED")
+        self.assertNotIn("locked_by", job)
+        self.assertNotIn("lease_expires_at", job)
+        stored = self.db.questions.find_one({"_id": question_id})
+        self.assertEqual(stored["review_status"], "APPROVED")
+        self.assertEqual(stored["evaluation_status"], "NOT_STARTED")
+
     def test_list_filters_match_missing_assignment_overrides_and_sla(self):
         teacher = self._user("Teacher")
         never_assigned = self._question(teacher, submitted_hours_ago=settings.review_sla_hours + 2)

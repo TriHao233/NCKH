@@ -11,7 +11,8 @@ from core.dependencies import (
     get_current_user,
     require_permissions,
     require_reviewer_or_admin,
-    require_teacher_or_admin,
+    require_authenticated,
+    require_question_generator,
     require_teacher_reviewer_or_admin,
 )
 from modules.users.schemas import (
@@ -129,7 +130,7 @@ def get_my_stats(
 
 @router.get("/me/generation-presets", response_model=GenerationPresetListResponse)
 def list_my_generation_presets(
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     service: UserService = Depends(get_user_service),
 ):
     result = service.list_generation_presets(str(current_user.id))
@@ -145,7 +146,7 @@ def list_my_generation_presets(
 )
 def save_my_generation_preset(
     payload: GenerationPresetPayload,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     service: UserService = Depends(get_user_service),
 ):
     preset = service.save_generation_preset(str(current_user.id), payload)
@@ -157,7 +158,7 @@ def save_my_generation_preset(
 @router.delete("/me/generation-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_my_generation_preset(
     preset_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     service: UserService = Depends(get_user_service),
 ):
     deleted = service.delete_generation_preset(str(current_user.id), preset_id)
@@ -174,7 +175,7 @@ def get_my_calendar(
     to: date | None = Query(None),
     status_filter: str = Query("all", alias="status"),
     priority: str = Query("all"),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_authenticated),
     service: UserService = Depends(get_user_service),
 ):
     date_from = datetime.combine(from_, datetime.min.time(), tzinfo=timezone.utc) if from_ else None
@@ -197,7 +198,7 @@ def get_my_calendar(
 )
 def create_my_calendar_task(
     payload: TaskCalendarPayload,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_authenticated),
     service: UserService = Depends(get_user_service),
 ):
     task = service.create_task(str(current_user.id), payload)
@@ -210,7 +211,7 @@ def create_my_calendar_task(
 def update_my_calendar_task(
     event_id: str,
     payload: TaskCalendarUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_authenticated),
     service: UserService = Depends(get_user_service),
 ):
     result = service.update_task(str(current_user.id), event_id, payload)
@@ -224,7 +225,7 @@ def update_my_calendar_task(
 @router.delete("/me/calendar/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_my_calendar_task(
     event_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_authenticated),
     service: UserService = Depends(get_user_service),
 ):
     deleted = service.delete_task(str(current_user.id), event_id)

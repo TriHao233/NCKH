@@ -258,6 +258,9 @@ class UserResponse(BaseModel):
     display_name: str
     role: RoleEnum
     permissions: list[str] = Field(default_factory=list)
+    # Khác biệt so với mặc định của vai trò, để giao diện hiện rõ ngoại lệ.
+    permission_grants: list[str] = Field(default_factory=list)
+    permission_revokes: list[str] = Field(default_factory=list)
     review_subject_ids: list[str] = Field(default_factory=list)
     profile: UserProfile
     is_active: bool

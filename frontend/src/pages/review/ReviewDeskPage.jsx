@@ -239,7 +239,8 @@ function ReviewDeskPage() {
     const timer = window.setInterval(async () => {
       try {
         const fresh = await refreshQuestion();
-        if (!isEvaluationBusy(fresh)) {
+        // NOT_STARTED: lượt AI bị dừng vì người duyệt đã chốt kết quả, không có gì để báo.
+        if (!isEvaluationBusy(fresh) && fresh.evaluation_status !== 'NOT_STARTED') {
           await refreshHistory();
           showFlash('info', `AI đã đánh giá xong: ${EVALUATION_STATUS_LABEL[fresh.evaluation_status] || fresh.evaluation_status}.`);
         }

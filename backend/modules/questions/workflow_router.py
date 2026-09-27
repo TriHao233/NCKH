@@ -6,6 +6,7 @@ from core.config import settings
 from core.dependencies import (
     CurrentUser,
     require_admin,
+    require_permissions,
     require_reviewer_or_admin,
     require_teacher_reviewer_or_admin,
 )
@@ -27,6 +28,7 @@ from modules.questions.workflow_service import (
     get_workflow_service,
 )
 
+require_moodle_publisher = require_permissions("reviews.manage", "questions.export_moodle")
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Question workflow"])
 
 
@@ -324,7 +326,7 @@ def set_secondary_review(
 def publish_question_to_moodle(
     question_id: str,
     payload: MoodlePublicationRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_moodle_publisher),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:

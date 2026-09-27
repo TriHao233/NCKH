@@ -85,7 +85,7 @@ def list_subjects(
 @router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def create_subject(
     payload: SubjectPayload,
-    user: CurrentUser = Depends(require_permissions("catalog.subjects.manage_own")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:

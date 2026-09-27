@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
+import {
+  ALL_PERMISSIONS,
+  PROTECTED_ROUTE_ROLES,
+  canAccessPath,
+  landingPathForRole,
+  permissionsForUser,
+  rolesForPath,
+} from "./permissions.js";
 
 const PROTECTED_APP_ROUTES = [
   "/sinh-cau-hoi",
@@ -67,19 +74,31 @@ test("reviewer works only inside the review workspace", () => {
   assert.equal(landingPathForRole("Reviewer"), "/kiem-duyet");
 });
 
-test("explicit permissions can grant access outside the base role", () => {
+test("business permissions can be granted across roles, admin permissions cannot", () => {
+  assert.equal(
+    canAccessPath({ role: "Reviewer", permissions: ["reviews.manage", "questions.generate"] }, "/sinh-cau-hoi"),
+    true,
+  );
+  assert.equal(
+    canAccessPath({ role: "Teacher", permissions: ["questions.manage_own", "reviews.manage"] }, "/kiem-duyet"),
+    true,
+  );
   assert.equal(
     canAccessPath({ role: "Teacher", permissions: ["admin.users"] }, "/quan-ly-nguoi-dung"),
-    true,
-  );
-  assert.equal(
-    canAccessPath({ role: "Reviewer", permissions: ["questions.generate"] }, "/sinh-cau-hoi"),
-    true,
-  );
-  assert.equal(
-    canAccessPath({ role: "Teacher", permissions: ["admin.users"] }, "/nhat-ky-he-thong"),
     false,
   );
+});
+
+test("revoked permissions remove access even inside the base role", () => {
+  assert.equal(canAccessPath({ role: "Reviewer", permissions: ["questions.export_moodle"] }, "/kiem-duyet"), false);
+  assert.equal(canAccessPath({ role: "Teacher", permissions: ["questions.manage_own"] }, "/sinh-cau-hoi"), false);
+  assert.equal(canAccessPath({ role: "Teacher", permissions: [] }, "/lich-cong-viec"), true);
+});
+
+test("admins keep to the admin workspace", () => {
+  assert.equal(canAccessPath({ role: "Admin", permissions: [] }, "/quan-ly-nguoi-dung"), true);
+  assert.equal(canAccessPath({ role: "Admin" }, "/sinh-cau-hoi"), false);
+  assert.deepEqual(permissionsForUser({ role: "Admin", permissions: [] }).sort(), [...ALL_PERMISSIONS].sort());
 });
 
 test("anonymous users only access public routes", () => {

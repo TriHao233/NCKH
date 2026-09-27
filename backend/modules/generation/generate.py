@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from core.config import settings
-from core.dependencies import CurrentUser, has_permission, require_teacher_or_admin
+from core.dependencies import CurrentUser, has_permission, require_question_generator
 from core.job_worker import maintain_lease
 from modules.documents.service import DocumentService, get_document_service
 from modules.generation.mongodb import (
@@ -197,7 +197,7 @@ async def process_generate_background(job_id: str, worker_id: str):
 async def api_generate_questions(
     req: QuestionGenerateRequest,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key", max_length=128),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     document_service: DocumentService = Depends(get_document_service),
 ):
     try:
@@ -263,7 +263,7 @@ async def api_generate_questions(
 )
 async def get_generation_job_status(
     job_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
 ):
     can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
     owner_id = None if can_manage_all else current_user.id
@@ -280,7 +280,7 @@ async def get_generation_job_status(
 @router.post("/status/{job_id}/cancel", response_model=GenerationJobStatusResponse)
 async def cancel_generation_job_request(
     job_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
 ):
     can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
     owner_id = None if can_manage_all else current_user.id
@@ -332,7 +332,7 @@ def _build_generation_status_response(job: dict) -> GenerationJobStatusResponse:
 async def stream_generation_job_status(
     job_id: str,
     request: Request,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
 ):
     can_manage_all = current_user.role == "Admin" or has_permission(current_user, "questions.manage_all")
     owner_id = None if can_manage_all else current_user.id

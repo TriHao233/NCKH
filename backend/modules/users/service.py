@@ -9,7 +9,7 @@ from firebase_admin import auth
 
 from core.audit import record_audit_event
 from core.database import get_rag_db
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, effective_permissions, permission_overrides
 from modules.auth.session_repository import (
     FirebaseSessionRepository,
     get_firebase_session_repository,
@@ -30,7 +30,6 @@ from modules.users.schemas import (
 
 MAX_GENERATION_PRESETS = 12
 MAX_TASK_CALENDAR_ITEMS = 500
-REVIEWING_ROLES = {"Reviewer", "Admin"}
 
 
 def utc_now() -> datetime:
@@ -82,11 +81,11 @@ class UserService:
     def _release_reviewer_work(
         self,
         user_id: ObjectId,
-        previous_role: str | None,
+        could_review: bool,
         actor: CurrentUser | None,
         reason: str,
     ) -> None:
-        if self.release_review_assignments and previous_role in REVIEWING_ROLES:
+        if self.release_review_assignments and could_review:
             self.release_review_assignments(user_id, actor, reason)
 
     def sync_from_claims(self, claims: dict) -> dict:
@@ -116,6 +115,9 @@ class UserService:
         return serialize_user(user)
 
     def create_user(self, payload: UserCreateRequest) -> dict:
+        overrides = permission_overrides(
+            payload.role.value, self._normalize_permissions(payload.permissions) or None
+        )
         firebase_user = self.identity.create_user(
             email=str(payload.email),
             password=payload.password,
@@ -130,7 +132,7 @@ class UserService:
                     "display_name": payload.display_name,
                     "role": payload.role.value,
                     "profile": payload.profile.model_dump(),
-                    "permissions": self._normalize_permissions(payload.permissions),
+                    **overrides,
                 }
             )
             self.sessions.upsert(firebase_user.uid, None)
@@ -170,6 +172,9 @@ class UserService:
         payload: UserInviteRequest,
         actor: CurrentUser | None = None,
     ) -> dict:
+        overrides = permission_overrides(
+            payload.role.value, self._normalize_permissions(payload.permissions) or None
+        )
         temporary_password = secrets.token_urlsafe(18)
         firebase_user = self.identity.create_user(
             email=str(payload.email),
@@ -185,7 +190,7 @@ class UserService:
                     "display_name": payload.display_name,
                     "role": payload.role.value,
                     "profile": payload.profile.model_dump(),
-                    "permissions": self._normalize_permissions(payload.permissions),
+                    **overrides,
                 }
             )
             self.sessions.upsert(firebase_user.uid, None)
@@ -290,10 +295,13 @@ class UserService:
         }
 
     def list_reviewer_options(self, search: str | None = None) -> dict:
-        records = []
-        for role in ("Reviewer", "Admin"):
-            role_records, _total = self.repository.list(1, 100, role, search)
-            records.extend(user for user in role_records if user.get("is_active", True))
+        # Người được giao duyệt = người thật sự có quyền kiểm duyệt (kể cả giảng viên được cấp thêm).
+        all_records, _total = self.repository.list(1, 500, None, search)
+        records = [
+            user
+            for user in all_records
+            if user.get("is_active", True) and "reviews.manage" in effective_permissions(user)
+        ]
         return {
             "items": [
                 {
@@ -479,7 +487,8 @@ class UserService:
         return {
             "role": user.get("role"),
             "is_active": user.get("is_active", True),
-            "permissions": user.get("permissions") or [],
+            "permissions": list(effective_permissions(user)),
+            "review_subject_ids": [str(item) for item in user.get("review_subject_ids") or []],
         }
 
     def update_admin(
@@ -495,27 +504,41 @@ class UserService:
         role = fields.get("role")
         if role is not None:
             fields["role"] = role.value if hasattr(role, "value") else role
-        if "permissions" in fields:
-            fields["permissions"] = self._normalize_permissions(fields.get("permissions"))
         if "review_subject_ids" in fields:
             fields["review_subject_ids"] = self._normalize_object_ids(fields["review_subject_ids"])
         user = self.repository.find_by_id(user_id)
         if not user:
             return None
+        next_role = fields.get("role", user.get("role"))
+        desired_permissions = fields.pop("permissions", None)
+        role_changed = next_role != user.get("role")
+        if desired_permissions is not None or role_changed:
+            # Đổi vai trò mà không gửi quyền thì về đúng mặc định của vai trò mới.
+            fields.update(permission_overrides(next_role, desired_permissions))
+            fields["permissions"] = []  # bỏ dữ liệu quyền kiểu cũ (chỉ cộng thêm)
         self._ensure_admin_floor(user, fields)
         before = self._user_audit_snapshot(user)
-        previous_role = user.get("role")
-        if payload.display_name is not None:
-            self.identity.update_user(user["firebase_uid"], display_name=payload.display_name)
-        if payload.is_active is not None:
-            self.identity.set_user_disabled(user["firebase_uid"], not payload.is_active)
+        # Chỉ gọi Firebase khi tên hoặc trạng thái thật sự thay đổi.
+        try:
+            if payload.display_name is not None and payload.display_name != user.get("display_name"):
+                self.identity.update_user(user["firebase_uid"], display_name=payload.display_name)
+            if payload.is_active is not None and payload.is_active != user.get("is_active", True):
+                self.identity.set_user_disabled(user["firebase_uid"], not payload.is_active)
+        except Exception as exc:
+            raise ValueError(f"Không cập nhật được tài khoản đăng nhập Firebase: {exc}") from exc
         updated = self.repository.update(user_id, fields)
-        if updated and payload.is_active is False:
+        if not updated:
+            return None
+        after = self._user_audit_snapshot(updated)
+        could_review = "reviews.manage" in before["permissions"]
+        can_review = "reviews.manage" in after["permissions"]
+        if payload.is_active is False and before["is_active"]:
             self.sessions.upsert(user["firebase_uid"], None)
-            self._release_reviewer_work(user["_id"], previous_role, actor, "reviewer_deactivated")
-        elif updated and fields.get("role") and fields["role"] not in REVIEWING_ROLES:
-            self._release_reviewer_work(user["_id"], previous_role, actor, "reviewer_role_removed")
-        if updated and {"role", "is_active"} & set(fields):
+            self._release_reviewer_work(user["_id"], could_review, actor, "reviewer_deactivated")
+        elif could_review and not can_review:
+            self._release_reviewer_work(user["_id"], could_review, actor, "reviewer_role_removed")
+        changed_fields = sorted(key for key in before if before[key] != after[key])
+        if changed_fields:
             record_audit_event(
                 action="user.admin_update",
                 entity_type="user",
@@ -523,10 +546,10 @@ class UserService:
                 actor_user_id=actor.id if actor else None,
                 actor_role=actor.role if actor else None,
                 before=before,
-                after=self._user_audit_snapshot(updated),
-                metadata={"changed_fields": sorted({"role", "is_active"} & set(fields))},
+                after=after,
+                metadata={"changed_fields": changed_fields},
             )
-        return serialize_user(updated) if updated else None
+        return serialize_user(updated)
 
     def deactivate(self, user_id: str, actor: CurrentUser | None = None) -> bool:
         user = self.repository.find_by_id(user_id)
@@ -534,12 +557,16 @@ class UserService:
             return False
         self._ensure_admin_floor(user, {"is_active": False})
         before = self._user_audit_snapshot(user)
-        previous_role = user.get("role")
         self.identity.set_user_disabled(user["firebase_uid"], True)
         updated = self.repository.update(user_id, {"is_active": False})
         if updated:
             self.sessions.upsert(user["firebase_uid"], None)
-            self._release_reviewer_work(user["_id"], previous_role, actor, "reviewer_deactivated")
+            self._release_reviewer_work(
+                user["_id"],
+                "reviews.manage" in effective_permissions(user),
+                actor,
+                "reviewer_deactivated",
+            )
             record_audit_event(
                 action="user.deactivate",
                 entity_type="user",

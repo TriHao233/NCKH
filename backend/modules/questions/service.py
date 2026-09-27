@@ -139,10 +139,12 @@ class QuestionService:
 
     @staticmethod
     def _can_review_all(current_user: CurrentUser) -> bool:
-        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+        return has_permission(current_user, "reviews.manage")
 
     @staticmethod
     def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
+        if not has_permission(current_user, "questions.use_shared_bank"):
+            return False
         shared_with = set(question.get("shared_with_user_ids") or [])
         return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
 
@@ -154,6 +156,8 @@ class QuestionService:
             return True
         if document.get("uploaded_by_user_id") == current_user.id:
             return True
+        if not has_permission(current_user, "questions.use_shared_bank"):
+            return False
         shared_with = set(document.get("shared_with_user_ids") or [])
         return current_user.id in shared_with or document.get("shared_scope") == "SUBJECT"
 

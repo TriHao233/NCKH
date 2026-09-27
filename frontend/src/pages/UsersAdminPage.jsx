@@ -15,7 +15,7 @@ import {
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
 import { listSubjects } from '../api/catalog';
 import { getReviewSubjectSuggestions } from '../api/questions';
-import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
+import { PERMISSION_GROUPS, ROLE_DEFAULT_PERMISSIONS, permissionsForUser } from '../auth/permissions';
 import { AuthContext } from '../context/AuthContext';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
 import WorkspaceHero from '../components/workspace/WorkspaceHero';
@@ -43,44 +43,6 @@ const ROLE_TONE = {
   Teacher: 'info',
   Reviewer: 'success',
 };
-
-// Nhóm quyền theo khu vực nghiệp vụ để dễ đọc hơn danh sách phẳng.
-const PERMISSION_GROUPS = [
-  {
-    label: 'Giảng viên',
-    items: [
-      { value: 'questions.generate', label: 'Sinh câu hỏi bằng AI' },
-      { value: 'questions.manage_own', label: 'Quản lý câu hỏi của mình' },
-      { value: 'questions.share_bank', label: 'Chia sẻ ngân hàng câu hỏi' },
-      { value: 'questions.use_shared_bank', label: 'Dùng ngân hàng được chia sẻ' },
-      { value: 'documents.manage_own', label: 'Quản lý tài liệu của mình' },
-      { value: 'exams.manage_own', label: 'Làm đề thi' },
-      { value: 'catalog.subjects.manage_own', label: 'Quản lý học phần của mình' },
-    ],
-  },
-  {
-    label: 'Kiểm duyệt',
-    items: [
-      { value: 'reviews.manage', label: 'Kiểm duyệt câu hỏi' },
-      { value: 'questions.read_review_queue', label: 'Xem hàng kiểm duyệt' },
-      { value: 'questions.comment', label: 'Trao đổi trên câu hỏi' },
-      { value: 'questions.export_moodle', label: 'Xuất và ghi Moodle' },
-    ],
-  },
-  {
-    label: 'Quản trị',
-    items: [
-      { value: 'questions.manage_all', label: 'Quản lý mọi câu hỏi' },
-      { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
-      { value: 'admin.overview', label: 'Xem tổng quan' },
-      { value: 'admin.users', label: 'Quản lý người dùng' },
-      { value: 'admin.catalog', label: 'Quản lý danh mục' },
-      { value: 'admin.jobs', label: 'Quản lý hàng đợi' },
-      { value: 'admin.moodle', label: 'Quản lý Moodle' },
-      { value: 'admin.audit', label: 'Xem nhật ký' },
-    ],
-  },
-];
 
 function permissionsForRole(role) {
   return [...(ROLE_DEFAULT_PERMISSIONS[role] || [])];
@@ -125,33 +87,86 @@ function parseImportRows(text) {
     });
 }
 
-function PermissionPicker({ value, onChange }) {
+const PERMISSION_LABEL = Object.fromEntries(
+  PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => [item.value, item.label])),
+);
+
+/** Phần khác so với mặc định của vai trò: quyền được thêm và quyền bị bỏ. */
+function permissionDiff(role, permissions) {
+  const defaults = new Set(permissionsForRole(role));
+  const current = new Set(permissions || []);
+  return {
+    granted: [...current].filter((item) => !defaults.has(item)),
+    revoked: [...defaults].filter((item) => !current.has(item)),
+  };
+}
+
+function PermissionPicker({ role, value, onChange }) {
+  if (role === 'Admin') {
+    return (
+      <div className="ws-field">
+        <span className="ws-label">Quyền</span>
+        <Notice tone="info">
+          Quản trị viên luôn có toàn bộ quyền. Muốn giới hạn quyền, hãy chọn vai trò Giảng viên hoặc Người duyệt.
+        </Notice>
+      </div>
+    );
+  }
+  const defaults = new Set(permissionsForRole(role));
+  const current = new Set(value || []);
+  const { granted, revoked } = permissionDiff(role, value);
   return (
     <div className="ws-field">
       <span className="ws-label">Quyền chi tiết</span>
-      <small>Chọn vai trò sẽ điền sẵn quyền mặc định; chỉnh thêm khi cần ngoại lệ.</small>
-      {PERMISSION_GROUPS.map((group) => (
-        <fieldset key={group.label} style={{ border: 0, padding: 0, margin: '6px 0 0' }}>
+      <small>
+        Đã điền sẵn quyền mặc định của vai trò {ROLE_LABEL[role] || role}. Bỏ tick để thu hồi, tick thêm để cấp ngoại lệ.
+        Quyền quản trị chỉ dành cho vai trò Quản trị viên.
+      </small>
+      {PERMISSION_GROUPS.filter((group) => !group.adminOnly).map((group) => (
+        <fieldset key={group.id} style={{ border: 0, padding: 0, margin: '6px 0 0' }}>
           <legend className="ws-hint" style={{ fontWeight: 700, marginBottom: 6 }}>{group.label}</legend>
           <div className="ad-permission-grid">
-            {group.items.map((permission) => (
-              <label className="ws-check" key={permission.value}>
-                <input
-                  type="checkbox"
-                  checked={(value || []).includes(permission.value)}
-                  onChange={() => onChange(togglePermission(value, permission.value))}
-                />
-                {permission.label}
-              </label>
-            ))}
+            {group.items.map((permission) => {
+              const checked = current.has(permission.value);
+              const isDefault = defaults.has(permission.value);
+              const tag = checked && !isDefault ? 'Thêm' : !checked && isDefault ? 'Đã bỏ' : isDefault ? 'Mặc định' : '';
+              return (
+                <label className="ws-check" key={permission.value} title={permission.description}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onChange(togglePermission(value, permission.value))}
+                  />
+                  <span>
+                    {permission.label}
+                    {tag && (
+                      <span className={`ws-pill ws-pill--${tag === 'Thêm' ? 'info' : tag === 'Đã bỏ' ? 'warn' : 'outline'}`} style={{ marginLeft: 6 }}>
+                        {tag}
+                      </span>
+                    )}
+                    {permission.description && <small className="ws-muted" style={{ display: 'block' }}>{permission.description}</small>}
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </fieldset>
       ))}
+      {(granted.length > 0 || revoked.length > 0) && (
+        <div className="ws-meta" style={{ marginTop: 8 }}>
+          <span>{granted.length} quyền thêm, {revoked.length} quyền bỏ so với mặc định.</span>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => onChange(permissionsForRole(role))}>
+            Về mặc định của vai trò
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-const REVIEWING_ROLES = new Set(['Reviewer', 'Admin']);
+function canReview(user) {
+  return permissionsForUser(user).includes('reviews.manage');
+}
 
 function subjectLabel(subject) {
   return [subject.subject_code, subject.subject_name].filter(Boolean).join(' - ');
@@ -404,7 +419,7 @@ function UsersAdminPage() {
         display_name: target.display_name || '',
         role: target.role,
         is_active: target.is_active,
-        permissions: target.permissions?.length ? target.permissions : permissionsForRole(target.role),
+        permissions: Array.isArray(target.permissions) ? target.permissions : permissionsForRole(target.role),
         review_subject_ids: target.review_subject_ids || [],
       },
     });
@@ -436,8 +451,8 @@ function UsersAdminPage() {
       await updateUser(target.id, {
         ...rest,
         display_name: form.display_name.trim(),
-        // Chỉ người duyệt và quản trị mới dùng học phần phụ trách; đổi sang vai trò khác thì xoá.
-        review_subject_ids: REVIEWING_ROLES.has(form.role) ? reviewSubjectIds : [],
+        // Chỉ người có quyền kiểm duyệt mới dùng học phần phụ trách; mất quyền thì xoá.
+        review_subject_ids: canReview(form) ? reviewSubjectIds : [],
       });
       setEditState(null);
       showFlash('success', `Đã cập nhật ${target.email}.`);
@@ -582,12 +597,19 @@ function UsersAdminPage() {
                           </td>
                           <td>
                             <span className={`ws-pill ws-pill--${ROLE_TONE[item.role] || 'outline'}`}>{ROLE_LABEL[item.role] || item.role}</span>
-                            {REVIEWING_ROLES.has(item.role) && (
+                            {item.role !== 'Admin' && ((item.permission_grants || []).length > 0 || (item.permission_revokes || []).length > 0) && (
+                              <small title="Khác với quyền mặc định của vai trò">
+                                {(item.permission_grants || []).length > 0 && `Thêm: ${(item.permission_grants || []).map((key) => PERMISSION_LABEL[key] || key).join(', ')}`}
+                                {(item.permission_grants || []).length > 0 && (item.permission_revokes || []).length > 0 && ' · '}
+                                {(item.permission_revokes || []).length > 0 && `Bỏ: ${(item.permission_revokes || []).map((key) => PERMISSION_LABEL[key] || key).join(', ')}`}
+                              </small>
+                            )}
+                            {canReview(item) && (
                               (item.review_subject_ids || []).length > 0 ? (
                                 <small title={(item.review_subject_ids || []).map((id) => subjectLabel(subjectsById.get(id) || {}) || id).join(', ')}>
                                   Duyệt: {(item.review_subject_ids || []).map((id) => subjectsById.get(id)?.subject_code || '?').join(', ')}
                                 </small>
-                              ) : item.role === 'Reviewer' ? (
+                              ) : item.role !== 'Admin' ? (
                                 <small className="ws-muted">Chưa gán học phần phụ trách</small>
                               ) : null
                             )}
@@ -693,7 +715,7 @@ function UsersAdminPage() {
                 </select>
               </label>
             </div>
-            <PermissionPicker value={createState.form.permissions} onChange={(permissions) => updateCreate({ permissions })} />
+            <PermissionPicker role={createState.form.role} value={createState.form.permissions} onChange={(permissions) => updateCreate({ permissions })} />
             {createState.error && <Notice tone="error">{createState.error}</Notice>}
           </>
         ))}
@@ -781,8 +803,8 @@ function UsersAdminPage() {
                 </select>
               </label>
             </div>
-            <PermissionPicker value={editState.form.permissions} onChange={(permissions) => updateEdit({ permissions })} />
-            {REVIEWING_ROLES.has(editState.form.role) && (
+            <PermissionPicker role={editState.form.role} value={editState.form.permissions} onChange={(permissions) => updateEdit({ permissions })} />
+            {canReview(editState.form) && (
               <ReviewSubjectPicker
                 subjects={subjectOptions}
                 value={editState.form.review_subject_ids}

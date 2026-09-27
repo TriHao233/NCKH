@@ -16,7 +16,7 @@ from pymongo import ReturnDocument
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.ingest.quality import validate_chunks
 from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.documents.service import DocumentService, get_document_service
@@ -79,7 +79,7 @@ DEFINITION_PATTERN = re.compile(r"\b(định nghĩa|khái niệm|là gì)\b", re
 async def chunk_document(
     req: DocumentChunkRequest,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     document_service: DocumentService = Depends(get_document_service),
 ):
     doc = get_document_record(req.document_id)

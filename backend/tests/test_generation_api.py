@@ -7,7 +7,7 @@ from bson import ObjectId
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_question_generator
 from modules.documents.service import get_document_service
 from modules.generation.generate import router
 from modules.generation.mongodb import _resolve_clo_ids
@@ -46,7 +46,7 @@ class GenerationStatusApiTests(unittest.TestCase):
         self.app = FastAPI()
         self.app.include_router(router)
         self.current_user = user()
-        self.app.dependency_overrides[require_teacher_or_admin] = lambda: self.current_user
+        self.app.dependency_overrides[require_question_generator] = lambda: self.current_user
         self.app.dependency_overrides[get_document_service] = lambda: type(
             "DocumentServiceStub",
             (),

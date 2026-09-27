@@ -97,6 +97,15 @@ test('validation enforces decision specific requirements', () => {
   assert.match(validateDraft(aiFailed, checkAll(defaultDraft(aiFailed, 'APPROVED')), reviewer, NOW), /lý do/);
   assert.equal(validateDraft(aiFailed, { ...checkAll(defaultDraft(aiFailed, 'APPROVED')), overrideReason: 'Đã đối chiếu nguồn' }, reviewer, NOW), '');
 
+  // Chưa có gợi ý AI hợp lệ (kể cả AI đang chạy) thì người duyệt tự quyết, không tính là override.
+  for (const status of ['NOT_STARTED', 'QUEUED', 'PROCESSING', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE']) {
+    const noAi = question({ evaluation_status: status });
+    const draft = checkAll(defaultDraft(noAi, 'APPROVED'));
+    assert.equal(validateDraft(noAi, draft, reviewer, NOW), '', status);
+    assert.equal(buildReviewPayload(noAi, draft).override?.applied ?? false, false, status);
+    assert.deepEqual(policySecondaryReasons(noAi, draft, { secondary_on_override: true }), [], status);
+  }
+
   assert.match(validateDraft(q, defaultDraft(q, 'NEEDS_REVISION'), reviewer, NOW), /lỗi/);
   assert.equal(
     validateDraft(q, { ...defaultDraft(q, 'NEEDS_REVISION'), issues: [{ title: 'Sai đáp án', detail: '' }] }, reviewer, NOW),
