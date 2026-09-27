@@ -8,6 +8,7 @@ import {
   autoEvaluateQuestion,
   claimQuestionReview,
   getReviewDashboard,
+  getReviewPolicy,
   listQuestions,
   publishQuestionToMoodle,
   reviewQuestion,
@@ -56,6 +57,7 @@ import {
   qualityOf,
   questionTypeKey,
   refId,
+  reviewHoldDurations,
 } from '../../features/review/reviewModel';
 import '../../css/workspace.css';
 import '../../css/ReviewPage.css';
@@ -157,6 +159,14 @@ function ReviewInboxPage() {
   const [evalDialog, setEvalDialog] = useState(null);
   const [autoAssignDialog, setAutoAssignDialog] = useState(null);
   const [evalModels, setEvalModels] = useState([]);
+  const [reviewPolicy, setReviewPolicy] = useState(null);
+  const holdDurations = reviewHoldDurations(reviewPolicy);
+
+  useEffect(() => {
+    // Chỉ quản trị viên phân công câu; thời hạn giữ câu lấy từ cấu hình backend.
+    if (!isAdminUser) return;
+    getReviewPolicy().then(setReviewPolicy).catch(() => setReviewPolicy(null));
+  }, [isAdminUser]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -859,7 +869,7 @@ function ReviewInboxPage() {
                 <option value="">Bỏ giao, trả về hàng chờ chung</option>
                 {lookups.reviewers.map((reviewer) => <option key={refId(reviewer)} value={refId(reviewer)}>{userName(reviewer)}</option>)}
               </select>
-              <small>Người được giao nhận thông báo và giữ câu trong 72 giờ kể từ lúc giao.</small>
+              <small>Người được giao nhận thông báo và giữ câu trong {holdDurations.assignment} kể từ lúc giao.</small>
             </label>
             <label className="ws-field">
               <span>Ghi chú</span>

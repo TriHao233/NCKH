@@ -68,6 +68,7 @@ import {
   restoreDraft,
   reviewIssuesOf,
   validateDraft,
+  reviewHoldDurations,
 } from '../../features/review/reviewModel';
 import '../../css/workspace.css';
 import '../../css/ReviewPage.css';
@@ -338,10 +339,11 @@ function ReviewDeskPage() {
   const ownsLock = Boolean(question) && isPending(question) && isAssignedToUser(question, user)
     && assignmentOf(question).status === 'IN_REVIEW';
   const holding = ownsLock && !isLockExpired(question, now);
+  const holdDurations = reviewHoldDurations(reviewPolicy);
 
   const handleClaim = () => runAction('claim', async () => {
     setQuestion(holding ? await renewQuestionReview(questionId) : await claimQuestionReview(questionId));
-  }, holding ? 'Đã gia hạn khoá thêm 30 phút.' : 'Bạn đã nhận câu hỏi này.');
+  }, holding ? `Đã gia hạn khoá thêm ${holdDurations.lock}.` : 'Bạn đã nhận câu hỏi này.');
 
   // Tự gia hạn khoá khi bàn duyệt đang mở và hiển thị, để phiếu dài không bị mất khoá giữa chừng.
   const renewingRef = useRef(false);
@@ -713,7 +715,7 @@ function ReviewDeskPage() {
                     <div className="rv-locked">
                       <p>
                         {canClaim(question, user, now)
-                          ? 'Bấm "Nhận câu" ở thanh trên để giữ quyền chấm trong 30 phút, tránh trùng việc với người duyệt khác.'
+                          ? `Bấm "Nhận câu" ở thanh trên để giữ quyền chấm trong ${holdDurations.lock}, tránh trùng việc với người duyệt khác.`
                           : `${userName(reviewer, 'Người duyệt khác')} đang xử lý câu này. Bạn vẫn đọc được nội dung và trao đổi.`}
                       </p>
                     </div>
@@ -787,7 +789,7 @@ function ReviewDeskPage() {
                   <option value={assignDrawer.reviewerId}>Người duyệt hiện tại (không còn hoạt động)</option>
                 )}
               </select>
-              <small>Người được giao nhận thông báo và giữ câu trong 72 giờ.</small>
+              <small>Người được giao nhận thông báo và giữ câu trong {holdDurations.assignment}.</small>
             </label>
             <label className="ws-field">
               <span>Ghi chú</span>

@@ -74,6 +74,24 @@ REVIEWER_PERMISSION_FIELDS = {"role": 1, "permission_grants": 1, "permission_rev
 
 def _user_can_review(user: dict) -> bool:
     return bool(user.get("is_active", True)) and "reviews.manage" in effective_permissions(user)
+
+
+POLICY_AUDIT_KEYS = ("secondary_on_override", "secondary_below_score", "secondary_subject_ids")
+
+
+def _valid_ai_score(question: dict) -> float | None:
+    """Điểm AI chỉ có giá trị khi AI đã có kết luận hợp lệ cho phiên bản hiện tại.
+
+    Khớp với giao diện: khi AI chưa chấm, đang chấm, bị dừng hoặc lỗi thì không
+    hiển thị điểm, nên cũng không dùng điểm cũ để áp chính sách duyệt vòng 2.
+    """
+    if question.get("evaluation_status") not in {"PASSED", "FAILED"}:
+        return None
+    summary = question.get("quality_summary") or {}
+    if summary.get("error"):
+        return None
+    score = summary.get("overall_score")
+    return score if isinstance(score, (int, float)) else None
 EVALUATION_RETRYABLE_STATUSES = {
     "NOT_STARTED",
     "FAILED",
@@ -2697,6 +2715,9 @@ class QuestionWorkflowService:
         ).model_dump()
         policy["updated_at"] = stored.get("updated_at")
         policy["updated_by_user_id"] = stored.get("updated_by_user_id")
+        # Thời hạn giữ câu lấy từ cấu hình để giao diện không phải viết cứng.
+        policy["lock_timeout_minutes"] = settings.review_lock_timeout_minutes
+        policy["assignment_timeout_hours"] = settings.review_assignment_timeout_hours
         return json_safe(policy)
 
     def update_review_policy(self, payload: ReviewPolicyPayload, current_user: CurrentUser) -> dict:
@@ -2728,8 +2749,8 @@ class QuestionWorkflowService:
             entity_id=REVIEW_POLICY_ID,
             actor_user_id=current_user.id,
             actor_role=current_user.role,
-            before={key: value for key, value in before.items() if not key.startswith("updated_")},
-            after={key: value for key, value in after.items() if not key.startswith("updated_")},
+            before={key: value for key, value in before.items() if key in POLICY_AUDIT_KEYS},
+            after={key: value for key, value in after.items() if key in POLICY_AUDIT_KEYS},
             created_at=now,
         )
         return after
@@ -2743,7 +2764,7 @@ class QuestionWorkflowService:
         if policy.get("secondary_on_override") and payload.override.applied:
             reasons.append("duyệt khác gợi ý AI (override)")
         threshold = policy.get("secondary_below_score")
-        score = (question.get("quality_summary") or {}).get("overall_score")
+        score = _valid_ai_score(question)
         if isinstance(threshold, (int, float)) and isinstance(score, (int, float)) and score < threshold:
             reasons.append(f"điểm AI {score:.2f} dưới ngưỡng {threshold:.2f}")
         if question.get("subject_id") and question.get("subject_id") in (policy.get("secondary_subject_ids") or []):

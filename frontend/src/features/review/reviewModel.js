@@ -534,7 +534,8 @@ export function policySecondaryReasons(question, draft, policy) {
   const reasons = [];
   if (policy.secondary_on_override && needsOverride(question, draft)) reasons.push('duyệt khác gợi ý AI (override)');
   const threshold = policy.secondary_below_score;
-  const score = question?.quality_summary?.overall_score;
+  // Cùng quy tắc với phần hiển thị: chỉ dùng điểm khi AI đã có kết luận hợp lệ.
+  const score = qualityOf(question).score;
   if (typeof threshold === 'number' && typeof score === 'number' && score < threshold) {
     reasons.push(`điểm AI ${score.toFixed(2)} dưới ngưỡng ${threshold.toFixed(2)}`);
   }
@@ -648,4 +649,14 @@ export function evaluationModeLabel(mode) {
   if (mode === 'heuristic_fallback') return 'Đánh giá dự phòng';
   if (mode === 'heuristic') return 'Chấm nhanh theo luật';
   return mode ? 'Hệ thống hỗ trợ' : '--';
+}
+
+/** Thời hạn giữ câu theo cấu hình backend (mặc định khớp REVIEW_LOCK_TIMEOUT_MINUTES / REVIEW_ASSIGNMENT_TIMEOUT_HOURS). */
+export function reviewHoldDurations(policy) {
+  const lockMinutes = Number(policy?.lock_timeout_minutes);
+  const assignmentHours = Number(policy?.assignment_timeout_hours);
+  return {
+    lock: `${Number.isFinite(lockMinutes) && lockMinutes > 0 ? lockMinutes : 30} phút`,
+    assignment: `${Number.isFinite(assignmentHours) && assignmentHours > 0 ? assignmentHours : 72} giờ`,
+  };
 }

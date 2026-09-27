@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { faFileCircleQuestion } from '@fortawesome/free-solid-svg-icons';
 import { fetchQuestionSourcePdf } from '../../api/questions';
 import { EmptyState, Notice, SkeletonRows } from '../../components/workspace/Feedback';
@@ -6,25 +6,32 @@ import { firstSourcePage, pageRangeLabel } from './reviewModel';
 
 /**
  * Tài liệu nguồn của câu hỏi: đoạn trích dẫn, PDF nhảy đúng trang (nếu có) và văn bản trang.
- * PDF chỉ tải khi tab được mở lần đầu để không làm chậm phiên duyệt.
+ * PDF chỉ tải khi tab được mở lần đầu cho mỗi câu/tài liệu; mở lại tab dùng lại bản đã tải.
  */
 function SourcePanel({ questionId, viewer, loading, error, active }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [activePage, setActivePage] = useState(1);
   const [pdf, setPdf] = useState({ status: 'idle', url: '', error: '' });
+  const loadedPdfKey = useRef('');
 
   const items = viewer?.items || [];
   const documentInfo = viewer?.document || {};
   const pdfAvailable = Boolean(documentInfo.pdf_available);
+  // Chỉ tải lại PDF khi đổi câu hỏi hoặc tài liệu, không phải mỗi lần dữ liệu nguồn được làm mới.
+  const pdfKey = pdfAvailable ? `${questionId}:${documentInfo.id || documentInfo.original_filename || ''}` : '';
 
   useEffect(() => {
     setActiveIndex(0);
     setActivePage(firstSourcePage(viewer?.items?.[0]));
-    setPdf({ status: 'idle', url: '', error: '' });
   }, [questionId, viewer]);
 
   useEffect(() => {
-    if (!active || !pdfAvailable) return undefined;
+    loadedPdfKey.current = '';
+    setPdf({ status: 'idle', url: '', error: '' });
+  }, [pdfKey]);
+
+  useEffect(() => {
+    if (!active || !pdfKey || loadedPdfKey.current === pdfKey) return undefined;
     let cancelled = false;
     setPdf({ status: 'loading', url: '', error: '' });
     fetchQuestionSourcePdf(questionId)
@@ -33,15 +40,18 @@ function SourcePanel({ questionId, viewer, loading, error, active }) {
           URL.revokeObjectURL(result.url);
           return;
         }
+        loadedPdfKey.current = pdfKey;
         setPdf({ status: 'ready', url: result.url, error: '' });
       })
       .catch((pdfError) => {
-        if (!cancelled) setPdf({ status: 'error', url: '', error: pdfError.message || 'Không mở được PDF nguồn.' });
+        if (cancelled) return;
+        loadedPdfKey.current = pdfKey;
+        setPdf({ status: 'error', url: '', error: pdfError.message || 'Không mở được PDF nguồn.' });
       });
     return () => {
       cancelled = true;
     };
-  }, [active, pdfAvailable, questionId, viewer]);
+  }, [active, pdfKey, questionId]);
 
   useEffect(() => () => {
     if (pdf.url) URL.revokeObjectURL(pdf.url);

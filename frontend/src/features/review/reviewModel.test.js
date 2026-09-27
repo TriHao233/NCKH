@@ -269,3 +269,13 @@ test('policySecondaryReasons mirrors the backend review policy', () => {
     [],
   );
 });
+
+test('score-based secondary policy ignores scores without a valid AI verdict', () => {
+  const policy = { secondary_below_score: 0.7 };
+  const stale = question({ evaluation_status: 'NOT_STARTED', quality_summary: { overall_score: 0.64, color: 'YELLOW' } });
+  assert.deepEqual(policySecondaryReasons(stale, checkAll(defaultDraft(stale, 'APPROVED')), policy), []);
+  const errored = question({ evaluation_status: 'FAILED', quality_summary: { overall_score: 0.4, error: { message: 'x' } } });
+  assert.deepEqual(policySecondaryReasons(errored, checkAll(defaultDraft(errored, 'APPROVED')), policy), []);
+  const valid = question({ evaluation_status: 'PASSED', quality_summary: { overall_score: 0.64, color: 'YELLOW' } });
+  assert.deepEqual(policySecondaryReasons(valid, checkAll(defaultDraft(valid, 'APPROVED')), policy), ['điểm AI 0.64 dưới ngưỡng 0.70']);
+});

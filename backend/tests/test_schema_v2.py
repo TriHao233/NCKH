@@ -2580,6 +2580,38 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual([item["type"] for item in teacher_notes], ["QUESTION_SECONDARY_REVIEW_PENDING"])
         self.assertIn("REVIEW_POLICY_UPDATED", [event["action"] for event in db.audit_logs.records])
 
+    def test_score_policy_ignores_stale_score_without_valid_ai_verdict(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        # Người duyệt vừa dừng AI: câu "chưa đánh giá" nhưng còn điểm cũ trong quality_summary.
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer],
+            evaluation_status="NOT_STARTED",
+            quality_summary={"overall_score": 0.64, "color": "YELLOW"},
+        )
+        db.review_settings = InMemoryCollection([{"_id": "review_policy", "secondary_below_score": 0.7}])
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+
+        review = self._with_workflow_service(db, scenario)
+        self.assertEqual(review["resulting_status"], "APPROVED")
+        self.assertNotIn("dưới ngưỡng", review["secondary_reason"] or "")
+
+    def test_review_policy_exposes_configured_hold_durations(self):
+        teacher = _current_user("Teacher")
+        db, _question_id, _ = self._review_guard_fixture(author=teacher, users=[teacher])
+        db.review_settings = InMemoryCollection([])
+        policy = self._with_workflow_service(db, lambda service: service.get_review_policy())
+        self.assertEqual(policy["lock_timeout_minutes"], settings.review_lock_timeout_minutes)
+        self.assertEqual(policy["assignment_timeout_hours"], settings.review_assignment_timeout_hours)
+
     def test_review_subject_suggestions_rank_reviewed_subjects(self):
         now = datetime.now(timezone.utc)
         reviewer_id = ObjectId()
