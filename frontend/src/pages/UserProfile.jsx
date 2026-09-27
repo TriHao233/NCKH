@@ -22,7 +22,10 @@ import {
 } from 'firebase/auth';
 import { AuthContext } from '../context/AuthContext';
 import { auth } from '../firebase';
+import { readDemoSession } from '../auth/demoSession';
 import { getMe, getMyStats, updateMe, uploadMyAvatar } from '../api/users';
+import { getReviewDashboard } from '../api/questions';
+import { reviewDurationLabel } from '../features/review/reviewModel';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/UserProfile.css';
 
@@ -212,11 +215,11 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section profile-form-section--avatar">
         <h4><FontAwesomeIcon icon={faUser} /> Ảnh đại diện</h4>
         <div className="field-group">
-          <label className="field-label">Ảnh đại diện</label>
+          <label className="field-label" htmlFor="profile-anh-dai-dien">Ảnh đại diện</label>
           <div className="avatar-edit-row">
             <img src={avatarPreview} alt="Xem trước ảnh đại diện" className="avatar-preview" referrerPolicy="no-referrer" />
             <div className="avatar-edit-controls">
-              <input
+              <input id="profile-anh-dai-dien"
                 className="field-input"
                 placeholder="Dán URL ảnh (https://...)"
                 value={form.avatar}
@@ -260,8 +263,8 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section">
         <h4><FontAwesomeIcon icon={faUser} /> Thông tin cơ bản</h4>
         <div className="field-group">
-          <label className="field-label">Họ và tên</label>
-          <input
+          <label className="field-label" htmlFor="profile-ho-va-ten">Họ và tên</label>
+          <input id="profile-ho-va-ten"
             className="field-input"
             value={form.displayName}
             onChange={handleChange('displayName')}
@@ -272,13 +275,13 @@ function InfoTab({ user, onProfileUpdated }) {
 
         <div className="field-row-2">
           <div className="field-group">
-            <label className="field-label">Email</label>
-            <input className="field-input" value={user?.email || ''} disabled />
+            <label className="field-label" htmlFor="profile-email">Email</label>
+            <input id="profile-email" className="field-input" value={user?.email || ''} disabled />
             <span className="field-hint">Không thể thay đổi email tại đây.</span>
           </div>
           <div className="field-group">
-            <label className="field-label">Vai trò</label>
-            <input className="field-input" value={user?.role || ''} disabled />
+            <label className="field-label" htmlFor="profile-vai-tro">Vai trò</label>
+            <input id="profile-vai-tro" className="field-input" value={user?.role || ''} disabled />
             <span className="field-hint">Chỉ quản trị viên mới thay đổi được vai trò.</span>
           </div>
         </div>
@@ -287,8 +290,8 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section">
         <h4><FontAwesomeIcon icon={faBriefcase} /> Thông tin công tác</h4>
         <div className="field-group">
-          <label className="field-label">Đơn vị công tác</label>
-          <input
+          <label className="field-label" htmlFor="profile-don-vi-cong-tac">Đơn vị công tác</label>
+          <input id="profile-don-vi-cong-tac"
             className="field-input"
             value={form.school}
             onChange={handleChange('school')}
@@ -299,8 +302,8 @@ function InfoTab({ user, onProfileUpdated }) {
         </div>
 
         <div className="field-group">
-          <label className="field-label">Địa chỉ</label>
-          <input
+          <label className="field-label" htmlFor="profile-dia-chi">Địa chỉ</label>
+          <input id="profile-dia-chi"
             className="field-input"
             placeholder="Chưa cập nhật"
             value={form.address}
@@ -316,12 +319,12 @@ function InfoTab({ user, onProfileUpdated }) {
         <h4><FontAwesomeIcon icon={faFileLines} /> Thông tin khác</h4>
         <div className="field-row-2">
           <div className="field-group">
-            <label className="field-label">Trạng thái tài khoản</label>
-            <input className="field-input" value={user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động'} disabled />
+            <label className="field-label" htmlFor="profile-trang-thai-tai-khoan">Trạng thái tài khoản</label>
+            <input id="profile-trang-thai-tai-khoan" className="field-input" value={user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động'} disabled />
           </div>
           <div className="field-group">
-            <label className="field-label">Ngày tham gia</label>
-            <input
+            <label className="field-label" htmlFor="profile-ngay-tham-gia">Ngày tham gia</label>
+            <input id="profile-ngay-tham-gia"
               className="field-input"
               value={user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—'}
               disabled
@@ -350,6 +353,7 @@ function InfoTab({ user, onProfileUpdated }) {
 }
 
 function SecurityTab() {
+  const isDemoAccount = Boolean(readDemoSession()?.token);
   const isPasswordAccount = (auth?.currentUser?.providerData || []).some(
     (provider) => provider.providerId === 'password',
   );
@@ -395,11 +399,13 @@ function SecurityTab() {
       <h3 className="profile-card-title">Bảo mật</h3>
 
       <div className="field-group">
-        <label className="field-label">Phương thức đăng nhập hiện tại</label>
-        <input className="field-input" value={isPasswordAccount ? 'Email/Mật khẩu' : 'Google'} disabled />
+        <label className="field-label" htmlFor="profile-phuong-thuc-dang-nhap-hien-tai">Phương thức đăng nhập hiện tại</label>
+        <input id="profile-phuong-thuc-dang-nhap-hien-tai" className="field-input" value={isDemoAccount ? 'Tài khoản demo' : (isPasswordAccount ? 'Email/Mật khẩu' : 'Google')} disabled />
       </div>
 
-      {!isPasswordAccount ? (
+      {isDemoAccount ? (
+        <p className="field-hint">Tài khoản demo dùng để thử hệ thống. Không đổi mật khẩu tại trang này.</p>
+      ) : !isPasswordAccount ? (
         <p className="field-hint">
           Tài khoản này đăng nhập bằng Google nên mật khẩu được quản lý bởi Google.
           Vui lòng đổi mật khẩu tại{' '}
@@ -414,8 +420,8 @@ function SecurityTab() {
           )}
 
           <div className="field-group">
-            <label className="field-label">Mật khẩu hiện tại</label>
-            <input
+            <label className="field-label" htmlFor="profile-mat-khau-hien-tai">Mật khẩu hiện tại</label>
+            <input id="profile-mat-khau-hien-tai"
               className="field-input"
               type="password"
               placeholder="••••••••"
@@ -427,8 +433,8 @@ function SecurityTab() {
 
           <div className="field-row-2">
             <div className="field-group">
-              <label className="field-label">Mật khẩu mới</label>
-              <input
+              <label className="field-label" htmlFor="profile-mat-khau-moi">Mật khẩu mới</label>
+              <input id="profile-mat-khau-moi"
                 className="field-input"
                 type="password"
                 placeholder="••••••••"
@@ -438,8 +444,8 @@ function SecurityTab() {
               {fieldErrors.newPassword && <span className="field-error">{fieldErrors.newPassword}</span>}
             </div>
             <div className="field-group">
-              <label className="field-label">Xác nhận mật khẩu mới</label>
-              <input
+              <label className="field-label" htmlFor="profile-xac-nhan-mat-khau-moi">Xác nhận mật khẩu mới</label>
+              <input id="profile-xac-nhan-mat-khau-moi"
                 className="field-input"
                 type="password"
                 placeholder="••••••••"
@@ -465,7 +471,9 @@ function ProfileSidebar({ user }) {
 
   useEffect(() => {
     let active = true;
-    getMyStats()
+    setStats(null);
+    setStatsError(null);
+    (user?.role === 'Reviewer' ? getReviewDashboard() : getMyStats())
       .then((data) => {
         if (active) setStats(data);
       })
@@ -475,7 +483,7 @@ function ProfileSidebar({ user }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [user?.role]);
 
   const displayStatus = user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động';
   const joinedAt = user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—';
@@ -506,18 +514,19 @@ function ProfileSidebar({ user }) {
         {!statsError && !stats && <p className="side-note">Đang tải...</p>}
         {stats && (
           <ul className="info-list">
-            <li>
-              <span className="info-list-label">Tài liệu đã tải lên</span>
-              <span>{stats.documents_count}</span>
-            </li>
-            <li>
-              <span className="info-list-label">Câu hỏi đã tạo</span>
-              <span>{stats.questions_count}</span>
-            </li>
-            <li>
-              <span className="info-list-label">Câu hỏi chờ duyệt</span>
-              <span>{stats.pending_questions_count}</span>
-            </li>
+            {user?.role === 'Reviewer' ? (
+              <>
+                <li><span className="info-list-label">Lượt duyệt trong 30 ngày</span><span>{stats.performance?.reviews_30d || 0}</span></li>
+                <li><span className="info-list-label">Câu đang được giao</span><span>{stats.workload?.mine || 0}</span></li>
+                <li><span className="info-list-label">Thời gian duyệt trung bình</span><span>{reviewDurationLabel(stats.performance?.average_review_hours) || 'Chưa đủ dữ liệu'}</span></li>
+              </>
+            ) : (
+              <>
+                <li><span className="info-list-label">Tài liệu đã tải lên</span><span>{stats.documents_count}</span></li>
+                <li><span className="info-list-label">Câu hỏi đã tạo</span><span>{stats.questions_count}</span></li>
+                <li><span className="info-list-label">Câu hỏi chờ duyệt</span><span>{stats.pending_questions_count}</span></li>
+              </>
+            )}
           </ul>
         )}
       </div>

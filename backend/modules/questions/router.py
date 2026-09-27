@@ -7,7 +7,8 @@ from fastapi.responses import FileResponse
 from core.config import settings
 from core.dependencies import (
     CurrentUser,
-    require_teacher_or_admin,
+    require_bank_sharing,
+    require_question_author,
     require_teacher_reviewer_or_admin,
 )
 from modules.questions.schemas import (
@@ -20,7 +21,10 @@ from modules.questions.schemas import (
     QuestionUpdateRequest,
 )
 from modules.questions.service import QuestionService, get_question_service
-from modules.notifications.service import safe_notify_question_resubmitted
+from modules.notifications.service import (
+    safe_notify_exam_owners_question_reopened,
+    safe_notify_question_resubmitted,
+)
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
     get_workflow_service,
@@ -52,6 +56,8 @@ def list_questions(
     creator_user_id: str | None = Query(None),
     waiting_hours_min: float | None = Query(None, ge=0),
     overdue_only: bool = Query(False),
+    sla_breached_only: bool = Query(False),
+    override_only: bool = Query(False),
     created_from: datetime | None = Query(None),
     created_to: datetime | None = Query(None),
     submitted_from: datetime | None = Query(None),
@@ -85,6 +91,8 @@ def list_questions(
             creator_user_id=creator_user_id,
             waiting_hours_min=waiting_hours_min,
             overdue_only=overdue_only,
+            sla_breached_only=sla_breached_only,
+            override_only=override_only,
             created_from=created_from,
             created_to=created_to,
             submitted_from=submitted_from,
@@ -102,7 +110,7 @@ def list_questions(
 @router.post("", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
 def create_question(
     payload: QuestionCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -142,7 +150,7 @@ def get_question(
 )
 def duplicate_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -218,8 +226,9 @@ def get_question_source_pdf(
 def update_question(
     question_id: str,
     payload: QuestionUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
+    workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
         question = service.update(
@@ -239,6 +248,14 @@ def update_question(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not question:
         raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
+    # The edit created a new version, so open exams pinned to the old one can
+    # no longer be finalized until it is reviewed and re-selected.
+    safe_notify_exam_owners_question_reopened(
+        database=workflow_service.db,
+        question_id=question_id,
+        question_code=question.get("question_code") or "Câu hỏi",
+        actor_user_id=current_user.id,
+    )
     return question
 
 
@@ -246,7 +263,7 @@ def update_question(
 def update_question_sharing(
     question_id: str,
     payload: QuestionSharingRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_bank_sharing),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -263,7 +280,7 @@ def update_question_sharing(
 @router.post("/{question_id}/submit-review", response_model=QuestionResponse)
 def submit_question_for_review(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
@@ -326,7 +343,7 @@ def submit_question_for_review(
 @router.delete("/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:

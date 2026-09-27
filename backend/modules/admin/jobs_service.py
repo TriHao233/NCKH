@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from bson import ObjectId
@@ -19,6 +19,7 @@ from modules.questions.workflow_service import QuestionWorkflowService
 
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
 RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "BLOCKED", "failed"}
+LEGACY_ADMIN_CANCEL_PATTERN = "^Cancelled by admin "
 
 
 def utc_now() -> datetime:
@@ -198,19 +199,31 @@ class AdminJobService:
 
         subject_ids = set()
         doc_subject_map = {}
+        # Nhãn đối tượng là chính tài liệu/câu hỏi; học phần hiển thị kèm ở subject_label.
+        entity_labels = {}
         if document_ids:
-            for doc in self.db.documents.find({"_id": {"$in": document_ids}}, {"subject_id": 1}):
+            for doc in self.db.documents.find({"_id": {"$in": document_ids}}, {"subject_id": 1, "title": 1, "original_filename": 1}):
+                entity_labels[("document", str(doc["_id"]))] = doc.get("title") or doc.get("original_filename")
                 if doc.get("subject_id"):
                     subject_ids.add(doc["subject_id"])
                     doc_subject_map[str(doc["_id"])] = doc["subject_id"]
 
         question_subject_map = {}
         if question_ids:
+            questions = getattr(self.db, "questions", None)
+            for question in (questions.find({"_id": {"$in": question_ids}}, {"question_code": 1}) if questions is not None else []):
+                entity_labels[("question", str(question["_id"]))] = question.get("question_code")
             for qv in self.db.question_versions.find({"question_id": {"$in": question_ids}}, {"question_id": 1, "classification.subject.id": 1}):
                 subj_id = (qv.get("classification") or {}).get("subject", {}).get("id")
                 if subj_id:
                     subject_ids.add(subj_id)
                     question_subject_map[str(qv["question_id"])] = subj_id
+
+        for job in jobs:
+            entity = job.get('entity', {})
+            label = entity_labels.get((entity.get('type'), str(entity.get('id'))))
+            if label:
+                entity['label'] = label
 
         if subject_ids:
             subjects_map = {
@@ -225,7 +238,7 @@ class AdminJobService:
                 elif entity.get('type') == 'question' and entity.get('id'):
                     subj_id = question_subject_map.get(str(entity['id']))
                 if subj_id and str(subj_id) in subjects_map:
-                    entity['label'] = subjects_map[str(subj_id)]
+                    entity['subject_label'] = subjects_map[str(subj_id)]
 
         if stale_only:
             jobs = [job for job in jobs if job["is_long_running"]]
@@ -375,8 +388,15 @@ class AdminJobService:
     def _evaluation_query(self, status, user_oid, date_from, date_to) -> dict:
         query: dict = {}
         status_filter = _uppercase_status_filter(status)
-        if status_filter is not None:
+        if status_filter == "CANCELLED":
+            query["$or"] = [
+                {"status": "CANCELLED"},
+                {"status": "STALE", "error.message": {"$regex": LEGACY_ADMIN_CANCEL_PATTERN}},
+            ]
+        elif status_filter is not None:
             query["status"] = status_filter
+            if status_filter == "STALE" or (isinstance(status_filter, dict) and "STALE" in status_filter.get("$in", [])):
+                query["$nor"] = [{"status": "STALE", "error.message": {"$regex": LEGACY_ADMIN_CANCEL_PATTERN}}]
         if user_oid:
             query["requested_by_user_id"] = user_oid
         self._apply_date_query(query, "updated_at", date_from, date_to)
@@ -442,6 +462,8 @@ class AdminJobService:
 
     def _normalize_evaluation(self, job: dict) -> dict:
         status = job.get("status", "")
+        if status == "STALE" and (_error_message(job.get("error")) or "").startswith("Cancelled by admin "):
+            status = "CANCELLED"
         updated_at = _job_time(job)
         return {
             "kind": "evaluation",
@@ -582,6 +604,13 @@ class AdminJobService:
         question = self.db.questions.find_one({"_id": job.get("question_id")})
         if not question:
             raise LookupError("Không tìm thấy câu hỏi của job")
+        already_active = {
+            str(item["_id"])
+            for item in self.db.evaluation_jobs.find(
+                {"question_id": question["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                {"_id": 1},
+            )
+        }
         queued = QuestionWorkflowService(self.db).enqueue_auto_evaluation(
             str(question["_id"]),
             expected_version=question["current_version"],
@@ -592,8 +621,11 @@ class AdminJobService:
             fallback_model_snapshot=job.get("fallback_model_snapshot"),
             fallback_to_heuristic=bool(job.get("fallback_to_heuristic")),
         )
-        self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
-        return {"job": json_safe(queued)}
+        # Bấm chạy lại khi đã có lượt đang chờ thì chỉ trả về lượt đó, không ghi nhật ký lặp.
+        already_queued = str(queued.get("_id")) in already_active
+        if not already_queued:
+            self._audit(current_user, "admin.job_retry", "evaluation", job_id, {"new_job_id": queued.get("_id")})
+        return {"job": json_safe(queued), "already_queued": already_queued}
 
     def _retry_document(
         self,
@@ -634,9 +666,10 @@ class AdminJobService:
             {"_id": _parse_object_id(job_id, "job_id"), "status": {"$in": ["QUEUED", "PROCESSING"]}},
             {
                 "$set": {
-                    "status": "STALE",
+                    "status": "CANCELLED",
                     "error": error,
                     "finished_at": now,
+                    "expires_at": now + timedelta(days=settings.job_retention_days),
                     "updated_at": now,
                 }
             },
@@ -649,7 +682,10 @@ class AdminJobService:
                 "_id": result.get("question_id"),
                 "quality_summary.latest_evaluation_job_id": result["_id"],
             },
-            {"$set": {"evaluation_status": "STALE", "quality_summary.error": error, "updated_at": now}},
+            {
+                "$set": {"evaluation_status": "NOT_STARTED", "quality_summary.error": error, "updated_at": now},
+                "$unset": {"quality_summary.overall_score": "", "quality_summary.color": "", "quality_summary.latest_evaluation_id": ""},
+            },
         )
         self._audit(current_user, "admin.job_cancel", "evaluation", job_id)
         return {"job": json_safe(result)}

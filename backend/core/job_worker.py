@@ -8,6 +8,7 @@ from core.config import settings
 from core.database import get_database
 
 logger = logging.getLogger(__name__)
+SLA_FIRST_CHECK_DELAY_SECONDS = 60.0
 
 
 def get_worker_id() -> str:
@@ -75,12 +76,20 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
     """
     from modules.generation.generate import process_generate_background
     from modules.generation.mongodb import get_next_queued_generation_job_id
-    from modules.questions.workflow_service import process_evaluation_job_background
+    from modules.questions.workflow_service import (
+        get_workflow_service,
+        process_evaluation_job_background,
+    )
+
+    def send_review_sla_reminders() -> int:
+        return get_workflow_service().send_review_sla_reminders()
 
     worker_id = get_worker_id()
     logger.info("Mongo job worker started: %s", worker_id)
     generation_tasks: dict[str, tuple[str, asyncio.Task]] = {}
     evaluation_task: asyncio.Task | None = None
+    # First SLA pass runs shortly after start-up, not before the first job poll.
+    next_sla_check = asyncio.get_running_loop().time() + SLA_FIRST_CHECK_DELAY_SECONDS
 
     async def finish_task(task: asyncio.Task, label: str) -> None:
         try:
@@ -136,6 +145,16 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
                         )
             except Exception:
                 logger.exception("Mongo job worker iteration failed")
+
+            loop_time = asyncio.get_running_loop().time()
+            if loop_time >= next_sla_check:
+                next_sla_check = loop_time + max(60.0, settings.review_sla_reminder_interval_seconds)
+                try:
+                    reminded = await asyncio.to_thread(send_review_sla_reminders)
+                    if reminded:
+                        logger.info("Sent review SLA reminders for %s question(s)", reminded)
+                except Exception:
+                    logger.exception("Review SLA reminder pass failed")
 
             try:
                 await asyncio.wait_for(

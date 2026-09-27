@@ -208,16 +208,23 @@ Các CRUD endpoint:
 Thiết kế dữ liệu chi tiết xem tại [`DATABASE_DESIGN_V2.md`](DATABASE_DESIGN_V2.md).
 # Chạy Docker
 
-Trên PowerShell, chạy lệnh sau để build và khởi động dự án với đầu ra gọn:
+Trên PowerShell, chạy lệnh sau để build và khởi động backend, worker, MongoDB và frontend dev:
 
 ```powershell
-.\start-docker.ps1
+docker compose up -d --build
 ```
 
-Sau khi thành công, mở `http://localhost`.
+Sau khi thành công, mở `http://localhost:5177`. Backend chạy tại `http://localhost:8000`.
+MongoDB được publish tại cổng `27018` trên máy host; có thể đổi bằng `MONGO_HOST_PORT`.
 
 Chỉ khởi động lại container, không build image:
 
 ```powershell
-.\start-docker.ps1 -NoBuild
+docker compose up -d
+```
+
+Máy có NVIDIA GPU và NVIDIA Container Toolkit có thể chạy với cấu hình GPU:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml up -d --build
 ```

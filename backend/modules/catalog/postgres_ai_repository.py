@@ -102,7 +102,7 @@ class PostgresAiRepository:
                        {"active_version_id": target["id"], "version": version})
         return self.model(code)
 
-    def save_model(self, payload, *, actor_id=None) -> dict:
+    def save_model(self, payload, *, actor_id=None, create: bool | None = None) -> dict:
         values = payload.model_dump()
         code = values["model_code"]
         config = values["config"]
@@ -120,6 +120,10 @@ class PostgresAiRepository:
                 existing = conn.execute(
                         "SELECT id, active_version_id FROM ai_models WHERE model_code = %s FOR UPDATE", (code,)
                 ).fetchone()
+                if create is True and existing:
+                    raise FileExistsError("Mã mô hình đã tồn tại")
+                if create is False and not existing:
+                    raise LookupError("Không tìm thấy mô hình")
                 model_id = existing["id"] if existing else str(ObjectId())
                 if not existing:
                     conn.execute("""

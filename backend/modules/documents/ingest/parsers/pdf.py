@@ -315,6 +315,7 @@ def _append_docling_structured_blocks(
     *,
     page_number: int,
     confidence: float,
+    extractor: str = "docling",
 ) -> None:
     page_asset_ids = set(unit.asset_ids)
     page_assets = [
@@ -355,7 +356,7 @@ def _append_docling_structured_blocks(
                         page_number=page_number,
                         source_location={"page_number": page_number, "coord_origin": coord_origin},
                         bbox=bbox,
-                        extractor="docling",
+                        extractor=extractor,
                         extraction_method="pdf_page_region_reference",
                         confidence=confidence,
                         raw_ref=f"{context.source_uri}#page={page_number}&bbox={','.join(map(str, bbox))}",
@@ -402,7 +403,7 @@ def _append_docling_structured_blocks(
             )
             matching.validation_notes = [] if matching.validation_status == "passed" else ["layout block has no source bbox"]
             matching.transformation_log.append(
-                {"operation": "docling_layout_enrichment", "semantic_change": False}
+                {"operation": f"{extractor}_layout_enrichment", "semantic_change": False}
             )
             if len(page_assets) == 1 and block_type == "caption":
                 _link_source_caption(page_assets[0], content)
@@ -414,12 +415,12 @@ def _append_docling_structured_blocks(
             review_notes.append("visual-to-asset link is ambiguous")
         block = make_block(
             context,
-            location_key=f"pdf:{page_number}:docling:{len(unit.content_blocks)}",
+            location_key=f"pdf:{page_number}:{extractor}:{len(unit.content_blocks)}",
             index=len(unit.content_blocks),
             block_type=block_type,
             content=content,
             source_location={"page_number": page_number},
-            extractor="docling",
+            extractor=extractor,
             extraction_method="page_selective_layout",
             page_number=page_number,
             confidence=confidence,
@@ -772,6 +773,11 @@ class PdfParser(DocumentParser):
                             "layout_quality": {**text_quality_metrics(ocr_text), "score": score},
                             "status": "passed",
                         }
+                    )
+                if result.get("structured_blocks"):
+                    _append_docling_structured_blocks(
+                        units[page_number - 1], result, context, assets,
+                        page_number=page_number, confidence=score, extractor="easyocr",
                     )
 
         _normalize_layout_blocks(units)

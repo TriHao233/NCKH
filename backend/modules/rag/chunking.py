@@ -16,7 +16,7 @@ from pymongo import ReturnDocument
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.ingest.quality import validate_chunks
 from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.documents.service import DocumentService, get_document_service
@@ -25,6 +25,7 @@ from modules.dictionary.mongodb import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import (
     embedding_config_hash,
+    embedding_config_matches,
     embedding_config_snapshot,
     embedding_token_lengths,
     embedding_token_offsets,
@@ -79,7 +80,7 @@ DEFINITION_PATTERN = re.compile(r"\b(định nghĩa|khái niệm|là gì)\b", re
 async def chunk_document(
     req: DocumentChunkRequest,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     document_service: DocumentService = Depends(get_document_service),
 ):
     doc = get_document_record(req.document_id)
@@ -200,7 +201,7 @@ def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, st
         {"provider": "CHROMA", "collection_name": resolved_collection, "is_active": True},
         sort=[("created_at", -1)],
     )
-    if record and record.get("embedding_config_hash") != current_config_hash:
+    if record and not embedding_config_matches(record.get("embedding_model") or {}, record.get("embedding_config_hash")):
         raise ValueError("Vector collection name collision for a different embedding configuration")
     if record:
         return record, resolved_collection

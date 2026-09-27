@@ -15,7 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.concurrency import run_in_threadpool
 
 from core.config import resolve_path, settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.service import DocumentService, get_document_service
 from modules.documents.retention import deduplicate_artifact_file
 from modules.documents.ingest.base import UnsupportedDocumentError
@@ -279,13 +279,17 @@ async def queue_document_upload(
         raise HTTPException(status_code=400, detail="Dung lượng tối đa 50 MB")
 
     title = Path(safe_filename).stem.replace("_", " ")
-    document_id = create_document_record(
-        filename=safe_filename,
-        title=title,
-        uploaded_by_user_id=current_user.id,
-        subject_id=subject_id,
-        chapter_id=chapter_id,
-    )
+    try:
+        document_id = create_document_record(
+            filename=safe_filename,
+            title=title,
+            uploaded_by_user_id=current_user.id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
+        )
+    except ValueError as exc:
+        file.file.close()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = create_ocr_job(document_id, config={"source_format": upload_type["source_format"]})
     upload_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
     output_path = _OUTPUT_DIR / f"{document_id}_{job_id}_result.md"
@@ -357,7 +361,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
     subject_id: str | None = Form(None),
     chapter_id: str | None = Form(None),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
 ):
     return await queue_pdf_ocr_upload(
         background_tasks,
@@ -371,7 +375,7 @@ async def upload_pdf(
 @router.get("/status/{job_id}", summary="Get OCR job status")
 def check_job_status(
     job_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     document_service: DocumentService = Depends(get_document_service),
 ):
     try:

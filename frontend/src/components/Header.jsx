@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faBars, faBell, faCheckDouble, faRightToBracket, faXmark } from '@fortawesome/free-solid-svg-icons';
@@ -13,6 +13,15 @@ import {
 import UserProfileMenu from './UserProfileMenu'; 
 import './Header.css';
 
+// Khớp breakpoint menu gọn trong Header.css.
+const MOBILE_NAV_BREAKPOINT = 1120;
+
+function isNavItemActive(link, pathname) {
+  if ((link.exclude || []).some((path) => pathname === path || pathname.startsWith(`${path}/`))) return false;
+  const paths = link.matches || [link.path];
+  return paths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
 const Header = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -25,6 +34,7 @@ const Header = () => {
   const signedIn = Boolean(user);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [navCompact, setNavCompact] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -140,7 +150,8 @@ const Header = () => {
       id: 'reviewer',
       label: 'Người duyệt',
       items: [
-        { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+        { path: '/kiem-duyet', label: 'Hộp việc', exclude: ['/kiem-duyet/hieu-suat'] },
+        { path: '/kiem-duyet/hieu-suat', label: 'Hiệu suất' },
       ],
     },
     {
@@ -159,15 +170,17 @@ const Header = () => {
   const adminNavGroup = {
     id: 'admin',
     label: 'Quản trị',
+    // Theo thứ tự pipeline; mỗi mục một tên duy nhất dùng thống nhất ở mọi nơi.
     items: [
       { path: '/tong-quan', label: 'Tổng quan' },
+      { path: '/kiem-duyet', label: 'Kiểm duyệt', exclude: ['/kiem-duyet/hieu-suat'] },
+      { path: '/kiem-duyet/hieu-suat', label: 'Hiệu suất duyệt' },
       { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
-      { path: '/quan-ly', label: 'Câu hỏi' },
-      { path: '/duyet-ai', label: 'Thẩm định AI' },
-      { path: '/lam-de-thi', label: 'Đề thi' },
-      { path: '/nhat-ky-he-thong', label: 'Lịch sử' },
-      { path: '/quan-ly-job', label: 'Thống kê' },
+      { path: '/danh-muc', label: 'Học phần' },
+      { path: '/cau-hinh-ai', label: 'Cấu hình AI' },
+      { path: '/quan-ly-job', label: 'Tác vụ' },
       { path: '/quan-ly-moodle', label: 'Moodle' },
+      { path: '/nhat-ky-he-thong', label: 'Nhật ký' },
     ],
   };
   const roleNavGroups = role === 'Admin' ? [adminNavGroup] : navGroups;
@@ -188,6 +201,35 @@ const Header = () => {
     setMobileNavOpen(false);
   }, [location.pathname, role, signedIn]);
 
+  // Chuyển sang menu gọn khi các mục điều hướng không đủ chỗ (ví dụ menu Quản trị nhiều mục),
+  // thay vì để chuông/tài khoản đè lên hoặc giấu mục cuối trong vùng cuộn ngang.
+  const navKey = visibleNavGroups.map((group) => group.items.map((item) => item.path).join(',')).join('|');
+  useLayoutEffect(() => {
+    const nav = navMenuRef.current;
+    const container = nav?.parentElement;
+    if (!nav || !container) return undefined;
+    const check = () => {
+      if (window.innerWidth <= MOBILE_NAV_BREAKPOINT) {
+        setNavCompact(false);
+        return;
+      }
+      // Ở chế độ gọn, nút menu chiếm thêm chỗ bên phải; cộng lại để so như bố cục đầy đủ.
+      const toggle = container.querySelector('.mobile-nav-toggle');
+      const toggleSpace = toggle?.offsetWidth
+        ? toggle.offsetWidth + (parseFloat(getComputedStyle(toggle.parentElement).columnGap) || 0)
+        : 0;
+      setNavCompact(nav.scrollWidth > nav.clientWidth + toggleSpace + 1);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(container);
+    window.addEventListener('resize', check);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', check);
+    };
+  }, [navKey]);
+
   useEffect(() => {
     if (!mobileNavOpen) return undefined;
     const handleKeyDown = (event) => {
@@ -198,7 +240,7 @@ const Header = () => {
   }, [mobileNavOpen]);
 
   return (
-    <header className="navbar" id="navbar">
+    <header className={`navbar ${navCompact ? 'navbar--compact' : ''}`} id="navbar">
       <div className="nav-container">
         <div className="nav-brand">
           <Link to="/" className="nav-brand-link">
@@ -214,7 +256,7 @@ const Header = () => {
           </div>
         </div>
 
-        <nav className="nav-menu" aria-label="Điều hướng chính" ref={navMenuRef}>
+        <nav className="nav-menu" aria-label="Điều hướng chính" aria-hidden={navCompact || undefined} ref={navMenuRef}>
           {visibleNavGroups.map((group) => (
             <div
               key={group.id}
@@ -223,13 +265,13 @@ const Header = () => {
               {showSectionLabels && <span className="nav-section-label">{group.label}</span>}
               <div className="nav-section-links">
                 {group.items.map((link) => {
-                  const isActive = location.pathname === link.path
-                    || location.pathname.startsWith(`${link.path}/`);
+                  const isActive = isNavItemActive(link, location.pathname);
                   return (
                     <Link
                       key={link.path}
                       to={link.path}
                       className={`nav-link ${isActive ? 'nav-link--active' : ''}`}
+                      aria-current={isActive ? 'page' : undefined}
                     >
                       {link.label}
                     </Link>
@@ -327,8 +369,7 @@ const Header = () => {
                 <span className="mobile-nav-section-label">{group.label}</span>
                 <div className="mobile-nav-links">
                   {group.items.map((link) => {
-                    const isActive = location.pathname === link.path
-                      || location.pathname.startsWith(`${link.path}/`);
+                    const isActive = isNavItemActive(link, location.pathname);
                     return (
                       <Link
                         key={link.path}

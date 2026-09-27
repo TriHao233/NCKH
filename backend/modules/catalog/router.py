@@ -86,7 +86,7 @@ def list_subjects(
 @router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def create_subject(
     payload: SubjectPayload,
-    user: CurrentUser = Depends(require_permissions("catalog.subjects.manage_own")),
+    user: CurrentUser = Depends(require_subject_manager),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
@@ -196,22 +196,40 @@ def list_available_ai_models(
 
 
 @router.post("/ai-models", status_code=status.HTTP_201_CREATED)
-def upsert_ai_model(
+def create_ai_model(
     payload: AiModelPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.upsert_ai_model(payload, actor_id=_admin.id)
+    try:
+        return service.save_ai_model(payload, create=True, viewer=admin)
+    except Exception as exc:
+        _translate(exc)
+
+
+@router.put("/ai-models/{model_code}")
+def update_ai_model(
+    model_code: str,
+    payload: AiModelPayload,
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    if model_code.strip().lower() != payload.model_code:
+        raise HTTPException(status_code=400, detail="Mã mô hình không khớp")
+    try:
+        return service.save_ai_model(payload, create=False, viewer=admin)
+    except Exception as exc:
+        _translate(exc)
 
 
 @router.post("/ai-models/active")
 def set_ai_model_active(
     payload: AiModelActivationPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.set_ai_model_active(payload, actor_id=_admin.id)
+        return service.set_ai_model_active(payload, viewer=admin)
     except Exception as exc:
         _translate(exc)
 
@@ -260,20 +278,20 @@ def list_prompt_templates(
 @router.post("/prompt-templates", status_code=status.HTTP_201_CREATED)
 def save_prompt_template(
     payload: PromptTemplatePayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.save_prompt_template(payload, actor_id=_admin.id)
+    return service.save_prompt_template(payload, viewer=admin)
 
 
 @router.post("/prompt-templates/active")
 def activate_prompt_template(
     payload: PromptTemplateActivationPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.activate_prompt_template(payload, actor_id=_admin.id)
+        return service.activate_prompt_template(payload, viewer=admin)
     except Exception as exc:
         _translate(exc)
 
@@ -301,19 +319,19 @@ def list_evaluation_policies(
 @router.post("/evaluation-policies", status_code=status.HTTP_201_CREATED)
 def save_evaluation_policy(
     payload: EvaluationPolicyPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    return service.save_evaluation_policy(payload, actor_id=_admin.id)
+    return service.save_evaluation_policy(payload, viewer=admin)
 
 
 @router.post("/evaluation-policies/active")
 def activate_evaluation_policy(
     payload: EvaluationPolicyActivationPayload,
-    _admin: CurrentUser = Depends(require_permissions("admin.catalog")),
+    admin: CurrentUser = Depends(require_permissions("admin.catalog")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:
-        return service.activate_evaluation_policy(payload, actor_id=_admin.id)
+        return service.activate_evaluation_policy(payload, viewer=admin)
     except Exception as exc:
         _translate(exc)

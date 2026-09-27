@@ -111,6 +111,11 @@ class ReviewCreateRequest(BaseModel):
     review_form: StructuredReviewForm = Field(default_factory=StructuredReviewForm)
     secondary_required: bool = False
     secondary_reason: str = Field("", max_length=500)
+    # Set by list-level bulk approval: the checklist was not filled per item,
+    # so these reviews are kept out of human-vs-AI calibration.
+    bulk: bool = False
+    # Quản trị viên tự duyệt câu do chính mình tạo/sửa phải ghi lý do (được lưu và ghi nhật ký).
+    self_review_reason: str = Field("", max_length=500)
 
     @model_validator(mode="after")
     def require_structured_reason(self):
@@ -140,6 +145,26 @@ class SecondaryReviewRequest(BaseModel):
 class ReviewAssignmentRequest(BaseModel):
     reviewer_user_id: str | None = Field(None, min_length=1, max_length=120)
     note: str = Field("", max_length=500)
+
+
+class AutoAssignRequest(BaseModel):
+    # Restrict the run to these questions; empty means every open question.
+    question_ids: list[str] = Field(default_factory=list, max_length=500)
+    limit: int = Field(100, ge=1, le=500)
+    max_load_per_reviewer: int = Field(20, ge=1, le=500)
+    # "prefer": specialists first, reviewers without subjects as fallback.
+    # "strict": only reviewers whose review_subject_ids cover the question.
+    subject_mode: Literal["prefer", "strict"] = "prefer"
+    include_admins: bool = False
+
+
+class ReviewPolicyPayload(BaseModel):
+    """Rules that force a second review on approval, set by Admin."""
+
+    secondary_on_override: bool = False
+    # Approvals of questions whose AI overall score is below this need a second reviewer.
+    secondary_below_score: float | None = Field(None, ge=0, le=1)
+    secondary_subject_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
 class MoodlePublicationRequest(BaseModel):

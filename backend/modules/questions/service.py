@@ -10,7 +10,7 @@ from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
 from core.audit import record_audit_event
-from core.config import resolve_path
+from core.config import resolve_path, settings
 from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
 from modules.questions.repository import (
@@ -139,10 +139,12 @@ class QuestionService:
 
     @staticmethod
     def _can_review_all(current_user: CurrentUser) -> bool:
-        return current_user.role in {"Admin", "Reviewer"} or has_permission(current_user, "reviews.manage")
+        return has_permission(current_user, "reviews.manage")
 
     @staticmethod
     def _is_shared_question(question: dict, current_user: CurrentUser) -> bool:
+        if not has_permission(current_user, "questions.use_shared_bank"):
+            return False
         shared_with = set(question.get("shared_with_user_ids") or [])
         return current_user.id in shared_with or question.get("shared_scope") == "SUBJECT"
 
@@ -154,6 +156,8 @@ class QuestionService:
             return True
         if document.get("uploaded_by_user_id") == current_user.id:
             return True
+        if not has_permission(current_user, "questions.use_shared_bank"):
+            return False
         shared_with = set(document.get("shared_with_user_ids") or [])
         return current_user.id in shared_with or document.get("shared_scope") == "SUBJECT"
 
@@ -659,6 +663,8 @@ class QuestionService:
         creator_user_id: str | None = None,
         waiting_hours_min: float | None = None,
         overdue_only: bool = False,
+        sla_breached_only: bool = False,
+        override_only: bool = False,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         submitted_from: datetime | None = None,
@@ -710,6 +716,9 @@ class QuestionService:
                 raise ValueError("waiting_hours_min không hợp lệ")
             waiting_since = utc_now() - timedelta(hours=waiting_hours_min)
         overdue_at = utc_now() if overdue_only else None
+        if sla_breached_only:
+            sla_cutoff = utc_now() - timedelta(hours=max(1, settings.review_sla_hours))
+            submitted_to = min(submitted_to, sla_cutoff) if submitted_to else sla_cutoff
 
         list_result = self.repository.list(
             page,
@@ -733,6 +742,7 @@ class QuestionService:
             visible_to_user_id=owner_user_id,
             waiting_since=waiting_since,
             overdue_at=overdue_at,
+            override_only=override_only,
             created_from=created_from,
             created_to=created_to,
             submitted_from=submitted_from,
@@ -847,6 +857,17 @@ class QuestionService:
                     source_warnings.append("Nội dung chunk đã thay đổi so với snapshot câu hỏi")
 
             page_numbers = _source_page_numbers(source, chunk)
+            if (
+                not page_numbers
+                and source.get("source_type") == "MANUAL_EXCERPT"
+                and document
+                and current_ocr_job_id
+            ):
+                page_numbers = self.references.find_excerpt_pages(
+                    document["_id"],
+                    current_ocr_job_id,
+                    source.get("context_excerpt") or "",
+                )
             page_records = []
             if document and current_ocr_job_id:
                 page_records = self.references.find_pages(
@@ -881,7 +902,9 @@ class QuestionService:
                     "chunk_content_hash": source_hash,
                     "current_content_hash": current_hash,
                     "content_hash_matches": content_hash_matches,
-                    "page_range": (chunk or {}).get("page_range") or {},
+                    "page_range": (chunk or {}).get("page_range") or source.get("page_range") or (
+                        {"pages": page_numbers} if page_numbers else {}
+                    ),
                     "heading": (chunk or {}).get("heading") or {},
                     "content_type": (chunk or {}).get("content_type"),
                     "semantic_type": (chunk or {}).get("semantic_type"),

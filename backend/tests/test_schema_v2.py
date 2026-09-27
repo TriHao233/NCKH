@@ -17,7 +17,16 @@ from pydantic import ValidationError
 from main import app
 from core.bootstrap import SCHEMA_VERSION, VALIDATORS
 from core.config import settings
-from core.dependencies import CurrentUser, effective_permissions, require_permissions
+from core.dependencies import (
+    ALL_PERMISSIONS,
+    CurrentUser,
+    effective_permissions,
+    permission_overrides,
+    require_admin,
+    require_exam_manager,
+    require_permissions,
+    require_reviewer_or_admin,
+)
 from core import job_recovery
 from modules.admin import jobs_service as admin_jobs_module
 from modules.admin.jobs_service import (
@@ -32,12 +41,16 @@ from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.admin.overview_service import AdminOverviewService
 from modules.catalog.schemas import (
     AiModelActivationPayload,
+    AiModelPayload,
     ChapterPayload,
     ChapterUpdatePayload,
     EvaluationPolicyActivationPayload,
+    EvaluationPolicyPayload,
     LearningOutcomePayload,
     LearningOutcomeUpdatePayload,
     PromptTemplateActivationPayload,
+    PromptTemplatePayload,
+    PromptTemplateTestPayload,
     SubjectPayload,
     SubjectUpdatePayload,
 )
@@ -78,9 +91,10 @@ from modules.questions.schemas import (
 )
 from modules.questions import repository as question_repository_module
 from modules.questions import router as question_router_module
-from modules.questions.repository import MongoQuestionRepository
+from modules.questions.repository import MongoQuestionRepository, serialize_question
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
+    AutoAssignRequest,
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     EvaluationScores,
@@ -90,6 +104,7 @@ from modules.questions.workflow_schemas import (
     ReviewCreateRequest,
     ReviewDraftUpsertRequest,
     ReviewOverride,
+    ReviewPolicyPayload,
     SecondaryReviewRequest,
 )
 from modules.questions import workflow_service as question_workflow_module
@@ -114,7 +129,7 @@ def _current_user(role="Teacher", user_id=None, permissions=None):
         email=f"{role.lower()}@example.com",
         role=role,
         is_active=True,
-        permissions=tuple(permissions or ()),
+        permissions=tuple(effective_permissions({"role": role}) if permissions is None else permissions),
         display_name=f"{role} User",
     )
 
@@ -224,6 +239,61 @@ class FakeExamQuestionRepository:
         return pairs[start:start + page_size], total
 
 
+def _pending_question_pair(code, subject_id, submitted_at, author, now, **extra):
+    """A pending question aggregate and its version, ready for review workflow tests."""
+    question_id, version_id = ObjectId(), ObjectId()
+    return (
+        {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": code,
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "PENDING",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {},
+            "latest_review_id": None,
+            "subject_id": subject_id,
+            "created_by_user_id": author,
+            "review_assignment": {"status": "UNASSIGNED", "lock_expires_at": None},
+            "review_submission": {"submitted_at": submitted_at},
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+            **extra,
+        },
+        {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": author,
+            "generated_by_model_id": None,
+            "classification": {
+                "subject": {"id": subject_id},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 1},
+                "difficulty": None,
+            },
+            "clos": [],
+            "content": code,
+            "question_data": {"options": {"A": "x"}, "correct_answer": "A"},
+            "sources": [],
+            "keywords": [],
+            "content_hash": f"hash-{code}",
+            "change_note": "",
+            "created_at": now,
+        },
+    )
+
+
 def _user_doc(role="Admin", is_active=True):
     now = datetime.now(timezone.utc)
     oid = ObjectId()
@@ -250,6 +320,12 @@ class FakeUserRepository:
     def find_by_firebase_uid(self, firebase_uid):
         return next(
             (user for user in self.users.values() if user.get("firebase_uid") == firebase_uid),
+            None,
+        )
+
+    def find_by_email(self, email):
+        return next(
+            (user for user in self.users.values() if str(user.get("email", "")).lower() == email.lower()),
             None,
         )
 
@@ -368,11 +444,18 @@ def _matches_query(record, query):
             if not all(_matches_query(record, item) for item in expected):
                 return False
             continue
+        if key == "$nor":
+            if any(_matches_query(record, item) for item in expected):
+                return False
+            continue
         values = _path_values(record, key)
         if isinstance(expected, dict):
             for operator, operand in expected.items():
                 if operator == "$in":
                     if not any(value in operand for value in values):
+                        return False
+                elif operator == "$nin":
+                    if any(value in operand for value in values):
                         return False
                 elif operator == "$ne":
                     if any(value == operand for value in values):
@@ -458,6 +541,14 @@ class InMemoryCollection:
                 item[field_key] = value
                 return
 
+    @staticmethod
+    def _unset_path(record, path):
+        current = record
+        parts = path.split(".")
+        for part in parts[:-1]:
+            current = current.get(part, {})
+        current.pop(parts[-1], None)
+
     def insert_one(self, record, *_args, **_kwargs):
         item = dict(record)
         self.records.append(item)
@@ -488,10 +579,12 @@ class InMemoryCollection:
     def update_one(self, filter_query, update, *, upsert=False, **_kwargs):
         matched = 0
         modified = 0
+        upserted_id = None
         record = self.find_one(filter_query)
         if record is None and upsert:
             record = dict(update.get("$setOnInsert") or {})
             self.records.append(record)
+            upserted_id = record.get("_id")
             matched = 1
             modified = 1
         elif record is not None:
@@ -502,6 +595,9 @@ class InMemoryCollection:
             for path, value in (update.get("$set") or {}).items():
                 self._set_path(record, path, value, filter_query)
                 changed = True
+            for path in (update.get("$unset") or {}):
+                self._unset_path(record, path)
+                changed = True
             for path, value in (update.get("$push") or {}).items():
                 record.setdefault(path, []).append(value)
                 changed = True
@@ -511,7 +607,7 @@ class InMemoryCollection:
         return type(
             "Result",
             (),
-            {"matched_count": matched, "modified_count": modified},
+            {"matched_count": matched, "modified_count": modified, "upserted_id": upserted_id},
         )()
 
     def update_many(self, filter_query, update, **_kwargs):
@@ -524,6 +620,9 @@ class InMemoryCollection:
             changed = False
             for path, value in (update.get("$set") or {}).items():
                 self._set_path(record, path, value, filter_query)
+                changed = True
+            for path in (update.get("$unset") or {}):
+                self._unset_path(record, path)
                 changed = True
             for path, value in (update.get("$push") or {}).items():
                 record.setdefault(path, []).append(value)
@@ -559,20 +658,48 @@ class FakeCatalogDatabase:
         self.ai_models = InMemoryCollection(ai_models)
         self.prompt_templates = InMemoryCollection(prompt_templates)
         self.evaluation_policies = InMemoryCollection(evaluation_policies)
+        self.audit_logs = InMemoryCollection()
 
 
 class SchemaV2Tests(unittest.TestCase):
     def test_only_admin_teacher_and_reviewer_roles_exist(self):
         self.assertEqual({role.value for role in RoleEnum}, {"Admin", "Teacher", "Reviewer"})
 
-    def test_require_permissions_allows_explicit_permission_without_admin_role(self):
-        permissions = effective_permissions({"role": "Teacher", "permissions": ["admin.users"]})
-        user_admin = _current_user("Teacher", permissions=permissions)
-
-        self.assertIs(require_permissions("admin.users")(user_admin), user_admin)
+    def test_admin_permissions_belong_only_to_admin_role(self):
+        # Dữ liệu cũ từng cấp quyền quản trị cho giảng viên: không còn hiệu lực.
+        legacy_teacher = effective_permissions({"role": "Teacher", "permissions": ["admin.users"]})
+        self.assertNotIn("admin.users", legacy_teacher)
+        teacher = _current_user("Teacher", permissions=legacy_teacher)
         with self.assertRaises(HTTPException) as ctx:
-            require_permissions("admin.catalog")(user_admin)
+            require_permissions("admin.users")(teacher)
         self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("Quản lý người dùng", ctx.exception.detail)
+
+        with self.assertRaisesRegex(ValueError, "Quản trị viên"):
+            permission_overrides("Reviewer", ["reviews.manage", "admin.overview"])
+
+        self.assertEqual(set(effective_permissions({"role": "Admin"})), set(ALL_PERMISSIONS))
+        self.assertEqual(
+            set(effective_permissions({"role": "Admin", "permission_revokes": ["admin.users"]})),
+            set(ALL_PERMISSIONS),
+        )
+
+    def test_permission_overrides_grant_and_revoke_relative_to_role(self):
+        overrides = permission_overrides("Reviewer", ["questions.export_moodle", "exams.manage_own"])
+        self.assertEqual(overrides, {"permission_grants": ["exams.manage_own"], "permission_revokes": ["reviews.manage"]})
+        permissions = set(effective_permissions({"role": "Reviewer", **overrides}))
+        self.assertEqual(permissions, {"questions.export_moodle", "exams.manage_own"})
+
+        reviewer = _current_user("Reviewer", permissions=tuple(permissions))
+        with self.assertRaises(HTTPException):
+            require_reviewer_or_admin(reviewer)
+        self.assertIs(require_exam_manager(reviewer), reviewer)
+
+    def test_role_guards_do_not_infer_roles_from_permissions(self):
+        teacher_with_review = _current_user("Teacher", permissions=("reviews.manage",))
+        self.assertIs(require_reviewer_or_admin(teacher_with_review), teacher_with_review)
+        with self.assertRaises(HTTPException):
+            require_admin(teacher_with_review)
 
     def test_public_register_cannot_choose_role(self):
         with self.assertRaises(ValidationError):
@@ -930,6 +1057,44 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn("Nguồn không còn thuộc chunk set hiện hành", result["items"][0]["warnings"])
         self.assertEqual(result["items"][0]["pages"][0]["page_number"], 2)
         self.assertEqual(references.page_query, (document_id, ocr_job_id, [2, 3]))
+
+    def test_manual_excerpt_source_viewer_resolves_ocr_page(self):
+        question_id = ObjectId()
+        document_id = ObjectId()
+        ocr_job_id = ObjectId()
+        question = {"_id": question_id, "question_code": "Q-EXCERPT"}
+        version = {
+            "_id": ObjectId(),
+            "version": 1,
+            "document_id": document_id,
+            "sources": [{"source_type": "MANUAL_EXCERPT", "context_excerpt": "Bình B3 là trung gian."}],
+        }
+        document = {
+            "_id": document_id,
+            "title": "Giáo trình",
+            "original_filename": "giaotrinh.pdf",
+            "current_processing": {"ocr_job_id": ocr_job_id},
+            "artifacts": [],
+        }
+
+        class PairRepository:
+            def find_pair(self, _question_id):
+                return question, version
+
+        class References:
+            def find_document(self, _document_id):
+                return document
+
+            def find_excerpt_pages(self, _document_id, _ocr_job_id, _text):
+                return [5]
+
+            def find_pages(self, _document_id, _ocr_job_id, page_numbers):
+                assert page_numbers == [5]
+                return [{"page_number": 5, "cleaned_text": "Bình B3 là trung gian."}]
+
+        result = QuestionService(PairRepository(), References()).source_viewer(str(question_id))
+        self.assertEqual(result["items"][0]["page_range"]["pages"], [5])
+        self.assertEqual(result["items"][0]["pages"][0]["page_number"], 5)
 
     def test_submit_for_review_moves_draft_or_revision_to_pending(self):
         teacher = _current_user("Teacher")
@@ -1483,6 +1648,7 @@ class SchemaV2Tests(unittest.TestCase):
                     ]
                 )
                 self.question_reviews = InMemoryCollection()
+                self.evaluation_jobs = InMemoryCollection()
                 self.audit_logs = InMemoryCollection()
                 self.notifications = InMemoryCollection()
 
@@ -1607,6 +1773,7 @@ class SchemaV2Tests(unittest.TestCase):
                     ]
                 )
                 self.question_reviews = InMemoryCollection()
+                self.evaluation_jobs = InMemoryCollection()
                 self.question_comments = InMemoryCollection()
                 self.audit_logs = InMemoryCollection()
                 self.notifications = InMemoryCollection()
@@ -1629,14 +1796,8 @@ class SchemaV2Tests(unittest.TestCase):
                 reviewer,
             )
             after_primary = dict(db.questions.find_one({"_id": question_id}))
-            service.claim_review(str(question_id), reviewer)
-            with self.assertRaises(ValueError):
-                service.review(
-                    str(question_id),
-                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
-                    reviewer,
-                )
-            service.release_review(str(question_id), reviewer)
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), reviewer)
             service.claim_review(str(question_id), second_reviewer)
             secondary = service.review(
                 str(question_id),
@@ -1664,6 +1825,1014 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(final_question["secondary_review"]["status"], "COMPLETED")
         self.assertEqual(comment["body"], "Nhờ giảng viên xem thêm ghi chú này")
         self.assertEqual(db.notifications.records[-1]["type"], "QUESTION_MENTION")
+
+    def _review_guard_fixture(self, *, author, users, **question_fields):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": author.id,
+            "generated_by_model_id": None,
+            "classification": {
+                "subject": {"id": None},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 2},
+                "difficulty": None,
+            },
+            "clos": [],
+            "content": "Which structure is LIFO?",
+            "question_data": {"options": {"A": "Stack", "B": "Queue"}, "correct_answer": "A"},
+            "sources": [],
+            "keywords": [],
+            "content_hash": "hash-review-guard",
+            "change_note": "Initial version",
+            "created_at": now,
+        }
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-GUARD",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "PENDING",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {"overall_score": 0.9, "color": "GREEN"},
+            "review_assignment": {"status": "UNASSIGNED"},
+            "latest_review_id": None,
+            "created_by_user_id": author.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+            **question_fields,
+        }
+
+        class FakeWorkflowDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([question])
+                self.question_versions = InMemoryCollection([version])
+                self.users = InMemoryCollection(
+                    [{"_id": user.id, "role": user.role, "is_active": True} for user in users]
+                )
+                self.question_reviews = InMemoryCollection()
+                self.evaluation_jobs = InMemoryCollection()
+                self.question_comments = InMemoryCollection()
+                self.audit_logs = InMemoryCollection()
+                self.notifications = InMemoryCollection()
+
+        return FakeWorkflowDatabase(), question_id, version_id
+
+    def _with_workflow_service(self, db, callback):
+        original_transaction = question_workflow_module.mongo_transaction
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            return callback(QuestionWorkflowService(db))
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+
+    def test_admin_assignment_reserves_question_beyond_interactive_lock(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        other_reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer, other_reviewer],
+        )
+
+        def scenario(service):
+            before = datetime.now(timezone.utc)
+            assigned = service.assign_review(
+                str(question_id),
+                ReviewAssignmentRequest(reviewer_user_id=str(reviewer.id)),
+                admin,
+            )
+            stored = db.questions.find_one({"_id": question_id})["review_assignment"]
+            expires_at = stored["lock_expires_at"]
+            self.assertGreaterEqual(
+                expires_at,
+                before + timedelta(hours=settings.review_assignment_timeout_hours) - timedelta(seconds=5),
+            )
+            # Well past the 30-minute interactive lock, the assignee still owns it.
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), other_reviewer)
+            # Once the assignment window lapses, anyone may pick it up.
+            stored["lock_expires_at"] = before - timedelta(minutes=1)
+            claimed = service.claim_review(str(question_id), other_reviewer)
+            return assigned, claimed
+
+        assigned, claimed = self._with_workflow_service(db, scenario)
+        self.assertEqual(assigned["review_assignment"]["status"], "ASSIGNED")
+        self.assertEqual(claimed["review_assignment"]["reviewer_user_id"], str(other_reviewer.id))
+
+    def test_review_lock_renewal_is_limited_to_current_holder(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        other_reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer, other_reviewer],
+        )
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            stored = db.questions.find_one({"_id": question_id})["review_assignment"]
+            stored["lock_expires_at"] = datetime.now(timezone.utc) - timedelta(minutes=1)
+            with self.assertRaises(PermissionError):
+                service.renew_review(str(question_id), other_reviewer)
+            renewed = service.renew_review(str(question_id), reviewer)
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            return renewed, review
+
+        renewed, review = self._with_workflow_service(db, scenario)
+        self.assertEqual(renewed["review_assignment"]["status"], "IN_REVIEW")
+        self.assertEqual(review["decision"], "APPROVED")
+
+    def test_reopening_approved_question_keeps_primary_reviewer_out_of_secondary(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        second_reviewer = _current_user("Reviewer")
+        db, question_id, version_id = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer, second_reviewer],
+        )
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            # A reviewer cannot silently un-approve a question.
+            with self.assertRaises(PermissionError):
+                service.set_secondary_review(
+                    str(question_id),
+                    SecondaryReviewRequest(required=True, reason="Xem lại"),
+                    reviewer,
+                )
+            reopened = service.set_secondary_review(
+                str(question_id),
+                SecondaryReviewRequest(required=True, reason="Câu thi cuối kỳ"),
+                admin,
+            )
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), reviewer)
+            service.claim_review(str(question_id), second_reviewer)
+            secondary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                second_reviewer,
+            )
+            return reopened, secondary
+
+        reopened, secondary = self._with_workflow_service(db, scenario)
+        self.assertEqual(reopened["review_status"], "PENDING")
+        self.assertEqual(reopened["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(reopened["secondary_review"]["primary_reviewer_user_id"], str(reviewer.id))
+        self.assertEqual(secondary["review_stage"], "SECONDARY")
+        final_question = db.questions.find_one({"_id": question_id})
+        self.assertEqual(final_question["review_status"], "APPROVED")
+        self.assertEqual(final_question["approved_version_id"], version_id)
+        self.assertEqual(final_question["secondary_review"]["status"], "COMPLETED")
+
+    def test_secondary_review_requested_before_primary_approval(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        second_reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer, second_reviewer],
+        )
+
+        def scenario(service):
+            requested = service.set_secondary_review(
+                str(question_id),
+                SecondaryReviewRequest(
+                    required=True,
+                    reason="Câu khó",
+                    reviewer_user_id=str(second_reviewer.id),
+                ),
+                admin,
+            )
+            service.claim_review(str(question_id), reviewer)
+            primary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            after_primary = dict(db.questions.find_one({"_id": question_id}))
+            service.claim_review(str(question_id), second_reviewer)
+            secondary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                second_reviewer,
+            )
+            return requested, primary, after_primary, secondary
+
+        requested, primary, after_primary, secondary = self._with_workflow_service(db, scenario)
+        self.assertEqual(requested["secondary_review"]["status"], "REQUESTED")
+        self.assertEqual(requested["review_assignment"]["status"], "UNASSIGNED")
+        self.assertEqual(primary["resulting_status"], "PENDING")
+        self.assertEqual(after_primary["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(after_primary["secondary_review"]["primary_reviewer_user_id"], reviewer.id)
+        self.assertEqual(after_primary["review_assignment"]["status"], "ASSIGNED")
+        self.assertEqual(after_primary["review_assignment"]["reviewer_user_id"], second_reviewer.id)
+        self.assertIn(
+            second_reviewer.id,
+            [
+                item["recipient_user_id"]
+                for item in db.notifications.records
+                if item["type"] == "QUESTION_REVIEW_ASSIGNED"
+            ],
+        )
+        self.assertEqual(secondary["review_stage"], "SECONDARY")
+        self.assertEqual(db.questions.find_one({"_id": question_id})["review_status"], "APPROVED")
+
+    def test_authors_cannot_review_their_own_questions(self):
+        admin = _current_user("Admin")
+        reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(author=admin, users=[admin, reviewer])
+
+        def admin_scenario(service):
+            with self.assertRaises(PermissionError):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    admin,
+                )
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    override={"applied": True, "reason": "Không còn người duyệt khác"},
+                ),
+                admin,
+            )
+
+        review = self._with_workflow_service(db, admin_scenario)
+        self.assertTrue(review["override"]["applied"])
+
+        # Cách mới: Admin tự duyệt bằng lý do riêng, không bị tính là "duyệt khác AI".
+        db, question_id, _ = self._review_guard_fixture(author=admin, users=[admin, reviewer])
+        review = self._with_workflow_service(
+            db,
+            lambda service: service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    self_review_reason="Không còn người duyệt khác phụ trách học phần",
+                ),
+                admin,
+            ),
+        )
+        self.assertFalse(review["override"]["applied"])
+        self.assertEqual(review["self_review_reason"], "Không còn người duyệt khác phụ trách học phần")
+        self.assertEqual(db.audit_logs.records[-1]["metadata"]["self_review_reason"], review["self_review_reason"])
+
+        teacher = _current_user("Teacher")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer],
+        )
+        db.question_versions.records[0]["created_by_user_id"] = reviewer.id
+
+        def reviewer_scenario(service):
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), reviewer)
+            with self.assertRaises(ValueError):
+                service.assign_review(
+                    str(question_id),
+                    ReviewAssignmentRequest(reviewer_user_id=str(reviewer.id)),
+                    admin,
+                )
+
+        self._with_workflow_service(db, reviewer_scenario)
+
+    def test_reviewer_decides_without_override_when_ai_has_no_verdict(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+
+        def approve(service, question_id, **fields):
+            service.claim_review(str(question_id), reviewer)
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED", **fields),
+                reviewer,
+            )
+
+        for status in ("NOT_STARTED", "ERROR", "STALE", "INSUFFICIENT_EVIDENCE"):
+            db, question_id, _ = self._review_guard_fixture(
+                author=teacher,
+                users=[teacher, reviewer],
+                evaluation_status=status,
+            )
+            review = self._with_workflow_service(db, lambda service: approve(service, question_id))
+            self.assertFalse(review["override"]["applied"], status)
+            self.assertEqual(review["resulting_status"], "APPROVED", status)
+
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer],
+            evaluation_status="FAILED",
+        )
+
+        def failed_scenario(service):
+            with self.assertRaisesRegex(ValueError, "override"):
+                approve(service, question_id)
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    override={"applied": True, "reason": "Đã đối chiếu nguồn"},
+                ),
+                reviewer,
+            )
+
+        review = self._with_workflow_service(db, failed_scenario)
+        self.assertTrue(review["override"]["applied"])
+
+    def test_reviewer_decision_interrupts_running_ai_evaluation(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        db, question_id, version_id = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer],
+            evaluation_status="PROCESSING",
+        )
+        job_id = ObjectId()
+        db.evaluation_jobs = InMemoryCollection(
+            [
+                {
+                    "_id": job_id,
+                    "question_id": question_id,
+                    "question_version_id": version_id,
+                    "status": "PROCESSING",
+                    "locked_by": "worker-1",
+                }
+            ]
+        )
+        db.question_evaluations = InMemoryCollection()
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            # Worker trả kết quả sau khi người duyệt đã chốt: kết quả bị bỏ.
+            with self.assertRaises(question_workflow_module.EvaluationInterruptedError):
+                service.evaluate(
+                    str(question_id),
+                    EvaluationCreateRequest(
+                        expected_version=1,
+                        scores=EvaluationScores(
+                            faithfulness=0.9,
+                            contextual_relevancy=0.9,
+                            answer_relevancy=0.9,
+                            bloom_alignment=0.9,
+                            clo_alignment=0.9,
+                        ),
+                        model_snapshot={"model_code": "test", "model_name": "Test"},
+                        policy_snapshot={
+                            "version": 1,
+                            "weights": {
+                                "faithfulness": 0.35,
+                                "contextual_relevancy": 0.20,
+                                "answer_relevancy": 0.15,
+                                "bloom_alignment": 0.15,
+                                "clo_alignment": 0.15,
+                            },
+                            "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+                        },
+                        evaluation_job_id=str(job_id),
+                    ),
+                    None,
+                    require_active_job=True,
+                )
+            return review
+
+        review = self._with_workflow_service(db, scenario)
+        self.assertFalse(review["override"]["applied"])
+        self.assertEqual(review["resulting_status"], "APPROVED")
+        job = db.evaluation_jobs.find_one({"_id": job_id})
+        self.assertEqual(job["status"], "CANCELLED")
+        self.assertEqual(job["error"]["stage"], "REVIEWER_DECIDED")
+        stored = db.questions.find_one({"_id": question_id})
+        self.assertEqual(stored["review_status"], "APPROVED")
+        self.assertEqual(stored["evaluation_status"], "NOT_STARTED")
+        self.assertEqual(db.question_evaluations.records, [])
+
+    def test_releasing_reviewer_work_returns_held_questions_to_queue(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer],
+        )
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            return service.release_assignments_for_reviewer(reviewer.id, admin, "reviewer_deactivated")
+
+        released = self._with_workflow_service(db, scenario)
+        self.assertEqual(released, 1)
+        assignment = db.questions.find_one({"_id": question_id})["review_assignment"]
+        self.assertEqual(assignment["status"], "UNASSIGNED")
+        self.assertEqual(assignment["release_reason"], "reviewer_deactivated")
+        self.assertEqual(db.audit_logs.records[-1]["action"], "QUESTION_REVIEW_RELEASED")
+
+    def test_admin_dashboard_breaks_down_reviewers_and_excludes_bulk_from_calibration(self):
+        now = datetime.now(timezone.utc)
+        admin = _current_user("Admin")
+        busy_reviewer = ObjectId()
+        idle_reviewer = ObjectId()
+        late = now - timedelta(hours=settings.review_sla_hours + 5)
+        base_question = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+        version_ids = [ObjectId() for _ in range(6)]
+        reviews = [
+            {
+                "_id": ObjectId(),
+                "question_version_id": version_id,
+                "reviewer_user_id": busy_reviewer,
+                "decision": "APPROVED",
+                "override": {"applied": index < 2},
+                "revision_issues": [],
+                "bulk": index == 5,
+                "reviewed_at": now - timedelta(days=1),
+            }
+            for index, version_id in enumerate(version_ids)
+        ]
+
+        class FakeDashboardDatabase:
+            def __init__(self):
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": admin.id, "role": "Admin", "is_active": True, "display_name": "Admin"},
+                        {"_id": busy_reviewer, "role": "Reviewer", "is_active": True, "display_name": "Bận"},
+                        {"_id": idle_reviewer, "role": "Reviewer", "is_active": True, "display_name": "Rảnh"},
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            **base_question,
+                            "_id": ObjectId(),
+                            "review_assignment": {"status": "IN_REVIEW", "reviewer_user_id": busy_reviewer},
+                            "review_submission": {"submitted_at": late},
+                        },
+                        {
+                            **base_question,
+                            "_id": ObjectId(),
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "review_submission": {"submitted_at": now - timedelta(hours=1)},
+                        },
+                    ]
+                )
+                self.question_reviews = InMemoryCollection(reviews)
+                # AI failed every version: only the non-bulk approvals count as disagreements.
+                self.question_evaluations = InMemoryCollection(
+                    [
+                        {"_id": ObjectId(), "question_version_id": version_id, "passed": False, "created_at": now}
+                        for version_id in version_ids
+                    ]
+                )
+                self.audit_logs = InMemoryCollection()
+                self.question_versions = InMemoryCollection()
+                self.subjects = InMemoryCollection()
+
+        dashboard = QuestionWorkflowService(FakeDashboardDatabase()).review_dashboard(admin)
+
+        self.assertEqual(dashboard["workload"]["sla_breached"], 1)
+        self.assertEqual(dashboard["workload"]["sla_hours"], settings.review_sla_hours)
+        self.assertEqual(dashboard["performance"]["reviews_30d"], 6)
+        self.assertEqual(dashboard["performance"]["bulk_count"], 1)
+        self.assertEqual(dashboard["calibration"]["sample_size"], 5)
+        rows = {row["user_id"]: row for row in dashboard["reviewers"]}
+        busy = rows[str(busy_reviewer)]
+        self.assertEqual(busy["reviews_30d"], 6)
+        self.assertEqual(busy["override_count"], 2)
+        self.assertEqual(busy["holding"], 1)
+        self.assertEqual(busy["holding_sla_breached"], 1)
+        self.assertEqual(busy["ai_sample_size"], 5)
+        self.assertEqual(busy["ai_agreement_rate"], 0.0)
+        self.assertEqual(busy["flags"], ["HIGH_OVERRIDE", "SLA_BREACHED", "NO_SUBJECTS"])
+        idle = rows[str(idle_reviewer)]
+        self.assertEqual(idle["reviews_30d"], 0)
+        self.assertEqual(idle["flags"], ["NO_SUBJECTS"])
+        self.assertEqual(dashboard["reviewers"][0]["user_id"], str(busy_reviewer))
+
+        reviewer_view = QuestionWorkflowService(FakeDashboardDatabase()).review_dashboard(
+            _current_user("Reviewer", busy_reviewer)
+        )
+        self.assertEqual(reviewer_view["reviewers"], [])
+
+    def test_review_sla_reminders_notify_assignee_or_admins_once_per_submission(self):
+        now = datetime.now(timezone.utc)
+        admin_id = ObjectId()
+        inactive_admin_id = ObjectId()
+        reviewer_id = ObjectId()
+        late = now - timedelta(hours=settings.review_sla_hours + 1)
+        base_question = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+            "current_version_id": ObjectId(),
+        }
+        assigned_id, unassigned_id, fresh_id = ObjectId(), ObjectId(), ObjectId()
+
+        class FakeReminderDatabase:
+            def __init__(self):
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": admin_id, "role": "Admin", "is_active": True},
+                        {"_id": inactive_admin_id, "role": "Admin", "is_active": False},
+                        {"_id": reviewer_id, "role": "Reviewer", "is_active": True},
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            **base_question,
+                            "_id": assigned_id,
+                            "question_code": "Q-LATE-1",
+                            "review_assignment": {"status": "ASSIGNED", "reviewer_user_id": reviewer_id},
+                            "review_submission": {"submitted_at": late},
+                        },
+                        {
+                            **base_question,
+                            "_id": unassigned_id,
+                            "question_code": "Q-LATE-2",
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "review_submission": {"submitted_at": late},
+                        },
+                        {
+                            **base_question,
+                            "_id": fresh_id,
+                            "question_code": "Q-FRESH",
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "review_submission": {"submitted_at": now},
+                        },
+                    ]
+                )
+                self.notifications = InMemoryCollection()
+
+        db = FakeReminderDatabase()
+        service = QuestionWorkflowService(db)
+
+        self.assertEqual(service.send_review_sla_reminders(now), 2)
+        self.assertEqual(
+            sorted((str(item["recipient_user_id"]), item["type"]) for item in db.notifications.records),
+            sorted(
+                [
+                    (str(reviewer_id), "QUESTION_REVIEW_SLA_BREACHED"),
+                    (str(admin_id), "QUESTION_REVIEW_SLA_BREACHED"),
+                ]
+            ),
+        )
+        self.assertEqual(service.send_review_sla_reminders(now), 0)
+
+        # A resubmission that is late again earns a fresh reminder.
+        db.questions.find_one({"_id": unassigned_id})["review_submission"]["submitted_at"] = late + timedelta(minutes=1)
+        self.assertEqual(service.send_review_sla_reminders(now), 1)
+        self.assertEqual(len(db.notifications.records), 3)
+
+    def test_auto_assign_prefers_subject_specialists_and_balances_load(self):
+        now = datetime.now(timezone.utc)
+        admin = _current_user("Admin")
+        teacher = ObjectId()
+        subject_ctdl, subject_mmt = ObjectId(), ObjectId()
+        specialist = ObjectId()  # CTDL only
+        generalist_a = ObjectId()  # any subject
+        generalist_b = ObjectId()  # any subject, but authored one question
+        inactive = ObjectId()
+
+        def question(code, subject_id, minutes_ago, *, author=teacher, **extra):
+            return _pending_question_pair(
+                code, subject_id, now - timedelta(minutes=minutes_ago), author, now, **extra
+            )
+
+        pairs = [
+            question("Q-CTDL-1", subject_ctdl, 50),
+            question("Q-CTDL-2", subject_ctdl, 40),
+            question("Q-MMT-1", subject_mmt, 30),
+            question("Q-MMT-OWN", subject_mmt, 20, author=generalist_b),
+            question(
+                "Q-HELD",
+                subject_mmt,
+                10,
+                review_assignment={
+                    "status": "IN_REVIEW",
+                    "reviewer_user_id": generalist_a,
+                    "lock_expires_at": now + timedelta(minutes=20),
+                },
+            ),
+        ]
+
+        class FakeAssignDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([item[0] for item in pairs])
+                self.question_versions = InMemoryCollection([item[1] for item in pairs])
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": specialist, "role": "Reviewer", "is_active": True, "display_name": "CTDL",
+                         "review_subject_ids": [subject_ctdl]},
+                        {"_id": generalist_a, "role": "Reviewer", "is_active": True, "display_name": "A"},
+                        {"_id": generalist_b, "role": "Reviewer", "is_active": True, "display_name": "B"},
+                        {"_id": inactive, "role": "Reviewer", "is_active": False, "display_name": "Off"},
+                    ]
+                )
+                self.audit_logs = InMemoryCollection()
+                self.notifications = InMemoryCollection()
+
+        db = FakeAssignDatabase()
+        result = QuestionWorkflowService(db).auto_assign_reviews(
+            AutoAssignRequest(max_load_per_reviewer=5),
+            admin,
+        )
+
+        by_code = {item["question_code"]: item["reviewer_user_id"] for item in result["assigned"]}
+        # Specialist takes every CTDL question even while carrying load.
+        self.assertEqual(by_code["Q-CTDL-1"], str(specialist))
+        self.assertEqual(by_code["Q-CTDL-2"], str(specialist))
+        # A already holds a live question, so the lighter generalist B gets MMT-1.
+        self.assertEqual(by_code["Q-MMT-1"], str(generalist_b))
+        # B authored this one, so it falls to A.
+        self.assertEqual(by_code["Q-MMT-OWN"], str(generalist_a))
+        self.assertNotIn("Q-HELD", by_code)
+        self.assertNotIn(str(inactive), by_code.values())
+        self.assertEqual(result["skipped"], [])
+        stored = db.questions.find_one({"question_code": "Q-CTDL-1"})["review_assignment"]
+        self.assertEqual(stored["status"], "ASSIGNED")
+        self.assertEqual(stored["reviewer_user_id"], specialist)
+
+        # Capacity caps stop assignment instead of overloading reviewers.
+        db = FakeAssignDatabase()
+        capped = QuestionWorkflowService(db).auto_assign_reviews(
+            AutoAssignRequest(max_load_per_reviewer=1),
+            admin,
+        )
+        self.assertEqual(
+            sorted(item["reason"] for item in capped["skipped"]),
+            ["NO_ELIGIBLE_REVIEWER"] * len(capped["skipped"]),
+        )
+        self.assertLessEqual(
+            max(
+                sum(1 for item in capped["assigned"] if item["reviewer_user_id"] == reviewer)
+                for reviewer in {item["reviewer_user_id"] for item in capped["assigned"]}
+            ),
+            1,
+        )
+
+    def test_auto_assign_strict_subject_mode_and_optional_admin_pool(self):
+        now = datetime.now(timezone.utc)
+        admin_user = _current_user("Admin")
+        teacher = ObjectId()
+        subject_ctdl, subject_mmt = ObjectId(), ObjectId()
+        admin_reviewer = ObjectId()  # created first, so it wins load ties
+        specialist = ObjectId()
+        generalist = ObjectId()
+        pairs = [
+            _pending_question_pair("Q-CTDL", subject_ctdl, now - timedelta(minutes=30), teacher, now),
+            _pending_question_pair("Q-MMT", subject_mmt, now - timedelta(minutes=20), teacher, now),
+            _pending_question_pair("Q-MMT-ADMIN", subject_mmt, now - timedelta(minutes=10), admin_reviewer, now),
+        ]
+
+        def database():
+            class FakeAssignDatabase:
+                questions = InMemoryCollection([item[0] for item in pairs])
+                question_versions = InMemoryCollection([item[1] for item in pairs])
+                users = InMemoryCollection(
+                    [
+                        {"_id": admin_reviewer, "role": "Admin", "is_active": True, "display_name": "Admin"},
+                        {"_id": specialist, "role": "Reviewer", "is_active": True, "display_name": "CTDL",
+                         "review_subject_ids": [subject_ctdl]},
+                        {"_id": generalist, "role": "Reviewer", "is_active": True, "display_name": "Chung"},
+                    ]
+                )
+                audit_logs = InMemoryCollection()
+                notifications = InMemoryCollection()
+
+            return FakeAssignDatabase()
+
+        strict = QuestionWorkflowService(database()).auto_assign_reviews(
+            AutoAssignRequest(subject_mode="strict"),
+            admin_user,
+        )
+        self.assertEqual(
+            [(item["question_code"], item["reviewer_user_id"]) for item in strict["assigned"]],
+            [("Q-CTDL", str(specialist))],
+        )
+        self.assertEqual(
+            {item["question_code"]: item["reason"] for item in strict["skipped"]},
+            {"Q-MMT": "NO_SUBJECT_SPECIALIST", "Q-MMT-ADMIN": "NO_SUBJECT_SPECIALIST"},
+        )
+
+        with_admins = QuestionWorkflowService(database()).auto_assign_reviews(
+            AutoAssignRequest(include_admins=True),
+            admin_user,
+        )
+        by_code = {item["question_code"]: item["reviewer_user_id"] for item in with_admins["assigned"]}
+        self.assertEqual(by_code["Q-CTDL"], str(specialist))
+        self.assertEqual(by_code["Q-MMT"], str(admin_reviewer))
+        # The Admin authored this one, so it goes to the other generalist.
+        self.assertEqual(by_code["Q-MMT-ADMIN"], str(generalist))
+
+    def test_review_policy_forces_secondary_review_and_notifies_teacher(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer],
+        )
+        # Real Mongo upserts the _id from the equality filter; the in-memory fake needs it seeded.
+        db.review_settings = InMemoryCollection([{"_id": "review_policy"}])
+
+        def scenario(service):
+            policy = service.update_review_policy(
+                ReviewPolicyPayload(secondary_on_override=True, secondary_below_score=0.95),
+                admin,
+            )
+            service.claim_review(str(question_id), reviewer)
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    override={"applied": True, "reason": "Nguồn đủ, AI chấm sai"},
+                ),
+                reviewer,
+            )
+            return policy, review
+
+        policy, review = self._with_workflow_service(db, scenario)
+        self.assertTrue(policy["secondary_on_override"])
+        self.assertEqual(policy["secondary_below_score"], 0.95)
+        self.assertEqual(review["resulting_status"], "PENDING")
+        self.assertIn("override", review["secondary_reason"])
+        self.assertIn("dưới ngưỡng 0.95", review["secondary_reason"])
+        stored = db.questions.find_one({"_id": question_id})
+        self.assertEqual(stored["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(stored["secondary_review"]["primary_reviewer_user_id"], reviewer.id)
+        teacher_notes = [item for item in db.notifications.records if item["recipient_user_id"] == teacher.id]
+        self.assertEqual([item["type"] for item in teacher_notes], ["QUESTION_SECONDARY_REVIEW_PENDING"])
+        self.assertIn("REVIEW_POLICY_UPDATED", [event["action"] for event in db.audit_logs.records])
+
+    def test_score_policy_ignores_stale_score_without_valid_ai_verdict(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        # Người duyệt vừa dừng AI: câu "chưa đánh giá" nhưng còn điểm cũ trong quality_summary.
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer],
+            evaluation_status="NOT_STARTED",
+            quality_summary={"overall_score": 0.64, "color": "YELLOW"},
+        )
+        db.review_settings = InMemoryCollection([{"_id": "review_policy", "secondary_below_score": 0.7}])
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+
+        review = self._with_workflow_service(db, scenario)
+        self.assertEqual(review["resulting_status"], "APPROVED")
+        self.assertNotIn("dưới ngưỡng", review["secondary_reason"] or "")
+
+    def test_review_policy_exposes_configured_hold_durations(self):
+        teacher = _current_user("Teacher")
+        db, _question_id, _ = self._review_guard_fixture(author=teacher, users=[teacher])
+        db.review_settings = InMemoryCollection([])
+        policy = self._with_workflow_service(db, lambda service: service.get_review_policy())
+        self.assertEqual(policy["lock_timeout_minutes"], settings.review_lock_timeout_minutes)
+        self.assertEqual(policy["assignment_timeout_hours"], settings.review_assignment_timeout_hours)
+
+    def test_review_subject_suggestions_rank_reviewed_subjects(self):
+        now = datetime.now(timezone.utc)
+        reviewer_id = ObjectId()
+        subject_a, subject_b = ObjectId(), ObjectId()
+        versions = [ObjectId() for _ in range(4)]
+
+        class FakeSuggestionDatabase:
+            question_reviews = InMemoryCollection(
+                [
+                    {"_id": ObjectId(), "reviewer_user_id": reviewer_id, "question_version_id": version_id,
+                     "reviewed_at": now - timedelta(days=3)}
+                    for version_id in versions
+                ]
+                + [
+                    {"_id": ObjectId(), "reviewer_user_id": reviewer_id, "question_version_id": ObjectId(),
+                     "reviewed_at": now - timedelta(days=400)},
+                ]
+            )
+            question_versions = InMemoryCollection(
+                [
+                    {"_id": versions[0], "classification": {"subject": {"id": subject_a}}},
+                    {"_id": versions[1], "classification": {"subject": {"id": subject_a}}},
+                    {"_id": versions[2], "classification": {"subject": {"id": subject_a}}},
+                    {"_id": versions[3], "classification": {"subject": {"id": subject_b}}},
+                ]
+            )
+            subjects = InMemoryCollection(
+                [
+                    {"_id": subject_a, "subject_code": "CTDL", "subject_name": "Cấu trúc dữ liệu"},
+                    {"_id": subject_b, "subject_code": "MMT", "subject_name": "Mạng máy tính"},
+                ]
+            )
+
+        result = QuestionWorkflowService(FakeSuggestionDatabase()).suggest_review_subjects(str(reviewer_id))
+        self.assertEqual(
+            [(item["subject_code"], item["reviews"]) for item in result["items"]],
+            [("CTDL", 3), ("MMT", 1)],
+        )
+
+    def test_editing_question_notifies_owners_of_open_exams(self):
+        question_id = ObjectId()
+        editor = ObjectId()
+        owner = ObjectId()
+
+        class FakeExamDatabase:
+            exams = InMemoryCollection(
+                [
+                    {"_id": ObjectId(), "name": "Giữa kỳ", "status": "DRAFT", "created_by_user_id": owner,
+                     "questions": [{"question_id": question_id}]},
+                    {"_id": ObjectId(), "name": "Đã chốt", "status": "FINALIZED", "created_by_user_id": owner,
+                     "questions": [{"question_id": question_id}]},
+                    {"_id": ObjectId(), "name": "Của người sửa", "status": "READY", "created_by_user_id": editor,
+                     "questions": [{"question_id": question_id}]},
+                    {"_id": ObjectId(), "name": "Không liên quan", "status": "DRAFT", "created_by_user_id": owner,
+                     "questions": [{"question_id": ObjectId()}]},
+                ]
+            )
+            notifications = InMemoryCollection()
+
+        db = FakeExamDatabase()
+        created = NotificationService(db).notify_exam_owners_question_reopened(
+            question_id=question_id,
+            question_code="Q-EDIT",
+            actor_user_id=editor,
+        )
+        self.assertEqual(len(created), 1)
+        self.assertEqual(db.notifications.records[0]["recipient_user_id"], owner)
+        self.assertEqual(db.notifications.records[0]["type"], "EXAM_QUESTION_NEEDS_REVIEW")
+        self.assertIn("Giữa kỳ", db.notifications.records[0]["title"])
+
+    def test_question_repository_override_filter_uses_latest_review(self):
+        overridden = ObjectId()
+
+        class FakeQuestionsCollection:
+            def __init__(self):
+                self.pipelines = []
+
+            def aggregate(self, pipeline):
+                self.pipelines.append(pipeline)
+                return [{"items": [], "count": [{"total": 0}]}]
+
+        class FakeDatabase:
+            questions = FakeQuestionsCollection()
+            question_reviews = InMemoryCollection(
+                [
+                    {"_id": overridden, "override": {"applied": True}},
+                    {"_id": ObjectId(), "override": {"applied": False}},
+                ]
+            )
+
+        db = FakeDatabase()
+        MongoQuestionRepository(db).list(1, 10, "APPROVED", None, override_only=True)
+        self.assertEqual(db.questions.pipelines[0][0]["$match"]["latest_review_id"], {"$in": [overridden]})
+
+        # Never-assigned questions have no review_assignment.status; "UNASSIGNED" must include them.
+        MongoQuestionRepository(db).list(1, 10, "PENDING", None, assignment_status="UNASSIGNED")
+        self.assertEqual(
+            db.questions.pipelines[1][0]["$match"]["review_assignment.status"],
+            {"$in": ["UNASSIGNED", None]},
+        )
+
+    def test_audit_writers_share_one_canonical_shape(self):
+        from core import audit as audit_module
+
+        actor_id = ObjectId()
+        target_id = ObjectId()
+        db = type("FakeAuditDb", (), {"audit_logs": InMemoryCollection()})()
+        original_db = audit_module.get_rag_db
+        try:
+            audit_module.get_rag_db = lambda: db
+            audit_module.record_audit_event(
+                action="user.admin_update",
+                entity_type="user",
+                entity_id=str(target_id),
+                actor_user_id=str(actor_id),
+                actor_role="Admin",
+                before={"role": "Reviewer", "is_active": True},
+                after={"role": "Teacher", "is_active": True},
+            )
+        finally:
+            audit_module.get_rag_db = original_db
+        audit_module.write_audit_event(
+            db,
+            action="QUESTION_COMMENT_ADDED",
+            entity_type="QUESTION",
+            entity_id=target_id,
+            actor_user_id=actor_id,
+            actor_role="Reviewer",
+            metadata={"comment_id": "c1"},
+        )
+
+        flat_style, workflow_style = db.audit_logs.records
+        for event in (flat_style, workflow_style):
+            self.assertEqual(
+                set(event),
+                {"schema_version", "action", "actor", "entity", "changes", "before", "after",
+                 "before_hash", "after_hash", "metadata", "created_at"},
+            )
+            self.assertEqual(event["actor"]["user_id"], actor_id)
+            self.assertEqual(event["entity"]["id"], target_id)
+            self.assertNotIn("actor_user_id", event)
+        self.assertEqual(flat_style["entity"]["type"], "user")
+        self.assertEqual(workflow_style["entity"]["type"], "question")
+        # Flat-style callers get a field-level change list derived from before/after.
+        self.assertEqual(
+            flat_style["changes"],
+            [{"path": "role", "old_value": "Reviewer", "new_value": "Teacher"}],
+        )
+        self.assertEqual(flat_style["actor"]["role"], "Admin")
+
+    def test_admin_can_set_reviewer_subjects(self):
+        admin_doc = _user_doc("Admin", True)
+        reviewer_doc = _user_doc("Reviewer", True)
+        service = UserService(FakeUserRepository([admin_doc, reviewer_doc]), FakeIdentityGateway(), FakeSessions())
+        actor = _current_user("Admin", admin_doc["_id"])
+        subject_id = ObjectId()
+
+        updated = service.update_admin(
+            str(reviewer_doc["_id"]),
+            UserAdminUpdateRequest(review_subject_ids=[str(subject_id), str(subject_id)]),
+            actor,
+        )
+        self.assertEqual(updated["review_subject_ids"], [str(subject_id)])
+        with self.assertRaises(ValueError):
+            service.update_admin(
+                str(reviewer_doc["_id"]),
+                UserAdminUpdateRequest(review_subject_ids=["not-an-id"]),
+                actor,
+            )
+
+    def test_user_service_releases_reviewer_work_on_deactivate_and_role_change(self):
+        admin_doc = _user_doc("Admin", True)
+        reviewer_doc = _user_doc("Reviewer", True)
+        other_reviewer_doc = _user_doc("Reviewer", True)
+        calls = []
+        service = UserService(
+            FakeUserRepository([admin_doc, reviewer_doc, other_reviewer_doc]),
+            FakeIdentityGateway(),
+            FakeSessions(),
+            release_review_assignments=lambda user_id, actor, reason: calls.append((user_id, reason)) or 0,
+        )
+        actor = _current_user("Admin", admin_doc["_id"])
+
+        service.deactivate(str(reviewer_doc["_id"]), actor)
+        service.update_admin(
+            str(other_reviewer_doc["_id"]),
+            UserAdminUpdateRequest(role="Teacher"),
+            actor,
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                (reviewer_doc["_id"], "reviewer_deactivated"),
+                (other_reviewer_doc["_id"], "reviewer_role_removed"),
+            ],
+        )
 
     def test_auto_evaluation_requires_expected_version(self):
         with self.assertRaises(ValidationError):
@@ -4291,6 +5460,16 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(imported["created"], 1)
         self.assertEqual(imported["failed"], 0)
 
+        # Email đã có: báo lỗi dễ hiểu và không tạo tài khoản Firebase nào.
+        created_before = len(identity.created)
+        duplicate = service.import_users(
+            UserImportRequest(users=[{"email": "NEW.teacher@example.com", "display_name": "Dup", "role": "Teacher"}]),
+            admin,
+        )
+        self.assertEqual(duplicate["failed"], 1)
+        self.assertIn("đã có tài khoản", duplicate["items"][0]["error"])
+        self.assertEqual(len(identity.created), created_before)
+
     def test_user_admin_update_persists_fine_grained_permissions(self):
         teacher = _user_doc("Teacher", True)
         identity = FakeIdentityGateway()
@@ -4426,6 +5605,175 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(updated["learning_outcomes"][0]["target_weight"], 0.75)
         self.assertFalse(updated["learning_outcomes"][0]["is_active"])
 
+    def test_changing_code_of_subject_in_use_requires_confirmation(self):
+        subject_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        db = FakeCatalogDatabase(
+            subjects=[{
+                "_id": subject_id, "subject_code": "CTDL", "subject_name": "Cấu trúc dữ liệu",
+                "chapters": [], "learning_outcomes": [], "is_active": True,
+                "created_at": now, "updated_at": now,
+            }],
+            documents=[{"_id": ObjectId(), "subject_id": subject_id, "archived_at": None}],
+        )
+        service = CatalogService(db)
+        with self.assertRaisesRegex(ValueError, "xác nhận"):
+            service.update_subject(str(subject_id), SubjectUpdatePayload(subject_code="CTDL2"))
+        self.assertEqual(db.subjects.find_one({"_id": subject_id})["subject_code"], "CTDL")
+
+        # Giữ nguyên mã (chỉ đổi tên) không cần xác nhận.
+        service.update_subject(str(subject_id), SubjectUpdatePayload(subject_code="CTDL", subject_name="CTDL mới"))
+        updated = service.update_subject(
+            str(subject_id), SubjectUpdatePayload(subject_code="CTDL2", confirm_code_change=True)
+        )
+        self.assertEqual(updated["subject_code"], "CTDL2")
+
+    def test_legacy_question_without_submitter_falls_back_to_creator(self):
+        creator_id, question_id, version_id = ObjectId(), ObjectId(), ObjectId()
+        base = {
+            "_id": question_id, "question_code": "Q-OLD", "current_version": 1, "current_version_id": version_id,
+            "lifecycle_status": "ACTIVE", "evaluation_status": "NOT_STARTED", "publication_status": "NOT_PUBLISHED",
+            "created_by_user_id": creator_id, "review_submission": {},
+            "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+        }
+        version = {"_id": version_id, "question_id": question_id, "version": 1, "content": "x",
+                   "question_data": {}, "classification": {}, "created_by_user_id": creator_id,
+                   "content_hash": "hash-old", "created_at": datetime.now(timezone.utc)}
+        pending = serialize_question({**base, "review_status": "PENDING"}, version)
+        self.assertEqual(pending["submitted_by_user_id"], str(creator_id))
+        self.assertEqual(pending["author_user_ids"], [str(creator_id)])
+        draft = serialize_question({**base, "review_status": "DRAFT"}, version)
+        self.assertIsNone(draft["submitted_by_user_id"])
+
+    def test_ai_model_create_rejects_existing_code_without_overwriting(self):
+        db = FakeCatalogDatabase()
+        service = CatalogService(db)
+        payload = AiModelPayload(
+            model_code="qa-model", model_name="Original", runtime="OLLAMA",
+            capabilities=["QUESTION_GENERATION"],
+        )
+        created = service.save_ai_model(payload, create=True)
+        self.assertEqual(created["model_name"], "Original")
+
+        duplicate = payload.model_copy(update={"model_name": "Replacement"})
+        with self.assertRaisesRegex(ValueError, "Mã mô hình đã tồn tại"):
+            service.save_ai_model(duplicate, create=True)
+        self.assertEqual(db.ai_models.find_one({"model_code": "qa-model"})["model_name"], "Original")
+
+        updated = service.save_ai_model(duplicate, create=False)
+        self.assertEqual(updated["model_name"], "Replacement")
+        self.assertEqual(len(db.ai_models.records), 1)
+
+    def test_catalog_mutations_record_actor_and_field_changes(self):
+        db = FakeCatalogDatabase()
+        service = CatalogService(db)
+        admin = _current_user("Admin")
+        subject = service.create_subject(SubjectPayload(subject_code="CTDL", subject_name="Cấu trúc dữ liệu"), admin)
+        subject_id = subject["id"]
+        service.update_subject(subject_id, SubjectUpdatePayload(subject_name="CTDL mới"), admin)
+        chapter = service.add_chapter(subject_id, ChapterPayload(chapter_code="CH1", chapter_name="Ngăn xếp"), admin)
+        chapter_id = chapter["chapters"][0]["id"]
+        service.update_chapter(subject_id, chapter_id, ChapterUpdatePayload(chapter_name="Stack"), admin)
+        outcome = service.add_learning_outcome(subject_id, LearningOutcomePayload(clo_code="CLO1", description="Hiểu stack"), admin)
+        clo_id = outcome["learning_outcomes"][0]["id"]
+        service.update_learning_outcome(subject_id, clo_id, LearningOutcomeUpdatePayload(description="Hiểu queue"), admin)
+        service.deactivate_subject(subject_id, admin)
+
+        actions = [item["action"] for item in db.audit_logs.records]
+        self.assertEqual(actions, [
+            "catalog.subject_create", "catalog.subject_update", "catalog.chapter_create",
+            "catalog.chapter_update", "catalog.clo_create", "catalog.clo_update",
+            "catalog.subject_deactivate",
+        ])
+        changed = db.audit_logs.records[1]
+        self.assertEqual(changed["actor"]["user_id"], admin.id)
+        self.assertEqual(changed["before"]["subject_name"], "Cấu trúc dữ liệu")
+        self.assertEqual(changed["after"]["subject_name"], "CTDL mới")
+        self.assertEqual(db.audit_logs.records[3]["entity"]["id"], ObjectId(chapter_id))
+        self.assertEqual(db.audit_logs.records[5]["entity"]["id"], ObjectId(clo_id))
+
+    def test_ai_prompt_and_evaluation_policy_audit_tracks_versions_without_secrets(self):
+        db = FakeCatalogDatabase()
+        service = CatalogService(db)
+        admin = _current_user("Admin")
+        model = AiModelPayload(
+            model_code="qa-model", model_name="QA", runtime="OLLAMA",
+            capabilities=["QUESTION_GENERATION"], config={"api_key": "hidden-secret"},
+        )
+        service.save_ai_model(model, create=True, viewer=admin)
+        service.save_ai_model(model.model_copy(update={"model_name": "QA 2"}), create=False, viewer=admin)
+        service.set_ai_model_active(AiModelActivationPayload(model_code="qa-model", is_active=False), admin)
+        prompt = PromptTemplatePayload(template_key="system", kind="SYSTEM", name="System", prompt_body="private prompt")
+        service.save_prompt_template(prompt, admin)
+        service.save_prompt_template(prompt.model_copy(update={"prompt_body": "new private prompt"}), admin)
+        service.activate_prompt_template(PromptTemplateActivationPayload(template_key="system", version=1), admin)
+        policy = EvaluationPolicyPayload(
+            policy_name="QA", weights={"faithfulness": 1.0},
+            thresholds={"yellow_min": 0.5, "pass_min": 0.65, "green_min": 0.75},
+        )
+        service.save_evaluation_policy(policy, admin)
+        service.save_evaluation_policy(policy.model_copy(update={"weights": {"faithfulness": 0.8}}), admin)
+        service.activate_evaluation_policy(EvaluationPolicyActivationPayload(policy_name="QA", version=1), admin)
+
+        actions = [item["action"] for item in db.audit_logs.records]
+        for action in (
+            "catalog.ai_model_create", "catalog.ai_model_update", "catalog.ai_model_deactivate",
+            "catalog.prompt_create", "catalog.prompt_activate", "catalog.prompt_deactivate",
+            "catalog.evaluation_policy_create", "catalog.evaluation_policy_activate",
+            "catalog.evaluation_policy_deactivate",
+        ):
+            self.assertIn(action, actions)
+        serialized = str(db.audit_logs.records)
+        self.assertNotIn("hidden-secret", serialized)
+        self.assertNotIn("private prompt", serialized)
+        self.assertEqual(actions.count("catalog.prompt_deactivate"), 2)
+        self.assertEqual(actions.count("catalog.evaluation_policy_deactivate"), 2)
+
+    def test_prompt_preview_uses_selected_version(self):
+        db = FakeCatalogDatabase(prompt_templates=[
+            {
+                "_id": ObjectId(), "template_key": "system", "version": 1,
+                "prompt_body": "SELECTED_SYSTEM_V1", "is_active": False,
+            },
+            {
+                "_id": ObjectId(), "template_key": "system", "version": 2,
+                "prompt_body": "ACTIVE_SYSTEM_V2", "is_active": True,
+            },
+            {
+                "_id": ObjectId(), "template_key": "evaluation:question_quality", "version": 1,
+                "prompt_body": "SELECTED_EVALUATION", "is_active": True,
+            },
+        ])
+        service = CatalogService(db)
+        preview = service.test_prompt_template(PromptTemplateTestPayload(template_key="system", version=1))
+        self.assertIn("SELECTED_SYSTEM_V1", preview["rendered_prompt"])
+        self.assertNotIn("ACTIVE_SYSTEM_V2", preview["rendered_prompt"])
+        self.assertEqual(preview["effective_sources"]["system"], "selected")
+
+        evaluation = service.test_prompt_template(
+            PromptTemplateTestPayload(template_key="evaluation:question_quality", version=1)
+        )
+        self.assertEqual(evaluation["rendered_prompt"], "SELECTED_EVALUATION")
+        self.assertEqual(evaluation["preview_mode"], "template")
+
+    def test_evaluation_policy_rejects_out_of_order_thresholds(self):
+        weights = {"faithfulness": 1.0}
+        valid = {"yellow_min": 0.5, "pass_min": 0.65, "green_min": 0.75}
+        self.assertEqual(
+            EvaluationPolicyPayload(policy_name="QA", weights=weights, thresholds=valid).thresholds,
+            valid,
+        )
+        with self.assertRaises(ValidationError):
+            EvaluationPolicyPayload(
+                policy_name="QA", weights=weights,
+                thresholds={"yellow_min": 0.7, "pass_min": 0.65, "green_min": 0.75},
+            )
+        with self.assertRaises(ValidationError):
+            EvaluationPolicyPayload(
+                policy_name="QA", weights=weights,
+                thresholds={"yellow_min": 0.5, "pass_min": 0.8, "green_min": 0.75},
+            )
+
     def test_catalog_runtime_controls_prompt_policy_and_model_state(self):
         db = FakeCatalogDatabase(
             ai_models=[
@@ -4501,7 +5849,9 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertTrue(models[0]["factory_status"]["supported"])
         self.assertFalse(models[1]["factory_status"]["supported"])
         available = service.available_ai_models("QUESTION_GENERATION")
-        self.assertEqual([item["code"] for item in available["items"]], ["qwen"])
+        available_codes = [item["code"] for item in available["items"]]
+        self.assertIn("qwen", available_codes)
+        self.assertNotIn("unknown-provider", available_codes)
 
         model = service.set_ai_model_active(
             AiModelActivationPayload(model_code="qwen", is_active=False)
@@ -4566,7 +5916,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(_generation_status_filter("active"), {"$in": ["queued", "processing"]})
         self.assertEqual(_generation_status_filter("retryable"), {"$in": ["failed"]})
         self.assertEqual(_uppercase_status_filter("active"), {"$in": ["QUEUED", "PROCESSING"]})
-        self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE"]})
+        self.assertEqual(_uppercase_status_filter("retryable"), {"$in": ["FAILED", "ERROR", "STALE", "BLOCKED"]})
 
     def test_admin_audit_list_filters_legacy_and_nested_records(self):
         actor_id = ObjectId()
@@ -4788,7 +6138,11 @@ class SchemaV2Tests(unittest.TestCase):
                         {
                             "_id": question_id,
                             "evaluation_status": "PROCESSING",
-                            "quality_summary": {"latest_evaluation_job_id": evaluation_job_id},
+                            "quality_summary": {
+                                "latest_evaluation_job_id": evaluation_job_id,
+                                "overall_score": 0.64,
+                                "color": "YELLOW",
+                            },
                             "updated_at": now,
                         }
                     ]
@@ -4807,12 +6161,25 @@ class SchemaV2Tests(unittest.TestCase):
 
         self.assertEqual(generation_result["job"]["status"], "failed")
         self.assertIn("Cancelled by admin", generation_result["job"]["error_message"])
-        self.assertEqual(evaluation_result["job"]["status"], "STALE")
+        self.assertEqual(evaluation_result["job"]["status"], "CANCELLED")
         question = db.questions.find_one({"_id": question_id})
-        self.assertEqual(question["evaluation_status"], "STALE")
+        self.assertEqual(question["evaluation_status"], "NOT_STARTED")
+        self.assertNotIn("overall_score", question["quality_summary"])
+        self.assertNotIn("color", question["quality_summary"])
         self.assertIn("Cancelled by admin", question["quality_summary"]["error"]["message"])
         self.assertEqual([event["action"] for event in audit_events], ["admin.job_cancel", "admin.job_cancel"])
         self.assertEqual({event["entity_type"] for event in audit_events}, {"generation", "evaluation"})
+
+        legacy = {
+            "_id": ObjectId(), "status": "STALE",
+            "error": {"message": "Cancelled by admin old@qbankctu.edu.vn"},
+            "updated_at": now,
+        }
+        legacy_db = type("LegacyJobDatabase", (), {"evaluation_jobs": InMemoryCollection([legacy])})()
+        legacy_service = AdminJobService(legacy_db)
+        self.assertEqual(legacy_service._evaluation_jobs("CANCELLED", None)[0]["status"], "CANCELLED")
+        self.assertEqual(legacy_service._evaluation_jobs("STALE", None), [])
+        self.assertEqual(legacy_service._evaluation_jobs("retryable", None), [])
 
     def test_admin_job_retry_evaluation_queues_for_worker_and_audit(self):
         admin = _current_user("Admin")
@@ -4891,6 +6258,21 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(audit_events[0]["action"], "admin.job_retry")
         self.assertEqual(audit_events[0]["entity_type"], "evaluation")
         self.assertEqual(audit_events[0]["metadata"]["new_job_id"], queued_job_id)
+        self.assertFalse(result["already_queued"])
+
+        # Bấm chạy lại lần nữa khi lượt trước còn đang chờ: không tạo lượt mới, không ghi nhật ký lặp.
+        db.evaluation_jobs.insert_one(
+            {"_id": queued_job_id, "status": "QUEUED", "question_id": question_id, "updated_at": now}
+        )
+        try:
+            admin_jobs_module.QuestionWorkflowService = FakeWorkflowService
+            admin_jobs_module.record_audit_event = lambda **kwargs: audit_events.append(kwargs)
+            again = AdminJobService(db).retry_job("evaluation", str(job_id), background_tasks, admin)
+        finally:
+            admin_jobs_module.QuestionWorkflowService = original_workflow_service
+            admin_jobs_module.record_audit_event = original_audit
+        self.assertTrue(again["already_queued"])
+        self.assertEqual(len(audit_events), 1)
 
     def test_admin_overview_summarizes_operational_state(self):
         now = datetime.now(timezone.utc)
@@ -5581,6 +6963,7 @@ class SchemaV2Tests(unittest.TestCase):
                             "_id": review_id,
                             "question_id": question_id,
                             "reviewer_user_id": reviewer.id,
+                            "decision": "NEEDS_REVISION",
                             "reviewed_at": datetime.now(timezone.utc),
                         }
                     ]
@@ -5589,23 +6972,42 @@ class SchemaV2Tests(unittest.TestCase):
         db = FakeDatabase()
         service = NotificationService(db)
 
-        ignored = service.notify_question_resubmitted(
+        already_pending = service.notify_question_resubmitted(
+            question_id=question_id,
+            previous_review_status="PENDING",
+            actor_user_id=teacher.id,
+        )
+        # The usual path: the teacher edits (status becomes DRAFT) and then resubmits.
+        notifications = service.notify_question_resubmitted(
             question_id=question_id,
             previous_review_status="DRAFT",
             actor_user_id=teacher.id,
         )
-        notifications = service.notify_question_resubmitted(
-            question_id=question_id,
-            previous_review_status="NEEDS_REVISION",
-            actor_user_id=teacher.id,
-        )
 
-        self.assertEqual(ignored, [])
+        self.assertEqual(already_pending, [])
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0]["type"], "QUESTION_RESUBMITTED")
         self.assertEqual(notifications[0]["link"], f"/kiem-duyet?questionId={question_id}")
         self.assertEqual(notifications[0]["entity"]["version_id"], str(version_id))
         self.assertEqual(service.unread_count(reviewer), 1)
+
+        db.question_reviews.records[0]["decision"] = "REJECTED"
+        rejected = service.notify_question_resubmitted(
+            question_id=question_id,
+            previous_review_status="DRAFT",
+            actor_user_id=teacher.id,
+        )
+        self.assertIn("sau khi bị từ chối", rejected[0]["title"])
+
+        db.question_reviews.records[0]["decision"] = "APPROVED"
+        self.assertEqual(
+            service.notify_question_resubmitted(
+                question_id=question_id,
+                previous_review_status="DRAFT",
+                actor_user_id=teacher.id,
+            ),
+            [],
+        )
 
     def test_question_hash_is_order_independent(self):
         self.assertEqual(
@@ -5815,9 +7217,9 @@ class SchemaV2Tests(unittest.TestCase):
         prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "output_format.txt"
         output_format = prompt_path.read_text(encoding="utf-8")
 
-        self.assertIn("QUESTION_STRUCTURE", output_format)
-        self.assertIn('"options": "object hoặc null theo QUESTION_STRUCTURE"', output_format)
-        self.assertIn('"difficulty": "de | trung_binh | kho"', output_format)
+        self.assertIn("`questions`", output_format)
+        self.assertIn("`options`", output_format)
+        self.assertIn("`difficulty` chỉ là `de`, `trung_binh` hoặc `kho`", output_format)
 
     def test_difficulty_rule_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
@@ -5827,11 +7229,11 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("QUY ĐỊNH ĐỘ KHÓ ƯỚC LƯỢNG", prompt)
         self.assertIn("de", prompt)
         self.assertIn("trung_binh", prompt)
         self.assertIn("kho", prompt)
-        self.assertIn("KEYWORD TRONG CÂU HỎI", prompt)
+        self.assertIn("Độ dài hay từ khóa chỉ là tín hiệu phụ", prompt)
 
     def test_normalize_difficulty_accepts_known_labels(self):
         self.assertEqual(_normalize_difficulty("de"), "de")
@@ -5863,7 +7265,7 @@ class SchemaV2Tests(unittest.TestCase):
             },
         )
 
-        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("QUY ĐỊNH ĐỘ KHÓ ƯỚC LƯỢNG", prompt)
         self.assertIn("current_difficulty", prompt)
         self.assertIn('"de"', prompt)
         self.assertIn("correct_answer và explanation là khẳng định CHƯA ĐƯỢC TIN CẬY", prompt)
@@ -5881,9 +7283,9 @@ class SchemaV2Tests(unittest.TestCase):
             num_questions=1,
         )
 
-        self.assertIn("QUESTION RULES", prompt)
-        self.assertIn("Tham chiếu nguồn học liệu", prompt)
-        self.assertIn("Nếu vi phạm bất kỳ quy tắc nào", prompt)
+        self.assertIn("QUY TẮC CÂU HỎI", prompt)
+        self.assertIn("theo tài liệu", prompt)
+        self.assertIn("Thiếu dữ kiện, mơ hồ", prompt)
 
     def test_question_structure_is_loaded_into_generation_prompt(self):
         prompt = PromptBuilder().build(
@@ -5894,7 +7296,7 @@ class SchemaV2Tests(unittest.TestCase):
         )
 
         self.assertIn("CẤU TRÚC: dung_sai", prompt)
-        self.assertIn("mệnh đề hoàn chỉnh", prompt)
+        self.assertIn("mệnh đề độc lập, hoàn chỉnh", prompt)
         self.assertIn('{"A": "Đúng", "B": "Sai"}', prompt)
 
     def test_mcq_validation_rejects_two_option_shape(self):

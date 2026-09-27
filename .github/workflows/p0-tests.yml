@@ -65,7 +65,7 @@ jobs:
           AUTH_DB_NAME: NCKH_ci_auth
           RAG_DB_NAME: NCKH_ci_rag
           REQUIRE_MONGO_TRANSACTIONS: "true"
-        run: python -m pytest tests/test_mongo_integration.py -q
+        run: python -m pytest tests/test_mongo_integration.py tests/test_review_workflow_mongo_integration.py -q
 
   frontend:
     name: Frontend permission and utility tests

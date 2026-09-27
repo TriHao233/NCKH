@@ -11,6 +11,7 @@ from core.database import get_database, mongo_transaction
 from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.rag.chromadb_engine import (
     embedding_config_hash,
+    embedding_config_matches,
     embedding_config_snapshot,
     model_scoped_collection_name,
 )
@@ -194,9 +195,7 @@ def persist_chunks(
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
-    indexed_model = (vector.get("embedding_model") or {}).get("model_name")
-    indexed_config_hash = vector.get("embedding_config_hash")
-    if indexed_model != settings.embedding_model_name or indexed_config_hash != current_embedding_config_hash:
+    if not embedding_config_matches(vector.get("embedding_model") or {}, vector.get("embedding_config_hash")):
         raise ValueError(
             "Collection ChromaDB đã dùng cấu hình embedding khác. "
             "Hãy chọn collection_name mới cho model/precision hiện tại."

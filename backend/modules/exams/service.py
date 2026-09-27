@@ -111,7 +111,7 @@ class ExamService:
             raise PermissionError("Bạn chưa đăng nhập")
         if current_user.role == "Admin":
             return
-        if current_user.role == "Teacher" and str(exam.get("created_by_user_id")) == str(current_user.id):
+        if str(exam.get("created_by_user_id")) == str(current_user.id):
             return
         raise PermissionError("Bạn không có quyền truy cập đề thi này")
 
@@ -237,7 +237,7 @@ class ExamService:
     def list_exams(self, page: int, page_size: int, current_user: CurrentUser | None) -> dict:
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user and current_user.role != "Admin"
             else None
         )
         exams, total = self.repository.list(page, page_size, owner_user_id)
@@ -263,7 +263,7 @@ class ExamService:
         exam = self._get_for_user_or_404(exam_id, current_user)
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user and current_user.role != "Admin"
             else None
         )
         pairs, total = self.question_repository.list(
@@ -379,7 +379,7 @@ class ExamService:
         chapter_id = str(cell["chapter_id"]) if cell.get("chapter_id") else None
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user and current_user.role != "Admin"
             else None
         )
         pairs, _total = self.question_repository.list(

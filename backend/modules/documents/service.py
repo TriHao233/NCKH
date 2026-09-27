@@ -42,10 +42,10 @@ class DocumentService:
         if not record or DocumentService._can_manage_all(current_user):
             return
         shared_with = set(record.get("shared_with_user_ids") or [])
-        if (
-            DocumentService._is_owner(record, current_user)
-            or current_user.id in shared_with
-            or record.get("shared_scope") == "SUBJECT"
+        can_use_shared = has_permission(current_user, "questions.use_shared_bank")
+        if DocumentService._is_owner(record, current_user) or (
+            can_use_shared
+            and (current_user.id in shared_with or record.get("shared_scope") == "SUBJECT")
         ):
             return
         raise PermissionError("Bạn không có quyền truy cập tài liệu này")

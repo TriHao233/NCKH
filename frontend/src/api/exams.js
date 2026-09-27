@@ -1,4 +1,4 @@
-import { auth } from '../firebase';
+import { authHeaders } from './client';
 import { apiRequest, ApiError } from '../services/apiClient';
 
 const API_BASE_URL = (
@@ -99,19 +99,16 @@ export function getVariantPreview(examId, variantId) {
 }
 
 async function downloadVariantExport(examId, variantId, format, type, fallbackMessage) {
-  if (!auth) {
-    throw new ApiError('Firebase web app chưa được cấu hình', 503, null);
+  let headers;
+  try {
+    headers = await authHeaders();
+  } catch (error) {
+    throw new ApiError(error.message || 'Bạn chưa đăng nhập', 401, null);
   }
-  await auth.authStateReady();
-  const firebaseUser = auth.currentUser;
-  if (!firebaseUser) {
-    throw new ApiError('Bạn chưa đăng nhập', 401, null);
-  }
-  const token = await firebaseUser.getIdToken();
   const params = new URLSearchParams({ type });
   const response = await fetch(
     `${API_BASE_URL}/exams/${examId}/variants/${variantId}/export/${format}?${params.toString()}`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    { headers },
   );
   if (!response.ok) {
     let payload = null;

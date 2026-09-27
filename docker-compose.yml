@@ -20,27 +20,15 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
-      EASYOCR_GPU: ${EASYOCR_GPU:-true}
+      EASYOCR_GPU: ${EASYOCR_GPU:-false}
       EASYOCR_LANGUAGES: ${EASYOCR_LANGUAGES:-vi,en}
       EASYOCR_BATCH_SIZE: ${EASYOCR_BATCH_SIZE:-2}
       EASYOCR_MODEL_STORAGE_DIRECTORY: /app/data/easyocr_models
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU CHẠY BẰNG GPU (NVIDIA)
-    # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
     depends_on:
       mongodb:
@@ -53,7 +41,7 @@ services:
     image: mongo:7.0
     container_name: nckh-mongodb
     ports:
-      - "27017:27017"
+      - "${MONGO_HOST_PORT:-27018}:27017"
     volumes:
       - mongodb_data:/data/db
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
@@ -106,20 +94,11 @@ services:
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     depends_on:
       mongodb:
         condition: service_healthy

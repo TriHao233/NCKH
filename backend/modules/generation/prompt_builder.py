@@ -175,17 +175,23 @@ class PromptBuilder:
         content_mode: str = "general",
         focus_directive: str | None = None,
         difficulty: str | None = None,
+        template_overrides: dict[str, str] | None = None,
     ):
-        system = self._load_template("system", "system.txt")
-        question_rule = self._load_template("question_rule", "question_rule.txt")
-        bloom = self._load_template(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
-        difficulty_rule = self._load_template("quy_dinh_do_kho", "quy_dinh_do_kho.txt")
-        qtype = self._load_template(f"question_type:{question_type}", f"question_type/{question_type}.txt")
-        qstructure = self._load_template(
+        def load(key: str, path: str) -> str:
+            if template_overrides and key in template_overrides:
+                return template_overrides[key]
+            return self._load_template(key, path)
+
+        system = load("system", "system.txt")
+        question_rule = load("question_rule", "question_rule.txt")
+        bloom = load(f"bloom:{bloom_level}", f"bloom/{bloom_level}.txt")
+        difficulty_rule = load("quy_dinh_do_kho", "quy_dinh_do_kho.txt")
+        qtype = load(f"question_type:{question_type}", f"question_type/{question_type}.txt")
+        qstructure = load(
             f"question_structure:{question_type}",
             f"question_structure/{question_type}.txt",
         )
-        output = self._load_template("output_format", "output_format.txt")
+        output = load("output_format", "output_format.txt")
         instruction_block = ""
         if instruction:
             instruction_block = f"""
