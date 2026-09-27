@@ -74,10 +74,10 @@ function preloadDevPages() {
 }
 
 function RequireAccess({ path, children }) {
-    const { user, loading } = useContext(AuthContext);
+    const { user, loading, sessionNotice } = useContext(AuthContext);
     const location = useLocation();
     if (loading) return <div className="route-loading">Đang kiểm tra phiên đăng nhập...</div>;
-    if (!user) return <Navigate to="/dang-nhap" replace state={{ from: `${location.pathname}${location.search}` }} />;
+    if (!user) return <Navigate to="/dang-nhap" replace state={{ from: `${location.pathname}${location.search}`, authNotice: sessionNotice ? { type: 'error', message: sessionNotice } : null }} />;
     if (!canAccessPath(user, path)) return <Navigate to="/trang-chu" replace />;
     return children;
 }

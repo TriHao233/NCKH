@@ -1,5 +1,5 @@
 import { auth } from "../firebase";
-import { demoAuthHeaders } from "../auth/demoSession";
+import { demoAuthHeaders, expireDemoSession } from "../auth/demoSession";
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "/api/v1"
@@ -19,6 +19,7 @@ export async function apiRequest(
   { method = "GET", body, headers = {}, authRequired = true, signal } = {},
 ) {
   const requestHeaders = { Accept: "application/json", ...headers };
+  let demoToken = null;
   if (body !== undefined && !(body instanceof FormData)) {
     requestHeaders["Content-Type"] = "application/json";
   }
@@ -27,6 +28,7 @@ export async function apiRequest(
     const demoHeaders = demoAuthHeaders();
     if (demoHeaders) {
       Object.assign(requestHeaders, demoHeaders);
+      demoToken = demoHeaders.Authorization.slice('Bearer '.length);
       authRequired = false;
     }
   }
@@ -64,6 +66,7 @@ export async function apiRequest(
     payload = null;
   }
   if (!response.ok) {
+    if (response.status === 401 && demoToken) expireDemoSession(demoToken);
     const fallbackMessage = [502, 503, 504].includes(response.status)
       ? "Không thể kết nối máy chủ. Vui lòng thử lại."
       : "Yêu cầu API thất bại";
