@@ -105,6 +105,8 @@ class UserAdminUpdateRequest(UserSelfUpdateRequest):
     role: Optional[RoleEnum] = None
     is_active: Optional[bool] = None
     permissions: Optional[list[str]] = Field(None, max_length=50)
+    # Subjects a reviewer specialises in; empty means "can review any subject".
+    review_subject_ids: Optional[list[str]] = Field(None, max_length=100)
 
 
 class PasswordResetResponse(BaseModel):
@@ -137,6 +139,7 @@ class TeacherOptionResponse(BaseModel):
     email: str
     display_name: str
     is_active: bool = True
+    review_subject_ids: list[str] = Field(default_factory=list)
 
 
 class TeacherOptionListResponse(BaseModel):
@@ -255,6 +258,7 @@ class UserResponse(BaseModel):
     display_name: str
     role: RoleEnum
     permissions: list[str] = Field(default_factory=list)
+    review_subject_ids: list[str] = Field(default_factory=list)
     profile: UserProfile
     is_active: bool
     created_at: datetime

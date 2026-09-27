@@ -145,6 +145,13 @@ class ReviewAssignmentRequest(BaseModel):
     note: str = Field("", max_length=500)
 
 
+class AutoAssignRequest(BaseModel):
+    # Restrict the run to these questions; empty means every open question.
+    question_ids: list[str] = Field(default_factory=list, max_length=500)
+    limit: int = Field(100, ge=1, le=500)
+    max_load_per_reviewer: int = Field(20, ge=1, le=500)
+
+
 class MoodlePublicationRequest(BaseModel):
     expected_version: int = Field(..., ge=1)
     target_id: str | None = Field(None, min_length=1, max_length=120)

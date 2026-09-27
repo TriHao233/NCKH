@@ -12,6 +12,50 @@ import {
   refId,
   reviewIssuesOf,
 } from './reviewModel';
+import { baselineReview, diffVersions } from './versionDiff';
+
+const REVIEW_DECISION_TEXT = {
+  APPROVED: 'đã duyệt',
+  NEEDS_REVISION: 'yêu cầu sửa',
+  REJECTED: 'từ chối',
+};
+
+function WordSegments({ segments, side }) {
+  return segments.map((segment, index) => {
+    if (segment.type === 'same') return <span key={index}>{segment.text}</span>;
+    const Tag = side === 'before' ? 'del' : 'ins';
+    return <Tag key={index} className={`rv-diff-${segment.type}`}>{segment.text}</Tag>;
+  });
+}
+
+function ChangeBody({ change }) {
+  if (change.kind === 'sources') {
+    return (
+      <div className="ad-change-values">
+        <div className="is-old" aria-label="Nguồn bị bỏ">
+          {change.removed.length ? change.removed.map((item) => <p key={item}>− {item}</p>) : <p>(không bỏ nguồn nào)</p>}
+        </div>
+        <div className="is-new" aria-label="Nguồn thêm mới">
+          {change.added.length ? change.added.map((item) => <p key={item}>+ {item}</p>) : <p>(không thêm nguồn nào)</p>}
+        </div>
+      </div>
+    );
+  }
+  if (change.kind === 'text' && change.words) {
+    return (
+      <div className="ad-change-values">
+        <pre className="is-old" aria-label="Trước">{change.before ? <WordSegments segments={change.words.before} side="before" /> : '(trống)'}</pre>
+        <pre className="is-new" aria-label="Sau">{change.after ? <WordSegments segments={change.words.after} side="after" /> : '(trống)'}</pre>
+      </div>
+    );
+  }
+  return (
+    <div className="ad-change-values">
+      <pre className="is-old" aria-label="Trước">{change.before || '(trống)'}</pre>
+      <pre className="is-new" aria-label="Sau">{change.after || '(trống)'}</pre>
+    </div>
+  );
+}
 
 function optionsOf(data) {
   return Object.entries(data?.question_data?.options || data?.options || {});
@@ -21,31 +65,7 @@ function severityLabel(value) {
   return ISSUE_SEVERITY.find((item) => item.value === value)?.label || 'Vừa';
 }
 
-/** So sánh phiên bản hiện tại với phiên bản trước để thấy giảng viên đã sửa gì. */
-function diffVersions(previous, current) {
-  if (!previous || !current) return [];
-  const changes = [];
-  if ((previous.content || '') !== (current.content || '')) {
-    changes.push({ key: 'content', label: 'Nội dung câu hỏi', before: previous.content, after: current.content });
-  }
-  const before = previous.question_data || {};
-  const after = current.question_data || {};
-  const keys = new Set([...Object.keys(before.options || {}), ...Object.keys(after.options || {})]);
-  [...keys].sort().forEach((key) => {
-    const oldValue = String(before.options?.[key] ?? '');
-    const newValue = String(after.options?.[key] ?? '');
-    if (oldValue !== newValue) changes.push({ key: `opt-${key}`, label: `Phương án ${key}`, before: oldValue, after: newValue });
-  });
-  if (String(before.correct_answer || '') !== String(after.correct_answer || '')) {
-    changes.push({ key: 'answer', label: 'Đáp án đúng', before: before.correct_answer, after: after.correct_answer });
-  }
-  if (String(before.explanation || '') !== String(after.explanation || '')) {
-    changes.push({ key: 'explanation', label: 'Giải thích', before: before.explanation, after: after.explanation });
-  }
-  return changes;
-}
-
-function QuestionPane({ question, reviews }) {
+function QuestionPane({ question, reviews, chapterLabel }) {
   const correct = new Set(correctAnswerKeys(question));
   const typeKey = questionTypeKey(question);
   const difficulty = difficultyLabel(question.classification?.difficulty);
@@ -55,7 +75,9 @@ function QuestionPane({ question, reviews }) {
     [reviews, question],
   );
   const isResubmitted = Boolean(previousRequest);
-  const hasNewVersion = isResubmitted && Number(previousRequest.question_version) < Number(question.current_version);
+  // Mốc so sánh là phiên bản gần nhất đã có phiếu duyệt (kể cả câu đã duyệt rồi bị sửa và gửi lại).
+  const baseline = useMemo(() => baselineReview(question, reviews), [question, reviews]);
+  const hasNewVersion = Boolean(baseline);
 
   const [showChanges, setShowChanges] = useState(false);
   const [versions, setVersions] = useState(null);
@@ -78,12 +100,12 @@ function QuestionPane({ question, reviews }) {
     if (!versions) return [];
     const sorted = [...versions].sort((a, b) => Number(a.version) - Number(b.version));
     const current = sorted.find((item) => Number(item.version) === Number(question.current_version)) || sorted[sorted.length - 1];
-    const previousVersion = previousRequest?.question_version;
+    const previousVersion = baseline?.question_version;
     const older = sorted.filter((item) => Number(item.version) < Number(current?.version));
     const previous = sorted.find((item) => Number(item.version) === Number(previousVersion))
       || older[older.length - 1];
-    return diffVersions(previous, current);
-  }, [versions, question.current_version, previousRequest]);
+    return diffVersions(previous, current, { chapterLabel });
+  }, [versions, question.current_version, baseline, chapterLabel]);
 
   return (
     <section className="ws-card rv-pane">
@@ -96,14 +118,20 @@ function QuestionPane({ question, reviews }) {
         </div>
         {hasNewVersion && (
           <button type="button" className="ws-link-btn" aria-pressed={showChanges} onClick={() => setShowChanges((value) => !value)}>
-            {showChanges ? 'Ẩn thay đổi' : 'Xem thay đổi so với lần trước'}
+            {showChanges
+              ? 'Ẩn thay đổi'
+              : `Xem thay đổi so với phiên bản ${baseline.question_version} (${REVIEW_DECISION_TEXT[baseline.decision] || 'đã duyệt'})`}
           </button>
         )}
       </div>
 
       {isResubmitted && (
         <div className="rv-previous">
-          <h4>{hasNewVersion ? 'Lần trước đã yêu cầu sửa' : 'Lần trước đã yêu cầu sửa, giảng viên gửi lại chưa đổi nội dung'}</h4>
+          <h4>
+            {Number(previousRequest.question_version) < Number(question.current_version)
+              ? 'Lần trước đã yêu cầu sửa'
+              : 'Lần trước đã yêu cầu sửa, giảng viên gửi lại chưa đổi nội dung'}
+          </h4>
           {previousRequest.note && <p>{previousRequest.note}</p>}
           {reviewIssuesOf(previousRequest).length > 0 && (
             <ul>
@@ -122,14 +150,11 @@ function QuestionPane({ question, reviews }) {
         <div className="rv-changes">
           {versionError && <p className="ws-field-error">{versionError}</p>}
           {!versions && !versionError && <p className="ws-hint">Đang so sánh phiên bản...</p>}
-          {versions && changes.length === 0 && <p className="ws-hint">Không thấy khác biệt về nội dung, đáp án hay giải thích.</p>}
+          {versions && changes.length === 0 && <p className="ws-hint">Không thấy khác biệt về nội dung, phân loại, CLO hay nguồn trích dẫn.</p>}
           {changes.map((change) => (
             <div className="rv-change" key={change.key}>
               <span className="ws-label">{change.label}</span>
-              <div className="ad-change-values">
-                <pre className="is-old" aria-label="Trước">{change.before || '(trống)'}</pre>
-                <pre className="is-new" aria-label="Sau">{change.after || '(trống)'}</pre>
-              </div>
+              <ChangeBody change={change} />
             </div>
           ))}
         </div>

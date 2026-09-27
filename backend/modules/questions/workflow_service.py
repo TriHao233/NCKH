@@ -27,6 +27,7 @@ from modules.notifications.service import (
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
 from modules.rag.search import get_evaluation_evidence
 from modules.questions.workflow_schemas import (
+    AutoAssignRequest,
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     EvaluationScores,
@@ -2492,6 +2493,116 @@ class QuestionWorkflowService:
                 actor_user_id=current_user.id,
             )
         return serialize_question(updated, version)
+
+    def auto_assign_reviews(self, payload: AutoAssignRequest, current_user: CurrentUser) -> dict:
+        """Distribute open pending questions across active reviewers.
+
+        Open means unassigned, or held past its lock/assignment window. Each
+        question goes to an eligible reviewer (not its author, not the primary
+        reviewer of a pending second review), preferring reviewers whose
+        review_subject_ids cover the question's subject, then the lightest
+        current load. Reviewers without review_subject_ids take any subject.
+        """
+        now = utc_now()
+        query: dict = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+            "$or": [
+                {"review_assignment": {"$exists": False}},
+                {"review_assignment.status": {"$exists": False}},
+                {"review_assignment.status": "UNASSIGNED"},
+                {"review_assignment.lock_expires_at": {"$lte": now}},
+            ],
+        }
+        if payload.question_ids:
+            query["_id"] = {"$in": [object_id(item, "question_id") for item in payload.question_ids]}
+        questions = list(
+            self.db.questions.find(query)
+            .sort("review_submission.submitted_at", 1)
+            .limit(payload.limit)
+        )
+
+        reviewers = list(
+            self.db.users.find(
+                {"role": "Reviewer", "is_active": True},
+                {"display_name": 1, "review_subject_ids": 1},
+            )
+        )
+        loads = {reviewer["_id"]: 0 for reviewer in reviewers}
+        for held in self.db.questions.find(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+                "review_status": "PENDING",
+                "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+                "review_assignment.lock_expires_at": {"$gt": now},
+            },
+            {"review_assignment.reviewer_user_id": 1},
+        ):
+            reviewer_id = (held.get("review_assignment") or {}).get("reviewer_user_id")
+            if reviewer_id in loads:
+                loads[reviewer_id] += 1
+
+        version_ids = [question["current_version_id"] for question in questions]
+        version_authors = {
+            version["_id"]: version.get("created_by_user_id")
+            for version in self.db.question_versions.find(
+                {"_id": {"$in": version_ids}},
+                {"created_by_user_id": 1},
+            )
+        } if version_ids else {}
+
+        assigned: list[dict] = []
+        skipped: list[dict] = []
+        for question in questions:
+            code = question.get("question_code")
+            if not reviewers:
+                skipped.append({"question_id": question["_id"], "question_code": code, "reason": "NO_REVIEWERS"})
+                continue
+            excluded = {
+                question.get("created_by_user_id"),
+                version_authors.get(question.get("current_version_id")),
+            }
+            secondary = question.get("secondary_review") or {}
+            if secondary.get("status") == "AWAITING_SECONDARY":
+                excluded.add(secondary.get("primary_reviewer_user_id"))
+            subject_id = question.get("subject_id")
+            candidates = []
+            for reviewer in reviewers:
+                if reviewer["_id"] in excluded or loads[reviewer["_id"]] >= payload.max_load_per_reviewer:
+                    continue
+                subjects = reviewer.get("review_subject_ids") or []
+                if subjects and subject_id not in subjects:
+                    continue
+                specialist = bool(subjects)
+                candidates.append((0 if specialist else 1, loads[reviewer["_id"]], str(reviewer["_id"]), reviewer))
+            if not candidates:
+                skipped.append({"question_id": question["_id"], "question_code": code, "reason": "NO_ELIGIBLE_REVIEWER"})
+                continue
+            reviewer = min(candidates, key=lambda item: item[:3])[3]
+            try:
+                self.assign_review(
+                    str(question["_id"]),
+                    ReviewAssignmentRequest(reviewer_user_id=str(reviewer["_id"]), note="auto_assign"),
+                    current_user,
+                )
+            except KeyError:
+                # A data bug, not a business rule: do not hide it as a skip.
+                raise
+            except (LookupError, PermissionError, RuntimeError, ValueError) as exc:
+                skipped.append({"question_id": question["_id"], "question_code": code, "reason": str(exc)})
+                continue
+            loads[reviewer["_id"]] += 1
+            assigned.append(
+                {
+                    "question_id": question["_id"],
+                    "question_code": code,
+                    "reviewer_user_id": reviewer["_id"],
+                    "reviewer_name": reviewer.get("display_name"),
+                }
+            )
+        return json_safe({"assigned": assigned, "skipped": skipped})
 
     def get_review_draft(self, question_id: str, current_user: CurrentUser) -> dict | None:
         question, version = self._pair(question_id)

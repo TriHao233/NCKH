@@ -142,6 +142,18 @@ class UserService:
         return serialize_user(user)
 
     @staticmethod
+    def _normalize_object_ids(values: list[str] | None) -> list[ObjectId]:
+        normalized: list[ObjectId] = []
+        for value in values or []:
+            text = str(value or "").strip()
+            if not ObjectId.is_valid(text):
+                raise ValueError("Mã học phần phụ trách không hợp lệ")
+            oid = ObjectId(text)
+            if oid not in normalized:
+                normalized.append(oid)
+        return normalized
+
+    @staticmethod
     def _normalize_permissions(permissions: list[str] | None) -> list[str]:
         normalized = []
         seen = set()
@@ -289,6 +301,7 @@ class UserService:
                     "email": user.get("email", ""),
                     "display_name": user.get("display_name", ""),
                     "is_active": user.get("is_active", True),
+                    "review_subject_ids": [str(item) for item in user.get("review_subject_ids") or []],
                 }
                 for user in records
             ],
@@ -484,6 +497,8 @@ class UserService:
             fields["role"] = role.value if hasattr(role, "value") else role
         if "permissions" in fields:
             fields["permissions"] = self._normalize_permissions(fields.get("permissions"))
+        if "review_subject_ids" in fields:
+            fields["review_subject_ids"] = self._normalize_object_ids(fields["review_subject_ids"])
         user = self.repository.find_by_id(user_id)
         if not user:
             return None

@@ -16,6 +16,7 @@ import {
   defaultDraft,
   isBlockedFromSecondary,
   isSlaBreached,
+  rankNextCandidates,
   restoreDraft,
   validateDraft,
 } from './reviewModel.js';
@@ -215,4 +216,12 @@ test('isSlaBreached flags pending questions waiting past the SLA only', () => {
   assert.equal(isSlaBreached({ ...late, review_status: 'APPROVED' }, 48, NOW), false);
   assert.equal(isSlaBreached(late, 0, NOW), false);
   assert.equal(isSlaBreached(question({ review_submission: {} }), 48, NOW), false);
+});
+
+test('rankNextCandidates puts my assignments, then my subjects, first', () => {
+  const open = (id, subjectId) => question({ id, subject_id: subjectId, review_assignment: { status: 'UNASSIGNED' } });
+  const mine = question({ id: 'mine', subject_id: 'other', review_assignment: { status: 'ASSIGNED', reviewer_user_id: 'r1' } });
+  const ranked = rankNextCandidates([open('a', 'x'), open('b', 'ctdl'), mine, open('c', 'ctdl')], reviewer, ['ctdl']);
+  assert.deepEqual(ranked.map((item) => item.id), ['mine', 'b', 'c', 'a']);
+  assert.deepEqual(rankNextCandidates([open('a', 'x'), open('b', 'y')], reviewer).map((item) => item.id), ['a', 'b']);
 });

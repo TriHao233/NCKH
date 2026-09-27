@@ -42,6 +42,7 @@ def serialize_user(user: dict) -> dict:
         "display_name": user["display_name"],
         "role": user["role"],
         "permissions": list(effective_permissions(user)),
+        "review_subject_ids": [str(item) for item in user.get("review_subject_ids") or []],
         "profile": profile,
         "is_active": user.get("is_active", True),
         "created_at": user["created_at"],

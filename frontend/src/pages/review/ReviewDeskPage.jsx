@@ -39,7 +39,7 @@ import DiscussionPanel from '../../features/review/DiscussionPanel';
 import HistoryPanel from '../../features/review/HistoryPanel';
 import DecisionPanel from '../../features/review/DecisionPanel';
 import MoodlePublishPanel from '../../features/review/MoodlePublishPanel';
-import { claimNextQuestion, useReviewLookups, userName } from '../../features/review/reviewData';
+import { claimNextQuestion, preferredSubjectIds, useReviewLookups, userName } from '../../features/review/reviewData';
 import {
   DECISION_DONE_TEXT,
   EVALUATION_STATUS_LABEL,
@@ -107,6 +107,13 @@ function ReviewDeskPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const lookups = useReviewLookups();
+  const chapterLabel = useCallback((chapterId) => {
+    for (const subject of lookups.subjectsById.values()) {
+      const chapter = (subject.chapters || []).find((item) => childId(item) === chapterId);
+      if (chapter) return [chapter.chapter_code, chapter.chapter_name].filter(Boolean).join(' - ');
+    }
+    return '';
+  }, [lookups.subjectsById]);
   const { flash, show: showFlash, clear: clearFlash } = useFlash();
   const [confirm, confirmDialog] = useConfirm();
   const wide = useMediaQuery('(min-width: 1280px)');
@@ -382,7 +389,7 @@ function ReviewDeskPage() {
       goTo(nextId, { autoClaim: true, flash: state });
       return;
     }
-    const next = await claimNextQuestion(user, { excludeId: questionId }).catch(() => null);
+    const next = await claimNextQuestion(user, { excludeId: questionId, preferredSubjectIds: preferredSubjectIds(user, lookups) }).catch(() => null);
     if (next) {
       navigate(`/kiem-duyet/${next.id}`, { state: { returnTo, queue: [], flash: { ...state, message: `${doneMessage} Đã nhận câu tiếp theo.` } } });
       return;
@@ -641,7 +648,7 @@ function ReviewDeskPage() {
                 />
               )}
               <div hidden={!wide && paneTab !== 'question'}>
-                <QuestionPane question={question} reviews={reviews} />
+                <QuestionPane question={question} reviews={reviews} chapterLabel={chapterLabel} />
               </div>
               {!wide && <div hidden={paneTab !== 'source'}>{sourceCard}</div>}
 

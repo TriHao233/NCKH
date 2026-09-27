@@ -177,6 +177,10 @@ export function renewQuestionReview(id) {
   return apiRequest(`/questions/${id}/review-assignment/renew`, { method: 'POST' });
 }
 
+export function autoAssignReviews(payload = {}) {
+  return apiRequest('/questions/review-assignments/auto', { method: 'POST', body: payload });
+}
+
 export function assignQuestionReview(id, payload) {
   return apiRequest(`/questions/${id}/review-assignment`, { method: 'POST', body: payload });
 }

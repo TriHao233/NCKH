@@ -337,6 +337,23 @@ export function canClaim(question, user, now = Date.now()) {
     || isAdmin(user);
 }
 
+/**
+ * Thứ tự nhận câu tiếp theo: câu đang giao cho mình, rồi câu thuộc học phần mình phụ trách,
+ * rồi các câu còn lại. Giữ nguyên thứ tự ưu tiên của API trong từng nhóm.
+ */
+export function rankNextCandidates(candidates, user, preferredSubjectIds = []) {
+  const preferred = new Set((preferredSubjectIds || []).map(String));
+  const rank = (question) => {
+    if (isAssignedToUser(question, user)) return 0;
+    const subjectId = refId(question?.subject_id || question?.classification?.subject);
+    return subjectId && preferred.has(subjectId) ? 1 : 2;
+  };
+  return candidates
+    .map((question, index) => ({ question, index, rank: rank(question) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((item) => item.question);
+}
+
 export function canRelease(question, user) {
   if (!isPending(question)) return false;
   const { status } = assignmentOf(question);

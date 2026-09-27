@@ -81,6 +81,7 @@ from modules.questions import router as question_router_module
 from modules.questions.repository import MongoQuestionRepository
 from modules.questions.service import QuestionService, stable_hash
 from modules.questions.workflow_schemas import (
+    AutoAssignRequest,
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     EvaluationScores,
@@ -2131,6 +2132,161 @@ class SchemaV2Tests(unittest.TestCase):
         db.questions.find_one({"_id": unassigned_id})["review_submission"]["submitted_at"] = late + timedelta(minutes=1)
         self.assertEqual(service.send_review_sla_reminders(now), 1)
         self.assertEqual(len(db.notifications.records), 3)
+
+    def test_auto_assign_prefers_subject_specialists_and_balances_load(self):
+        now = datetime.now(timezone.utc)
+        admin = _current_user("Admin")
+        teacher = ObjectId()
+        subject_ctdl, subject_mmt = ObjectId(), ObjectId()
+        specialist = ObjectId()  # CTDL only
+        generalist_a = ObjectId()  # any subject
+        generalist_b = ObjectId()  # any subject, but authored one question
+        inactive = ObjectId()
+
+        def question(code, subject_id, minutes_ago, *, author=teacher, **extra):
+            question_id, version_id = ObjectId(), ObjectId()
+            return (
+                {
+                    "_id": question_id,
+                    "schema_version": SCHEMA_VERSION,
+                    "question_code": code,
+                    "current_version": 1,
+                    "current_version_id": version_id,
+                    "approved_version_id": None,
+                    "lifecycle_status": "ACTIVE",
+                    "evaluation_status": "PASSED",
+                    "review_status": "PENDING",
+                    "publication_status": "NOT_PUBLISHED",
+                    "quality_summary": {},
+                    "latest_review_id": None,
+                    "subject_id": subject_id,
+                    "created_by_user_id": author,
+                    "review_assignment": {"status": "UNASSIGNED", "lock_expires_at": None},
+                    "review_submission": {"submitted_at": now - timedelta(minutes=minutes_ago)},
+                    "created_at": now,
+                    "updated_at": now,
+                    "archived_at": None,
+                    **extra,
+                },
+                {
+                    "_id": version_id,
+                    "schema_version": SCHEMA_VERSION,
+                    "question_id": question_id,
+                    "version": 1,
+                    "origin": "MANUAL",
+                    "generation_run_id": None,
+                    "document_id": None,
+                    "created_by_user_id": author,
+                    "generated_by_model_id": None,
+                    "classification": {
+                        "subject": {"id": subject_id},
+                        "chapter": {"id": None},
+                        "assessment_type": "TRAC_NGHIEM",
+                        "bloom": {"level": 1},
+                        "difficulty": None,
+                    },
+                    "clos": [],
+                    "content": code,
+                    "question_data": {"options": {"A": "x"}, "correct_answer": "A"},
+                    "sources": [],
+                    "keywords": [],
+                    "content_hash": f"hash-{code}",
+                    "change_note": "",
+                    "created_at": now,
+                },
+            )
+
+        pairs = [
+            question("Q-CTDL-1", subject_ctdl, 50),
+            question("Q-CTDL-2", subject_ctdl, 40),
+            question("Q-MMT-1", subject_mmt, 30),
+            question("Q-MMT-OWN", subject_mmt, 20, author=generalist_b),
+            question(
+                "Q-HELD",
+                subject_mmt,
+                10,
+                review_assignment={
+                    "status": "IN_REVIEW",
+                    "reviewer_user_id": generalist_a,
+                    "lock_expires_at": now + timedelta(minutes=20),
+                },
+            ),
+        ]
+
+        class FakeAssignDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([item[0] for item in pairs])
+                self.question_versions = InMemoryCollection([item[1] for item in pairs])
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": specialist, "role": "Reviewer", "is_active": True, "display_name": "CTDL",
+                         "review_subject_ids": [subject_ctdl]},
+                        {"_id": generalist_a, "role": "Reviewer", "is_active": True, "display_name": "A"},
+                        {"_id": generalist_b, "role": "Reviewer", "is_active": True, "display_name": "B"},
+                        {"_id": inactive, "role": "Reviewer", "is_active": False, "display_name": "Off"},
+                    ]
+                )
+                self.audit_logs = InMemoryCollection()
+                self.notifications = InMemoryCollection()
+
+        db = FakeAssignDatabase()
+        result = QuestionWorkflowService(db).auto_assign_reviews(
+            AutoAssignRequest(max_load_per_reviewer=5),
+            admin,
+        )
+
+        by_code = {item["question_code"]: item["reviewer_user_id"] for item in result["assigned"]}
+        # Specialist takes every CTDL question even while carrying load.
+        self.assertEqual(by_code["Q-CTDL-1"], str(specialist))
+        self.assertEqual(by_code["Q-CTDL-2"], str(specialist))
+        # A already holds a live question, so the lighter generalist B gets MMT-1.
+        self.assertEqual(by_code["Q-MMT-1"], str(generalist_b))
+        # B authored this one, so it falls to A.
+        self.assertEqual(by_code["Q-MMT-OWN"], str(generalist_a))
+        self.assertNotIn("Q-HELD", by_code)
+        self.assertNotIn(str(inactive), by_code.values())
+        self.assertEqual(result["skipped"], [])
+        stored = db.questions.find_one({"question_code": "Q-CTDL-1"})["review_assignment"]
+        self.assertEqual(stored["status"], "ASSIGNED")
+        self.assertEqual(stored["reviewer_user_id"], specialist)
+
+        # Capacity caps stop assignment instead of overloading reviewers.
+        db = FakeAssignDatabase()
+        capped = QuestionWorkflowService(db).auto_assign_reviews(
+            AutoAssignRequest(max_load_per_reviewer=1),
+            admin,
+        )
+        self.assertEqual(
+            sorted(item["reason"] for item in capped["skipped"]),
+            ["NO_ELIGIBLE_REVIEWER"] * len(capped["skipped"]),
+        )
+        self.assertLessEqual(
+            max(
+                sum(1 for item in capped["assigned"] if item["reviewer_user_id"] == reviewer)
+                for reviewer in {item["reviewer_user_id"] for item in capped["assigned"]}
+            ),
+            1,
+        )
+
+    def test_admin_can_set_reviewer_subjects(self):
+        admin_doc = _user_doc("Admin", True)
+        reviewer_doc = _user_doc("Reviewer", True)
+        service = UserService(FakeUserRepository([admin_doc, reviewer_doc]), FakeIdentityGateway(), FakeSessions())
+        actor = _current_user("Admin", admin_doc["_id"])
+        subject_id = ObjectId()
+
+        updated = service.update_admin(
+            str(reviewer_doc["_id"]),
+            UserAdminUpdateRequest(review_subject_ids=[str(subject_id), str(subject_id)]),
+            actor,
+        )
+        self.assertEqual(updated["review_subject_ids"], [str(subject_id)])
+        with self.assertRaises(ValueError):
+            service.update_admin(
+                str(reviewer_doc["_id"]),
+                UserAdminUpdateRequest(review_subject_ids=["not-an-id"]),
+                actor,
+            )
 
     def test_user_service_releases_reviewer_work_on_deactivate_and_role_change(self):
         admin_doc = _user_doc("Admin", True)

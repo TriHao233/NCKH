@@ -7,6 +7,7 @@ import {
   isAssignedToUser,
   isBlockedFromSecondary,
   isLockExpired,
+  rankNextCandidates,
   refId,
 } from './reviewModel';
 
@@ -74,7 +75,13 @@ export function userName(option, fallback = '--') {
  * ưu tiên câu đã giao/đang giữ của chính mình, sau đó tới câu chưa ai nhận theo độ ưu tiên.
  * Thử lần lượt vài ứng viên vì người khác có thể vừa nhận trước.
  */
-export async function claimNextQuestion(user, { excludeId = '' } = {}) {
+/** Học phần người duyệt phụ trách, lấy từ danh mục người duyệt (hoặc hồ sơ đăng nhập nếu có). */
+export function preferredSubjectIds(user, lookups) {
+  const option = lookups?.reviewersById?.get(refId(user?.id));
+  return option?.review_subject_ids || user?.review_subject_ids || [];
+}
+
+export async function claimNextQuestion(user, { excludeId = '', preferredSubjectIds = [] } = {}) {
   const now = Date.now();
   // Không lọc "UNASSIGNED" ở API vì câu chưa từng được giao không có trường này.
   const [mine, open] = await Promise.all([
@@ -82,11 +89,11 @@ export async function claimNextQuestion(user, { excludeId = '' } = {}) {
     listQuestions({ page: 1, pageSize: 50, reviewStatus: 'PENDING', sortBy: 'priority' }),
   ]);
   const seen = new Set();
-  const candidates = [...(mine.items || []), ...(open.items || [])].filter((question) => {
+  const candidates = rankNextCandidates([...(mine.items || []), ...(open.items || [])].filter((question) => {
     if (!question?.id || question.id === excludeId || seen.has(question.id)) return false;
     seen.add(question.id);
     return canClaim(question, user, now) && !isBlockedFromSecondary(question, user);
-  });
+  }), user, preferredSubjectIds);
 
   for (const question of candidates.slice(0, 5)) {
     const holdsLiveLock = question.review_assignment?.status === 'IN_REVIEW'

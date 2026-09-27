@@ -13,6 +13,7 @@ import {
   faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
+import { listSubjects } from '../api/catalog';
 import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
 import { AuthContext } from '../context/AuthContext';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -149,6 +150,41 @@ function PermissionPicker({ value, onChange }) {
   );
 }
 
+function ReviewSubjectPicker({ subjects, value, onChange }) {
+  const selected = new Set(value || []);
+  const toggle = (id) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange([...next]);
+  };
+  return (
+    <div className="ws-field">
+      <span className="ws-label">Học phần phụ trách duyệt</span>
+      <small>
+        Dùng khi tự chia việc và khi chọn câu tiếp theo. Để trống nghĩa là duyệt được mọi học phần.
+      </small>
+      {subjects === null ? (
+        <p className="ws-hint">Đang tải học phần...</p>
+      ) : subjects.length === 0 ? (
+        <p className="ws-hint">Chưa có học phần nào.</p>
+      ) : (
+        <div className="ad-permission-grid">
+          {subjects.map((subject) => {
+            const id = String(subject.id || subject._id);
+            return (
+              <label className="ws-check" key={id}>
+                <input type="checkbox" checked={selected.has(id)} onChange={() => toggle(id)} />
+                {[subject.subject_code, subject.subject_name].filter(Boolean).join(' - ')}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SecretLink({ label, value, copied, onCopy }) {
   return (
     <div className="ws-field">
@@ -182,6 +218,7 @@ function UsersAdminPage() {
   const [createState, setCreateState] = useState(null);
   const [importState, setImportState] = useState(null);
   const [editState, setEditState] = useState(null);
+  const [subjectOptions, setSubjectOptions] = useState(null);
   const [resetResult, setResetResult] = useState(null);
   const [busyKey, setBusyKey] = useState('');
   const [copiedKey, setCopiedKey] = useState('');
@@ -325,8 +362,14 @@ function UsersAdminPage() {
         role: target.role,
         is_active: target.is_active,
         permissions: target.permissions?.length ? target.permissions : permissionsForRole(target.role),
+        review_subject_ids: target.review_subject_ids || [],
       },
     });
+    if (subjectOptions === null) {
+      listSubjects()
+        .then((items) => setSubjectOptions(Array.isArray(items) ? items : (items?.items || [])))
+        .catch(() => setSubjectOptions([]));
+    }
   };
 
   const updateEdit = (patch) => setEditState((current) => ({ ...current, form: { ...current.form, ...patch }, error: '' }));
@@ -339,7 +382,13 @@ function UsersAdminPage() {
     }
     setBusyKey('edit');
     try {
-      await updateUser(target.id, { ...form, display_name: form.display_name.trim() });
+      const { review_subject_ids: reviewSubjectIds, ...rest } = form;
+      await updateUser(target.id, {
+        ...rest,
+        display_name: form.display_name.trim(),
+        // Chỉ người duyệt mới dùng học phần phụ trách; đổi sang vai trò khác thì xoá.
+        review_subject_ids: form.role === 'Reviewer' ? reviewSubjectIds : [],
+      });
       setEditState(null);
       showFlash('success', `Đã cập nhật ${target.email}.`);
       await refreshAll();
@@ -672,6 +721,13 @@ function UsersAdminPage() {
               </label>
             </div>
             <PermissionPicker value={editState.form.permissions} onChange={(permissions) => updateEdit({ permissions })} />
+            {editState.form.role === 'Reviewer' && (
+              <ReviewSubjectPicker
+                subjects={subjectOptions}
+                value={editState.form.review_subject_ids}
+                onChange={(ids) => updateEdit({ review_subject_ids: ids })}
+              />
+            )}
             <label className="ws-check">
               <input type="checkbox" checked={editState.form.is_active} disabled={isSelf(editState.user)} onChange={(event) => updateEdit({ is_active: event.target.checked })} />
               Tài khoản đang hoạt động

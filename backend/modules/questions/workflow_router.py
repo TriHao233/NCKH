@@ -10,6 +10,7 @@ from core.dependencies import (
     require_teacher_reviewer_or_admin,
 )
 from modules.questions.workflow_schemas import (
+    AutoAssignRequest,
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     MoodlePublicationRequest,
@@ -47,6 +48,18 @@ def review_dashboard(
 ):
     try:
         return service.review_dashboard(current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/review-assignments/auto")
+def auto_assign_reviews(
+    payload: AutoAssignRequest,
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.auto_assign_reviews(payload, current_user)
     except Exception as exc:
         _translate_workflow_error(exc)
 

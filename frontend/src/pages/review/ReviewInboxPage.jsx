@@ -1,9 +1,10 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowRight, faClipboardCheck, faMagnifyingGlass, faRobot } from '@fortawesome/free-solid-svg-icons';
+import { faArrowRight, faClipboardCheck, faMagnifyingGlass, faRobot, faShuffle } from '@fortawesome/free-solid-svg-icons';
 import {
   assignQuestionReview,
+  autoAssignReviews,
   autoEvaluateQuestion,
   claimQuestionReview,
   getReviewDashboard,
@@ -22,7 +23,7 @@ import { EmptyState, ErrorState, Notice, SkeletonRows } from '../../components/w
 import { Dialog, useConfirm, useFlash } from '../../components/workspace/Dialog';
 import { FilterChips, FilterToggle } from '../../components/workspace/Filters';
 import { Pagination, Tabs } from '../../components/workspace/Navigation';
-import { claimNextQuestion, fetchAllQuestions, useReviewLookups, userName } from '../../features/review/reviewData';
+import { claimNextQuestion, fetchAllQuestions, preferredSubjectIds, useReviewLookups, userName } from '../../features/review/reviewData';
 import {
   EVALUATION_RETRY_STATUSES,
   INBOX_CLIENT_FILTERS,
@@ -76,6 +77,11 @@ const EMPTY_FILTERS = {
   creatorUserId: '',
   submittedFrom: '',
   submittedTo: '',
+};
+
+const AUTO_ASSIGN_SKIP_REASON = {
+  NO_REVIEWERS: 'chưa có người duyệt đang hoạt động',
+  NO_ELIGIBLE_REVIEWER: 'không còn người phù hợp (khác tác giả, đúng học phần, chưa đủ tải)',
 };
 
 const TAB_EMPTY = {
@@ -301,7 +307,7 @@ function ReviewInboxPage() {
     setBusy('next');
     clearFlash();
     try {
-      const question = await claimNextQuestion(user);
+      const question = await claimNextQuestion(user, { preferredSubjectIds: preferredSubjectIds(user, lookups) });
       if (!question) {
         showFlash('info', 'Hiện không còn câu nào chờ duyệt. Bạn có thể quay lại sau.');
         refresh();
@@ -408,6 +414,35 @@ function ReviewInboxPage() {
   };
 
   // ─── Đánh giá lại bằng AI ───────────────────────────────────
+  const handleAutoAssign = async () => {
+    const accepted = await confirm({
+      title: 'Tự chia việc cho người duyệt',
+      description: 'Giao các câu chưa ai nhận hoặc quá hạn giữ (tối đa 100 câu, cũ nhất trước). Ưu tiên người phụ trách đúng học phần, '
+        + 'rồi người đang giữ ít câu nhất; không giao cho tác giả câu hỏi, mỗi người giữ tối đa 20 câu.',
+      confirmLabel: 'Chia việc',
+    });
+    if (!accepted) return;
+    setBusy('auto-assign');
+    clearFlash();
+    try {
+      const result = await autoAssignReviews({});
+      const assigned = result.assigned?.length || 0;
+      const skipped = result.skipped?.length || 0;
+      const reasons = [...new Set((result.skipped || []).map((item) => AUTO_ASSIGN_SKIP_REASON[item.reason] || item.reason))];
+      showFlash(
+        skipped ? 'warn' : 'success',
+        assigned || skipped
+          ? `Đã giao ${assigned} câu.${skipped ? ` Chưa giao được ${skipped} câu: ${reasons.join('; ')}.` : ''}`
+          : 'Không có câu nào cần chia.',
+      );
+      refresh();
+    } catch (error) {
+      showFlash('error', error.message || 'Không chia việc được.');
+    } finally {
+      setBusy('');
+    }
+  };
+
   const openEvaluate = async () => {
     setEvalDialog({ modelCode: '', scope: 'filtered', error: '' });
     try {
@@ -462,6 +497,9 @@ function ReviewInboxPage() {
             <MoreMenu
               items={[
                 { key: 'eval', label: 'Đánh giá lại bằng AI', icon: faRobot, onClick: openEvaluate, disabled: Boolean(busy) },
+                ...(isAdminUser
+                  ? [{ key: 'auto-assign', label: 'Tự chia việc cho người duyệt', icon: faShuffle, onClick: handleAutoAssign, disabled: Boolean(busy) }]
+                  : []),
               ]}
             />
             <button type="button" className="btn btn--primary" onClick={handleNext} disabled={Boolean(busy)}>

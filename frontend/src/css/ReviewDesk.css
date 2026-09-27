@@ -219,6 +219,33 @@
   margin-bottom: 4px;
 }
 
+/* Tô sáng từng từ bị xoá / thêm khi so sánh phiên bản. */
+.rv-change del.rv-diff-removed {
+  background: #f6c9c4;
+  color: #6b1f18;
+  text-decoration: line-through;
+  border-radius: 3px;
+}
+
+.rv-change ins.rv-diff-added {
+  background: #bfe8d0;
+  color: #0f4a31;
+  text-decoration: none;
+  border-radius: 3px;
+}
+
+.rv-change .ad-change-values div {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.rv-change .ad-change-values div p {
+  margin: 0 0 4px;
+}
+
 .rv-clos {
   margin-top: 14px;
   font-size: 0.84rem;
