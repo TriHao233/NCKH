@@ -69,6 +69,26 @@ def embedding_config_hash() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def embedding_model_names_match(left: str | None, right: str | None) -> bool:
+    def canonical(name):
+        name = str(name or "").strip().rstrip("/")
+        return name.removeprefix("sentence-transformers/")
+
+    return bool(left and right) and canonical(left) == canonical(right)
+
+
+def embedding_config_matches(indexed_model: dict, indexed_hash: str | None) -> bool:
+    if not embedding_model_names_match(indexed_model.get("model_name"), settings.embedding_model_name):
+        return False
+    if not indexed_hash or indexed_hash == embedding_config_hash():
+        return True
+    current = embedding_config_snapshot()
+    return all(
+        key in indexed_model and indexed_model[key] == current[key]
+        for key in ("model_revision", "precision", "normalize_embeddings")
+    )
+
+
 def model_scoped_collection_name(collection_name: str) -> str:
     suffix = embedding_config_hash()[:8]
     if collection_name.endswith(f"_{suffix}"):

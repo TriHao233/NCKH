@@ -8,7 +8,7 @@ from bson import ObjectId
 from core.config import settings
 from core.database import get_rag_db
 from core.gpu_coordination import current_gpu_operation_label
-from modules.rag.chromadb_engine import embedding_config_hash, get_collection, model_scoped_collection_name
+from modules.rag.chromadb_engine import embedding_config_matches, embedding_model_names_match, get_collection, model_scoped_collection_name
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +49,13 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
         raise ValueError(
             f"Tài liệu đang được index trong collection '{active_collection_name}'"
         )
-    indexed_model = (vector.get("embedding_model") or {}).get("model_name")
-    if indexed_model != settings.embedding_model_name:
+    indexed_model = vector.get("embedding_model") or {}
+    if not embedding_model_names_match(indexed_model.get("model_name"), settings.embedding_model_name):
         raise ValueError(
             "Embedding model hiện tại không khớp snapshot đã index: "
-            f"'{settings.embedding_model_name}' != '{indexed_model}'"
+            f"'{settings.embedding_model_name}' != '{indexed_model.get('model_name')}'"
         )
-    indexed_config_hash = vector.get("embedding_config_hash")
-    if indexed_config_hash and indexed_config_hash != embedding_config_hash():
+    if not embedding_config_matches(indexed_model, vector.get("embedding_config_hash")):
         raise ValueError("Cấu hình embedding hiện tại không khớp snapshot đã index")
     return str(chunk_set_id), str(vector_collection_id), str(active_collection_name)
 

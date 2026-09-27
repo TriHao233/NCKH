@@ -25,6 +25,7 @@ from modules.dictionary.mongodb import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import (
     embedding_config_hash,
+    embedding_config_matches,
     embedding_config_snapshot,
     embedding_token_lengths,
     embedding_token_offsets,
@@ -200,7 +201,7 @@ def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, st
         {"provider": "CHROMA", "collection_name": resolved_collection, "is_active": True},
         sort=[("created_at", -1)],
     )
-    if record and record.get("embedding_config_hash") != current_config_hash:
+    if record and not embedding_config_matches(record.get("embedding_model") or {}, record.get("embedding_config_hash")):
         raise ValueError("Vector collection name collision for a different embedding configuration")
     if record:
         return record, resolved_collection
