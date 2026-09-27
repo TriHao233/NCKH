@@ -15,6 +15,7 @@ import {
   compactIssues,
   defaultDraft,
   isBlockedFromSecondary,
+  isSlaBreached,
   restoreDraft,
   validateDraft,
 } from './reviewModel.js';
@@ -203,4 +204,15 @@ test('unassigned includes questions that never had an assignment record', () => 
   assert.equal(isUnassigned(question({ review_assignment: { status: 'UNASSIGNED' } })), true);
   assert.equal(isUnassigned(question()), false);
   assert.equal(isUnassigned(question({ review_status: 'APPROVED', review_assignment: undefined })), false);
+});
+
+test('isSlaBreached flags pending questions waiting past the SLA only', () => {
+  const submittedAt = (hoursAgo) => new Date(NOW - hoursAgo * 3600000).toISOString();
+  const late = question({ review_submission: { submitted_at: submittedAt(49) } });
+  const fresh = question({ review_submission: { submitted_at: submittedAt(2) } });
+  assert.equal(isSlaBreached(late, 48, NOW), true);
+  assert.equal(isSlaBreached(fresh, 48, NOW), false);
+  assert.equal(isSlaBreached({ ...late, review_status: 'APPROVED' }, 48, NOW), false);
+  assert.equal(isSlaBreached(late, 0, NOW), false);
+  assert.equal(isSlaBreached(question({ review_submission: {} }), 48, NOW), false);
 });

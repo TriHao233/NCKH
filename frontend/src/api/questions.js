@@ -33,6 +33,7 @@ export function listQuestions({
   creatorUserId,
   waitingHoursMin,
   overdueOnly = false,
+  slaBreachedOnly = false,
   createdFrom,
   createdTo,
   submittedFrom,
@@ -63,6 +64,7 @@ export function listQuestions({
   if (creatorUserId) params.set('creator_user_id', creatorUserId);
   if (waitingHoursMin) params.set('waiting_hours_min', waitingHoursMin);
   if (overdueOnly) params.set('overdue_only', 'true');
+  if (slaBreachedOnly) params.set('sla_breached_only', 'true');
   if (createdFrom) params.set('created_from', localDateBoundary(createdFrom));
   if (createdTo) params.set('created_to', localDateBoundary(createdTo, true));
   if (submittedFrom) params.set('submitted_from', localDateBoundary(submittedFrom));

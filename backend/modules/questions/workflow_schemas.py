@@ -111,6 +111,9 @@ class ReviewCreateRequest(BaseModel):
     review_form: StructuredReviewForm = Field(default_factory=StructuredReviewForm)
     secondary_required: bool = False
     secondary_reason: str = Field("", max_length=500)
+    # Set by list-level bulk approval: the checklist was not filled per item,
+    # so these reviews are kept out of human-vs-AI calibration.
+    bulk: bool = False
 
     @model_validator(mode="after")
     def require_structured_reason(self):

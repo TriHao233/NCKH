@@ -10,7 +10,7 @@ from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
 from core.audit import record_audit_event
-from core.config import resolve_path
+from core.config import resolve_path, settings
 from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
 from modules.questions.repository import (
@@ -659,6 +659,7 @@ class QuestionService:
         creator_user_id: str | None = None,
         waiting_hours_min: float | None = None,
         overdue_only: bool = False,
+        sla_breached_only: bool = False,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         submitted_from: datetime | None = None,
@@ -710,6 +711,9 @@ class QuestionService:
                 raise ValueError("waiting_hours_min không hợp lệ")
             waiting_since = utc_now() - timedelta(hours=waiting_hours_min)
         overdue_at = utc_now() if overdue_only else None
+        if sla_breached_only:
+            sla_cutoff = utc_now() - timedelta(hours=max(1, settings.review_sla_hours))
+            submitted_to = min(submitted_to, sla_cutoff) if submitted_to else sla_cutoff
 
         list_result = self.repository.list(
             page,

@@ -44,6 +44,7 @@ import {
   formatScore,
   formatWaiting,
   inboxTabsFor,
+  isSlaBreached,
   isAssignedToUser,
   isBlockedFromSecondary,
   isObjectId,
@@ -81,7 +82,8 @@ const TAB_EMPTY = {
   mine: ['Bạn chưa giữ câu nào', 'Bấm "Duyệt câu tiếp theo" để nhận câu ưu tiên cao nhất.'],
   unassigned: ['Không còn câu chưa ai nhận', 'Câu giảng viên gửi duyệt sẽ xuất hiện ở đây kèm gợi ý của AI.'],
   resubmitted: ['Chưa có câu gửi lại', 'Câu bị yêu cầu sửa và được giảng viên gửi lại sẽ nằm ở đây.'],
-  overdue: ['Không có câu quá hạn', 'Câu bị giữ quá thời gian khoá sẽ hiện ở đây để người khác nhận lại.'],
+  overdue: ['Không có câu quá hạn giữ', 'Câu bị giữ quá thời gian khoá hoặc hạn phân công sẽ hiện ở đây để người khác nhận lại.'],
+  late: ['Không có câu trễ hạn', 'Câu chờ duyệt quá hạn xử lý kể từ lúc giảng viên gửi sẽ hiện ở đây.'],
   processed: ['Chưa có câu đã xử lý', 'Câu đã duyệt, yêu cầu sửa hoặc từ chối sẽ nằm ở đây.'],
   moodle: ['Không còn câu chờ lên Moodle', 'Câu đã duyệt nhưng chưa đồng bộ Moodle sẽ nằm ở đây.'],
   all: ['Hàng chờ đang trống', 'Chưa có câu nào đang chờ kiểm duyệt.'],
@@ -121,6 +123,7 @@ function ReviewInboxPage() {
   const requestedTab = searchParams.get('tab') || (searchParams.get('status') === 'PENDING' ? (isAdminUser ? 'all' : 'unassigned') : '');
 
   const [counts, setCounts] = useState({});
+  const [slaHours, setSlaHours] = useState(0);
   const [countsLoaded, setCountsLoaded] = useState(false);
   const [autoTab, setAutoTab] = useState('');
   const tab = tabs.some((item) => item.value === requestedTab) ? requestedTab : (autoTab || 'mine');
@@ -164,12 +167,14 @@ function ReviewInboxPage() {
       mine: workload.mine,
       unassigned: pendingAll.status === 'fulfilled' ? pendingAll.value.filter(isUnassigned).length : workload.unassigned,
       overdue: workload.lock_expired,
+      late: workload.sla_breached,
       all: workload.pending,
       processed: processed.status === 'fulfilled' ? processed.value.total || 0 : undefined,
       moodle: moodle.status === 'fulfilled' ? moodle.value.total || 0 : undefined,
       resubmitted: pendingAll.status === 'fulfilled' ? pendingAll.value.filter(isResubmission).length : undefined,
     };
     setCounts(next);
+    setSlaHours(workload.sla_hours || 0);
     setCountsLoaded(true);
     return next;
   }, []);
@@ -364,11 +369,15 @@ function ReviewInboxPage() {
       let current = question;
       if (!canDecide(current, user)) current = await claimQuestionReview(current.id);
       const draft = defaultDraft(current, 'APPROVED');
-      await reviewQuestion(current.id, buildReviewPayload(current, {
-        ...draft,
-        checklist: draft.checklist.map((item) => ({ ...item, passed: true })),
-        overallNote: 'Duyệt theo danh sách: AI đề xuất đạt và người duyệt đã rà soát.',
-      }));
+      await reviewQuestion(current.id, {
+        ...buildReviewPayload(current, {
+          ...draft,
+          checklist: draft.checklist.map((item) => ({ ...item, passed: true })),
+          overallNote: 'Duyệt theo danh sách: AI đề xuất đạt và người duyệt đã rà soát.',
+        }),
+        // Phiếu duyệt hàng loạt không chấm từng tiêu chí nên bị loại khỏi thống kê khớp với AI.
+        bulk: true,
+      });
     }, 'Đã duyệt');
   };
 
@@ -672,6 +681,7 @@ function ReviewInboxPage() {
                               <span className="ws-code">{question.question_code}</span>
                               <span className="ws-clip-1" title={question.content}>{question.content}</span>
                               <span className="rv-row-flags">
+                                {isSlaBreached(question, slaHours) && <span className="ws-pill ws-pill--danger">Trễ hạn</span>}
                                 {isResubmission(question) && <span className="ws-pill ws-pill--info">Gửi lại</span>}
                                 {question.secondary_review?.status === 'AWAITING_SECONDARY' && <span className="ws-pill ws-pill--info">Vòng 2</span>}
                                 {(!question.sources || question.sources.length === 0) && <span className="ws-pill ws-pill--warn">Thiếu nguồn</span>}

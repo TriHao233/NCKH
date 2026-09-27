@@ -1973,6 +1973,165 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(assignment["release_reason"], "reviewer_deactivated")
         self.assertEqual(db.audit_logs.records[-1]["action"], "QUESTION_REVIEW_RELEASED")
 
+    def test_admin_dashboard_breaks_down_reviewers_and_excludes_bulk_from_calibration(self):
+        now = datetime.now(timezone.utc)
+        admin = _current_user("Admin")
+        busy_reviewer = ObjectId()
+        idle_reviewer = ObjectId()
+        late = now - timedelta(hours=settings.review_sla_hours + 5)
+        base_question = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+        version_ids = [ObjectId() for _ in range(6)]
+        reviews = [
+            {
+                "_id": ObjectId(),
+                "question_version_id": version_id,
+                "reviewer_user_id": busy_reviewer,
+                "decision": "APPROVED",
+                "override": {"applied": index < 2},
+                "revision_issues": [],
+                "bulk": index == 5,
+                "reviewed_at": now - timedelta(days=1),
+            }
+            for index, version_id in enumerate(version_ids)
+        ]
+
+        class FakeDashboardDatabase:
+            def __init__(self):
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": admin.id, "role": "Admin", "is_active": True, "display_name": "Admin"},
+                        {"_id": busy_reviewer, "role": "Reviewer", "is_active": True, "display_name": "Bận"},
+                        {"_id": idle_reviewer, "role": "Reviewer", "is_active": True, "display_name": "Rảnh"},
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            **base_question,
+                            "_id": ObjectId(),
+                            "review_assignment": {"status": "IN_REVIEW", "reviewer_user_id": busy_reviewer},
+                            "review_submission": {"submitted_at": late},
+                        },
+                        {
+                            **base_question,
+                            "_id": ObjectId(),
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "review_submission": {"submitted_at": now - timedelta(hours=1)},
+                        },
+                    ]
+                )
+                self.question_reviews = InMemoryCollection(reviews)
+                # AI failed every version: only the non-bulk approvals count as disagreements.
+                self.question_evaluations = InMemoryCollection(
+                    [
+                        {"_id": ObjectId(), "question_version_id": version_id, "passed": False, "created_at": now}
+                        for version_id in version_ids
+                    ]
+                )
+                self.audit_logs = InMemoryCollection()
+                self.question_versions = InMemoryCollection()
+                self.subjects = InMemoryCollection()
+
+        dashboard = QuestionWorkflowService(FakeDashboardDatabase()).review_dashboard(admin)
+
+        self.assertEqual(dashboard["workload"]["sla_breached"], 1)
+        self.assertEqual(dashboard["workload"]["sla_hours"], settings.review_sla_hours)
+        self.assertEqual(dashboard["performance"]["reviews_30d"], 6)
+        self.assertEqual(dashboard["performance"]["bulk_count"], 1)
+        self.assertEqual(dashboard["calibration"]["sample_size"], 5)
+        rows = {row["user_id"]: row for row in dashboard["reviewers"]}
+        busy = rows[str(busy_reviewer)]
+        self.assertEqual(busy["reviews_30d"], 6)
+        self.assertEqual(busy["override_count"], 2)
+        self.assertEqual(busy["holding"], 1)
+        self.assertEqual(busy["holding_sla_breached"], 1)
+        self.assertEqual(busy["ai_sample_size"], 5)
+        self.assertEqual(busy["ai_agreement_rate"], 0.0)
+        self.assertEqual(busy["flags"], ["HIGH_OVERRIDE", "SLA_BREACHED"])
+        idle = rows[str(idle_reviewer)]
+        self.assertEqual(idle["reviews_30d"], 0)
+        self.assertEqual(idle["flags"], [])
+        self.assertEqual(dashboard["reviewers"][0]["user_id"], str(busy_reviewer))
+
+        reviewer_view = QuestionWorkflowService(FakeDashboardDatabase()).review_dashboard(
+            _current_user("Reviewer", busy_reviewer)
+        )
+        self.assertEqual(reviewer_view["reviewers"], [])
+
+    def test_review_sla_reminders_notify_assignee_or_admins_once_per_submission(self):
+        now = datetime.now(timezone.utc)
+        admin_id = ObjectId()
+        inactive_admin_id = ObjectId()
+        reviewer_id = ObjectId()
+        late = now - timedelta(hours=settings.review_sla_hours + 1)
+        base_question = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+            "current_version_id": ObjectId(),
+        }
+        assigned_id, unassigned_id, fresh_id = ObjectId(), ObjectId(), ObjectId()
+
+        class FakeReminderDatabase:
+            def __init__(self):
+                self.users = InMemoryCollection(
+                    [
+                        {"_id": admin_id, "role": "Admin", "is_active": True},
+                        {"_id": inactive_admin_id, "role": "Admin", "is_active": False},
+                        {"_id": reviewer_id, "role": "Reviewer", "is_active": True},
+                    ]
+                )
+                self.questions = InMemoryCollection(
+                    [
+                        {
+                            **base_question,
+                            "_id": assigned_id,
+                            "question_code": "Q-LATE-1",
+                            "review_assignment": {"status": "ASSIGNED", "reviewer_user_id": reviewer_id},
+                            "review_submission": {"submitted_at": late},
+                        },
+                        {
+                            **base_question,
+                            "_id": unassigned_id,
+                            "question_code": "Q-LATE-2",
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "review_submission": {"submitted_at": late},
+                        },
+                        {
+                            **base_question,
+                            "_id": fresh_id,
+                            "question_code": "Q-FRESH",
+                            "review_assignment": {"status": "UNASSIGNED"},
+                            "review_submission": {"submitted_at": now},
+                        },
+                    ]
+                )
+                self.notifications = InMemoryCollection()
+
+        db = FakeReminderDatabase()
+        service = QuestionWorkflowService(db)
+
+        self.assertEqual(service.send_review_sla_reminders(now), 2)
+        self.assertEqual(
+            sorted((str(item["recipient_user_id"]), item["type"]) for item in db.notifications.records),
+            sorted(
+                [
+                    (str(reviewer_id), "QUESTION_REVIEW_SLA_BREACHED"),
+                    (str(admin_id), "QUESTION_REVIEW_SLA_BREACHED"),
+                ]
+            ),
+        )
+        self.assertEqual(service.send_review_sla_reminders(now), 0)
+
+        # A resubmission that is late again earns a fresh reminder.
+        db.questions.find_one({"_id": unassigned_id})["review_submission"]["submitted_at"] = late + timedelta(minutes=1)
+        self.assertEqual(service.send_review_sla_reminders(now), 1)
+        self.assertEqual(len(db.notifications.records), 3)
+
     def test_user_service_releases_reviewer_work_on_deactivate_and_role_change(self):
         admin_doc = _user_doc("Admin", True)
         reviewer_doc = _user_doc("Reviewer", True)

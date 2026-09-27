@@ -96,6 +96,11 @@ class Settings(BaseModel):
     # Admin assignments reserve a question for the assigned reviewer much longer
     # than an interactive review lock; after this window other reviewers may claim.
     review_assignment_timeout_hours: int = int(os.getenv("REVIEW_ASSIGNMENT_TIMEOUT_HOURS", "72"))
+    # A pending question is late once it has waited this long since submission.
+    review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
+    review_sla_reminder_interval_seconds: float = float(
+        os.getenv("REVIEW_SLA_REMINDER_INTERVAL_SECONDS", "900")
+    )
     gpu_coordination_enabled: bool = _env_bool("GPU_COORDINATION_ENABLED", True)
     gpu_lock_path: str = os.getenv("GPU_LOCK_PATH", "./data/gpu-operation.lock")
     gpu_lock_timeout_seconds: float = float(os.getenv("GPU_LOCK_TIMEOUT_SECONDS", "1200"))

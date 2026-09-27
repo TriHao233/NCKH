@@ -46,6 +46,19 @@ function buildAttention(overview, dashboard, staleUnassigned) {
   if (staleUnassigned) items.push({ key: 'stale-review', tone: 'warn', text: `${formatNumber(staleUnassigned)} câu chờ duyệt quá 48 giờ chưa ai nhận`, to: '/kiem-duyet?tab=unassigned' });
   const lockExpired = dashboard?.workload?.lock_expired || 0;
   if (lockExpired) items.push({ key: 'lock', tone: 'warn', text: `${formatNumber(lockExpired)} câu bị giữ quá hạn khoá`, to: '/kiem-duyet?tab=overdue' });
+  const slaBreached = dashboard?.workload?.sla_breached || 0;
+  if (slaBreached) {
+    items.push({
+      key: 'sla',
+      tone: 'danger',
+      text: `${formatNumber(slaBreached)} câu chờ duyệt quá ${dashboard.workload.sla_hours || 48} giờ`,
+      to: '/kiem-duyet?tab=late',
+    });
+  }
+  const flaggedReviewers = (dashboard?.reviewers || []).filter((row) => row.flags?.some((flag) => flag !== 'SLA_BREACHED')).length;
+  if (flaggedReviewers) {
+    items.push({ key: 'reviewer-flags', tone: 'warn', text: `${formatNumber(flaggedReviewers)} người duyệt có dấu hiệu cần xem lại`, to: '/kiem-duyet/hieu-suat' });
+  }
   const longRunning = overview?.jobs?.long_running || 0;
   if (longRunning) items.push({ key: 'long', tone: 'warn', text: `${formatNumber(longRunning)} tác vụ chạy quá lâu`, to: '/quan-ly-job?stale_only=true' });
   return items;

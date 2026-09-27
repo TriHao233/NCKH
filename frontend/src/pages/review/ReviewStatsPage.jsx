@@ -14,6 +14,22 @@ function hoursText(value) {
   return typeof value === 'number' ? `${value.toFixed(1).replace('.', ',')} giờ/câu` : 'chưa đủ dữ liệu thời gian';
 }
 
+const REVIEWER_FLAG_LABEL = {
+  HIGH_OVERRIDE: 'Hay duyệt khác AI',
+  HIGH_BULK: 'Duyệt hàng loạt nhiều',
+  SLA_BREACHED: 'Giữ câu trễ hạn',
+};
+
+const REVIEWER_FLAG_TONE = {
+  HIGH_OVERRIDE: 'warn',
+  HIGH_BULK: 'warn',
+  SLA_BREACHED: 'danger',
+};
+
+function shortHours(value) {
+  return typeof value === 'number' ? `${value.toFixed(1).replace('.', ',')} giờ` : '--';
+}
+
 function ReviewStatsPage() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -40,6 +56,8 @@ function ReviewStatsPage() {
   const calibration = dashboard?.calibration || {};
   const decisions = dashboard?.decisions || {};
   const subjects = dashboard?.subjects || [];
+  const reviewers = dashboard?.reviewers || [];
+  const isAdminScope = dashboard?.scope === 'all_reviewers';
   const scopeText = dashboard?.scope === 'all_reviewers' ? 'toàn bộ người duyệt' : 'các phiếu do bạn chốt';
 
   return (
@@ -88,6 +106,14 @@ function ReviewStatsPage() {
                         <tr><td>Đã giao, chưa bắt đầu</td><td className="ws-num">{workload.assigned || 0}</td></tr>
                         <tr><td>Đang xử lý</td><td className="ws-num">{workload.in_review || 0}</td></tr>
                         <tr><td>Quá hạn giữ câu</td><td className="ws-num">{workload.lock_expired || 0}</td></tr>
+                        <tr>
+                          <td>Trễ hạn duyệt{workload.sla_hours ? ` (quá ${workload.sla_hours} giờ)` : ''}</td>
+                          <td className="ws-num">
+                            {workload.sla_breached
+                              ? <Link to="/kiem-duyet?tab=late"><span className="ws-pill ws-pill--danger tabular">{workload.sla_breached}</span></Link>
+                              : 0}
+                          </td>
+                        </tr>
                         <tr><td>Của tôi</td><td className="ws-num">{workload.mine || 0}</td></tr>
                         <tr><td><strong>Tổng chờ duyệt</strong></td><td className="ws-num"><strong>{workload.pending || 0}</strong></td></tr>
                       </tbody>
@@ -98,7 +124,10 @@ function ReviewStatsPage() {
                 <section className="ws-card">
                   <div className="ws-card-title" style={{ marginBottom: 18 }}>
                     <h2>Kết luận 30 ngày</h2>
-                    <span>{performance.override_count || 0} lần duyệt khác gợi ý AI, {performance.revision_issues || 0} lỗi đã gửi giảng viên</span>
+                    <span>
+                      {performance.override_count || 0} lần duyệt khác gợi ý AI, {performance.revision_issues || 0} lỗi đã gửi giảng viên
+                      {performance.bulk_count ? `, ${performance.bulk_count} phiếu duyệt hàng loạt` : ''}
+                    </span>
                   </div>
                   <div className="ws-table-wrap">
                     <table className="ws-table">
@@ -116,7 +145,8 @@ function ReviewStatsPage() {
                 <div className="ws-card-title" style={{ marginBottom: 14 }}>
                   <h2>Mức thống nhất với AI</h2>
                   <span>
-                    Cùng kết luận {formatPercent(calibration.agreement_rate)} trên {calibration.sample_size || 0} phiếu.
+                    Cùng kết luận {formatPercent(calibration.agreement_rate)} trên {calibration.sample_size || 0} phiếu
+                    {' '}(không tính phiếu duyệt hàng loạt).
                     {' '}AI đề xuất xem lại nhưng vẫn duyệt: {calibration.ai_failed_but_approved || 0}.
                     {' '}AI đề xuất đạt nhưng giữ lại: {calibration.ai_passed_but_not_approved || 0}.
                   </span>
@@ -153,6 +183,75 @@ function ReviewStatsPage() {
                   </table>
                 </div>
               </section>
+
+              {isAdminScope && (
+                <section className="ws-card">
+                  <div className="ws-card-title" style={{ marginBottom: 14 }}>
+                    <h2>Theo người duyệt</h2>
+                    <span>Khối lượng đang giữ và chất lượng kết luận 30 ngày. Cảnh báo chỉ xét khi có từ 5 phiếu.</span>
+                  </div>
+                  {reviewers.length === 0 ? (
+                    <EmptyState compact title="Chưa có người duyệt" description="Tạo tài khoản vai trò Người duyệt ở trang Người dùng." />
+                  ) : (
+                    <div className="ws-table-wrap">
+                      <table className="ws-table">
+                        <thead>
+                          <tr>
+                            <th>Người duyệt</th>
+                            <th className="ws-num">Đang giữ</th>
+                            <th className="ws-num">Phiếu 30 ngày</th>
+                            <th className="ws-num">Tỷ lệ duyệt</th>
+                            <th className="ws-num">Khác AI (override)</th>
+                            <th className="ws-num">Khớp AI</th>
+                            <th className="ws-num">Thời gian TB</th>
+                            <th>Cảnh báo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reviewers.map((row) => (
+                            <tr key={row.user_id}>
+                              <td>
+                                {row.display_name}
+                                <small>
+                                  {row.role === 'Admin' ? 'Quản trị' : 'Người duyệt'}
+                                  {row.is_active ? '' : ' · đã khoá'}
+                                </small>
+                              </td>
+                              <td className="ws-num">
+                                {row.holding}
+                                {row.holding_sla_breached ? <small>{row.holding_sla_breached} trễ hạn</small> : null}
+                              </td>
+                              <td className="ws-num">
+                                {row.reviews_30d}
+                                {row.bulk_count ? <small>{row.bulk_count} hàng loạt</small> : null}
+                              </td>
+                              <td className="ws-num">{formatPercent(row.approval_rate)}</td>
+                              <td className="ws-num">
+                                {formatPercent(row.override_rate)}
+                                {row.override_count ? <small>{row.override_count} phiếu</small> : null}
+                              </td>
+                              <td className="ws-num">
+                                {formatPercent(row.ai_agreement_rate)}
+                                {row.ai_sample_size ? <small>{row.ai_sample_size} mẫu</small> : null}
+                              </td>
+                              <td className="ws-num">{shortHours(row.average_review_hours)}</td>
+                              <td>
+                                {row.flags.length === 0
+                                  ? <span className="ws-muted">--</span>
+                                  : row.flags.map((flag) => (
+                                    <span key={flag} className={`ws-pill ws-pill--${REVIEWER_FLAG_TONE[flag] || 'warn'}`}>
+                                      {REVIEWER_FLAG_LABEL[flag] || flag}
+                                    </span>
+                                  ))}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
 
               <section className="ws-card">
                 <div className="ws-card-title" style={{ marginBottom: 14 }}>

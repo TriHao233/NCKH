@@ -71,6 +71,12 @@ EVALUATION_SOURCE_LIMIT = 3
 EVALUATION_RETRIEVAL_LIMIT = 5
 EVALUATION_MIN_SIMILARITY = 0.20
 EVALUATION_PROMPT_SOURCE_LIMIT = 3
+# Reviewer health flags on the Admin dashboard only fire once a reviewer has
+# enough decisions in the 30-day window for the rate to mean something.
+REVIEWER_FLAG_MIN_REVIEWS = 5
+HIGH_OVERRIDE_RATE = 0.3
+HIGH_BULK_RATE = 0.5
+SLA_REMINDER_BATCH_SIZE = 200
 OPTION_CHECK_VERDICTS = {"SUPPORTED", "CONTRADICTED", "NOT_IN_SOURCE", "AMBIGUOUS"}
 SINGLE_ANSWER_TYPES = {"TRAC_NGHIEM", "DUNG_SAI"}
 MULTIPLE_ANSWER_TYPES = {"NHIEU_LUA_CHON"}
@@ -2597,6 +2603,7 @@ class QuestionWorkflowService:
             "review_form": review_form,
             "revision_issues": review_form.get("revision_issues", []),
             "review_stage": "SECONDARY" if awaiting_secondary else "PRIMARY",
+            "bulk": bool(payload.bulk),
             "secondary_required": bool(request_secondary or awaiting_secondary),
             "secondary_reason": payload.secondary_reason or secondary.get("reason") or "",
             "supersedes_review_id": question.get("latest_review_id"),
@@ -3450,28 +3457,75 @@ class QuestionWorkflowService:
                     "review_assignment.reviewer_user_id": current_user.id,
                 }
             ),
+            "sla_breached": pending_count(
+                {"review_submission.submitted_at": {"$lte": self._sla_cutoff(now)}}
+            ),
+            "sla_hours": settings.review_sla_hours,
         }
 
         review_match: dict = {"reviewed_at": {"$gte": since_30d}}
         if not is_admin:
             review_match["reviewer_user_id"] = current_user.id
         reviews = list(
-            self.db.question_reviews.find(review_match).sort("reviewed_at", -1).limit(500)
+            self.db.question_reviews.find(
+                review_match,
+                {
+                    "question_version_id": 1,
+                    "reviewer_user_id": 1,
+                    "decision": 1,
+                    "override.applied": 1,
+                    "revision_issues": 1,
+                    "review_form.criterion_assessments": 1,
+                    "review_form.checklist": 1,
+                    "bulk": 1,
+                    "reviewed_at": 1,
+                },
+            ).sort("reviewed_at", -1)
         )
         decision_counts = {"APPROVED": 0, "NEEDS_REVISION": 0, "REJECTED": 0}
         override_count = 0
+        bulk_count = 0
         revision_issues = 0
         reviews_last_7d = 0
+        per_reviewer: dict = {}
+
+        def reviewer_bucket(reviewer_id) -> dict:
+            return per_reviewer.setdefault(
+                reviewer_id,
+                {
+                    "reviews_30d": 0,
+                    "reviews_7d": 0,
+                    "decisions": {"APPROVED": 0, "NEEDS_REVISION": 0, "REJECTED": 0},
+                    "override_count": 0,
+                    "bulk_count": 0,
+                    "calibration_sample": 0,
+                    "calibration_agreements": 0,
+                    "durations": [],
+                },
+            )
+
         for review in reviews:
             decision = review.get("decision")
+            overridden = bool((review.get("override") or {}).get("applied"))
+            bucket = reviewer_bucket(review.get("reviewer_user_id")) if is_admin else None
             if decision in decision_counts:
                 decision_counts[decision] += 1
-            if (review.get("override") or {}).get("applied"):
+                if bucket is not None:
+                    bucket["decisions"][decision] += 1
+            if overridden:
                 override_count += 1
+            if review.get("bulk"):
+                bulk_count += 1
             revision_issues += len(review.get("revision_issues") or [])
             reviewed_at = _as_aware_utc(review.get("reviewed_at"))
-            if reviewed_at and reviewed_at >= since_7d:
+            recent = bool(reviewed_at and reviewed_at >= since_7d)
+            if recent:
                 reviews_last_7d += 1
+            if bucket is not None:
+                bucket["reviews_30d"] += 1
+                bucket["reviews_7d"] += int(recent)
+                bucket["override_count"] += int(overridden)
+                bucket["bulk_count"] += int(bool(review.get("bulk")))
 
         version_ids = [
             review.get("question_version_id")
@@ -3500,11 +3554,17 @@ class QuestionWorkflowService:
         }
         for review in reviews:
             evaluation = evaluation_map.get(review.get("question_version_id"))
-            if not evaluation:
+            # Bulk approvals mark every criterion as passed without a
+            # per-item check, so they would inflate human/AI agreement.
+            if not evaluation or review.get("bulk"):
                 continue
             calibration_sample += 1
             ai_positive = bool(evaluation.get("passed"))
             human_positive = review.get("decision") == "APPROVED"
+            bucket = per_reviewer.get(review.get("reviewer_user_id")) if is_admin else None
+            if bucket is not None:
+                bucket["calibration_sample"] += 1
+                bucket["calibration_agreements"] += int(ai_positive == human_positive)
             if ai_positive == human_positive:
                 calibration_agreements += 1
             else:
@@ -3545,12 +3605,20 @@ class QuestionWorkflowService:
         if not is_admin:
             audit_match["actor.user_id"] = current_user.id
         durations: list[float] = []
-        for audit in self.db.audit_logs.find(audit_match, {"metadata.review_assignment": 1, "created_at": 1}):
+        for audit in self.db.audit_logs.find(
+            audit_match,
+            {"metadata.review_assignment": 1, "created_at": 1, "actor.user_id": 1},
+        ):
             assignment = ((audit.get("metadata") or {}).get("review_assignment") or {})
             start = _as_aware_utc(assignment.get("claimed_at") or assignment.get("assigned_at"))
             end = _as_aware_utc(audit.get("created_at"))
             if start and end and end >= start:
-                durations.append((end - start).total_seconds() / 3600)
+                hours = (end - start).total_seconds() / 3600
+                durations.append(hours)
+                if is_admin:
+                    actor_id = (audit.get("actor") or {}).get("user_id")
+                    if actor_id in per_reviewer:
+                        per_reviewer[actor_id]["durations"].append(hours)
         average_review_hours = (
             round(sum(durations) / len(durations), 2)
             if durations
@@ -3604,6 +3672,7 @@ class QuestionWorkflowService:
             "reviews_30d": total_reviews,
             "approval_rate": round(approved / total_reviews, 3) if total_reviews else None,
             "override_count": override_count,
+            "bulk_count": bulk_count,
             "revision_issues": revision_issues,
             "average_review_hours": average_review_hours,
             "duration_sample_size": len(durations),
@@ -3638,10 +3707,183 @@ class QuestionWorkflowService:
                 "calibration": calibration,
                 "decisions": decision_counts,
                 "subjects": subjects,
+                "reviewers": self._reviewer_breakdown(per_reviewer, now) if is_admin else [],
                 "generated_at": now,
                 "scope": "all_reviewers" if is_admin else "current_reviewer",
             }
         )
+
+    def _sla_cutoff(self, now) -> object:
+        return now - timedelta(hours=max(1, settings.review_sla_hours))
+
+    def _reviewer_breakdown(self, per_reviewer: dict, now) -> list[dict]:
+        """Per-reviewer workload and quality signals for the Admin dashboard."""
+        sla_cutoff = _as_aware_utc(self._sla_cutoff(now))
+        holding: dict = {}
+        for question in self.db.questions.find(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+                "review_status": "PENDING",
+                "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+            },
+            {"review_assignment": 1, "review_submission.submitted_at": 1},
+        ):
+            reviewer_id = (question.get("review_assignment") or {}).get("reviewer_user_id")
+            if reviewer_id is None:
+                continue
+            counts = holding.setdefault(reviewer_id, {"holding": 0, "holding_sla_breached": 0})
+            counts["holding"] += 1
+            submitted_at = _as_aware_utc((question.get("review_submission") or {}).get("submitted_at"))
+            if submitted_at and submitted_at <= sla_cutoff:
+                counts["holding_sla_breached"] += 1
+
+        users = {
+            user["_id"]: user
+            for user in self.db.users.find(
+                {
+                    "$or": [
+                        {"role": "Reviewer", "is_active": True},
+                        {"_id": {"$in": [key for key in {*per_reviewer, *holding} if key is not None]}},
+                    ]
+                },
+                {"display_name": 1, "email": 1, "role": 1, "is_active": 1},
+            )
+        }
+        rows = []
+        for reviewer_id in {*users, *per_reviewer, *holding}:
+            if reviewer_id is None:
+                continue
+            user = users.get(reviewer_id) or {}
+            stats = per_reviewer.get(reviewer_id) or {}
+            load = holding.get(reviewer_id) or {}
+            total = stats.get("reviews_30d", 0)
+            sample = stats.get("calibration_sample", 0)
+            durations = stats.get("durations") or []
+            override_rate = round(stats.get("override_count", 0) / total, 3) if total else None
+            bulk_rate = round(stats.get("bulk_count", 0) / total, 3) if total else None
+            flags = []
+            if total >= REVIEWER_FLAG_MIN_REVIEWS and (override_rate or 0) >= HIGH_OVERRIDE_RATE:
+                flags.append("HIGH_OVERRIDE")
+            if total >= REVIEWER_FLAG_MIN_REVIEWS and (bulk_rate or 0) >= HIGH_BULK_RATE:
+                flags.append("HIGH_BULK")
+            if load.get("holding_sla_breached"):
+                flags.append("SLA_BREACHED")
+            rows.append(
+                {
+                    "user_id": reviewer_id,
+                    "display_name": user.get("display_name") or user.get("email") or str(reviewer_id),
+                    "email": user.get("email"),
+                    "role": user.get("role"),
+                    "is_active": user.get("is_active", False),
+                    "reviews_7d": stats.get("reviews_7d", 0),
+                    "reviews_30d": total,
+                    "decisions": stats.get(
+                        "decisions",
+                        {"APPROVED": 0, "NEEDS_REVISION": 0, "REJECTED": 0},
+                    ),
+                    "approval_rate": (
+                        round(stats["decisions"]["APPROVED"] / total, 3) if total else None
+                    ),
+                    "override_count": stats.get("override_count", 0),
+                    "override_rate": override_rate,
+                    "bulk_count": stats.get("bulk_count", 0),
+                    "ai_agreement_rate": (
+                        round(stats["calibration_agreements"] / sample, 3) if sample else None
+                    ),
+                    "ai_sample_size": sample,
+                    "average_review_hours": (
+                        round(sum(durations) / len(durations), 2) if durations else None
+                    ),
+                    "holding": load.get("holding", 0),
+                    "holding_sla_breached": load.get("holding_sla_breached", 0),
+                    "flags": flags,
+                }
+            )
+        rows.sort(key=lambda row: (-len(row["flags"]), -row["holding"], -row["reviews_30d"], row["display_name"]))
+        return rows
+
+    def send_review_sla_reminders(self, now=None) -> int:
+        """Notify once per submission when a pending question breaches the review SLA.
+
+        The current assignee is reminded; unassigned questions go to active Admins.
+        """
+        now = now or utc_now()
+        cutoff = self._sla_cutoff(now)
+        candidates = list(
+            self.db.questions.find(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "lifecycle_status": "ACTIVE",
+                    "review_status": "PENDING",
+                    "review_submission.submitted_at": {"$lte": cutoff},
+                },
+                {
+                    "question_code": 1,
+                    "current_version_id": 1,
+                    "review_assignment": 1,
+                    "review_submission.submitted_at": 1,
+                    "review_sla": 1,
+                },
+            ).limit(SLA_REMINDER_BATCH_SIZE)
+        )
+        admin_ids: list | None = None
+        notifications = NotificationService(self.db)
+        sent = 0
+        for question in candidates:
+            submitted_at = (question.get("review_submission") or {}).get("submitted_at")
+            if (question.get("review_sla") or {}).get("reminded_submission_at") == submitted_at:
+                continue
+            marked = self.db.questions.update_one(
+                {
+                    "_id": question["_id"],
+                    "review_status": "PENDING",
+                    "review_sla.reminded_submission_at": {"$ne": submitted_at},
+                },
+                {
+                    "$set": {
+                        "review_sla": {
+                            "reminded_submission_at": submitted_at,
+                            "reminded_at": now,
+                        }
+                    }
+                },
+            )
+            if not marked.matched_count:
+                continue
+            assignment = question.get("review_assignment") or {}
+            if assignment.get("status") in {"ASSIGNED", "IN_REVIEW"} and assignment.get("reviewer_user_id"):
+                recipients = [assignment["reviewer_user_id"]]
+            else:
+                if admin_ids is None:
+                    admin_ids = [
+                        user["_id"]
+                        for user in self.db.users.find({"role": "Admin", "is_active": True}, {"_id": 1})
+                    ]
+                recipients = admin_ids
+            question_code = question.get("question_code", "Câu hỏi")
+            notifications.create_many(
+                [
+                    {
+                        "recipient_user_id": recipient,
+                        "type": "QUESTION_REVIEW_SLA_BREACHED",
+                        "title": f"{question_code} đã chờ duyệt quá {settings.review_sla_hours} giờ",
+                        "body": "Câu hỏi đã vượt hạn kiểm duyệt, cần được xử lý hoặc phân công lại.",
+                        "link": f"/kiem-duyet?questionId={question['_id']}",
+                        "entity": json_safe(
+                            {
+                                "type": "QUESTION",
+                                "id": question["_id"],
+                                "version_id": question.get("current_version_id"),
+                                "question_code": question_code,
+                            }
+                        ),
+                    }
+                    for recipient in recipients
+                ]
+            )
+            sent += 1
+        return sent
 
 
 def get_workflow_service() -> QuestionWorkflowService:

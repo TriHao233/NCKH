@@ -160,7 +160,8 @@ export const INBOX_TABS = Object.freeze([
   // Câu chưa từng được giao không có trường review_assignment nên API lọc "UNASSIGNED" bỏ sót; lọc phía trình duyệt.
   { value: 'unassigned', label: 'Chưa ai nhận', query: { reviewStatus: 'PENDING' }, clientFilter: 'unassigned' },
   { value: 'resubmitted', label: 'Gửi lại sau sửa', query: { reviewStatus: 'PENDING' }, clientFilter: 'resubmitted' },
-  { value: 'overdue', label: 'Quá hạn', query: { reviewStatus: 'PENDING', overdueOnly: true } },
+  { value: 'overdue', label: 'Quá hạn giữ', query: { reviewStatus: 'PENDING', overdueOnly: true } },
+  { value: 'late', label: 'Trễ hạn duyệt', query: { reviewStatus: 'PENDING', slaBreachedOnly: true } },
   { value: 'processed', label: 'Đã xử lý', query: { reviewStatus: 'PROCESSED' } },
   { value: 'moodle', label: 'Chờ lên Moodle', query: { reviewStatus: 'APPROVED', publicationStatus: 'NOT_PUBLISHED' } },
   { value: 'all', label: 'Tất cả', query: { reviewStatus: 'PENDING' }, adminOnly: true },
@@ -239,6 +240,13 @@ export function formatWaiting(value, now = Date.now()) {
   if (hours < 1) return 'dưới 1 giờ';
   if (hours < 24) return `${Math.floor(hours)} giờ`;
   return `${Math.floor(hours / 24)} ngày`;
+}
+
+/** Câu chờ duyệt đã vượt hạn xử lý (SLA, tính từ lúc giảng viên gửi duyệt). */
+export function isSlaBreached(question, slaHours, now = Date.now()) {
+  if (!isPending(question) || !(slaHours > 0)) return false;
+  const submitted = new Date(question?.review_submission?.submitted_at || question?.submitted_at || '').getTime();
+  return Number.isFinite(submitted) && now - submitted >= slaHours * 3600000;
 }
 
 export function formatRemaining(value, now = Date.now()) {
