@@ -171,6 +171,10 @@ export function releaseQuestionReview(id) {
   return apiRequest(`/questions/${id}/review-assignment/release`, { method: 'POST' });
 }
 
+export function renewQuestionReview(id) {
+  return apiRequest(`/questions/${id}/review-assignment/renew`, { method: 'POST' });
+}
+
 export function assignQuestionReview(id, payload) {
   return apiRequest(`/questions/${id}/review-assignment`, { method: 'POST', body: payload });
 }

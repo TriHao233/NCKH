@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Callable, Protocol
 
 from bson import ObjectId
 from firebase_admin import auth
@@ -30,6 +30,7 @@ from modules.users.schemas import (
 
 MAX_GENERATION_PRESETS = 12
 MAX_TASK_CALENDAR_ITEMS = 500
+REVIEWING_ROLES = {"Reviewer", "Admin"}
 
 
 def utc_now() -> datetime:
@@ -71,10 +72,22 @@ class UserService:
         repository: UserRepository,
         identity: IdentityGateway,
         sessions: FirebaseSessionRepository,
+        release_review_assignments: Callable[[ObjectId, CurrentUser | None, str], int] | None = None,
     ):
         self.repository = repository
         self.identity = identity
         self.sessions = sessions
+        self.release_review_assignments = release_review_assignments
+
+    def _release_reviewer_work(
+        self,
+        user_id: ObjectId,
+        previous_role: str | None,
+        actor: CurrentUser | None,
+        reason: str,
+    ) -> None:
+        if self.release_review_assignments and previous_role in REVIEWING_ROLES:
+            self.release_review_assignments(user_id, actor, reason)
 
     def sync_from_claims(self, claims: dict) -> dict:
         return serialize_user(self.repository.sync_identity(claims))
@@ -476,6 +489,7 @@ class UserService:
             return None
         self._ensure_admin_floor(user, fields)
         before = self._user_audit_snapshot(user)
+        previous_role = user.get("role")
         if payload.display_name is not None:
             self.identity.update_user(user["firebase_uid"], display_name=payload.display_name)
         if payload.is_active is not None:
@@ -483,6 +497,9 @@ class UserService:
         updated = self.repository.update(user_id, fields)
         if updated and payload.is_active is False:
             self.sessions.upsert(user["firebase_uid"], None)
+            self._release_reviewer_work(user["_id"], previous_role, actor, "reviewer_deactivated")
+        elif updated and fields.get("role") and fields["role"] not in REVIEWING_ROLES:
+            self._release_reviewer_work(user["_id"], previous_role, actor, "reviewer_role_removed")
         if updated and {"role", "is_active"} & set(fields):
             record_audit_event(
                 action="user.admin_update",
@@ -502,10 +519,12 @@ class UserService:
             return False
         self._ensure_admin_floor(user, {"is_active": False})
         before = self._user_audit_snapshot(user)
+        previous_role = user.get("role")
         self.identity.set_user_disabled(user["firebase_uid"], True)
         updated = self.repository.update(user_id, {"is_active": False})
         if updated:
             self.sessions.upsert(user["firebase_uid"], None)
+            self._release_reviewer_work(user["_id"], previous_role, actor, "reviewer_deactivated")
             record_audit_event(
                 action="user.deactivate",
                 entity_type="user",
@@ -519,8 +538,22 @@ class UserService:
 
 
 def get_user_service() -> UserService:
+    database = get_rag_db()
+
+    def release_review_assignments(reviewer_user_id, actor, reason) -> int:
+        # Imported lazily: the question workflow module is heavy and imports
+        # user-facing helpers of its own.
+        from modules.questions.workflow_service import QuestionWorkflowService
+
+        return QuestionWorkflowService(database).release_assignments_for_reviewer(
+            reviewer_user_id,
+            actor,
+            reason,
+        )
+
     return UserService(
-        MongoUserRepository(get_rag_db()),
+        MongoUserRepository(database),
         FirebaseIdentityGateway(),
         get_firebase_session_repository(),
+        release_review_assignments=release_review_assignments,
     )

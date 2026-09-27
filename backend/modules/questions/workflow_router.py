@@ -172,6 +172,18 @@ def release_review_question(
         _translate_workflow_error(exc)
 
 
+@router.post("/{question_id}/review-assignment/renew")
+def renew_review_question(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.renew_review(question_id, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
 @router.post("/{question_id}/review-assignment")
 def assign_review_question(
     question_id: str,

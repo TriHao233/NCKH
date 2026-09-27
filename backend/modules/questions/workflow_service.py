@@ -2169,6 +2169,16 @@ class QuestionWorkflowService:
     def _lock_expires_at(self, now) -> object:
         return now + timedelta(minutes=max(1, settings.review_lock_timeout_minutes))
 
+    def _assignment_expires_at(self, now) -> object:
+        return now + timedelta(hours=max(1, settings.review_assignment_timeout_hours))
+
+    def _ensure_not_author(self, question: dict, version: dict, current_user: CurrentUser) -> None:
+        if current_user.id in {
+            question.get("created_by_user_id"),
+            version.get("created_by_user_id"),
+        }:
+            raise PermissionError("Bạn không thể kiểm duyệt câu hỏi do chính mình tạo hoặc chỉnh sửa")
+
     def _assignment_available_filter(self, current_user: CurrentUser, now) -> list[dict]:
         if current_user.role == "Admin":
             return []
@@ -2251,6 +2261,8 @@ class QuestionWorkflowService:
         question, version = pair
         if question["review_status"] != "PENDING":
             raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể claim")
+        if current_user.role != "Admin":
+            self._ensure_not_author(question, version, current_user)
         now = utc_now()
         previous_assignment = question.get("review_assignment") or {}
         assignment = {
@@ -2320,6 +2332,96 @@ class QuestionWorkflowService:
         )
         return serialize_question(updated, version)
 
+    def renew_review(self, question_id: str, current_user: CurrentUser) -> dict:
+        """Extend the caller's review lock while the review desk stays open.
+
+        An expired lock can still be renewed as long as nobody else has
+        claimed the question in the meantime.
+        """
+        question, version = self._pair(question_id)
+        now = utc_now()
+        updated = self.db.questions.find_one_and_update(
+            {
+                "_id": question["_id"],
+                "current_version_id": version["_id"],
+                "lifecycle_status": "ACTIVE",
+                "review_status": "PENDING",
+                "review_assignment.status": "IN_REVIEW",
+                "review_assignment.reviewer_user_id": current_user.id,
+            },
+            {
+                "$set": {
+                    "review_assignment.lock_expires_at": self._lock_expires_at(now),
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise PermissionError("Bạn không còn giữ khóa kiểm duyệt câu hỏi này")
+        return serialize_question(updated, version)
+
+    def release_assignments_for_reviewer(
+        self,
+        reviewer_user_id,
+        current_user: CurrentUser | None,
+        reason: str,
+    ) -> int:
+        """Return every pending question held by a reviewer to the shared queue."""
+        now = utc_now()
+        held = list(
+            self.db.questions.find(
+                {
+                    "lifecycle_status": "ACTIVE",
+                    "review_status": "PENDING",
+                    "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+                    "review_assignment.reviewer_user_id": reviewer_user_id,
+                }
+            )
+        )
+        released = 0
+        for question in held:
+            assignment = _empty_review_assignment(now, reason)
+            updated = self.db.questions.find_one_and_update(
+                {
+                    "_id": question["_id"],
+                    "review_status": "PENDING",
+                    "review_assignment.reviewer_user_id": reviewer_user_id,
+                },
+                {"$set": {"review_assignment": assignment, "updated_at": now}},
+                return_document=ReturnDocument.AFTER,
+            )
+            if not updated:
+                continue
+            released += 1
+            self.db.audit_logs.insert_one(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "actor": {
+                        "type": "USER" if current_user else "SYSTEM",
+                        "user_id": current_user.id if current_user else None,
+                        "model_id": None,
+                        "service_name": None if current_user else "user_management",
+                    },
+                    "entity": {
+                        "type": "QUESTION",
+                        "id": question["_id"],
+                        "version_id": question.get("current_version_id"),
+                    },
+                    "action": "QUESTION_REVIEW_RELEASED",
+                    "changes": [
+                        {
+                            "path": "review_assignment",
+                            "old_value": question.get("review_assignment") or {},
+                            "new_value": assignment,
+                        }
+                    ],
+                    "metadata": {"reason": reason, "reviewer_user_id": reviewer_user_id},
+                    "created_at": now,
+                }
+            )
+        return released
+
     def assign_review(
         self,
         question_id: str,
@@ -2333,13 +2435,20 @@ class QuestionWorkflowService:
         now = utc_now()
         if payload.reviewer_user_id:
             reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
+            if reviewer["_id"] in {
+                question.get("created_by_user_id"),
+                version.get("created_by_user_id"),
+            }:
+                raise ValueError("Không thể giao câu hỏi cho chính tác giả kiểm duyệt")
             assignment = {
                 "status": "ASSIGNED",
                 "reviewer_user_id": reviewer["_id"],
                 "assigned_by_user_id": current_user.id,
                 "assigned_at": now,
                 "claimed_at": None,
-                "lock_expires_at": self._lock_expires_at(now),
+                # Reserve the question for the assignee for the assignment
+                # window, not the short interactive review-lock window.
+                "lock_expires_at": self._assignment_expires_at(now),
                 "last_released_at": None,
                 "release_reason": payload.note or None,
             }
@@ -2453,6 +2562,10 @@ class QuestionWorkflowService:
             raise ValueError(
                 "Chỉ có thể duyệt phiên bản đã vượt đánh giá, hoặc phải ghi rõ override"
             )
+        if current_user.role != "Admin" or not payload.override.applied:
+            # Admins may only review their own question with an explicit,
+            # audited override; everyone else is always blocked.
+            self._ensure_not_author(question, version, current_user)
         now = utc_now()
         self._ensure_review_lock(question, current_user, now)
         secondary = question.get("secondary_review") or {}
@@ -2462,9 +2575,11 @@ class QuestionWorkflowService:
         )
         if awaiting_secondary and secondary.get("primary_reviewer_user_id") == current_user.id:
             raise ValueError("Reviewer duyệt lần đầu không được tự duyệt lần hai")
+        # "REQUESTED" means secondary review was configured before any primary
+        # approval: the next approval becomes the primary one.
         request_secondary = (
             payload.decision == "APPROVED"
-            and payload.secondary_required
+            and (payload.secondary_required or secondary.get("status") == "REQUESTED")
             and not awaiting_secondary
         )
         review_form = payload.review_form.model_dump()
@@ -2498,18 +2613,36 @@ class QuestionWorkflowService:
             ),
         }
         if request_secondary:
+            designated_secondary = (
+                secondary.get("secondary_reviewer_user_id")
+                if secondary.get("status") == "REQUESTED"
+                else None
+            )
+            if designated_secondary == current_user.id:
+                designated_secondary = None
             question_fields["review_status"] = "PENDING"
             question_fields["secondary_review"] = {
                 "required": True,
                 "status": "AWAITING_SECONDARY",
-                "reason": payload.secondary_reason or review_note,
+                "reason": payload.secondary_reason or secondary.get("reason") or review_note,
                 "primary_review_id": review["_id"],
                 "primary_reviewer_user_id": current_user.id,
                 "secondary_review_id": None,
-                "secondary_reviewer_user_id": None,
-                "requested_at": now,
+                "secondary_reviewer_user_id": designated_secondary,
+                "requested_at": secondary.get("requested_at") or now,
                 "completed_at": None,
             }
+            if designated_secondary:
+                question_fields["review_assignment"] = {
+                    "status": "ASSIGNED",
+                    "reviewer_user_id": designated_secondary,
+                    "assigned_by_user_id": secondary.get("requested_by_user_id") or current_user.id,
+                    "assigned_at": now,
+                    "claimed_at": None,
+                    "lock_expires_at": self._assignment_expires_at(now),
+                    "last_released_at": None,
+                    "release_reason": "secondary_review",
+                }
         else:
             question_fields["review_status"] = payload.decision
         if payload.decision == "APPROVED" and not request_secondary:
@@ -2525,7 +2658,9 @@ class QuestionWorkflowService:
                 }
         elif question.get("approved_version_id") == version["_id"]:
             question_fields["approved_version_id"] = None
-        if payload.decision != "APPROVED":
+        if payload.decision != "APPROVED" and secondary.get("status") != "REQUESTED":
+            # A standing "REQUESTED" requirement survives revisions so the
+            # resubmitted version still goes through two reviewers.
             question_fields["secondary_review"] = {
                 **secondary,
                 "status": "CANCELLED" if secondary else "NOT_REQUIRED",
@@ -2589,6 +2724,14 @@ class QuestionWorkflowService:
                 question=question,
                 version=version,
                 review=review,
+                actor_user_id=current_user.id,
+            )
+        elif question_fields["review_assignment"].get("status") == "ASSIGNED":
+            safe_notify_review_assigned(
+                database=self.db,
+                question=question,
+                version=version,
+                reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
                 actor_user_id=current_user.id,
             )
         if hasattr(self.db, "question_review_drafts"):
@@ -2776,56 +2919,97 @@ class QuestionWorkflowService:
         current_user: CurrentUser,
     ) -> dict:
         question, version = self._pair(question_id)
-        if question["review_status"] not in {"PENDING", "APPROVED"}:
+        review_status = question["review_status"]
+        if review_status not in {"PENDING", "APPROVED"}:
             raise ValueError("Chỉ cấu hình duyệt lần hai cho câu đang chờ hoặc đã duyệt")
-        reviewer = None
-        if payload.reviewer_user_id:
-            reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
+        is_admin = current_user.role == "Admin"
+        if not is_admin and (review_status == "APPROVED" or not payload.required):
+            raise PermissionError(
+                "Chỉ Admin được mở lại câu đã duyệt hoặc bỏ yêu cầu duyệt lần hai"
+            )
+        current_secondary = question.get("secondary_review") or {}
         now = utc_now()
-        secondary = (
-            {
-                "required": True,
-                "status": "AWAITING_SECONDARY",
-                "reason": payload.reason,
-                "primary_review_id": question.get("latest_review_id"),
-                "primary_reviewer_user_id": None,
-                "secondary_review_id": None,
-                "secondary_reviewer_user_id": reviewer["_id"] if reviewer else None,
-                "requested_at": now,
-                "completed_at": None,
-            }
-            if payload.required
-            else {
+
+        if not payload.required:
+            secondary = {
                 "required": False,
                 "status": "NOT_REQUIRED",
                 "reason": payload.reason,
                 "requested_at": now,
                 "completed_at": now,
             }
-        )
-        fields = {"secondary_review": secondary, "updated_at": now}
-        if payload.required:
-            fields["review_status"] = "PENDING"
-            fields["approved_version_id"] = None
-            fields["review_assignment"] = (
-                {
+            fields = {"secondary_review": secondary, "updated_at": now}
+            reviewer = None
+        else:
+            if review_status == "APPROVED":
+                # The approval being re-opened becomes the primary review.
+                primary_review_id = question.get("latest_review_id")
+                primary_review = (
+                    self.db.question_reviews.find_one({"_id": primary_review_id})
+                    if primary_review_id
+                    else None
+                ) or {}
+                primary_reviewer_user_id = primary_review.get("reviewer_user_id")
+                status = "AWAITING_SECONDARY"
+            elif current_secondary.get("status") == "AWAITING_SECONDARY":
+                primary_review_id = current_secondary.get("primary_review_id")
+                primary_reviewer_user_id = current_secondary.get("primary_reviewer_user_id")
+                status = "AWAITING_SECONDARY"
+            else:
+                # No primary approval yet: the next approval becomes primary
+                # and automatically hands over to the secondary stage.
+                primary_review_id = None
+                primary_reviewer_user_id = None
+                status = "REQUESTED"
+
+            reviewer = None
+            if payload.reviewer_user_id:
+                reviewer = self._find_assignable_reviewer(payload.reviewer_user_id)
+                if reviewer["_id"] == primary_reviewer_user_id:
+                    raise ValueError("Người duyệt lần hai phải khác người duyệt lần đầu")
+                if reviewer["_id"] in {
+                    question.get("created_by_user_id"),
+                    version.get("created_by_user_id"),
+                }:
+                    raise ValueError("Không thể giao duyệt lần hai cho chính tác giả")
+
+            secondary = {
+                "required": True,
+                "status": status,
+                "reason": payload.reason,
+                "requested_by_user_id": current_user.id,
+                "primary_review_id": primary_review_id,
+                "primary_reviewer_user_id": primary_reviewer_user_id,
+                "secondary_review_id": None,
+                "secondary_reviewer_user_id": reviewer["_id"] if reviewer else None,
+                "requested_at": now,
+                "completed_at": None,
+            }
+            fields = {"secondary_review": secondary, "updated_at": now}
+            if review_status == "APPROVED":
+                fields["review_status"] = "PENDING"
+                fields["approved_version_id"] = None
+                fields["review_assignment"] = _empty_review_assignment(
+                    now,
+                    payload.reason or "secondary_review",
+                )
+            if status == "AWAITING_SECONDARY" and reviewer:
+                fields["review_assignment"] = {
                     "status": "ASSIGNED",
                     "reviewer_user_id": reviewer["_id"],
                     "assigned_by_user_id": current_user.id,
                     "assigned_at": now,
                     "claimed_at": None,
-                    "lock_expires_at": self._lock_expires_at(now),
+                    "lock_expires_at": self._assignment_expires_at(now),
                     "last_released_at": None,
                     "release_reason": payload.reason or None,
                 }
-                if reviewer
-                else _empty_review_assignment(now, payload.reason or "secondary_review")
-            )
         updated = self.db.questions.find_one_and_update(
             {
                 "_id": question["_id"],
                 "current_version_id": version["_id"],
                 "lifecycle_status": "ACTIVE",
+                "review_status": review_status,
             },
             {"$set": fields},
             return_document=ReturnDocument.AFTER,
@@ -2841,7 +3025,7 @@ class QuestionWorkflowService:
             after=secondary,
             metadata={"reason": payload.reason},
         )
-        if reviewer:
+        if reviewer and (fields.get("review_assignment") or {}).get("status") == "ASSIGNED":
             safe_notify_review_assigned(
                 database=self.db,
                 question=updated,

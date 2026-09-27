@@ -1665,6 +1665,342 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(comment["body"], "Nhờ giảng viên xem thêm ghi chú này")
         self.assertEqual(db.notifications.records[-1]["type"], "QUESTION_MENTION")
 
+    def _review_guard_fixture(self, *, author, users, **question_fields):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        version = {
+            "_id": version_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_id": question_id,
+            "version": 1,
+            "origin": "MANUAL",
+            "generation_run_id": None,
+            "document_id": None,
+            "created_by_user_id": author.id,
+            "generated_by_model_id": None,
+            "classification": {
+                "subject": {"id": None},
+                "chapter": {"id": None},
+                "assessment_type": "TRAC_NGHIEM",
+                "bloom": {"level": 2},
+                "difficulty": None,
+            },
+            "clos": [],
+            "content": "Which structure is LIFO?",
+            "question_data": {"options": {"A": "Stack", "B": "Queue"}, "correct_answer": "A"},
+            "sources": [],
+            "keywords": [],
+            "content_hash": "hash-review-guard",
+            "change_note": "Initial version",
+            "created_at": now,
+        }
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-GUARD",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "approved_version_id": None,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PASSED",
+            "review_status": "PENDING",
+            "publication_status": "NOT_PUBLISHED",
+            "quality_summary": {"overall_score": 0.9, "color": "GREEN"},
+            "review_assignment": {"status": "UNASSIGNED"},
+            "latest_review_id": None,
+            "created_by_user_id": author.id,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+            **question_fields,
+        }
+
+        class FakeWorkflowDatabase:
+            def __init__(self):
+                self.questions = InMemoryCollection([question])
+                self.question_versions = InMemoryCollection([version])
+                self.users = InMemoryCollection(
+                    [{"_id": user.id, "role": user.role, "is_active": True} for user in users]
+                )
+                self.question_reviews = InMemoryCollection()
+                self.question_comments = InMemoryCollection()
+                self.audit_logs = InMemoryCollection()
+                self.notifications = InMemoryCollection()
+
+        return FakeWorkflowDatabase(), question_id, version_id
+
+    def _with_workflow_service(self, db, callback):
+        original_transaction = question_workflow_module.mongo_transaction
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            return callback(QuestionWorkflowService(db))
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+
+    def test_admin_assignment_reserves_question_beyond_interactive_lock(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        other_reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer, other_reviewer],
+        )
+
+        def scenario(service):
+            before = datetime.now(timezone.utc)
+            assigned = service.assign_review(
+                str(question_id),
+                ReviewAssignmentRequest(reviewer_user_id=str(reviewer.id)),
+                admin,
+            )
+            stored = db.questions.find_one({"_id": question_id})["review_assignment"]
+            expires_at = stored["lock_expires_at"]
+            self.assertGreaterEqual(
+                expires_at,
+                before + timedelta(hours=settings.review_assignment_timeout_hours) - timedelta(seconds=5),
+            )
+            # Well past the 30-minute interactive lock, the assignee still owns it.
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), other_reviewer)
+            # Once the assignment window lapses, anyone may pick it up.
+            stored["lock_expires_at"] = before - timedelta(minutes=1)
+            claimed = service.claim_review(str(question_id), other_reviewer)
+            return assigned, claimed
+
+        assigned, claimed = self._with_workflow_service(db, scenario)
+        self.assertEqual(assigned["review_assignment"]["status"], "ASSIGNED")
+        self.assertEqual(claimed["review_assignment"]["reviewer_user_id"], str(other_reviewer.id))
+
+    def test_review_lock_renewal_is_limited_to_current_holder(self):
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        other_reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[teacher, reviewer, other_reviewer],
+        )
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            stored = db.questions.find_one({"_id": question_id})["review_assignment"]
+            stored["lock_expires_at"] = datetime.now(timezone.utc) - timedelta(minutes=1)
+            with self.assertRaises(PermissionError):
+                service.renew_review(str(question_id), other_reviewer)
+            renewed = service.renew_review(str(question_id), reviewer)
+            review = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            return renewed, review
+
+        renewed, review = self._with_workflow_service(db, scenario)
+        self.assertEqual(renewed["review_assignment"]["status"], "IN_REVIEW")
+        self.assertEqual(review["decision"], "APPROVED")
+
+    def test_reopening_approved_question_keeps_primary_reviewer_out_of_secondary(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        second_reviewer = _current_user("Reviewer")
+        db, question_id, version_id = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer, second_reviewer],
+        )
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            # A reviewer cannot silently un-approve a question.
+            with self.assertRaises(PermissionError):
+                service.set_secondary_review(
+                    str(question_id),
+                    SecondaryReviewRequest(required=True, reason="Xem lại"),
+                    reviewer,
+                )
+            reopened = service.set_secondary_review(
+                str(question_id),
+                SecondaryReviewRequest(required=True, reason="Câu thi cuối kỳ"),
+                admin,
+            )
+            service.claim_review(str(question_id), reviewer)
+            with self.assertRaises(ValueError):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    reviewer,
+                )
+            service.release_review(str(question_id), reviewer)
+            service.claim_review(str(question_id), second_reviewer)
+            secondary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                second_reviewer,
+            )
+            return reopened, secondary
+
+        reopened, secondary = self._with_workflow_service(db, scenario)
+        self.assertEqual(reopened["review_status"], "PENDING")
+        self.assertEqual(reopened["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(reopened["secondary_review"]["primary_reviewer_user_id"], str(reviewer.id))
+        self.assertEqual(secondary["review_stage"], "SECONDARY")
+        final_question = db.questions.find_one({"_id": question_id})
+        self.assertEqual(final_question["review_status"], "APPROVED")
+        self.assertEqual(final_question["approved_version_id"], version_id)
+        self.assertEqual(final_question["secondary_review"]["status"], "COMPLETED")
+
+    def test_secondary_review_requested_before_primary_approval(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        second_reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer, second_reviewer],
+        )
+
+        def scenario(service):
+            requested = service.set_secondary_review(
+                str(question_id),
+                SecondaryReviewRequest(
+                    required=True,
+                    reason="Câu khó",
+                    reviewer_user_id=str(second_reviewer.id),
+                ),
+                admin,
+            )
+            service.claim_review(str(question_id), reviewer)
+            primary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                reviewer,
+            )
+            after_primary = dict(db.questions.find_one({"_id": question_id}))
+            service.claim_review(str(question_id), second_reviewer)
+            secondary = service.review(
+                str(question_id),
+                ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                second_reviewer,
+            )
+            return requested, primary, after_primary, secondary
+
+        requested, primary, after_primary, secondary = self._with_workflow_service(db, scenario)
+        self.assertEqual(requested["secondary_review"]["status"], "REQUESTED")
+        self.assertEqual(requested["review_assignment"]["status"], "UNASSIGNED")
+        self.assertEqual(primary["resulting_status"], "PENDING")
+        self.assertEqual(after_primary["secondary_review"]["status"], "AWAITING_SECONDARY")
+        self.assertEqual(after_primary["secondary_review"]["primary_reviewer_user_id"], reviewer.id)
+        self.assertEqual(after_primary["review_assignment"]["status"], "ASSIGNED")
+        self.assertEqual(after_primary["review_assignment"]["reviewer_user_id"], second_reviewer.id)
+        self.assertIn(
+            second_reviewer.id,
+            [
+                item["recipient_user_id"]
+                for item in db.notifications.records
+                if item["type"] == "QUESTION_REVIEW_ASSIGNED"
+            ],
+        )
+        self.assertEqual(secondary["review_stage"], "SECONDARY")
+        self.assertEqual(db.questions.find_one({"_id": question_id})["review_status"], "APPROVED")
+
+    def test_authors_cannot_review_their_own_questions(self):
+        admin = _current_user("Admin")
+        reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(author=admin, users=[admin, reviewer])
+
+        def admin_scenario(service):
+            with self.assertRaises(PermissionError):
+                service.review(
+                    str(question_id),
+                    ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                    admin,
+                )
+            return service.review(
+                str(question_id),
+                ReviewCreateRequest(
+                    expected_version=1,
+                    decision="APPROVED",
+                    override={"applied": True, "reason": "Không còn người duyệt khác"},
+                ),
+                admin,
+            )
+
+        review = self._with_workflow_service(db, admin_scenario)
+        self.assertTrue(review["override"]["applied"])
+
+        teacher = _current_user("Teacher")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer],
+        )
+        db.question_versions.records[0]["created_by_user_id"] = reviewer.id
+
+        def reviewer_scenario(service):
+            with self.assertRaises(PermissionError):
+                service.claim_review(str(question_id), reviewer)
+            with self.assertRaises(ValueError):
+                service.assign_review(
+                    str(question_id),
+                    ReviewAssignmentRequest(reviewer_user_id=str(reviewer.id)),
+                    admin,
+                )
+
+        self._with_workflow_service(db, reviewer_scenario)
+
+    def test_releasing_reviewer_work_returns_held_questions_to_queue(self):
+        admin = _current_user("Admin")
+        teacher = _current_user("Teacher")
+        reviewer = _current_user("Reviewer")
+        db, question_id, _ = self._review_guard_fixture(
+            author=teacher,
+            users=[admin, teacher, reviewer],
+        )
+
+        def scenario(service):
+            service.claim_review(str(question_id), reviewer)
+            return service.release_assignments_for_reviewer(reviewer.id, admin, "reviewer_deactivated")
+
+        released = self._with_workflow_service(db, scenario)
+        self.assertEqual(released, 1)
+        assignment = db.questions.find_one({"_id": question_id})["review_assignment"]
+        self.assertEqual(assignment["status"], "UNASSIGNED")
+        self.assertEqual(assignment["release_reason"], "reviewer_deactivated")
+        self.assertEqual(db.audit_logs.records[-1]["action"], "QUESTION_REVIEW_RELEASED")
+
+    def test_user_service_releases_reviewer_work_on_deactivate_and_role_change(self):
+        admin_doc = _user_doc("Admin", True)
+        reviewer_doc = _user_doc("Reviewer", True)
+        other_reviewer_doc = _user_doc("Reviewer", True)
+        calls = []
+        service = UserService(
+            FakeUserRepository([admin_doc, reviewer_doc, other_reviewer_doc]),
+            FakeIdentityGateway(),
+            FakeSessions(),
+            release_review_assignments=lambda user_id, actor, reason: calls.append((user_id, reason)) or 0,
+        )
+        actor = _current_user("Admin", admin_doc["_id"])
+
+        service.deactivate(str(reviewer_doc["_id"]), actor)
+        service.update_admin(
+            str(other_reviewer_doc["_id"]),
+            UserAdminUpdateRequest(role="Teacher"),
+            actor,
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                (reviewer_doc["_id"], "reviewer_deactivated"),
+                (other_reviewer_doc["_id"], "reviewer_role_removed"),
+            ],
+        )
+
     def test_auto_evaluation_requires_expected_version(self):
         with self.assertRaises(ValidationError):
             AutoEvaluationRequest()

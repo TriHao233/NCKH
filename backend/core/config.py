@@ -93,6 +93,9 @@ class Settings(BaseModel):
     ollama_generation_batch_size: int = int(os.getenv("OLLAMA_GENERATION_BATCH_SIZE", "1"))
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
+    # Admin assignments reserve a question for the assigned reviewer much longer
+    # than an interactive review lock; after this window other reviewers may claim.
+    review_assignment_timeout_hours: int = int(os.getenv("REVIEW_ASSIGNMENT_TIMEOUT_HOURS", "72"))
     gpu_coordination_enabled: bool = _env_bool("GPU_COORDINATION_ENABLED", True)
     gpu_lock_path: str = os.getenv("GPU_LOCK_PATH", "./data/gpu-operation.lock")
     gpu_lock_timeout_seconds: float = float(os.getenv("GPU_LOCK_TIMEOUT_SECONDS", "1200"))

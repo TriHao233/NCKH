@@ -22,6 +22,7 @@ import {
   listQuestionMoodlePublications,
   listQuestionReviews,
   releaseQuestionReview,
+  renewQuestionReview,
   reviewQuestion,
   saveQuestionReviewDraft,
 } from '../../api/questions';
@@ -72,6 +73,7 @@ import '../../css/ReviewDesk.css';
 import '../../css/AdminPages.css';
 
 const CONTINUE_KEY = 'qbankctu:review-continue-next';
+const LOCK_RENEW_THRESHOLD_MS = 10 * 60 * 1000;
 
 function readContinuePreference() {
   try {
@@ -318,12 +320,31 @@ function ReviewDeskPage() {
     }
   };
 
-  const holding = question && isPending(question) && isAssignedToUser(question, user)
-    && assignmentOf(question).status === 'IN_REVIEW' && !isLockExpired(question, now);
+  const ownsLock = Boolean(question) && isPending(question) && isAssignedToUser(question, user)
+    && assignmentOf(question).status === 'IN_REVIEW';
+  const holding = ownsLock && !isLockExpired(question, now);
 
   const handleClaim = () => runAction('claim', async () => {
-    setQuestion(await claimQuestionReview(questionId));
+    setQuestion(holding ? await renewQuestionReview(questionId) : await claimQuestionReview(questionId));
   }, holding ? 'Đã gia hạn khoá thêm 30 phút.' : 'Bạn đã nhận câu hỏi này.');
+
+  // Tự gia hạn khoá khi bàn duyệt đang mở và hiển thị, để phiếu dài không bị mất khoá giữa chừng.
+  const renewingRef = useRef(false);
+  const renewFailedForRef = useRef('');
+  useEffect(() => {
+    if (!ownsLock || renewingRef.current || document.visibilityState !== 'visible') return;
+    if (renewFailedForRef.current === questionId) return;
+    const expires = new Date(assignmentOf(question).lockExpiresAt || 0).getTime();
+    if (Number.isFinite(expires) && expires - now > LOCK_RENEW_THRESHOLD_MS) return;
+    renewingRef.current = true;
+    renewQuestionReview(questionId)
+      .then(setQuestion)
+      .catch((error) => {
+        renewFailedForRef.current = questionId;
+        showFlash('warn', error.message || 'Không gia hạn được khoá kiểm duyệt.');
+      })
+      .finally(() => { renewingRef.current = false; });
+  }, [ownsLock, question, now, questionId, showFlash]);
 
   const handleRelease = async () => {
     const accepted = await confirm({
