@@ -920,7 +920,9 @@ def bootstrap_database() -> None:
               and (name != "notifications" or settings.notification_store != "postgres")
               and (name != "audit_logs" or settings.audit_store != "postgres")
               and (name not in {"generation_jobs", "generation_runs"}
-                   or settings.generation_store != "postgres")),
+                   or settings.generation_store != "postgres")
+              and (name not in {"exams", "exam_variants"}
+                   or settings.exam_store != "postgres")),
     )
     _ensure_indexes()
     _seed_reference_data()

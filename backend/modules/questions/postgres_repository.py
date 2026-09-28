@@ -613,6 +613,60 @@ class PostgresQuestionRepository:
                 self._save_question(conn, question)
             return saved
 
+    @staticmethod
+    def find_publication(publication_id) -> dict | None:
+        with postgres_connection() as conn:
+            return _publication(conn.execute(
+                "SELECT * FROM moodle_publications WHERE id=%s",
+                (str(object_id(publication_id, "publication_id")),),
+            ).fetchone())
+
+    @staticmethod
+    def list_publications(*, page: int, page_size: int, status: str | None,
+                          site_key: str | None, search: str | None
+                          ) -> tuple[list[dict], int]:
+        clauses, params = [], []
+        if status:
+            clauses.append("status=%s")
+            params.append(status)
+        if site_key:
+            clauses.append("payload->'target'->>'moodle_site_id'=%s")
+            params.append(site_key)
+        if search:
+            pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            clauses.append("""(external_ref_id ILIKE %s
+                OR request_payload->>'question_code' ILIKE %s
+                OR payload->'error'->>'message' ILIKE %s)""")
+            params.extend([pattern, pattern, pattern])
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with postgres_connection() as conn:
+            total = conn.execute("SELECT count(*) AS n FROM moodle_publications" + where,
+                                 params).fetchone()["n"]
+            rows = conn.execute(
+                "SELECT * FROM moodle_publications" + where
+                + " ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
+                [*params, page_size, (page - 1) * page_size],
+            ).fetchall()
+        return [_publication(row) for row in rows], total
+
+    @staticmethod
+    def publication_summary(site_key: str | None) -> dict:
+        where, params = "", []
+        if site_key:
+            where, params = " WHERE payload->'target'->>'moodle_site_id'=%s", [site_key]
+        with postgres_connection() as conn:
+            row = conn.execute(
+                """SELECT count(*) AS total,
+                     count(*) FILTER (WHERE status='PUBLISHED') AS published,
+                     count(*) FILTER (WHERE payload->>'publication_mode'='MOCK'
+                       OR response_payload->>'publication_mode'='MOCK'
+                       OR request_payload->>'mock'='true') AS simulated,
+                     count(*) FILTER (WHERE status='FAILED') AS failed,
+                     count(*) FILTER (WHERE status IN ('QUEUED','PROCESSING')) AS pending
+                   FROM moodle_publications""" + where, params,
+            ).fetchone()
+        return dict(row)
+
     def _pairs(self, suffix: str, params: list) -> list[tuple[dict, dict]]:
         with postgres_connection() as conn:
             rows = conn.execute("SELECT q.* FROM questions q " + suffix, params).fetchall()

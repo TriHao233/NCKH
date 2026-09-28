@@ -228,15 +228,19 @@ class NotificationService:
     ) -> list[dict]:
         """An approved question was edited and left review: warn owners of open exams using it."""
         question_oid = object_id(question_id, "question_id")
-        exams = list(
-            self.db.exams.find(
-                {
-                    "questions.question_id": question_oid,
-                    "status": {"$nin": ["FINALIZED", "ARCHIVED", "finalized", "archived"]},
-                },
-                {"name": 1, "created_by_user_id": 1},
+        if settings.exam_store == "postgres":
+            from modules.exams.postgres_repository import PostgresExamRepository
+            exams = PostgresExamRepository.open_exams_using_question(question_oid)
+        else:
+            exams = list(
+                self.db.exams.find(
+                    {
+                        "questions.question_id": question_oid,
+                        "status": {"$nin": ["FINALIZED", "ARCHIVED", "finalized", "archived"]},
+                    },
+                    {"name": 1, "created_by_user_id": 1},
+                )
             )
-        )
         created = []
         for exam in exams:
             owner = exam.get("created_by_user_id")

@@ -14,6 +14,7 @@ def test_bootstrap_does_not_create_document_or_ai_collections_in_postgres_mode(m
     monkeypatch.setattr(settings, "notification_store", "postgres")
     monkeypatch.setattr(settings, "audit_store", "postgres")
     monkeypatch.setattr(settings, "generation_store", "postgres")
+    monkeypatch.setattr(settings, "exam_store", "postgres")
     monkeypatch.setattr(settings, "auth_db_name", "test_auth")
     monkeypatch.setattr(settings, "rag_db_name", "test_rag")
     rag_db = SimpleNamespace(schema_meta=SimpleNamespace(update_one=lambda *_args, **_kwargs: None))
@@ -34,7 +35,8 @@ def test_bootstrap_does_not_create_document_or_ai_collections_in_postgres_mode(m
                 "ai_models", "prompt_templates", "evaluation_policies",
                 "moodle_targets", "users", "subjects", "keywords",
                 "notifications", "audit_logs", "User",
-                "generation_jobs", "generation_runs"} & set(collections)
+                "generation_jobs", "generation_runs",
+                "exams", "exam_variants"} & set(collections)
 
 
 def test_ai_postgres_mode_does_not_seed_mongo_reference_data(monkeypatch):

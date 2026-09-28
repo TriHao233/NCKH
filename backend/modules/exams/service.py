@@ -7,6 +7,7 @@ from typing import Any
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database
 from core.dependencies import CurrentUser
 from modules.exams.repository import (
@@ -639,13 +640,28 @@ class ExamVariantService:
         )
 
 
+def _question_repository(database):
+    if settings.question_store == "postgres":
+        from modules.questions.postgres_repository import PostgresQuestionRepository
+        return PostgresQuestionRepository()
+    return MongoQuestionRepository(database)
+
+
+def _exam_repositories(database) -> tuple[ExamRepository, ExamVariantRepository]:
+    if settings.exam_store == "postgres":
+        from modules.exams.postgres_repository import (
+            PostgresExamRepository,
+            PostgresExamVariantRepository,
+        )
+        return PostgresExamRepository(), PostgresExamVariantRepository()
+    return MongoExamRepository(database), MongoExamVariantRepository(database)
+
+
 def get_exam_service() -> ExamService:
     database = get_database()
-    return ExamService(MongoExamRepository(database), MongoQuestionRepository(database))
+    exams, _variants = _exam_repositories(database)
+    return ExamService(exams, _question_repository(database))
 
 
 def get_exam_variant_service() -> ExamVariantService:
-    database = get_database()
-    return ExamVariantService(
-        MongoExamRepository(database), MongoExamVariantRepository(database)
-    )
+    return ExamVariantService(*_exam_repositories(get_database()))

@@ -79,6 +79,7 @@ class Settings(BaseModel):
     review_policy_store: str = os.getenv("REVIEW_POLICY_STORE", "mongo").strip().lower()
     question_store: str = os.getenv("QUESTION_STORE", "mongo").strip().lower()
     generation_store: str = os.getenv("GENERATION_STORE", "mongo").strip().lower()
+    exam_store: str = os.getenv("EXAM_STORE", "mongo").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",

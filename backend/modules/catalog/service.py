@@ -208,6 +208,14 @@ class CatalogService:
             return 0
         return collection.count_documents(query)
 
+    def _count_exams(self, *, subject_id=None, chapter_id=None) -> int:
+        if settings.exam_store == "postgres":
+            from modules.exams.postgres_repository import PostgresExamRepository
+            return PostgresExamRepository.count(subject_id=subject_id, chapter_id=chapter_id)
+        if subject_id is not None:
+            return self._count("exams", {"subject_id": subject_id})
+        return self._count("exams", {"matrix.chapter_id": chapter_id})
+
     def _count_current_questions(self, version_query: dict) -> int:
         versions = getattr(self.db, "question_versions", None)
         questions = getattr(self.db, "questions", None)
@@ -240,7 +248,7 @@ class CatalogService:
             "questions": self._count_current_questions(
                 {"classification.subject.id": subject_id}
             ),
-            "exams": self._count("exams", {"subject_id": subject_id}),
+            "exams": self._count_exams(subject_id=subject_id),
         }
         chapter_counts = {}
         for chapter in subject.get("chapters") or []:
@@ -259,7 +267,7 @@ class CatalogService:
                 "questions": self._count_current_questions(
                     {"classification.chapter.id": chapter_id}
                 ),
-                "exams": self._count("exams", {"matrix.chapter_id": chapter_id}),
+                "exams": self._count_exams(chapter_id=chapter_id),
             }
         outcome_counts = {}
         for outcome in subject.get("learning_outcomes") or []:

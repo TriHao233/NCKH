@@ -223,6 +223,21 @@ class MoodleTargetService:
         site_key: str | None = None,
         search: str | None = None,
     ) -> dict:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            items, total = PostgresQuestionRepository.list_publications(
+                page=page, page_size=page_size,
+                status=status.upper() if status and status != "all" else None,
+                site_key=site_key if site_key and site_key != "all" else None,
+                search=search,
+            )
+            return {
+                "items": [_safe_publication_item(item) for item in items],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "summary": self._publication_summary(site_key),
+            }
         query: dict = {}
         if status and status != "all":
             query["status"] = status.upper()
@@ -250,9 +265,7 @@ class MoodleTargetService:
         }
 
     def retry_publication(self, publication_id: str, current_user: CurrentUser) -> dict:
-        publication = self.db.moodle_publications.find_one(
-            {"_id": object_id(publication_id, "publication_id")}
-        )
+        publication = self._find_publication(object_id(publication_id, "publication_id"))
         if not publication:
             raise LookupError("Không tìm thấy Moodle publication")
         if publication.get("status") != "FAILED":
@@ -287,7 +300,7 @@ class MoodleTargetService:
         )
         saved_id = result.get("_id") or result.get("id")
         saved = (
-            self.db.moodle_publications.find_one({"_id": object_id(saved_id, "publication_id")})
+            self._find_publication(object_id(saved_id, "publication_id"))
             if saved_id
             else None
         )
@@ -359,7 +372,18 @@ class MoodleTargetService:
                 "latency_ms": int((time.perf_counter() - started) * 1000),
             }
 
+    def _find_publication(self, publication_id) -> dict | None:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.find_publication(publication_id)
+        return self.db.moodle_publications.find_one({"_id": publication_id})
+
     def _publication_summary(self, site_key: str | None = None) -> dict:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.publication_summary(
+                None if not site_key or site_key == "all" else site_key
+            )
         match = {} if not site_key or site_key == "all" else {"target.moodle_site_id": site_key}
         simulated_match = {
             **match,
@@ -387,6 +411,16 @@ class MoodleTargetService:
         metadata: dict | None = None,
         entity_type: str = "moodle_target",
     ) -> None:
+        if entity_type == "moodle_publication" and settings.question_store == "postgres":
+            from core.postgres import postgres_connection
+            from core.postgres_audit import write_postgres_audit_event
+            with postgres_connection() as conn:
+                write_postgres_audit_event(
+                    conn, action=action, entity_type=entity_type, entity_id=entity_id,
+                    actor_user_id=current_user.id, actor_role=current_user.role,
+                    after=after, metadata=metadata or {},
+                )
+            return
         record_audit_event(
             action=action,
             entity_type=entity_type,
