@@ -14,10 +14,6 @@ export function uploadMyAvatar(file) {
   return apiRequest('/users/me/avatar', { method: 'POST', body });
 }
 
-export function getMyStats() {
-  return apiRequest('/users/me/stats');
-}
-
 export function listUsers({ page = 1, pageSize = 20, role, search } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);

@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faUser,
   faCalendarCheck,
+  faCog,
   faSignOutAlt,
   faChevronDown,
   faListCheck,
@@ -11,7 +12,6 @@ import {
   faFileLines,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
-import { canAccessPath } from '../auth/permissions';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import './UserProfileMenu.css';
 
@@ -62,6 +62,7 @@ const UserProfileMenu = () => {
   };
   const displayName = user.display_name || 'Người dùng';
   const displayRole = roleLabel[user.role] || user.role || 'Người dùng';
+  const canOpenSettings = user.role === 'Admin';
   
   // Tự động generate avatar dựa trên tên người dùng
   const avatarUrl = normalizeAvatarUrl(user.profile?.avatar) || buildFallbackAvatar(displayName);
@@ -101,32 +102,37 @@ const UserProfileMenu = () => {
             Hồ sơ cá nhân
           </Link>
 
-          {canAccessPath(user, '/quan-ly-hoc-phan') && (
-            <Link to="/quan-ly-hoc-phan" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faBook} className="dropdown-icon" />
-              Quản lý học phần
-            </Link>
-          )}
-          {canAccessPath(user, '/quan-ly-tai-lieu') && (
-            <Link to="/quan-ly-tai-lieu" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faFileLines} className="dropdown-icon" />
-              Quản lý tài liệu
-            </Link>
-          )}
-          {canAccessPath(user, '/quan-ly') && (
-            <Link to="/quan-ly" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
-              {user.role === 'Admin' ? 'Ngân hàng câu hỏi' : 'Quản lý câu hỏi'}
-            </Link>
+          {user.role === 'Teacher' && (
+            <>
+              <Link to="/quan-ly-hoc-phan" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faBook} className="dropdown-icon" />
+                Quản lý học phần
+              </Link>
+              <Link to="/quan-ly-tai-lieu" className="dropdown-item dropdown-item--nested" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faFileLines} className="dropdown-icon" />
+                Quản lý tài liệu
+              </Link>
+              <Link to="/quan-ly" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
+                Quản lý câu hỏi
+              </Link>
+            </>
           )}
 
-          {canAccessPath(user, '/lich-cong-viec') && (
+          {['Admin', 'Reviewer'].includes(user.role) && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
               Lịch công việc
             </Link>
           )}
 
+          {canOpenSettings && (
+            <Link to="/quan-ly-nguoi-dung" className="dropdown-item" onClick={() => setIsOpen(false)}>
+              <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
+              Quản lý người dùng
+            </Link>
+          )}
+          
           <div className="dropdown-divider"></div>
           
           <button className="dropdown-item text-danger" onClick={handleLogout}>

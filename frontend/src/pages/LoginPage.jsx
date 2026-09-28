@@ -43,7 +43,7 @@ function LoginPage() {
   const requestedPath = location.state?.from;
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [authNotice, setAuthNotice] = useState(location.state?.authNotice || null);
+  const [authNotice, setAuthNotice] = useState(null);
   const redirectChecked = useRef(false);
 
   const [formData, setFormData] = useState({

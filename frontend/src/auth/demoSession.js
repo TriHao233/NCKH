@@ -1,5 +1,4 @@
 const DEMO_SESSION_STORAGE_KEY = 'qbank_demo_session';
-export const DEMO_SESSION_EXPIRED_EVENT = 'qbank:demo-session-expired';
 
 export function readDemoSession() {
   try {
@@ -22,14 +21,6 @@ export function saveDemoSession(token, user) {
 
 export function clearDemoSession() {
   globalThis.localStorage?.removeItem(DEMO_SESSION_STORAGE_KEY);
-}
-
-export function expireDemoSession(expectedToken) {
-  if (readDemoSession()?.token !== expectedToken) return false;
-  clearDemoSession();
-  globalThis.localStorage?.removeItem('userInfo');
-  globalThis.window?.dispatchEvent(new Event(DEMO_SESSION_EXPIRED_EVENT));
-  return true;
 }
 
 export function demoAuthHeaders() {

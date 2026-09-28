@@ -2,7 +2,7 @@ import { createContext, useState, useEffect, useRef } from 'react';
 import { onIdTokenChanged, signOut } from 'firebase/auth';
 
 import { auth } from '../firebase';
-import { clearDemoSession, DEMO_SESSION_EXPIRED_EVENT, readDemoSession, saveDemoSession } from '../auth/demoSession';
+import { clearDemoSession, readDemoSession, saveDemoSession } from '../auth/demoSession';
 import { apiRequest } from '../services/apiClient';
 
 export const AuthContext = createContext();
@@ -47,17 +47,7 @@ function syncBackendSession(firebaseUser, { forceRefresh = false } = {}) {
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(() => readCachedUser());
     const [loading, setLoading] = useState(true);
-    const [sessionNotice, setSessionNotice] = useState(null);
     const authGeneration = useRef(0);
-
-    useEffect(() => {
-        const handleExpiredSession = () => {
-            setUser(null);
-            setSessionNotice('Phiên đăng nhập đã được thay thế hoặc hết hạn. Vui lòng đăng nhập lại.');
-        };
-        window.addEventListener(DEMO_SESSION_EXPIRED_EVENT, handleExpiredSession);
-        return () => window.removeEventListener(DEMO_SESSION_EXPIRED_EVENT, handleExpiredSession);
-    }, []);
 
     const persistUser = (userInfo) => {
         localStorage.setItem("userInfo", JSON.stringify(userInfo));
@@ -170,7 +160,6 @@ export const AuthProvider = ({ children }) => {
             throw new Error("Phiên Firebase đã thay đổi");
         }
         persistUser(syncedUser);
-        setSessionNotice(null);
         return syncedUser;
     };
 
@@ -180,7 +169,6 @@ export const AuthProvider = ({ children }) => {
         }
         saveDemoSession(demoToken, demoUser);
         persistUser(demoUser);
-        setSessionNotice(null);
         return demoUser;
     };
 
@@ -196,7 +184,6 @@ export const AuthProvider = ({ children }) => {
             }
             localStorage.removeItem("userInfo");
             setUser(null);
-            setSessionNotice(null);
         }
     };
 
@@ -206,7 +193,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, login, loginWithDemoSession, logout, updateUser, loading, sessionNotice }}>
+        <AuthContext.Provider value={{ user, login, loginWithDemoSession, logout, updateUser, loading }}>
             {children}
         </AuthContext.Provider>
     );
