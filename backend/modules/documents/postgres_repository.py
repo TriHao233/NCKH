@@ -11,26 +11,12 @@ from psycopg.types.json import Jsonb
 from core.config import settings
 from core.database import get_database
 from core.postgres import postgres_connection
+from db.bson_json import restore as _restore
 from db.copy_business_data import normalized, projected_rows, upsert
 from core.postgres_audit import write_postgres_audit_event
 from modules.documents.repository import (
     MongoDocumentRepository, compact_raw_extraction, json_safe, object_id, utc_now,
 )
-
-
-def _restore(value, key: str = ""):
-    if isinstance(value, dict):
-        return {name: _restore(item, name) for name, item in value.items()}
-    if isinstance(value, list):
-        return [_restore(item, key[:-1] if key.endswith("s") else key) for item in value]
-    if isinstance(value, str) and (key == "_id" or key.endswith("_id")):
-        return ObjectId(value) if ObjectId.is_valid(value) else value
-    if isinstance(value, str) and key.endswith("_at"):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            pass
-    return value
 
 
 def _lineage_snapshot(value: dict) -> dict:
