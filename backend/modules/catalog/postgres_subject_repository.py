@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from core.config import settings
 from core.postgres import postgres_connection
+from core.postgres_audit import write_postgres_audit_event
 
 
 class SubjectCodeConflict(ValueError):
@@ -78,14 +79,11 @@ def _audit(conn, action: str, entity_type: str, entity_id: str, actor: Any,
     metadata = {"label": label, "actor_role": getattr(actor, "role", None)}
     if subject_id:
         metadata["subject_id"] = subject_id
-    conn.execute("""
-        INSERT INTO audit_logs
-        (id, actor_user_id, action, entity_type, entity_id,
-         before_state, after_state, metadata, created_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (str(ObjectId()), str(actor.id) if getattr(actor, "id", None) else None,
-          action, entity_type, entity_id, Jsonb(_json(before)), Jsonb(_json(after)),
-          Jsonb(metadata), _now()))
+    write_postgres_audit_event(
+        conn, action=action, entity_type=entity_type, entity_id=entity_id,
+        actor_user_id=getattr(actor, "id", None), actor_role=getattr(actor, "role", None),
+        before=before, after=after, metadata=metadata,
+    )
 
 
 def _snapshot(record: dict, fields: tuple[str, ...]) -> dict:

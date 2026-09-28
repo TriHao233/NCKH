@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 
 from core.config import settings
 from core.postgres import postgres_connection
+from core.postgres_audit import write_postgres_audit_event
 
 
 def _now():
@@ -35,15 +36,10 @@ def _audit(conn, actor_id, action: str, entity_type: str, entity_id: str,
            before: dict, after: dict) -> None:
     if actor_id is None:
         return
-    conn.execute("""
-        INSERT INTO audit_logs
-        (id, actor_user_id, action, entity_type, entity_id,
-         before_state, after_state, metadata, created_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,'{}'::jsonb,%s)
-    """, (
-        str(ObjectId()), str(actor_id), action, entity_type, entity_id,
-        Jsonb(before), Jsonb(after), _now(),
-    ))
+    write_postgres_audit_event(
+        conn, action=action, entity_type=entity_type, entity_id=entity_id,
+        actor_user_id=actor_id, before=before, after=after,
+    )
 
 
 MODEL_SELECT = """

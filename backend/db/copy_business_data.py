@@ -38,7 +38,7 @@ SOURCE_ORDER = (
 JSON_COLUMNS = {
     "permissions", "profile", "generation_presets", "task_calendar", "payload",
     "capabilities", "parameters", "weights", "thresholds", "assignment",
-    "question_data", "classification", "clos", "sources", "request",
+    "question_data", "classification", "clos", "sources", "request", "changes",
     "model_snapshot", "prompt_snapshot", "retrieval_snapshot", "result",
     "metrics", "policy_snapshot", "source_snapshot", "error", "draft",
     "snapshot", "before_state", "after_state", "metadata", "response_payload",
@@ -382,12 +382,20 @@ def projected_rows(name: str, item: dict):
         )
         return
     if name == "audit_logs":
+        actor = item.get("actor") or {}
+        entity = item.get("entity") or {}
+        actor_user_id = item.get("actor_user_id") or actor.get("user_id")
         yield "audit_logs", dict(
-            id=row_id, actor_user_id=oid(item.get("actor_user_id")),
-            action=item.get("action") or "UNKNOWN", entity_type=item.get("entity_type") or "unknown",
-            entity_id=oid(item.get("entity_id")),
+            id=row_id, actor_user_id=oid(actor_user_id),
+            actor_type=actor.get("type") or ("USER" if actor_user_id else "SYSTEM"),
+            actor_role=item.get("actor_role") or actor.get("role"),
+            action=item.get("action") or "UNKNOWN",
+            entity_type=item.get("entity_type") or entity.get("type") or "unknown",
+            entity_id=oid(item.get("entity_id") or entity.get("id")),
             before_state=data.get("before") or {}, after_state=data.get("after") or {},
-            metadata=data.get("metadata") or {}, created_at=created,
+            changes=data.get("changes") or [],
+            before_hash=item.get("before_hash"), after_hash=item.get("after_hash"),
+            metadata=data.get("metadata") or {}, payload=data, created_at=created,
         )
         return
     if name == "moodle_targets":

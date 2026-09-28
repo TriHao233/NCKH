@@ -30,6 +30,8 @@ CRITICAL_FIELDS = {
         "document_id", "artifact_type", "storage_provider", "storage_key",
         "checksum_sha256", "mime_type", "size_bytes", "version",
     ),
+    "audit_logs": ("actor_user_id", "actor_type", "actor_role", "action",
+                   "entity_type", "entity_id", "before_hash", "after_hash"),
     "moodle_targets": ("site_key", "site_name", "mode", "secret_ref", "is_active"),
     "questions": (
         "question_code", "current_version", "current_version_id",
@@ -45,6 +47,7 @@ DOCUMENT_CONTENT_FIELDS = {
     "document_jobs": ("payload",),
     "document_pages": ("payload", "raw_text", "clean_text"),
     "document_artifacts": ("payload",),
+    "audit_logs": ("payload", "before_state", "after_state", "changes", "metadata"),
 }
 
 
