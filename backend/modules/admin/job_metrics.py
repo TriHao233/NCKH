@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 
+from core.config import settings
+from modules.generation.llm import postgres_slots
+
 
 def _seconds_since(value: datetime | None, now: datetime) -> int | None:
     if not value:
@@ -62,12 +65,14 @@ def collect_job_metrics(database) -> dict:
                 ),
             },
         },
-        "llm_slots": {
-            "in_use": database.llm_slots.count_documents(
-                {"holder_id": {"$ne": None}, "lease_expires_at": {"$gt": now}}
-            ),
-            "expired": database.llm_slots.count_documents(
-                {"holder_id": {"$ne": None}, "lease_expires_at": {"$lte": now}}
-            ),
-        },
+        "llm_slots": (
+            postgres_slots.counts() if settings.llm_slot_store == "postgres" else {
+                "in_use": database.llm_slots.count_documents(
+                    {"holder_id": {"$ne": None}, "lease_expires_at": {"$gt": now}}
+                ),
+                "expired": database.llm_slots.count_documents(
+                    {"holder_id": {"$ne": None}, "lease_expires_at": {"$lte": now}}
+                ),
+            }
+        ),
     }

@@ -12,6 +12,7 @@ Tài liệu này ghi **trạng thái mã nguồn hiện tại** của quá trìn
 | Từ điển từ khóa dùng khi chunking | PostgreSQL: `legacy_dictionaries`, `keywords` với `DICTIONARY_STORE=postgres` | MongoDB |
 | Thông báo và trạng thái đã đọc | PostgreSQL: `notifications` với `NOTIFICATION_STORE=postgres` | MongoDB |
 | Cấu hình Moodle target | PostgreSQL: `moodle_targets` với `MOODLE_TARGET_STORE=postgres` | MongoDB |
+| Khóa giới hạn đồng thời model AI | PostgreSQL: `llm_slots` với `LLM_SLOT_STORE=postgres` | MongoDB |
 | Tài liệu, trang OCR, câu hỏi/phiên bản, duyệt/đánh giá, đề thi, job, Moodle publication, phần lớn audit | Chưa chuyển luồng đọc/ghi; schema và công cụ sao chép PostgreSQL đã có | MongoDB |
 | Chunk, chunk set, embedding metadata, vector collection và lineage của index | Giữ MongoDB | MongoDB |
 | Chỉ mục/vector truy xuất RAG | ChromaDB | ChromaDB local |
@@ -29,6 +30,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.
 - `modules/dictionary/postgres_repository.py` lưu từ điển và các từ khóa CORE/LEARNED/PENDING trong PostgreSQL; bước chunking và tác vụ AI học từ khóa chọn cùng một nguồn qua `DICTIONARY_STORE`.
 - `modules/admin/postgres_moodle_target_repository.py` lưu Moodle target, trạng thái kích hoạt và lần kiểm tra kết nối trong PostgreSQL. Trang quản trị, thống kê và bước publish mock đọc cùng nguồn được chọn. Chỉ lưu tên biến môi trường token (`token_env_var`), không lưu giá trị token vào database.
+- `modules/generation/llm/postgres_slots.py` cấp/duy trì/giải phóng slot bằng khóa hàng PostgreSQL và thời gian từ database; các API/worker dùng chung giới hạn đồng thời, dashboard đọc số slot từ cùng nguồn.
 - Repository PostgreSQL cho tài khoản/phiên và cấu hình AI đã có từ giai đoạn trước.
 - Khi `USER_STORE=postgres`, thống kê và lịch cá nhân vẫn đọc tài liệu/câu hỏi từ MongoDB vì đây còn là nguồn ghi chính của hai nhóm đó; không dùng các bảng PostgreSQL shadow copy có thể đã cũ.
 
@@ -55,9 +57,12 @@ CATALOG_STORE=postgres
 NOTIFICATION_STORE=postgres
 DICTIONARY_STORE=postgres
 MOODLE_TARGET_STORE=postgres
+LLM_SLOT_STORE=postgres
 ```
 
 `CATALOG_STORE` và `NOTIFICATION_STORE` yêu cầu `USER_STORE=postgres` để khóa ngoại owner/recipient hợp lệ. Có thể bật từng nhóm sau khi dữ liệu nhóm đó đã được sao chép và kiểm tra. `MOODLE_TARGET_STORE` chỉ chuyển cấu hình target; các publication vẫn ghi MongoDB theo luồng câu hỏi. Không bật các cờ trên production khi câu hỏi, tài liệu, job và các luồng liên quan còn dùng MongoDB. Khởi động lại API/worker sau khi đổi cờ; không chuyển cờ trong lúc có ghi đồng thời ở hai nguồn.
+
+Khi chuyển `LLM_SLOT_STORE`, chờ các lời gọi model đang chạy kết thúc trên toàn bộ API/worker rồi mới đổi cờ đồng loạt. Lease cũ ở MongoDB không tự chuyển theo worker; thay đổi cờ trong lúc chạy có thể khiến hai backend cấp slot song song vượt quá giới hạn.
 
 Kiểm thử PostgreSQL yêu cầu `RUN_POSTGRES_INTEGRATION=1`, `POSTGRES_DSN` trỏ đến database kiểm thử đã migrate. Khi không đặt hai biến này, các ca tích hợp PostgreSQL sẽ được bỏ qua.
 

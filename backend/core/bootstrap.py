@@ -533,19 +533,20 @@ def _ensure_indexes() -> None:
             IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_generation_jobs"),
         ]
     )
-    rag_db.llm_slots.create_indexes(
-        [
-            IndexModel(
-                [("provider", ASCENDING), ("slot_index", ASCENDING)],
-                unique=True,
-                name="uq_llm_slots_provider_index",
-            ),
-            IndexModel(
-                [("provider", ASCENDING), ("lease_expires_at", ASCENDING)],
-                name="ix_llm_slots_lease",
-            ),
-        ]
-    )
+    if settings.llm_slot_store != "postgres":
+        rag_db.llm_slots.create_indexes(
+            [
+                IndexModel(
+                    [("provider", ASCENDING), ("slot_index", ASCENDING)],
+                    unique=True,
+                    name="uq_llm_slots_provider_index",
+                ),
+                IndexModel(
+                    [("provider", ASCENDING), ("lease_expires_at", ASCENDING)],
+                    name="ix_llm_slots_lease",
+                ),
+            ]
+        )
     rag_db.generation_runs.create_indexes(
         [
             IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
@@ -896,7 +897,8 @@ def bootstrap_database() -> None:
     _ensure_collections(
         get_rag_db(),
         tuple(name for name in RAG_COLLECTIONS
-              if name != "moodle_targets" or settings.moodle_target_store != "postgres"),
+              if (name != "moodle_targets" or settings.moodle_target_store != "postgres")
+              and (name != "llm_slots" or settings.llm_slot_store != "postgres")),
     )
     _ensure_indexes()
     _seed_reference_data()

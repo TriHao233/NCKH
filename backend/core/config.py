@@ -73,6 +73,7 @@ class Settings(BaseModel):
     notification_store: str = os.getenv("NOTIFICATION_STORE", "mongo").strip().lower()
     dictionary_store: str = os.getenv("DICTIONARY_STORE", "mongo").strip().lower()
     moodle_target_store: str = os.getenv("MOODLE_TARGET_STORE", "mongo").strip().lower()
+    llm_slot_store: str = os.getenv("LLM_SLOT_STORE", "mongo").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",

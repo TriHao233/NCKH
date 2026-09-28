@@ -10,6 +10,7 @@ from pymongo.errors import DuplicateKeyError
 from core.config import settings
 from core.database import get_database
 from modules.generation.llm.base import LLMProvider
+from modules.generation.llm import postgres_slots
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,8 @@ def _ensure_slots(group: str, limit: int) -> None:
 
 
 def _try_acquire_slot(group: str, holder_id: str, limit: int) -> str | None:
+    if settings.llm_slot_store == "postgres":
+        return postgres_slots.try_acquire(group, holder_id, limit)
     _ensure_slots(group, limit)
     now = utc_now()
     slot = get_database().llm_slots.find_one_and_update(
@@ -90,6 +93,8 @@ def _try_acquire_slot(group: str, holder_id: str, limit: int) -> str | None:
 
 
 def _heartbeat_slot(slot_id: str, holder_id: str) -> bool:
+    if settings.llm_slot_store == "postgres":
+        return postgres_slots.heartbeat(slot_id, holder_id)
     now = utc_now()
     result = get_database().llm_slots.update_one(
         {"_id": slot_id, "holder_id": holder_id},
@@ -104,6 +109,9 @@ def _heartbeat_slot(slot_id: str, holder_id: str) -> bool:
 
 
 def _release_slot(slot_id: str, holder_id: str) -> None:
+    if settings.llm_slot_store == "postgres":
+        postgres_slots.release(slot_id, holder_id)
+        return
     get_database().llm_slots.update_one(
         {"_id": slot_id, "holder_id": holder_id},
         {
