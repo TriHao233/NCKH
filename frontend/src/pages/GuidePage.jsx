@@ -1,167 +1,62 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faChalkboardUser, faClipboardCheck, faShieldHalved, faArrowRight } from '@fortawesome/free-solid-svg-icons';
+import { QUESTION_TYPES, allowedBloomLevels } from '../constants/generationEnums';
 import '../css/GuidePage.css';
+import { GuideConfigSandbox, GuideTroubleshooter } from '../components/GuideTools';
 
 const roles = [
-  {
-    title: 'Giảng viên',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
-      </svg>
-    ),
-    desc: 'Tải tài liệu học phần, sinh câu hỏi nháp, chỉnh sửa nội dung và gửi sang hàng kiểm duyệt.',
-  },
-  {
-    title: 'Người duyệt',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-      </svg>
-    ),
-    desc: 'Nhận câu hỏi trong hàng đợi, đối chiếu nguồn, ghi lỗi cần sửa, duyệt hoặc từ chối phiên bản hiện tại.',
-  },
-  {
-    title: 'Quản trị viên',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 2l8 4v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6l8-4z" />
-      </svg>
-    ),
-    desc: 'Quản lý tài khoản, phân quyền, danh mục, hàng đợi vận hành và cấu hình ghi mô phỏng Moodle.',
-  },
+  { title: 'Giảng viên', icon: faChalkboardUser, target: '#guide-teacher', desc: 'Chuẩn bị học phần và tài liệu, tạo câu hỏi, rà soát rồi gửi duyệt.' },
+  { title: 'Người duyệt', icon: faClipboardCheck, target: '#guide-reviewer', desc: 'Nhận câu hỏi, đối chiếu nguồn và phản hồi trên từng phiên bản.' },
+  { title: 'Quản trị viên', icon: faShieldHalved, target: '#guide-admin', desc: 'Quản lý tài khoản, danh mục và theo dõi tác vụ vận hành.' },
 ];
-
 const steps = [
-  {
-    num: '01',
-    title: 'Đăng nhập hệ thống',
-    desc: 'Sử dụng tài khoản giảng viên, người duyệt hoặc quản trị viên do nhà trường cấp để đăng nhập vào QBankCTU.',
-  },
-  {
-    num: '02',
-    title: 'Tải tài liệu học phần',
-    desc: 'Vào mục "Sinh câu hỏi", tải lên giáo trình, bài giảng hoặc đề cương dạng PDF/DOC của môn Cấu trúc dữ liệu.',
-  },
-  {
-    num: '03',
-    title: 'Cấu hình tham số sinh câu hỏi',
-    desc: 'Chọn loại câu hỏi (MCQ, Đúng/Sai, Điền khuyết, Ghép đôi, Tình huống), cấp độ Bloom và số lượng câu hỏi cần tạo.',
-  },
-  {
-    num: '04',
-    title: 'AI sinh câu hỏi nháp',
-    desc: 'Hệ thống dùng kỹ thuật RAG truy xuất đúng ngữ cảnh từ tài liệu, sau đó mô hình ngôn ngữ lớn sinh ra bộ câu hỏi nháp.',
-  },
-  {
-    num: '05',
-    title: 'Gửi kiểm duyệt',
-    desc: 'Giảng viên rà soát nội dung, đáp án, CLO và gửi câu hỏi nháp sang hàng đợi kiểm duyệt.',
-  },
-  {
-    num: '06',
-    title: 'Duyệt, sửa và xuất bản',
-    desc: 'Người duyệt phê duyệt, từ chối hoặc yêu cầu sửa. Câu cần sửa quay lại cho giảng viên chỉnh rồi gửi duyệt lại; câu đã duyệt có thể export GIFT/XML hoặc ghi mô phỏng Moodle.',
-  },
+  { title: 'Chuẩn bị học phần', desc: 'Vào Quản lý học phần để tạo hoặc kiểm tra học phần, chương và chuẩn đầu ra (CLO) trước khi tải tài liệu.', link: '/quan-ly-hoc-phan', action: 'Mở Quản lý học phần' },
+  { title: 'Chọn nguồn và xử lý tài liệu', desc: 'Trong Sinh câu hỏi, chọn Tải tài liệu mới, chọn file và Học phần, rồi bấm Xử lý tài liệu. Chờ xử lý hoàn tất. Nếu đã có nguồn, dùng Chọn tài liệu đã xử lý; học phần được lấy từ tài liệu đó.', link: '/sinh-cau-hoi', action: 'Mở Sinh câu hỏi' },
+  { title: 'Thiết lập ma trận câu hỏi', desc: 'Mỗi dòng chọn Dạng câu hỏi, Mức nhận thức Bloom, Độ khó, Số câu và Nội dung. Dùng Thêm dòng để phối hợp nhiều dạng; tổng số câu từ 1 đến 7 mỗi lượt. Các mức Bloom không phù hợp sẽ bị khóa.' },
+  { title: 'Chọn mô hình và phạm vi', desc: 'Chọn Gemini hoặc Qwen trong Mô hình ngôn ngữ theo danh sách được cấu hình. Có thể nhập Chương hoặc mục cần tập trung và Yêu cầu sinh câu hỏi. Chọn Có mã nguồn cho câu hỏi dựa trên đoạn mã; chọn Lý thuyết cho nội dung khái niệm hoặc Tự nhận diện để hệ thống xác định.' },
+  { title: 'Sinh và kiểm tra bản nháp', desc: 'Bấm Sinh câu hỏi bằng AI rồi theo dõi trạng thái. Đọc nội dung, đáp án, giải thích và dẫn chứng. Dùng Sửa để hiệu chỉnh hoặc Bỏ câu để loại bản nháp chưa đạt. Câu cần mã nguồn phải có đoạn mã đủ dữ kiện ngay trong đề.' },
+  { title: 'Gửi duyệt và theo dõi phản hồi', desc: 'Bấm Gửi duyệt cho câu đã rà soát. Các ứng viên AI ban đầu gắn với tác vụ sinh, chưa tự trở thành câu trong ngân hàng. Theo dõi tại Quản lý câu hỏi; với câu Cần sửa, đọc góp ý, sửa rồi gửi duyệt lại.', link: '/quan-ly', action: 'Mở Quản lý câu hỏi' },
 ];
-
 const faqs = [
-  {
-    q: 'Tài liệu đầu vào cần định dạng gì?',
-    a: 'Hệ thống nhận tài liệu dạng PDF hoặc DOC bằng tiếng Việt. Với file PDF dạng scan (hình ảnh), hệ thống tích hợp OCR để nhận dạng và trích xuất văn bản trước khi xử lý.',
-  },
-  {
-    q: 'Hệ thống hỗ trợ những loại câu hỏi nào?',
-    a: 'Năm loại: Trắc nghiệm 4 lựa chọn (MCQ), Đúng/Sai, Điền khuyết, Ghép đôi và Câu hỏi tình huống.',
-  },
-  {
-    q: 'Câu hỏi do AI sinh ra có tự động lưu vào ngân hàng câu hỏi không?',
-    a: 'Không. Câu hỏi AI sinh ra ở trạng thái "Nháp"; giảng viên gửi kiểm duyệt và chỉ câu đã được người duyệt phê duyệt mới đi tiếp vào luồng xuất bản.',
-  },
-  {
-    q: 'Tôi có thể chỉnh sửa câu hỏi sau khi AI tạo ra không?',
-    a: 'Có. Giảng viên có thể chỉnh sửa nội dung, đáp án, mức Bloom/CLO trước khi gửi duyệt, hoặc sửa lại theo phản hồi "Cần sửa" của người duyệt.',
-  },
-  {
-    q: 'Câu hỏi đã duyệt được đưa vào Moodle như thế nào?',
-    a: 'Hệ thống chuyển đổi dữ liệu câu hỏi sang cấu trúc chuẩn của Moodle (nội dung, đáp án, thiết lập xáo trộn) để export GIFT/XML; publication hiện là mô phỏng trong demo.',
-  },
+  { q: 'Tôi đăng nhập hoặc đăng ký bằng cách nào?', a: 'Dùng trang Đăng nhập với tài khoản của bạn. Nếu chưa có tài khoản, mở Đăng ký; giao diện hỗ trợ email/mật khẩu và Google. Quyền sử dụng chức năng phụ thuộc vai trò tài khoản; không phải mọi người dùng đều có quyền kiểm duyệt hoặc quản trị.' },
+  { q: 'Tài liệu đầu vào hỗ trợ những định dạng nào?', a: 'PDF, DOC/DOCX, Markdown và TXT. PDF scan được xử lý bằng OCR. Nên dùng tài liệu rõ chữ, có cấu trúc và thuộc học phần đã chọn. Hệ thống không giới hạn tài liệu ở môn Cấu trúc dữ liệu.' },
+  { q: 'Tôi không thấy học phần hoặc tài liệu đã xử lý?', a: 'Tạo hoặc kiểm tra học phần tại Quản lý học phần. Với tài liệu cũ, bấm Tải lại ở phần Chọn tài liệu đã xử lý; chỉ tài liệu đủ điều kiện mới xuất hiện. Nếu danh sách vẫn trống, tải tài liệu mới và chờ xử lý thành công.' },
+  { q: 'Tại sao nút Sinh câu hỏi hoặc một số mức Bloom bị khóa?', a: 'Kiểm tra tài liệu đã xử lý và các điều kiện được báo trên trang. Tổng số câu phải từ 1 đến 7. Bloom phụ thuộc dạng câu hỏi; ví dụ MCQ chỉ hỗ trợ Nhớ, Hiểu, Vận dụng và Phân tích. Khi có tác vụ đang chạy, thao tác cấu hình có thể tạm khóa.' },
+  { q: 'OCR hoặc xử lý tài liệu thất bại thì làm gì?', a: 'Đọc thông báo lỗi, kiểm tra định dạng và khả năng mở file. Với bản scan, ưu tiên trang rõ nét, đúng chiều; file có mật khẩu hoặc khó đọc nên được chuẩn bị lại. Thử xử lý lại sau khi khắc phục. Nếu lỗi lặp lại, ghi thông báo và tên tài liệu để quản trị viên kiểm tra.' },
+  { q: 'Mô hình không tạo được câu hỏi hợp lệ thì xử lý thế nào?', a: 'Kiểm tra chất lượng tài liệu và phạm vi nội dung, thử ít câu hơn hoặc điều chỉnh ma trận phù hợp nguồn. Với câu hỏi về mã, chọn Có mã nguồn và dùng tài liệu có đoạn mã đầy đủ. Dùng nút thử lại khi trang hiển thị; nếu tiếp tục lỗi, ghi tên mô hình và thông báo lỗi để được hỗ trợ.' },
+  { q: 'Câu hỏi thiếu đoạn mã hoặc dữ kiện thì có nên gửi duyệt?', a: 'Chưa nên gửi. Đối chiếu dẫn chứng, dùng Sửa để bổ sung đoạn mã và dữ kiện cần thiết; kiểm tra lại đáp án, giải thích. Nếu không xác minh được câu hỏi từ nguồn, dùng Bỏ câu và tạo lại.' },
+  { q: 'Đóng trang có làm mất câu hỏi chưa gửi duyệt không?', a: 'Bản nháp AI chưa gửi duyệt không đồng nghĩa với câu đã lưu trong ngân hàng. Nên rà soát và gửi duyệt các câu cần giữ trước khi rời trang; không coi việc đóng trang hoặc đăng nhập lại là thao tác lưu bản nháp.' },
+  { q: 'Xuất tệp Moodle và xuất bản Moodle khác nhau thế nào?', a: 'Câu đã duyệt có thể tải dưới dạng GIFT hoặc XML để nhập vào Moodle. Chức năng xuất bản hiện ghi mô phỏng trong hệ thống demo; ghi nhận thành công tại đây không có nghĩa câu hỏi đã được gửi lên máy chủ Moodle thật.' },
 ];
 
 function GuidePage() {
   return (
     <main className="guide-page">
-      <section className="page-hero">
-        <div className="container">
-          <div className="page-hero-badge">Hướng dẫn sử dụng</div>
-          <h1 className="page-hero-title">Bắt đầu với QBankCTU trong vài bước</h1>
-          <p className="page-hero-desc">
-            Từ tải tài liệu đến export câu hỏi theo chuẩn Moodle — quy trình được thiết kế đơn giản, rõ ràng, phù hợp cho
-            cả giảng viên chưa quen thao tác kỹ thuật.
-          </p>
-        </div>
-      </section>
-
-      <section className="roles">
-        <div className="container roles-grid">
-          {roles.map((r) => (
-            <div className="role-card" key={r.title}>
-              <div className="role-icon">{r.icon}</div>
-              <h3>{r.title}</h3>
-              <p>{r.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="steps">
-        <div className="container">
-          <div className="section-header">
-            <h2 className="section-title">6 bước sử dụng hệ thống</h2>
-            <p className="section-desc">Áp dụng nguyên tắc "Con người trong vòng lặp" — AI hỗ trợ khởi tạo, giảng viên giữ quyền quyết định cuối cùng.</p>
-          </div>
-
-          <div className="steps-list">
-            {steps.map((s) => (
-              <div className="step-row" key={s.num}>
-                <span className="step-num">{s.num}</span>
-                <div className="step-body">
-                  <h3>{s.title}</h3>
-                  <p>{s.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="faq">
-        <div className="container">
-          <div className="section-header">
-            <h2 className="section-title">Giải đáp nhanh</h2>
-          </div>
-          <div className="faq-list">
-            {faqs.map((f) => (
-              <details className="faq-item" key={f.q}>
-                <summary>{f.q}</summary>
-                <p>{f.a}</p>
-              </details>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="guide-cta">
-        <div className="container guide-cta-inner">
-          <div>
-            <h2>Sẵn sàng tạo bộ câu hỏi đầu tiên?</h2>
-            <p>Chuyển sang mục Sinh câu hỏi để trải nghiệm quy trình đầy đủ.</p>
-          </div>
-          <Link to="/sinh-cau-hoi" className="btn btn--primary">Đến trang Sinh câu hỏi</Link>
-        </div>
-      </section>
+      <section className="page-hero"><div className="container">
+        <div className="page-hero-badge">Hướng dẫn sử dụng</div>
+        <h1 className="page-hero-title">Từ tài liệu đến câu hỏi đã được duyệt</h1>
+        <p className="page-hero-desc">Chọn hướng dẫn theo vai trò, làm theo tên nút trên giao diện và kiểm tra nội dung trước khi gửi duyệt.</p>
+        <nav className="guide-jump-nav" aria-label="Mục lục hướng dẫn"><a href="#guide-try">Thử cấu hình</a><a href="#guide-help">Tra cứu lỗi</a><a href="#guide-teacher">Giảng viên</a><a href="#guide-reviewer">Người duyệt</a><a href="#guide-admin">Quản trị viên</a><a href="#guide-faq">Giải đáp</a></nav>
+      </div></section>
+      <section className="guide-start" aria-label="Chọn hướng dẫn theo vai trò"><div className="container">
+        <div className="roles-grid">{roles.map((role) => <a className="role-card" href={role.target} key={role.title}><span className="role-icon"><FontAwesomeIcon icon={role.icon} aria-hidden="true" /></span><h3>{role.title}</h3><p>{role.desc}</p><span className="guide-role-action">Xem hướng dẫn <FontAwesomeIcon icon={faArrowRight} aria-hidden="true" /></span></a>)}</div>
+      </div></section>
+      <GuideConfigSandbox />
+      <GuideTroubleshooter />
+      <section className="steps" id="guide-teacher" aria-labelledby="guide-teacher-title"><div className="container">
+        <div className="section-header"><h2 className="section-title" id="guide-teacher-title">Giảng viên · 6 bước tạo và gửi câu hỏi</h2><p className="section-desc">AI tạo ứng viên; giảng viên rà soát, người duyệt quyết định kết quả kiểm duyệt.</p></div>
+        <ol className="steps-list">{steps.map((step, index) => <li className="step-row" key={step.title}><span className="step-num" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><div className="step-body"><h3>{step.title}</h3><p>{step.desc}</p>{step.link && <Link className="guide-inline-link" to={step.link}>{step.action} <FontAwesomeIcon icon={faArrowRight} aria-hidden="true" /></Link>}</div></li>)}</ol>
+        <div className="guide-example" aria-labelledby="guide-example-title"><div><span className="guide-example-label">Ví dụ cấu hình</span><h3 id="guide-example-title">Ôn tập cấu trúc rẽ nhánh</h3><p>Dùng tài liệu học phần có đoạn mã if/else rõ ràng. Chương cần tập trung: “Cấu trúc rẽ nhánh”. Yêu cầu: “Dùng đoạn mã ngắn, đủ dữ kiện; nêu rõ điều kiện và giá trị ban đầu”.</p></div><dl><div><dt>Dạng câu hỏi</dt><dd>Trắc nghiệm (MCQ)</dd></div><div><dt>Bloom / Độ khó</dt><dd>Hiểu / Trung bình</dd></div><div><dt>Số câu / Nội dung</dt><dd>3 câu / Có mã nguồn</dd></div></dl><p className="guide-example-note">Ví dụ tham khảo; kết quả cần được kiểm tra theo tài liệu thực tế.</p></div>
+        <details className="guide-type-reference"><summary>7 dạng câu hỏi và mức Bloom tương ứng</summary><ul>{QUESTION_TYPES.map((type) => <li key={type.id}><strong>{type.label}</strong><span>{allowedBloomLevels(type.id).map((level) => level.label).join(' · ')}</span></li>)}</ul></details>
+      </div></section>
+      <section className="guide-workflows" aria-label="Hướng dẫn kiểm duyệt và quản trị"><div className="container guide-workflow-grid">
+        <article id="guide-reviewer" className="guide-workflow-card"><span className="role-icon"><FontAwesomeIcon icon={faClipboardCheck} aria-hidden="true" /></span><h2>Người duyệt</h2><ol><li>Mở Hàng kiểm duyệt và chọn câu cần xem. Bấm <strong>Nhận câu</strong> khi được phép để bắt đầu xử lý.</li><li>Đối chiếu đề, đáp án, giải thích, Bloom/CLO và dẫn chứng. Góp ý AI chỉ hỗ trợ, không thay thế việc kiểm tra của người duyệt.</li><li>Chọn duyệt, <strong>Cần sửa</strong> hoặc <strong>Từ chối</strong>; ghi rõ lý do và nội dung cần điều chỉnh.</li><li>Với câu đã duyệt, dùng <strong>Tải tệp GIFT</strong> hoặc <strong>Tải tệp XML</strong> khi cần nhập vào Moodle.</li></ol><Link to="/kiem-duyet" className="guide-inline-link">Mở Hàng kiểm duyệt <FontAwesomeIcon icon={faArrowRight} aria-hidden="true" /></Link></article>
+        <article id="guide-admin" className="guide-workflow-card"><span className="role-icon"><FontAwesomeIcon icon={faShieldHalved} aria-hidden="true" /></span><h2>Quản trị viên</h2><ol><li>Kiểm tra tài khoản, vai trò và trạng thái tại <strong>Quản lý người dùng</strong>.</li><li>Quản lý học phần, chương, CLO và các cấu hình được cung cấp trong khu quản trị.</li><li>Theo dõi trạng thái tác vụ và nhật ký khi có lỗi; kiểm tra nguyên nhân trước khi thử lại hoặc hủy tác vụ.</li><li>Kiểm tra cấu hình và kết quả mô phỏng Moodle. Phân biệt tệp xuất với việc xuất bản lên Moodle thật.</li></ol><Link to="/tong-quan" className="guide-inline-link">Mở Tổng quan quản trị <FontAwesomeIcon icon={faArrowRight} aria-hidden="true" /></Link></article>
+      </div></section>
+      <section className="faq" id="guide-faq" aria-labelledby="guide-faq-title"><div className="container"><div className="section-header"><h2 className="section-title" id="guide-faq-title">Giải đáp và xử lý vướng mắc</h2><p className="section-desc">Mở câu hỏi để xem cách kiểm tra trước khi liên hệ hỗ trợ.</p></div><div className="faq-list">{faqs.map((faq) => <details className="faq-item" key={faq.q}><summary>{faq.q}</summary><p>{faq.a}</p></details>)}</div><p className="guide-access-note">Các liên kết chức năng vẫn tuân theo đăng nhập và phân quyền hiện tại. Nếu chưa đăng nhập, hệ thống sẽ đưa bạn đến trang Đăng nhập.</p></div></section>
     </main>
   );
 }
-
 export default GuidePage;

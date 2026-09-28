@@ -4,9 +4,9 @@
 
 /* ─── Footer ────────────────────────────────────────────────── */
 .footer {
-  background-color: #084a8c;
+  background-color: #063568;
   background-image:
-    linear-gradient(90deg, rgba(3, 34, 76, 0.55), rgba(3, 34, 76, 0.35)),
+    linear-gradient(90deg, rgba(2, 25, 58, 0.76), rgba(2, 25, 58, 0.68)),
     var(--footer-background);
   background-size: cover;
   background-position: center right;
