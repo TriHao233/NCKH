@@ -214,7 +214,7 @@ Sau bước 7.4, mọi thay đổi mới chỉ nằm ở PostgreSQL. Không có 
 
    Chỉ đặt `STORAGE_PROVIDER=s3` sau khi lần `--apply` không còn lỗi. File local chưa bị xóa.
 2. **Chroma server** (`CHROMA_MODE=http`) khi chạy nhiều instance: dựng server, rồi `python scripts/rebuild_chromadb.py --dry-run`, sau đó chạy thật.
-3. **Dọn MongoDB (sau rollback window ____ ngày):** backup lần cuối, rồi xóa các collection nghiệp vụ. Chỉ giữ `chunk_sets`, `document_chunks`, `vector_collections`, `chunk_embeddings`, `pipeline_lineage_events`. Việc này cần một thay đổi code trước: bootstrap hiện vẫn tạo lại một số collection nghiệp vụ (questions, reviews, evaluation…) ngay cả khi cờ đã là `postgres`.
+3. **Dọn MongoDB (sau rollback window ____ ngày):** backup lần cuối, rồi xóa các collection nghiệp vụ. Chỉ giữ `chunk_sets`, `document_chunks`, `vector_collections`, `chunk_embeddings`, `pipeline_lineage_events`. Khi mọi cờ ở Phụ lục A là `postgres`, bootstrap không tạo lại collection hay index nghiệp vụ nào nữa (bảng `POSTGRES_OWNERS` trong `backend/core/bootstrap.py`), nên các collection đã xóa sẽ không xuất hiện lại.
 
 ## Phụ lục A. Cờ cấu hình đích
 

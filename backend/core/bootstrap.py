@@ -48,6 +48,46 @@ RAG_COLLECTIONS = (
 
 COLLECTIONS = AUTH_COLLECTIONS + RAG_COLLECTIONS
 
+# Business collections move to PostgreSQL when their store flag is "postgres".
+# Bootstrap then neither creates them nor their indexes, so MongoDB keeps only
+# vector/RAG data (chunk_sets, document_chunks, vector_collections,
+# chunk_embeddings, pipeline_lineage_events) plus schema_meta and
+# migration_id_map.
+POSTGRES_OWNERS = {
+    "User": "user_store",
+    "users": "user_store",
+    "subjects": "catalog_store",
+    "keywords": "dictionary_store",
+    "documents": "document_store",
+    "document_jobs": "document_store",
+    "document_pages": "document_store",
+    "ai_models": "ai_config_store",
+    "prompt_templates": "ai_config_store",
+    "evaluation_policies": "ai_config_store",
+    "generation_jobs": "generation_store",
+    "generation_runs": "generation_store",
+    "questions": "question_store",
+    "question_versions": "question_store",
+    "evaluation_jobs": "question_store",
+    "question_evaluations": "question_store",
+    "question_reviews": "question_store",
+    "question_review_drafts": "question_store",
+    "question_comments": "question_store",
+    "moodle_publications": "question_store",
+    "llm_slots": "llm_slot_store",
+    "audit_logs": "audit_store",
+    "notifications": "notification_store",
+    "moodle_targets": "moodle_target_store",
+    "exams": "exam_store",
+    "exam_variants": "exam_store",
+}
+
+
+def mongo_owns(collection: str) -> bool:
+    """True while MongoDB is still the store of record for ``collection``."""
+    store = POSTGRES_OWNERS.get(collection)
+    return store is None or getattr(settings, store) != "postgres"
+
 VALIDATORS = {
     "User": {
         "$jsonSchema": {
@@ -426,13 +466,13 @@ def _ensure_collections(db, collection_names: tuple[str, ...]) -> None:
 
 def _ensure_indexes() -> None:
     rag_db = get_rag_db()
-    if settings.user_store != "postgres":
+    if mongo_owns("User"):
         get_auth_db()["User"].create_indexes(
             [
                 IndexModel([("uid", ASCENDING)], unique=True, name="uq_user_uid"),
             ]
         )
-    if settings.user_store != "postgres":
+    if mongo_owns("users"):
         rag_db.users.create_indexes(
             [
                 IndexModel([("firebase_uid", ASCENDING)], unique=True, name="uq_users_firebase_uid"),
@@ -440,9 +480,9 @@ def _ensure_indexes() -> None:
                 IndexModel([("role", ASCENDING), ("is_active", ASCENDING)], name="ix_users_role_active"),
             ]
         )
-    if settings.catalog_store != "postgres":
+    if mongo_owns("subjects"):
         rag_db.subjects.create_index([("subject_code", ASCENDING)], unique=True, name="uq_subject_code")
-    if settings.document_store != "postgres":
+    if mongo_owns("documents"):
         rag_db.documents.create_indexes(
             [
                 IndexModel(
@@ -522,7 +562,7 @@ def _ensure_indexes() -> None:
             IndexModel([("operation_id", ASCENDING)], unique=True, name="uq_lineage_operation"),
         ]
     )
-    if settings.generation_store != "postgres":
+    if mongo_owns("generation_jobs"):
         rag_db.generation_jobs.create_indexes(
             [
                 IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
@@ -537,7 +577,7 @@ def _ensure_indexes() -> None:
                 IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_generation_jobs"),
             ]
         )
-    if settings.llm_slot_store != "postgres":
+    if mongo_owns("llm_slots"):
         rag_db.llm_slots.create_indexes(
             [
                 IndexModel(
@@ -551,104 +591,105 @@ def _ensure_indexes() -> None:
                 ),
             ]
         )
-    if settings.generation_store != "postgres":
+    if mongo_owns("generation_runs"):
         rag_db.generation_runs.create_indexes(
             [
                 IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
                 IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"),
             ]
         )
-    rag_db.questions.create_indexes(
-        [
-            IndexModel([("question_code", ASCENDING)], unique=True, name="uq_question_code"),
-            IndexModel([("created_by_user_id", ASCENDING), ("updated_at", DESCENDING)], name="ix_questions_owner"),
-            IndexModel(
-                [("lifecycle_status", ASCENDING), ("created_at", DESCENDING)],
-                name="ix_questions_active_created",
-            ),
-            IndexModel(
-                [
-                    ("lifecycle_status", ASCENDING),
-                    ("subject_id", ASCENDING),
-                    ("created_at", DESCENDING),
-                ],
-                name="ix_questions_active_subject_created",
-            ),
-            IndexModel(
-                [
-                    ("lifecycle_status", ASCENDING),
-                    ("review_status", ASCENDING),
-                    ("review_submission.submitted_at", DESCENDING),
-                ],
-                name="ix_questions_active_review_submitted",
-            ),
-            IndexModel(
-                [
-                    ("review_status", ASCENDING),
-                    ("evaluation_status", ASCENDING),
-                    ("updated_at", DESCENDING),
-                ],
-                name="ix_questions_workflow",
-            ),
-            IndexModel(
-                [
-                    ("review_status", ASCENDING),
-                    ("review_assignment.status", ASCENDING),
-                    ("review_assignment.reviewer_user_id", ASCENDING),
-                    ("review_assignment.lock_expires_at", ASCENDING),
-                ],
-                name="ix_questions_review_assignment",
-            ),
-        ]
-    )
-    rag_db.question_versions.create_indexes(
-        [
-            IndexModel([("question_id", ASCENDING), ("version", ASCENDING)], unique=True, name="uq_question_version"),
-            IndexModel([("sources.chunk_id", ASCENDING)], name="ix_question_sources"),
-        ]
-    )
-    rag_db.evaluation_jobs.create_indexes(
-        [
-            IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_evaluation_jobs_queue"),
-            IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_evaluation_jobs_lease"),
-            IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_evaluation_jobs"),
-            IndexModel([("question_version_id", ASCENDING), ("created_at", DESCENDING)], name="ix_evaluation_jobs_version"),
-            IndexModel(
-                [("dedupe_key", ASCENDING)],
-                unique=True,
-                name="uq_active_evaluation_job",
-                partialFilterExpression={
-                    "$or": [{"status": "QUEUED"}, {"status": "PROCESSING"}],
-                },
-            ),
-        ]
-    )
-    rag_db.question_evaluations.create_index(
-        [("question_version_id", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_evaluations_version",
-    )
-    rag_db.question_reviews.create_index(
-        [("question_version_id", ASCENDING), ("reviewed_at", DESCENDING)],
-        name="ix_reviews_version",
-    )
-    rag_db.question_review_drafts.create_indexes(
-        [
-            IndexModel(
-                [("question_id", ASCENDING), ("reviewer_user_id", ASCENDING)],
-                unique=True,
-                name="uq_review_draft_question_reviewer",
-            ),
-            IndexModel(
-                [("reviewer_user_id", ASCENDING), ("updated_at", DESCENDING)],
-                name="ix_review_drafts_reviewer_updated",
-            ),
-        ]
-    )
-    rag_db.question_comments.create_index(
-        [("question_id", ASCENDING), ("deleted_at", ASCENDING), ("created_at", ASCENDING)],
-        name="ix_question_comments_thread",
-    )
-    if settings.audit_store != "postgres":
+    if mongo_owns("questions"):
+        rag_db.questions.create_indexes(
+            [
+                IndexModel([("question_code", ASCENDING)], unique=True, name="uq_question_code"),
+                IndexModel([("created_by_user_id", ASCENDING), ("updated_at", DESCENDING)], name="ix_questions_owner"),
+                IndexModel(
+                    [("lifecycle_status", ASCENDING), ("created_at", DESCENDING)],
+                    name="ix_questions_active_created",
+                ),
+                IndexModel(
+                    [
+                        ("lifecycle_status", ASCENDING),
+                        ("subject_id", ASCENDING),
+                        ("created_at", DESCENDING),
+                    ],
+                    name="ix_questions_active_subject_created",
+                ),
+                IndexModel(
+                    [
+                        ("lifecycle_status", ASCENDING),
+                        ("review_status", ASCENDING),
+                        ("review_submission.submitted_at", DESCENDING),
+                    ],
+                    name="ix_questions_active_review_submitted",
+                ),
+                IndexModel(
+                    [
+                        ("review_status", ASCENDING),
+                        ("evaluation_status", ASCENDING),
+                        ("updated_at", DESCENDING),
+                    ],
+                    name="ix_questions_workflow",
+                ),
+                IndexModel(
+                    [
+                        ("review_status", ASCENDING),
+                        ("review_assignment.status", ASCENDING),
+                        ("review_assignment.reviewer_user_id", ASCENDING),
+                        ("review_assignment.lock_expires_at", ASCENDING),
+                    ],
+                    name="ix_questions_review_assignment",
+                ),
+            ]
+        )
+        rag_db.question_versions.create_indexes(
+            [
+                IndexModel([("question_id", ASCENDING), ("version", ASCENDING)], unique=True, name="uq_question_version"),
+                IndexModel([("sources.chunk_id", ASCENDING)], name="ix_question_sources"),
+            ]
+        )
+        rag_db.evaluation_jobs.create_indexes(
+            [
+                IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_evaluation_jobs_queue"),
+                IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_evaluation_jobs_lease"),
+                IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_evaluation_jobs"),
+                IndexModel([("question_version_id", ASCENDING), ("created_at", DESCENDING)], name="ix_evaluation_jobs_version"),
+                IndexModel(
+                    [("dedupe_key", ASCENDING)],
+                    unique=True,
+                    name="uq_active_evaluation_job",
+                    partialFilterExpression={
+                        "$or": [{"status": "QUEUED"}, {"status": "PROCESSING"}],
+                    },
+                ),
+            ]
+        )
+        rag_db.question_evaluations.create_index(
+            [("question_version_id", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_evaluations_version",
+        )
+        rag_db.question_reviews.create_index(
+            [("question_version_id", ASCENDING), ("reviewed_at", DESCENDING)],
+            name="ix_reviews_version",
+        )
+        rag_db.question_review_drafts.create_indexes(
+            [
+                IndexModel(
+                    [("question_id", ASCENDING), ("reviewer_user_id", ASCENDING)],
+                    unique=True,
+                    name="uq_review_draft_question_reviewer",
+                ),
+                IndexModel(
+                    [("reviewer_user_id", ASCENDING), ("updated_at", DESCENDING)],
+                    name="ix_review_drafts_reviewer_updated",
+                ),
+            ]
+        )
+        rag_db.question_comments.create_index(
+            [("question_id", ASCENDING), ("deleted_at", ASCENDING), ("created_at", ASCENDING)],
+            name="ix_question_comments_thread",
+        )
+    if mongo_owns("audit_logs"):
         rag_db.audit_logs.create_index(
             [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],
             name="ix_audit_entity",
@@ -669,7 +710,7 @@ def _ensure_indexes() -> None:
             [("action", ASCENDING), ("created_at", DESCENDING)],
             name="ix_audit_action",
         )
-    if settings.notification_store != "postgres":
+    if mongo_owns("notifications"):
         rag_db.notifications.create_indexes(
             [
                 IndexModel(
@@ -682,20 +723,21 @@ def _ensure_indexes() -> None:
                 ),
             ]
         )
-    if settings.moodle_target_store != "postgres":
+    if mongo_owns("moodle_targets"):
         rag_db.moodle_targets.create_indexes(
             [
                 IndexModel([("site_key", ASCENDING)], unique=True, name="uq_moodle_target_site_key"),
                 IndexModel([("is_active", ASCENDING), ("mode", ASCENDING)], name="ix_moodle_targets_active_mode"),
             ]
         )
-    rag_db.moodle_publications.create_indexes(
-        [
-            IndexModel([("idempotency_key", ASCENDING)], unique=True, name="uq_publication_idempotency"),
-            IndexModel([("target.moodle_site_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_target_status"),
-            IndexModel([("question_id", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_question"),
-        ]
-    )
+    if mongo_owns("moodle_publications"):
+        rag_db.moodle_publications.create_indexes(
+            [
+                IndexModel([("idempotency_key", ASCENDING)], unique=True, name="uq_publication_idempotency"),
+                IndexModel([("target.moodle_site_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_target_status"),
+                IndexModel([("question_id", ASCENDING), ("created_at", DESCENDING)], name="ix_publications_question"),
+            ]
+        )
     rag_db.migration_id_map.create_index(
         [("source_collection", ASCENDING), ("source_id", ASCENDING)],
         unique=True,
@@ -713,7 +755,7 @@ def _seed_reference_data() -> None:
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     }
-    if settings.ai_config_store != "postgres":
+    if mongo_owns("evaluation_policies"):
         has_active_policy = db.evaluation_policies.find_one(
             {"is_active": True}, {"_id": 1}
         ) is not None
@@ -731,7 +773,7 @@ def _seed_reference_data() -> None:
             },
             upsert=True,
         )
-    if settings.moodle_target_store != "postgres":
+    if mongo_owns("moodle_targets"):
         db.moodle_targets.update_one(
             {"site_key": "demo-moodle"},
             {
@@ -754,7 +796,7 @@ def _seed_reference_data() -> None:
             },
             upsert=True,
         )
-    if settings.ai_config_store == "postgres":
+    if not mongo_owns("ai_models"):
         return
     for model in (
         {
@@ -903,26 +945,11 @@ def bootstrap_database() -> None:
     """Create or align V2 collections without deleting existing data."""
     if settings.auth_db_name == settings.rag_db_name:
         raise ValueError("AUTH_DB_NAME và RAG_DB_NAME phải là hai database khác nhau")
-    if settings.user_store != "postgres":
+    if mongo_owns("User"):
         _ensure_collections(get_auth_db(), AUTH_COLLECTIONS)
     _ensure_collections(
         get_rag_db(),
-        tuple(name for name in RAG_COLLECTIONS
-              if (name != "moodle_targets" or settings.moodle_target_store != "postgres")
-              and (name != "llm_slots" or settings.llm_slot_store != "postgres")
-              and (name not in {"documents", "document_jobs", "document_pages"}
-                   or settings.document_store != "postgres")
-              and (name not in {"ai_models", "prompt_templates", "evaluation_policies"}
-                   or settings.ai_config_store != "postgres")
-              and (name != "users" or settings.user_store != "postgres")
-              and (name != "subjects" or settings.catalog_store != "postgres")
-              and (name != "keywords" or settings.dictionary_store != "postgres")
-              and (name != "notifications" or settings.notification_store != "postgres")
-              and (name != "audit_logs" or settings.audit_store != "postgres")
-              and (name not in {"generation_jobs", "generation_runs"}
-                   or settings.generation_store != "postgres")
-              and (name not in {"exams", "exam_variants"}
-                   or settings.exam_store != "postgres")),
+        tuple(name for name in RAG_COLLECTIONS if mongo_owns(name)),
     )
     _ensure_indexes()
     _seed_reference_data()
