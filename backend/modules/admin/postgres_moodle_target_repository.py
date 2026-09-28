@@ -8,7 +8,9 @@ from bson import ObjectId
 from psycopg.types.json import Jsonb
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.postgres import postgres_connection
+from core.postgres_audit import write_postgres_audit_event
 
 
 def _now() -> datetime:
@@ -41,6 +43,20 @@ def _target(row: dict | None) -> dict | None:
 
 
 class PostgresMoodleTargetRepository:
+    def __init__(self):
+        if settings.user_store != "postgres":
+            raise RuntimeError("MOODLE_TARGET_STORE=postgres requires USER_STORE=postgres")
+
+    @staticmethod
+    def _locked(conn, identifier: str | ObjectId) -> dict | None:
+        key = str(identifier)
+        return conn.execute(
+            """SELECT * FROM moodle_targets WHERE site_key=%s OR id=%s
+               ORDER BY CASE WHEN site_key=%s THEN 0 ELSE 1 END
+               LIMIT 1 FOR UPDATE""",
+            (key, key, key),
+        ).fetchone()
+
     def list(self, *, include_inactive: bool = True) -> list[dict]:
         with postgres_connection() as conn:
             rows = conn.execute(
@@ -61,7 +77,8 @@ class PostgresMoodleTargetRepository:
             ).fetchone()
         return _target(row)
 
-    def save(self, data: dict, actor_user_id: ObjectId) -> dict:
+    def save(self, data: dict, actor_user_id: ObjectId,
+             actor_role: str | None = None) -> dict:
         now = _now()
         payload = {
             "schema_version": SCHEMA_VERSION, **data,
@@ -70,6 +87,7 @@ class PostgresMoodleTargetRepository:
             "last_check": None,
         }
         with postgres_connection() as conn:
+            before = _target(self._locked(conn, data["site_key"]))
             row = conn.execute(
                 """INSERT INTO moodle_targets
                    (id, site_key, site_name, mode, secret_ref, is_active,
@@ -86,34 +104,52 @@ class PostgresMoodleTargetRepository:
                  data.get("token_env_var") or None, data.get("is_active", True),
                  Jsonb(_json(payload)), now, now),
             ).fetchone()
+            write_postgres_audit_event(
+                conn, action="admin.moodle_target_save", entity_type="moodle_target",
+                entity_id=row["id"], actor_user_id=actor_user_id, actor_role=actor_role,
+                before=before, after=_target(row), metadata={"site_key": data["site_key"]},
+            )
         return _target(row)
 
-    def deactivate(self, identifier: str | ObjectId, actor_user_id: ObjectId) -> dict | None:
-        target = self.find(identifier)
-        if not target:
-            return None
+    def deactivate(self, identifier: str | ObjectId, actor_user_id: ObjectId,
+                   actor_role: str | None = None) -> dict | None:
         with postgres_connection() as conn:
+            before = _target(self._locked(conn, identifier))
+            if not before:
+                return None
             row = conn.execute(
                 """UPDATE moodle_targets SET is_active=false,
                        payload=payload || %s, updated_at=%s
                    WHERE id=%s RETURNING *""",
                 (Jsonb({"is_active": False, "updated_by_user_id": str(actor_user_id)}),
-                 _now(), str(target["_id"])),
+                 _now(), str(before["_id"])),
             ).fetchone()
+            write_postgres_audit_event(
+                conn, action="admin.moodle_target_deactivate", entity_type="moodle_target",
+                entity_id=row["id"], actor_user_id=actor_user_id, actor_role=actor_role,
+                before=before, after=_target(row), metadata={"site_key": row["site_key"]},
+            )
         return _target(row)
 
     def update_check(self, identifier: str | ObjectId, check: dict,
-                     actor_user_id: ObjectId) -> dict | None:
-        target = self.find(identifier)
-        if not target:
-            return None
+                     actor_user_id: ObjectId,
+                     actor_role: str | None = None) -> dict | None:
         with postgres_connection() as conn:
+            before = _target(self._locked(conn, identifier))
+            if not before:
+                return None
             row = conn.execute(
                 """UPDATE moodle_targets SET payload=payload || %s, updated_at=%s
                    WHERE id=%s RETURNING *""",
                 (Jsonb(_json({"last_check": check, "updated_by_user_id": actor_user_id})),
-                 _now(), str(target["_id"])),
+                 _now(), str(before["_id"])),
             ).fetchone()
+            write_postgres_audit_event(
+                conn, action="admin.moodle_target_check", entity_type="moodle_target",
+                entity_id=row["id"], actor_user_id=actor_user_id, actor_role=actor_role,
+                before={"last_check": before.get("last_check")},
+                after={"last_check": check}, metadata={"site_key": row["site_key"]},
+            )
         return _target(row)
 
     def count(self, *, active_only: bool = False) -> int:

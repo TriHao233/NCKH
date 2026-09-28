@@ -32,6 +32,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.
 - `modules/dictionary/postgres_repository.py` lưu từ điển và các từ khóa CORE/LEARNED/PENDING trong PostgreSQL; bước chunking và tác vụ AI học từ khóa chọn cùng một nguồn qua `DICTIONARY_STORE`.
 - `modules/admin/postgres_moodle_target_repository.py` lưu Moodle target, trạng thái kích hoạt và lần kiểm tra kết nối trong PostgreSQL. Trang quản trị, thống kê và bước publish mock đọc cùng nguồn được chọn. Chỉ lưu tên biến môi trường token (`token_env_var`), không lưu giá trị token vào database.
+- Khi `MOODLE_TARGET_STORE=postgres`, audit cho thao tác lưu/khóa/kiểm tra target được ghi cùng transaction PostgreSQL với target; không gửi bản audit thứ hai sang MongoDB.
 - `modules/generation/llm/postgres_slots.py` cấp/duy trì/giải phóng slot bằng khóa hàng PostgreSQL và thời gian từ database; các API/worker dùng chung giới hạn đồng thời, dashboard đọc số slot từ cùng nguồn.
 - Repository PostgreSQL cho tài khoản/phiên và cấu hình AI đã có từ giai đoạn trước.
 - Khi `USER_STORE=postgres`, thống kê và lịch cá nhân vẫn đọc tài liệu/câu hỏi từ MongoDB vì đây còn là nguồn ghi chính của hai nhóm đó; không dùng các bảng PostgreSQL shadow copy có thể đã cũ.
@@ -65,7 +66,7 @@ MOODLE_TARGET_STORE=postgres
 LLM_SLOT_STORE=postgres
 ```
 
-`CATALOG_STORE` và `NOTIFICATION_STORE` yêu cầu `USER_STORE=postgres` để khóa ngoại owner/recipient hợp lệ. Có thể bật từng nhóm sau khi dữ liệu nhóm đó đã được sao chép và kiểm tra. `MOODLE_TARGET_STORE` chỉ chuyển cấu hình target; các publication vẫn ghi MongoDB theo luồng câu hỏi. Không bật các cờ trên production khi câu hỏi, tài liệu, job và các luồng liên quan còn dùng MongoDB. Khởi động lại API/worker sau khi đổi cờ; không chuyển cờ trong lúc có ghi đồng thời ở hai nguồn.
+`CATALOG_STORE`, `NOTIFICATION_STORE` và `MOODLE_TARGET_STORE` yêu cầu `USER_STORE=postgres` để khóa ngoại owner/recipient/actor hợp lệ. Có thể bật từng nhóm sau khi dữ liệu nhóm đó đã được sao chép và kiểm tra. `MOODLE_TARGET_STORE` chỉ chuyển cấu hình target; các publication vẫn ghi MongoDB theo luồng câu hỏi. Không bật các cờ trên production khi câu hỏi, tài liệu, job và các luồng liên quan còn dùng MongoDB. Khởi động lại API/worker sau khi đổi cờ; không chuyển cờ trong lúc có ghi đồng thời ở hai nguồn.
 
 Khi chuyển `LLM_SLOT_STORE`, chờ các lời gọi model đang chạy kết thúc trên toàn bộ API/worker rồi mới đổi cờ đồng loạt. Lease cũ ở MongoDB không tự chuyển theo worker; thay đổi cờ trong lúc chạy có thể khiến hai backend cấp slot song song vượt quá giới hạn.
 

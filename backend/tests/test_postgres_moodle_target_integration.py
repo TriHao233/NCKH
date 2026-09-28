@@ -14,7 +14,9 @@ from db.copy_business_data import projected_rows, upsert
 from modules.admin import moodle_service
 from modules.admin.moodle_schemas import MoodleTargetPayload
 from modules.admin.overview_service import AdminOverviewService
+from modules.admin import postgres_moodle_target_repository
 from modules.admin.postgres_moodle_target_repository import PostgresMoodleTargetRepository
+from modules.users.postgres_repository import PostgresUserRepository
 
 
 pytestmark = pytest.mark.skipif(
@@ -25,9 +27,15 @@ pytestmark = pytest.mark.skipif(
 
 def test_moodle_target_lifecycle_is_postgres_backed(monkeypatch):
     monkeypatch.setattr(settings, "moodle_target_store", "postgres")
-    monkeypatch.setattr(moodle_service, "record_audit_event", lambda **fields: None)
+    monkeypatch.setattr(settings, "user_store", "postgres")
+    monkeypatch.setattr(moodle_service, "record_audit_event",
+                        lambda **fields: pytest.fail("MongoDB audit was called"))
     site_key = f"pg-{uuid4().hex[:12]}"
-    actor = SimpleNamespace(id=ObjectId(), role="Admin")
+    user = PostgresUserRepository().create({
+        "firebase_uid": site_key, "email": f"{site_key}@example.test",
+        "display_name": "Admin", "role": "Admin",
+    })
+    actor = SimpleNamespace(id=user["_id"], role="Admin")
     service = moodle_service.MoodleTargetService(SimpleNamespace())
     payload = MoodleTargetPayload(
         site_key=site_key, site_name="Moodle thử nghiệm", mode="MOCK",
@@ -59,13 +67,31 @@ def test_moodle_target_lifecycle_is_postgres_backed(monkeypatch):
         assert service.find_target(site_key, active_only=True) is None
         assert all(item["site_key"] != site_key
                    for item in service.list_targets(include_inactive=False)["items"])
+        with postgres_connection() as conn:
+            audit = conn.execute(
+                """SELECT action, actor_user_id, actor_role, entity_id, payload
+                   FROM audit_logs WHERE entity_id=%s ORDER BY created_at, id""",
+                (str(target_id),),
+            ).fetchall()
+        assert {row["action"] for row in audit} == {
+            "admin.moodle_target_save", "admin.moodle_target_check",
+            "admin.moodle_target_deactivate",
+        }
+        assert len(audit) == 4
+        assert all(row["actor_user_id"] == str(actor.id) and row["actor_role"] == "Admin"
+                   for row in audit)
+        assert all(row["payload"]["entity"]["id"] == str(target_id) for row in audit)
     finally:
         with postgres_connection() as conn:
+            conn.execute("DELETE FROM audit_logs WHERE entity_id IN "
+                         "(SELECT id FROM moodle_targets WHERE site_key=%s)", (site_key,))
             conn.execute("DELETE FROM moodle_targets WHERE site_key=%s", (site_key,))
+            conn.execute("DELETE FROM users WHERE id=%s", (str(user["_id"]),))
 
 
 def test_shadow_copied_moodle_target_can_be_used_by_service(monkeypatch):
     monkeypatch.setattr(settings, "moodle_target_store", "postgres")
+    monkeypatch.setattr(settings, "user_store", "postgres")
     site_key = f"copied-{uuid4().hex[:12]}"
     now = datetime.now(timezone.utc)
     legacy = {
@@ -87,3 +113,32 @@ def test_shadow_copied_moodle_target_can_be_used_by_service(monkeypatch):
     finally:
         with postgres_connection() as conn:
             conn.execute("DELETE FROM moodle_targets WHERE site_key=%s", (site_key,))
+
+
+def test_moodle_target_save_rolls_back_when_audit_fails(monkeypatch):
+    monkeypatch.setattr(settings, "moodle_target_store", "postgres")
+    monkeypatch.setattr(settings, "user_store", "postgres")
+    site_key = f"rollback-{uuid4().hex[:12]}"
+
+    def reject_audit(*_args, **_kwargs):
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(postgres_moodle_target_repository,
+                        "write_postgres_audit_event", reject_audit)
+    payload = MoodleTargetPayload(
+        site_key=site_key, site_name="Rollback", mode="MOCK",
+        default_course_id="course", default_category_id="category",
+    )
+    with pytest.raises(RuntimeError, match="audit failed"):
+        moodle_service.MoodleTargetService(SimpleNamespace()).save_target(
+            payload, SimpleNamespace(id=ObjectId(), role="Admin"),
+        )
+    with postgres_connection() as conn:
+        assert conn.execute("SELECT id FROM moodle_targets WHERE site_key=%s",
+                            (site_key,)).fetchone() is None
+
+
+def test_moodle_target_postgres_requires_postgres_users(monkeypatch):
+    monkeypatch.setattr(settings, "user_store", "mongo")
+    with pytest.raises(RuntimeError, match="requires USER_STORE=postgres"):
+        PostgresMoodleTargetRepository()
