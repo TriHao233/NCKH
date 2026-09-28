@@ -47,7 +47,7 @@ services:
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--quiet"]
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
-      interval: 2m
+      interval: 5m
       start_interval: 5s
       timeout: 5s
       retries: 20

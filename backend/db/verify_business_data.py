@@ -17,12 +17,13 @@ from db.copy_business_data import SOURCE_ORDER, projected_rows
 
 CHILD_TABLES = {
     "subject_chapters", "learning_outcomes", "ai_model_versions",
-    "document_artifacts", "exam_questions", "legacy_dictionaries",
+    "document_artifacts", "document_subjects", "exam_questions", "legacy_dictionaries",
 }
 CRITICAL_FIELDS = {
     "users": ("firebase_uid", "email", "role", "is_active"),
     "subjects": ("subject_code", "subject_name", "is_active"),
-    "documents": ("status", "current_version", "active_chunk_set_id"),
+    "documents": ("subject_id", "status", "current_version", "active_chunk_set_id"),
+    "document_subjects": ("position_no",),
     "document_pages": ("document_id", "version", "unit_number", "page_number", "source_location"),
     "moodle_targets": ("site_key", "site_name", "mode", "secret_ref", "is_active"),
     "questions": (
@@ -41,6 +42,8 @@ def row_key(table: str, row: dict):
         return (row["provider"], row["slot_index"])
     if table == "exam_questions":
         return (row["exam_id"], row["position"])
+    if table == "document_subjects":
+        return (row["document_id"], row["subject_id"])
     return row["id"]
 
 

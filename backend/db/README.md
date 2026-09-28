@@ -25,6 +25,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - `db/migrations/0001` đến `0004` tạo schema nghiệp vụ và metadata AI; `0005_catalog_casefold.sql` thêm ràng buộc mã học phần, chương, CLO không trùng khi khác chữ hoa/thường hoặc có khoảng trắng đầu/cuối.
 - `0006_dictionary_keyword_uniqueness.sql` ngăn từ khóa trùng trong cùng từ điển, kể cả khác chữ hoa/thường hoặc khác trạng thái CORE/LEARNED/PENDING.
 - `0007_document_page_location.sql` cho phép trang OCR không có `page_number` (DOCX/text), thêm `unit_number` và `source_location` để giữ đúng thứ tự, vị trí nguồn khi sao chép sang PostgreSQL. Đây là chuẩn bị schema và shadow copy; luồng tài liệu/OCR vẫn ghi MongoDB.
+- `0008_document_subjects.sql` thêm bảng quan hệ `document_subjects` có thứ tự, sao chép đủ `subject_ids` của tài liệu và backfill các bản PostgreSQL shadow hiện có. `documents.subject_id` tiếp tục là học phần chính; luồng tài liệu/OCR vẫn ghi MongoDB cho đến khi hoàn thành chuyển worker/RAG.
 - `modules/catalog/postgres_subject_repository.py` xử lý học phần, chương, CLO trong PostgreSQL. Ghi dữ liệu và audit tương ứng cùng transaction; cập nhật chương/CLO khóa học phần và ghép thay đổi với bản mới nhất để tránh ghi đè trường khác.
 - Các đường đọc học phần của tài liệu, sinh câu hỏi, thống kê reviewer và trang quản trị dùng nguồn được chọn bởi `CATALOG_STORE`.
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.
@@ -74,3 +75,7 @@ Kiểm thử PostgreSQL yêu cầu `RUN_POSTGRES_INTEGRATION=1`, `POSTGRES_DSN` 
 4. Diễn tập trên bản sao dữ liệu, đóng băng ghi, sao chép delta, đối chiếu nội dung và chạy lại luồng Teacher → Reviewer → Admin trước khi đổi cờ production.
 
 PostgreSQL, MongoDB, ChromaDB, file storage và model provider không có transaction chung. Các luồng đi qua nhiều hệ cần trạng thái, retry, outbox và tác vụ đối soát trước khi cutover.
+
+## Log MongoDB trong Docker
+
+Kiểm tra log thực tế 10 phút cho thấy các dòng INFO lặp chủ yếu đến từ kết nối `mongosh` của healthcheck (25 `client metadata`, 25 `Connection not authenticating`, 15 bắt tay lệnh đầu) và checkpoint WiredTiger mỗi phút (10 dòng). Compose giữ healthcheck nhanh `start_interval=5s` khi khởi động nhưng giãn `interval` sau khi khỏe từ 2 lên 5 phút. Thay đổi này chỉ có hiệu lực khi container được tạo lại; `logging.max-size/max-file` chỉ giới hạn dung lượng lưu log, không giảm số dòng. Vẫn xem các dòng WARN/ERROR khi chẩn đoán sự cố.

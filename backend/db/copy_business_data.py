@@ -206,6 +206,14 @@ def projected_rows(name: str, item: dict):
             active_chunk_set_id=oid(current.get("chunk_set_id")),
             payload=data, created_at=created, updated_at=updated,
         )
+        subject_ids = list(dict.fromkeys(
+            ([oid(item["subject_id"])] if item.get("subject_id") else [])
+            + [oid(value) for value in item.get("subject_ids") or []]
+        ))
+        for position, subject_id in enumerate(subject_ids):
+            yield "document_subjects", dict(
+                document_id=row_id, subject_id=subject_id, position_no=position,
+            )
         for index, artifact in enumerate(item.get("artifacts") or []):
             storage = artifact.get("storage") or {}
             yield "document_artifacts", dict(
@@ -409,8 +417,10 @@ def projected_rows(name: str, item: dict):
 
 def upsert(connection, table: str, row: dict) -> None:
     columns = tuple(row)
-    key_columns = ("provider", "slot_index") if table == "llm_slots" else (
-        ("exam_id", "position") if table == "exam_questions" else ("id",)
+    key_columns = (
+        ("provider", "slot_index") if table == "llm_slots" else
+        ("exam_id", "position") if table == "exam_questions" else
+        ("document_id", "subject_id") if table == "document_subjects" else ("id",)
     )
     assignments = [column for column in columns if column not in key_columns]
     statement = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}").format(
