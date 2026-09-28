@@ -473,17 +473,22 @@ class AdminOverviewService:
         )
 
     def _collect_evaluation_model_performance(self, groups: dict[str, dict], since: datetime) -> None:
-        collection = getattr(self.db, "evaluation_jobs", None)
-        if collection is None:
-            return
-        query = {
-            "$or": [
-                {"updated_at": {"$gte": since}},
-                {"finished_at": {"$gte": since}},
-                {"queued_at": {"$gte": since}},
-            ]
-        }
-        for job in collection.find(query).sort("updated_at", -1).limit(1000):
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+            jobs = PostgresEvaluationJobs().recent_jobs(since, 1000)
+        else:
+            collection = getattr(self.db, "evaluation_jobs", None)
+            if collection is None:
+                return
+            query = {
+                "$or": [
+                    {"updated_at": {"$gte": since}},
+                    {"finished_at": {"$gte": since}},
+                    {"queued_at": {"$gte": since}},
+                ]
+            }
+            jobs = collection.find(query).sort("updated_at", -1).limit(1000)
+        for job in jobs:
             model_code = job.get("evaluator_model_code") or "unknown"
             group = self._model_group(
                 groups,

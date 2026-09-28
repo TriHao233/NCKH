@@ -28,17 +28,28 @@ def _postgres_document_queue_metrics(now: datetime) -> dict:
     }
 
 
+def _postgres_evaluation_queue_metrics(now: datetime) -> dict:
+    from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+    row = PostgresEvaluationJobs().queue_metrics()
+    return {
+        "queued": row["queued"], "processing": row["processing"],
+        "retry_wait": row["retry_wait"], "dead_lettered": row["dead_lettered"],
+        "expired_leases": row["expired_leases"],
+        "oldest_queued_seconds": _seconds_since(row["oldest_queued"], now),
+    }
+
+
 def collect_job_metrics(database) -> dict:
     now = datetime.now(timezone.utc)
     generation = database.generation_jobs
-    evaluation = database.evaluation_jobs
+    evaluation = database.evaluation_jobs if settings.question_store != "postgres" else None
     documents = database.document_jobs if settings.document_store != "postgres" else None
     oldest_generation = generation.find_one(
         {"status": "queued"}, sort=[("created_at", 1)], projection={"created_at": 1}
     )
     oldest_evaluation = evaluation.find_one(
         {"status": "QUEUED"}, sort=[("queued_at", 1)], projection={"queued_at": 1}
-    )
+    ) if evaluation is not None else None
     oldest_document = (documents.find_one(
         {"status": "QUEUED"}, sort=[("queued_at", 1)], projection={"queued_at": 1}
     ) if documents is not None else None)
@@ -59,7 +70,7 @@ def collect_job_metrics(database) -> dict:
                     (oldest_generation or {}).get("created_at"), now
                 ),
             },
-            "evaluation": {
+            "evaluation": _postgres_evaluation_queue_metrics(now) if evaluation is None else {
                 "queued": evaluation.count_documents({"status": "QUEUED"}),
                 "processing": evaluation.count_documents({"status": "PROCESSING"}),
                 "retry_wait": evaluation.count_documents(

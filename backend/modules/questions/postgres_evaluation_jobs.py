@@ -367,3 +367,117 @@ class PostgresEvaluationJobs:
                                     updated_at=now)
                     repository._save_question(conn, question)
         return recovered
+
+    # ---- Admin views -----------------------------------------------------
+
+    @staticmethod
+    def _admin_where(statuses: list[str] | None, requested_by_user_id: ObjectId | None,
+                     date_from, date_to) -> tuple[str, list]:
+        clauses: list[str] = []
+        params: list = []
+        legacy_cancel = "(status='STALE' AND error->>'message' LIKE 'Cancelled by admin %%')"
+        if statuses == ["CANCELLED"]:
+            # Bản cũ ghi hủy của Admin thành STALE + message; vẫn hiển thị là CANCELLED.
+            clauses.append(f"(status='CANCELLED' OR {legacy_cancel})")
+        elif statuses:
+            clauses.append("status=ANY(%s)")
+            params.append(statuses)
+            if "STALE" in statuses:
+                clauses.append(f"NOT {legacy_cancel}")
+        if requested_by_user_id is not None:
+            clauses.append("requested_by_user_id=%s")
+            params.append(str(requested_by_user_id))
+        if date_from is not None:
+            clauses.append("updated_at >= %s")
+            params.append(date_from)
+        if date_to is not None:
+            clauses.append("updated_at <= %s")
+            params.append(date_to)
+        return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+    def admin_jobs(self, statuses: list[str] | None, requested_by_user_id: ObjectId | None,
+                   date_from, date_to, limit: int) -> list[dict]:
+        where, params = self._admin_where(statuses, requested_by_user_id, date_from, date_to)
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM evaluation_jobs" + where
+                + " ORDER BY updated_at DESC, id DESC LIMIT %s", [*params, limit],
+            ).fetchall()
+        return [_job(row) for row in rows]
+
+    def count_admin_jobs(self, statuses: list[str] | None,
+                         requested_by_user_id: ObjectId | None, date_from, date_to) -> int:
+        where, params = self._admin_where(statuses, requested_by_user_id, date_from, date_to)
+        with postgres_connection() as conn:
+            return conn.execute("SELECT count(*) AS n FROM evaluation_jobs" + where,
+                                params).fetchone()["n"]
+
+    def active_job_ids(self, question_id: str | ObjectId) -> set[str]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                "SELECT id FROM evaluation_jobs WHERE question_id=%s "
+                "AND status IN ('QUEUED','PROCESSING')",
+                (str(object_id(question_id, "question_id")),),
+            ).fetchall()
+        return {row["id"] for row in rows}
+
+    def cancel(self, job_id: str | ObjectId, error: dict) -> dict | None:
+        """Admin hủy job đang chờ/chạy; câu hỏi quay về NOT_STARTED nếu job là lượt mới nhất."""
+        key = str(object_id(job_id, "evaluation_job_id"))
+        repository = PostgresQuestionRepository()
+        with postgres_connection() as conn:
+            identity = conn.execute("SELECT question_id FROM evaluation_jobs WHERE id=%s",
+                                    (key,)).fetchone()
+            if not identity:
+                return None
+            pair = repository._pair(conn, identity["question_id"], active_only=False, lock=True)
+            row = conn.execute("SELECT * FROM evaluation_jobs WHERE id=%s FOR UPDATE",
+                               (key,)).fetchone()
+            if not row or row["status"] not in ACTIVE:
+                return None
+            job = _job(row)
+            now = error.get("at") or utc_now()
+            job.update(status="CANCELLED", error=error, finished_at=now, updated_at=now,
+                       expires_at=now + timedelta(days=settings.job_retention_days),
+                       locked_by=None, worker_id=None,
+                       lease_expires_at=None, next_attempt_at=None)
+            self._save(conn, job)
+            if pair:
+                question, _version = pair
+                summary = dict(question.get("quality_summary") or {})
+                if summary.get("latest_evaluation_job_id") == job["_id"]:
+                    for field in ("overall_score", "color", "latest_evaluation_id"):
+                        summary.pop(field, None)
+                    summary["error"] = error
+                    question.update(evaluation_status="NOT_STARTED",
+                                    quality_summary=summary, updated_at=now)
+                    repository._save_question(conn, question)
+            return job
+
+    def queue_metrics(self) -> dict:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                """SELECT
+                     count(*) FILTER (WHERE status='QUEUED') AS queued,
+                     count(*) FILTER (WHERE status='PROCESSING') AS processing,
+                     count(*) FILTER (WHERE status='QUEUED' AND next_attempt_at > now())
+                       AS retry_wait,
+                     count(*) FILTER (WHERE payload->>'dead_lettered_at' IS NOT NULL)
+                       AS dead_lettered,
+                     count(*) FILTER (WHERE status='PROCESSING' AND lease_expires_at <= now())
+                       AS expired_leases,
+                     min(created_at) FILTER (WHERE status='QUEUED') AS oldest_queued
+                   FROM evaluation_jobs"""
+            ).fetchone()
+        return dict(row)
+
+    def recent_jobs(self, since, limit: int = 1000) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM evaluation_jobs
+                   WHERE updated_at >= %s OR created_at >= %s
+                      OR (payload->>'finished_at')::timestamptz >= %s
+                   ORDER BY updated_at DESC, id DESC LIMIT %s""",
+                (since, since, since, limit),
+            ).fetchall()
+        return [_job(row) for row in rows]

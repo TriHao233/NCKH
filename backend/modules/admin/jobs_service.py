@@ -21,6 +21,13 @@ from modules.documents.store import get_document_repository
 from modules.generation.mongodb import create_generation_job, get_generation_job
 from modules.questions.workflow_service import QuestionWorkflowService
 
+def _postgres_evaluation_jobs():
+    if settings.question_store != "postgres":
+        return None
+    from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+    return PostgresEvaluationJobs()
+
+
 ACTIVE_STATUSES = {"QUEUED", "PROCESSING", "queued", "processing"}
 RETRYABLE_STATUSES = {"FAILED", "ERROR", "STALE", "BLOCKED", "failed"}
 LEGACY_ADMIN_CANCEL_PATTERN = "^Cancelled by admin "
@@ -245,7 +252,22 @@ class AdminJobService:
                     doc_subject_map[str(doc["_id"])] = doc["subject_id"]
 
         question_subject_map = {}
-        if question_ids:
+        if question_ids and settings.question_store == "postgres":
+            with postgres_connection() as conn:
+                rows = conn.execute(
+                    """SELECT q.id, q.question_code,
+                              v.classification->'subject'->>'id' AS subject_id
+                       FROM questions q
+                       LEFT JOIN question_versions v ON v.id=q.current_version_id
+                       WHERE q.id=ANY(%s)""",
+                    ([str(item) for item in question_ids],),
+                ).fetchall()
+            for row in rows:
+                entity_labels[("question", row["id"])] = row["question_code"]
+                if row["subject_id"] and ObjectId.is_valid(row["subject_id"]):
+                    subject_ids.add(ObjectId(row["subject_id"]))
+                    question_subject_map[row["id"]] = ObjectId(row["subject_id"])
+        elif question_ids:
             questions = getattr(self.db, "questions", None)
             for question in (questions.find({"_id": {"$in": question_ids}}, {"question_code": 1}) if questions is not None else []):
                 entity_labels[("question", str(question["_id"]))] = question.get("question_code")
@@ -321,9 +343,15 @@ class AdminJobService:
                 self._generation_query(status, user_oid, date_from, date_to)
             )
         if "evaluation" in requested_kinds:
-            total += self.db.evaluation_jobs.count_documents(
-                self._evaluation_query(status, user_oid, date_from, date_to)
-            )
+            evaluation_jobs = _postgres_evaluation_jobs()
+            if evaluation_jobs is not None:
+                total += evaluation_jobs.count_admin_jobs(
+                    _document_statuses(status), user_oid, date_from, date_to,
+                )
+            else:
+                total += self.db.evaluation_jobs.count_documents(
+                    self._evaluation_query(status, user_oid, date_from, date_to)
+                )
         if "document" in requested_kinds:
             if settings.document_store == "postgres":
                 total += get_document_repository(self.db).count_admin_jobs(
@@ -387,6 +415,14 @@ class AdminJobService:
         date_to: datetime | None = None,
         limit: int = 500,
     ) -> list[dict]:
+        evaluation_jobs = _postgres_evaluation_jobs()
+        if evaluation_jobs is not None:
+            return [
+                self._normalize_evaluation(job)
+                for job in evaluation_jobs.admin_jobs(
+                    _document_statuses(status), user_oid, date_from, date_to, limit,
+                )
+            ]
         query = self._evaluation_query(status, user_oid, date_from, date_to)
         return [
             self._normalize_evaluation(job)
@@ -644,21 +680,32 @@ class AdminJobService:
         background_tasks: BackgroundTasks,
         current_user: CurrentUser,
     ) -> dict:
-        job = self.db.evaluation_jobs.find_one({"_id": _parse_object_id(job_id, "job_id")})
+        evaluation_jobs = _postgres_evaluation_jobs()
+        job_oid = _parse_object_id(job_id, "job_id")
+        job = (evaluation_jobs.get(job_oid) if evaluation_jobs is not None
+               else self.db.evaluation_jobs.find_one({"_id": job_oid}))
         if not job:
             raise LookupError("Không tìm thấy job")
         if job.get("status") not in RETRYABLE_STATUSES:
             raise ValueError("Chỉ retry job evaluation đã lỗi hoặc stale")
-        question = self.db.questions.find_one({"_id": job.get("question_id")})
+        if evaluation_jobs is not None:
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            pair = PostgresQuestionRepository().find_pair(job["question_id"])
+            question = pair[0] if pair else None
+        else:
+            question = self.db.questions.find_one({"_id": job.get("question_id")})
         if not question:
             raise LookupError("Không tìm thấy câu hỏi của job")
-        already_active = {
-            str(item["_id"])
-            for item in self.db.evaluation_jobs.find(
-                {"question_id": question["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
-                {"_id": 1},
-            )
-        }
+        if evaluation_jobs is not None:
+            already_active = evaluation_jobs.active_job_ids(question["_id"])
+        else:
+            already_active = {
+                str(item["_id"])
+                for item in self.db.evaluation_jobs.find(
+                    {"question_id": question["_id"], "status": {"$in": ["QUEUED", "PROCESSING"]}},
+                    {"_id": 1},
+                )
+            }
         queued = QuestionWorkflowService(self.db).enqueue_auto_evaluation(
             str(question["_id"]),
             expected_version=question["current_version"],
@@ -710,6 +757,13 @@ class AdminJobService:
     def _cancel_evaluation(self, job_id: str, current_user: CurrentUser) -> dict:
         now = utc_now()
         error = {"message": f"Cancelled by admin {current_user.email}", "at": now}
+        evaluation_jobs = _postgres_evaluation_jobs()
+        if evaluation_jobs is not None:
+            result = evaluation_jobs.cancel(_parse_object_id(job_id, "job_id"), error)
+            if not result:
+                raise ValueError("Job không ở trạng thái có thể hủy")
+            self._audit(current_user, "admin.job_cancel", "evaluation", job_id)
+            return {"job": json_safe(result)}
         result = self.db.evaluation_jobs.find_one_and_update(
             {"_id": _parse_object_id(job_id, "job_id"), "status": {"$in": ["QUEUED", "PROCESSING"]}},
             {
@@ -755,7 +809,8 @@ class AdminJobService:
         entity_id: str,
         metadata: dict | None = None,
     ) -> None:
-        if entity_type == "document" and settings.document_store == "postgres":
+        if ((entity_type == "document" and settings.document_store == "postgres")
+                or (entity_type == "evaluation" and settings.question_store == "postgres")):
             with postgres_connection() as conn:
                 write_postgres_audit_event(
                     conn, action=action, entity_type=entity_type, entity_id=entity_id,
