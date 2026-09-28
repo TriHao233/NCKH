@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -13,6 +14,7 @@ from core.postgres import postgres_connection
 from core.postgres_audit import write_postgres_audit_event
 from db.copy_business_data import projected_rows, upsert
 from modules.users.postgres_repository import PostgresUserRepository
+from modules.admin.audit_service import AdminAuditService
 
 
 pytestmark = pytest.mark.skipif(
@@ -21,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_canonical_and_legacy_audit_events_keep_actor_entity_and_payload():
+def test_canonical_and_legacy_audit_events_keep_actor_entity_and_payload(monkeypatch):
     suffix = uuid4().hex[:12]
     user = PostgresUserRepository().create({
         "firebase_uid": f"audit-{suffix}", "email": f"audit-{suffix}@example.test",
@@ -89,6 +91,14 @@ def test_canonical_and_legacy_audit_events_keep_actor_entity_and_payload():
             "path": "status", "old_value": "PENDING", "new_value": "APPROVED",
         }]
         assert native["payload"]["actor"]["user_id"] == str(user["_id"])
+        monkeypatch.setattr(settings, "audit_store", "postgres")
+        listed = AdminAuditService(SimpleNamespace()).list(
+            page=1, page_size=10, actor_user_id=str(user["_id"]),
+            entity_type="QUESTION", action=native_action,
+        )
+        assert listed["total"] == 1
+        assert listed["items"][0]["actor"]["user_name"] == "Reviewer"
+        assert listed["items"][0]["entity"]["id"] == str(question_id)
     finally:
         with postgres_connection() as conn:
             conn.execute("DELETE FROM audit_logs WHERE id=ANY(%s)",

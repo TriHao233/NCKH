@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from core.config import settings
+from core.postgres import postgres_connection
 from modules.generation.llm import postgres_slots
 
 
@@ -12,20 +13,35 @@ def _seconds_since(value: datetime | None, now: datetime) -> int | None:
     return max(0, int((now - value).total_seconds()))
 
 
+def _postgres_document_queue_metrics(now: datetime) -> dict:
+    with postgres_connection() as conn:
+        row = conn.execute(
+            """SELECT
+                   count(*) FILTER (WHERE status='QUEUED') AS queued,
+                   count(*) FILTER (WHERE status='PROCESSING') AS processing,
+                   min(created_at) FILTER (WHERE status='QUEUED') AS oldest_queued
+               FROM document_jobs"""
+        ).fetchone()
+    return {
+        "queued": row["queued"], "processing": row["processing"],
+        "oldest_queued_seconds": _seconds_since(row["oldest_queued"], now),
+    }
+
+
 def collect_job_metrics(database) -> dict:
     now = datetime.now(timezone.utc)
     generation = database.generation_jobs
     evaluation = database.evaluation_jobs
-    documents = database.document_jobs
+    documents = database.document_jobs if settings.document_store != "postgres" else None
     oldest_generation = generation.find_one(
         {"status": "queued"}, sort=[("created_at", 1)], projection={"created_at": 1}
     )
     oldest_evaluation = evaluation.find_one(
         {"status": "QUEUED"}, sort=[("queued_at", 1)], projection={"queued_at": 1}
     )
-    oldest_document = documents.find_one(
+    oldest_document = (documents.find_one(
         {"status": "QUEUED"}, sort=[("queued_at", 1)], projection={"queued_at": 1}
-    )
+    ) if documents is not None else None)
     return {
         "observed_at": now,
         "queues": {
@@ -57,7 +73,7 @@ def collect_job_metrics(database) -> dict:
                     (oldest_evaluation or {}).get("queued_at"), now
                 ),
             },
-            "document": {
+            "document": _postgres_document_queue_metrics(now) if documents is None else {
                 "queued": documents.count_documents({"status": "QUEUED"}),
                 "processing": documents.count_documents({"status": "PROCESSING"}),
                 "oldest_queued_seconds": _seconds_since(

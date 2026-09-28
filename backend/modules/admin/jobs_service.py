@@ -10,11 +10,14 @@ from pymongo import ReturnDocument
 
 from core.audit import record_audit_event
 from core.config import settings
+from core.postgres import postgres_connection
+from core.postgres_audit import write_postgres_audit_event
 from core.dependencies import CurrentUser
 from modules.admin.job_metrics import collect_job_metrics
 from modules.catalog.postgres_subject_repository import subject_records
-from modules.documents.repository import MongoDocumentRepository, RETRYABLE_DOCUMENT_JOB_TYPES
+from modules.documents.repository import RETRYABLE_DOCUMENT_JOB_TYPES
 from modules.documents.service import DocumentService
+from modules.documents.store import get_document_repository
 from modules.generation.mongodb import create_generation_job, get_generation_job
 from modules.questions.workflow_service import QuestionWorkflowService
 
@@ -114,6 +117,11 @@ def _uppercase_status_filter(status: str | None) -> str | dict | None:
     return status.upper()
 
 
+def _document_statuses(status: str | None) -> list[str] | None:
+    value = _uppercase_status_filter(status)
+    return value.get("$in") if isinstance(value, dict) else [value] if value else None
+
+
 class AdminJobService:
     def __init__(self, database):
         self.db = database
@@ -173,10 +181,19 @@ class AdminJobService:
             if actor:
                 user_ids.append(_parse_object_id(actor))
         if user_ids:
-            users_map = {
-                str(u['_id']): u.get('display_name') or str(u['_id'])
-                for u in self.db.users.find({'_id': {'$in': user_ids}}, {'display_name': 1})
-            }
+            if settings.user_store == "postgres":
+                with postgres_connection() as conn:
+                    user_rows = conn.execute(
+                        "SELECT id, display_name FROM users WHERE id=ANY(%s)",
+                        ([str(item) for item in user_ids],),
+                    ).fetchall()
+                users_map = {row["id"]: row["display_name"] or row["id"]
+                             for row in user_rows}
+            else:
+                users_map = {
+                    str(u['_id']): u.get('display_name') or str(u['_id'])
+                    for u in self.db.users.find({'_id': {'$in': user_ids}}, {'display_name': 1})
+                }
             for job in jobs:
                 actor = str(job.get('actor_user_id', ''))
                 if actor and actor in users_map:
@@ -203,7 +220,25 @@ class AdminJobService:
         # Nhãn đối tượng là chính tài liệu/câu hỏi; học phần hiển thị kèm ở subject_label.
         entity_labels = {}
         if document_ids:
-            for doc in self.db.documents.find({"_id": {"$in": document_ids}}, {"subject_id": 1, "title": 1, "original_filename": 1}):
+            if settings.document_store == "postgres":
+                with postgres_connection() as conn:
+                    rows = conn.execute(
+                        "SELECT id, title, original_filename, subject_id FROM documents "
+                        "WHERE id=ANY(%s)",
+                        ([str(item) for item in document_ids],),
+                    ).fetchall()
+                source_documents = [
+                    {"_id": ObjectId(row["id"]), "title": row["title"],
+                     "original_filename": row["original_filename"],
+                     "subject_id": ObjectId(row["subject_id"]) if row["subject_id"] else None}
+                    for row in rows
+                ]
+            else:
+                source_documents = self.db.documents.find(
+                    {"_id": {"$in": document_ids}},
+                    {"subject_id": 1, "title": 1, "original_filename": 1},
+                )
+            for doc in source_documents:
                 entity_labels[("document", str(doc["_id"]))] = doc.get("title") or doc.get("original_filename")
                 if doc.get("subject_id"):
                     subject_ids.add(doc["subject_id"])
@@ -290,9 +325,14 @@ class AdminJobService:
                 self._evaluation_query(status, user_oid, date_from, date_to)
             )
         if "document" in requested_kinds:
-            total += self.db.document_jobs.count_documents(
-                self._document_query(status, user_oid, date_from, date_to)
-            )
+            if settings.document_store == "postgres":
+                total += get_document_repository(self.db).count_admin_jobs(
+                    _document_statuses(status), user_oid, date_from, date_to,
+                )
+            else:
+                total += self.db.document_jobs.count_documents(
+                    self._document_query(status, user_oid, date_from, date_to)
+                )
         return total
 
     def retry_job(
@@ -361,6 +401,13 @@ class AdminJobService:
         date_to: datetime | None = None,
         limit: int = 500,
     ) -> list[dict]:
+        if settings.document_store == "postgres":
+            return [
+                self._normalize_document(job, document)
+                for job, document in get_document_repository(self.db).admin_jobs(
+                    _document_statuses(status), user_oid, date_from, date_to, limit,
+                )
+            ]
         query = self._document_query(status, user_oid, date_from, date_to)
         document_jobs = list(self.db.document_jobs.find(query).sort("queued_at", -1).limit(limit))
         document_ids = [job["document_id"] for job in document_jobs if job.get("document_id")]
@@ -634,7 +681,7 @@ class AdminJobService:
         background_tasks: BackgroundTasks,
         current_user: CurrentUser,
     ) -> dict:
-        repository = MongoDocumentRepository(self.db)
+        repository = get_document_repository(self.db)
         job = repository.find_job(job_id)
         if not job:
             raise LookupError("Không tìm thấy job")
@@ -692,7 +739,7 @@ class AdminJobService:
         return {"job": json_safe(result)}
 
     def _cancel_document(self, job_id: str, current_user: CurrentUser) -> dict:
-        repository = MongoDocumentRepository(self.db)
+        repository = get_document_repository(self.db)
         job = repository.find_job(job_id)
         if not job:
             raise LookupError("Không tìm thấy job")
@@ -708,6 +755,14 @@ class AdminJobService:
         entity_id: str,
         metadata: dict | None = None,
     ) -> None:
+        if entity_type == "document" and settings.document_store == "postgres":
+            with postgres_connection() as conn:
+                write_postgres_audit_event(
+                    conn, action=action, entity_type=entity_type, entity_id=entity_id,
+                    actor_user_id=current_user.id, actor_role=current_user.role,
+                    metadata=metadata or {},
+                )
+            return
         record_audit_event(
             action=action,
             entity_type=entity_type,

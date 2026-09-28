@@ -328,6 +328,12 @@ class AdminOverviewService:
         )
 
     def _document_count(self, query: dict) -> int:
+        if settings.document_store == "postgres":
+            from modules.documents.postgres_repository import PostgresDocumentRepository
+            status = query.get("status")
+            statuses = (status.get("$in") if isinstance(status, dict)
+                        else [status] if status else None)
+            return PostgresDocumentRepository().count_by_status(statuses)
         return self._count(
             "documents",
             {"archived_at": None, **query},

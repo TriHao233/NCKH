@@ -148,6 +148,83 @@ class PostgresDocumentRepository:
             ).fetchall()
             return [self._load(conn, row) for row in rows], total
 
+    def count_owned(self, user_id: str | ObjectId) -> int:
+        with postgres_connection() as conn:
+            return conn.execute(
+                """SELECT count(*) AS n FROM documents
+                   WHERE uploaded_by_user_id=%s AND status<>'ARCHIVED'""",
+                (str(object_id(user_id, "user_id")),),
+            ).fetchone()["n"]
+
+    def count_by_status(self, statuses: list[str] | None = None) -> int:
+        with postgres_connection() as conn:
+            return conn.execute(
+                "SELECT count(*) AS n FROM documents WHERE status<>'ARCHIVED'"
+                + (" AND status=ANY(%s)" if statuses is not None else ""),
+                (statuses,) if statuses is not None else (),
+            ).fetchone()["n"]
+
+    def list_owned(self, user_id: str | ObjectId) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM documents WHERE uploaded_by_user_id=%s
+                   AND status<>'ARCHIVED' ORDER BY created_at DESC, id DESC""",
+                (str(object_id(user_id, "user_id")),),
+            ).fetchall()
+            return [self._load(conn, row) for row in rows]
+
+    @staticmethod
+    def _admin_job_filter(statuses: list[str] | None, user_id: ObjectId | None,
+                          date_from: datetime | None, date_to: datetime | None):
+        clauses = ["true"]
+        params = []
+        if statuses is not None:
+            clauses.append("j.status=ANY(%s)")
+            params.append(statuses)
+        if user_id is not None:
+            clauses.append("d.uploaded_by_user_id=%s")
+            params.append(str(user_id))
+        if date_from is not None:
+            clauses.append("j.created_at >= %s")
+            params.append(date_from)
+        if date_to is not None:
+            clauses.append("j.created_at <= %s")
+            params.append(date_to)
+        return " AND ".join(clauses), params
+
+    def count_admin_jobs(self, statuses: list[str] | None = None,
+                         user_id: ObjectId | None = None,
+                         date_from: datetime | None = None,
+                         date_to: datetime | None = None) -> int:
+        where, params = self._admin_job_filter(statuses, user_id, date_from, date_to)
+        with postgres_connection() as conn:
+            return conn.execute(
+                "SELECT count(*) AS n FROM document_jobs j "
+                "JOIN documents d ON d.id=j.document_id WHERE " + where,
+                params,
+            ).fetchone()["n"]
+
+    def admin_jobs(self, statuses: list[str] | None = None,
+                   user_id: ObjectId | None = None,
+                   date_from: datetime | None = None,
+                   date_to: datetime | None = None, limit: int = 500) -> list[tuple[dict, dict]]:
+        where, params = self._admin_job_filter(statuses, user_id, date_from, date_to)
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                "SELECT j.*, d.title AS document_title, "
+                "d.original_filename AS document_filename, "
+                "d.uploaded_by_user_id AS document_owner FROM document_jobs j "
+                "JOIN documents d ON d.id=j.document_id WHERE " + where
+                + " ORDER BY j.created_at DESC, j.id DESC LIMIT %s",
+                [*params, limit],
+            ).fetchall()
+        return [(self._job(row), {
+            "_id": ObjectId(row["document_id"]), "title": row["document_title"],
+            "original_filename": row["document_filename"],
+            "uploaded_by_user_id": (ObjectId(row["document_owner"])
+                                    if row["document_owner"] else None),
+        }) for row in rows]
+
     def update(self, document_id: str | ObjectId, fields: dict) -> dict | None:
         key = str(object_id(document_id, "document_id"))
         with postgres_connection() as conn:

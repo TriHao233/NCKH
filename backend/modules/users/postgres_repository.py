@@ -9,6 +9,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from core.database import get_database
+from core.config import settings
 from core.postgres import postgres_connection
 from modules.users.repository import MongoUserRepository
 
@@ -192,9 +193,27 @@ class PostgresUserRepository:
             conn.execute("DELETE FROM users WHERE id = %s", (_id(user_id),))
 
     def get_stats(self, user_id: str | ObjectId) -> dict:
+        if settings.document_store == "postgres":
+            from modules.documents.postgres_repository import PostgresDocumentRepository
+            document_count = PostgresDocumentRepository().count_owned(user_id)
+            db = get_database()
+            oid = ObjectId(user_id)
+            return {
+                "documents_count": document_count,
+                "questions_count": db.questions.count_documents({
+                    "created_by_user_id": oid,
+                    "lifecycle_status": {"$ne": "ARCHIVED"},
+                }),
+                "pending_questions_count": db.questions.count_documents({
+                    "created_by_user_id": oid, "review_status": "PENDING",
+                }),
+            }
         return _active_business_repository().get_stats(user_id)
 
     def get_calendar_documents(self, user_id: str | ObjectId) -> list[dict]:
+        if settings.document_store == "postgres":
+            from modules.documents.postgres_repository import PostgresDocumentRepository
+            return PostgresDocumentRepository().list_owned(user_id)
         return _active_business_repository().get_calendar_documents(user_id)
 
     def get_calendar_questions(self, user_id: str | ObjectId) -> list[dict]:

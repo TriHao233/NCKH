@@ -15,7 +15,11 @@ from db.copy_business_data import projected_rows, upsert
 from modules.documents import postgres_repository
 from modules.documents.postgres_repository import PostgresDocumentRepository
 from modules.documents.store import get_document_repository
+from modules.admin.overview_service import AdminOverviewService
+from modules.admin.jobs_service import AdminJobService
+from modules.admin.job_metrics import _postgres_document_queue_metrics
 from modules.users.postgres_repository import PostgresUserRepository
+from modules.users import postgres_repository as postgres_user_repository
 
 
 pytestmark = pytest.mark.skipif(
@@ -66,6 +70,23 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
         hidden, total = repository.list(1, 10, None, None,
                                         visible_to_user_id=ObjectId())
         assert total == 0 and hidden == []
+        monkeypatch.setattr(settings, "document_store", "postgres")
+
+        class FakeQuestions:
+            def count_documents(self, query):
+                return 2 if "lifecycle_status" in query else 1
+
+        monkeypatch.setattr(postgres_user_repository, "get_database",
+                            lambda: SimpleNamespace(questions=FakeQuestions()))
+        profile = PostgresUserRepository()
+        assert profile.get_stats(owner["_id"]) == {
+            "documents_count": 1, "questions_count": 2,
+            "pending_questions_count": 1,
+        }
+        assert profile.get_calendar_documents(owner["_id"])[0]["_id"] == document_id
+        overview = AdminOverviewService(SimpleNamespace())
+        assert overview._document_count({"status": "UPLOADED"}) == 1
+        assert overview._document_count({"status": {"$in": ["READY", "UPLOADED"]}}) == 1
 
         updated = repository.update(document_id, {"title": "Slide mới",
                                                   "shared_scope": "SUBJECT"})
@@ -85,6 +106,12 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
         assert job["attempt_no"] == 1
         assert repository.find_job(job["_id"])["status"] == "QUEUED"
         assert repository.list_jobs(document_id)[0]["_id"] == job["_id"]
+        assert _postgres_document_queue_metrics(datetime.now(timezone.utc))["queued"] >= 1
+        admin_jobs = AdminJobService(SimpleNamespace()).list_jobs(
+            page=1, page_size=10, job_kind="document", user_id=str(owner["_id"]),
+        )
+        assert admin_jobs["total"] == 1
+        assert admin_jobs["items"][0]["id"] == str(job["_id"])
         assert repository.save_pages(str(document_id), str(job["_id"]), [{
             "unit_number": 1, "page_number": 1, "text": "Clean",
             "original_text": "Original", "source_location": {"page": 1},
@@ -93,7 +120,6 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
         assert page["raw_text"] == "Original"
         assert page["cleaned_text"] == "Clean"
         assert page["source_location"] == {"page": 1}
-        monkeypatch.setattr(settings, "document_store", "postgres")
         assert isinstance(get_document_repository(), PostgresDocumentRepository)
         from modules.ocr.mongodb import get_document_status
         from modules.rag.mongodb import get_document_record, iter_document_pages
