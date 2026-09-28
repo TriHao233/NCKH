@@ -8,6 +8,7 @@ from bson import ObjectId
 from pymongo.database import Database
 
 from core.config import settings
+from modules.users.store import users_by_ids
 
 
 def _json_safe(value):
@@ -170,7 +171,7 @@ class AdminAuditService:
         if user_ids:
             users_map = {
                 str(u["_id"]): u.get("display_name") or str(u["_id"])
-                for u in self.db.users.find({"_id": {"$in": user_ids}}, {"display_name": 1})
+                for u in users_by_ids(self.db, user_ids)
             }
             for item in items:
                 actor = item.get("actor", {})

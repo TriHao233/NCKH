@@ -190,6 +190,18 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
         with postgres_connection() as conn:
             assert conn.execute("SELECT status FROM outbox_events WHERE event_key=%s",
                                 (f"document.chunk_cancel:{chunk_job['_id']}",)).fetchone()["status"] == "DONE"
+        stale = repository.create_job(document_id, "INDEX")
+        cutoff = datetime.now(timezone.utc)
+        with postgres_connection() as conn:
+            conn.execute(
+                "UPDATE document_jobs SET updated_at=%s WHERE id=%s",
+                (cutoff.replace(year=cutoff.year - 1), str(stale["_id"])),
+            )
+        assert repository.recover_stale_jobs(cutoff, "worker restarted") == 1
+        assert repository.find_job(stale["_id"])["status"] == "FAILED"
+        fresh = repository.create_job(document_id, "INDEX")
+        assert repository.recover_stale_jobs(cutoff, "worker restarted") == 0
+        assert repository.find_job(fresh["_id"])["status"] == "QUEUED"
         assert repository.archive(document_id) is True
         assert repository.find_by_id(document_id) is None
         assert repository.archive(document_id) is False

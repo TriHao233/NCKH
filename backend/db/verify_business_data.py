@@ -21,7 +21,9 @@ CHILD_TABLES = {
     "exam_questions", "legacy_dictionaries",
 }
 CRITICAL_FIELDS = {
-    "users": ("firebase_uid", "email", "role", "is_active"),
+    "users": ("firebase_uid", "email", "role", "is_active",
+              "permissions", "permission_grants", "permission_revokes",
+              "review_subject_ids"),
     "subjects": ("subject_code", "subject_name", "is_active"),
     "documents": ("subject_id", "status", "current_version", "active_chunk_set_id"),
     "document_subjects": ("position_no",),

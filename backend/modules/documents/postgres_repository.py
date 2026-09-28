@@ -496,7 +496,9 @@ class PostgresDocumentRepository:
 
     def update_job(self, job_id: str | ObjectId, status: str, *,
                    progress: int | None = None, stats: dict | None = None,
-                   error_message: str | None = None) -> dict | None:
+                   error_message: str | None = None,
+                   expected_statuses: set[str] | None = None,
+                   stale_before: datetime | None = None) -> dict | None:
         job_key = str(object_id(job_id, "job_id"))
         with postgres_connection() as conn:
             identity = conn.execute(
@@ -512,6 +514,10 @@ class PostgresDocumentRepository:
                 "SELECT * FROM document_jobs WHERE id=%s FOR UPDATE", (job_key,),
             ).fetchone()
             if not job_row:
+                return None
+            if expected_statuses is not None and job_row["status"] not in expected_statuses:
+                return None
+            if stale_before is not None and job_row["updated_at"] >= stale_before:
                 return None
             job = self._job(job_row)
             normalized = status.upper()
@@ -574,6 +580,25 @@ class PostgresDocumentRepository:
                             "error_message": error_message})),
                 )
             return job
+
+    def recover_stale_jobs(self, cutoff: datetime, message: str) -> int:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT id FROM document_jobs
+                   WHERE status IN ('QUEUED','PROCESSING') AND updated_at < %s
+                   ORDER BY updated_at, id""",
+                (cutoff,),
+            ).fetchall()
+        recovered = 0
+        for row in rows:
+            updated = self.update_job(
+                row["id"], "FAILED", error_message=message,
+                expected_statuses={"QUEUED", "PROCESSING"},
+                stale_before=cutoff,
+            )
+            if updated:
+                recovered += 1
+        return recovered
 
     def finish_chunk_job(self, document_id: str | ObjectId, job_id: str | ObjectId,
                          chunk_set_id: str | ObjectId, source_ocr_job_id: str | ObjectId | None,

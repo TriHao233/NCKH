@@ -43,6 +43,9 @@ from modules.questions.workflow_schemas import (
     ReviewPolicyPayload,
     SecondaryReviewRequest,
 )
+from modules.users.store import (
+    active_admin_ids, find_user_record, review_candidate_users, users_by_ids,
+)
 
 DEFAULT_WEIGHTS = {
     "faithfulness": 0.35,
@@ -2273,10 +2276,7 @@ class QuestionWorkflowService:
 
     def _find_assignable_reviewer(self, reviewer_user_id: str) -> dict:
         reviewer_oid = object_id(reviewer_user_id, "reviewer_user_id")
-        reviewer = self.db.users.find_one(
-            {"_id": reviewer_oid, "is_active": True},
-            {"_id": 1, "display_name": 1, "email": 1, "is_active": 1, **REVIEWER_PERMISSION_FIELDS},
-        )
+        reviewer = find_user_record(self.db, reviewer_oid, active_only=True)
         if not reviewer or not _user_can_review(reviewer):
             raise ValueError("Reviewer không tồn tại hoặc không còn hoạt động")
         return reviewer
@@ -2574,10 +2574,7 @@ class QuestionWorkflowService:
 
         reviewers = [
             reviewer
-            for reviewer in self.db.users.find(
-                {"is_active": True, "$or": REVIEWER_CANDIDATE_FILTER},
-                {"display_name": 1, "review_subject_ids": 1, "is_active": 1, **REVIEWER_PERMISSION_FIELDS},
-            )
+            for reviewer in review_candidate_users(self.db)
             if _user_can_review(reviewer) and (payload.include_admins or reviewer.get("role") != "Admin")
         ]
         strict = payload.subject_mode == "strict"
@@ -3136,12 +3133,7 @@ class QuestionWorkflowService:
             object_id(user_id, "mention_user_id")
             for user_id in dict.fromkeys(payload.mention_user_ids)
         ]
-        mentioned_users = list(
-            self.db.users.find(
-                {"_id": {"$in": mention_ids}, "is_active": True},
-                {"_id": 1, "is_active": 1, **REVIEWER_PERMISSION_FIELDS},
-            )
-        ) if mention_ids else []
+        mentioned_users = users_by_ids(self.db, mention_ids, active_only=True)
         if len(mentioned_users) != len(mention_ids):
             raise ValueError("Một hoặc nhiều người được mention không hợp lệ")
         now = utc_now()
@@ -4068,14 +4060,9 @@ class QuestionWorkflowService:
 
         users = {
             user["_id"]: user
-            for user in self.db.users.find(
-                {
-                    "$or": [
-                        {"is_active": True, "$or": REVIEWER_CANDIDATE_FILTER},
-                        {"_id": {"$in": [key for key in {*per_reviewer, *holding} if key is not None]}},
-                    ]
-                },
-                {"display_name": 1, "email": 1, "is_active": 1, "review_subject_ids": 1, **REVIEWER_PERMISSION_FIELDS},
+            for user in review_candidate_users(
+                self.db,
+                include_ids=[key for key in {*per_reviewer, *holding} if key is not None],
             )
         }
         # Admin chỉ hiện khi có hoạt động duyệt; người có quyền duyệt khác luôn hiện.
@@ -4194,10 +4181,7 @@ class QuestionWorkflowService:
                 recipients = [assignment["reviewer_user_id"]]
             else:
                 if admin_ids is None:
-                    admin_ids = [
-                        user["_id"]
-                        for user in self.db.users.find({"role": "Admin", "is_active": True}, {"_id": 1})
-                    ]
+                    admin_ids = active_admin_ids(self.db)
                 recipients = admin_ids
             question_code = question.get("question_code", "Câu hỏi")
             notifications.create_many(

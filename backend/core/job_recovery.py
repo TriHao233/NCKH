@@ -39,12 +39,21 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
     results = {
         "generation_failed": _recover_generation_jobs(db, cutoff, now, message),
         "evaluation_stale": _recover_evaluation_jobs(db, cutoff, now, message),
-        "document_failed": _recover_document_jobs(db, cutoff, now, message),
+        "document_failed": (
+            _recover_postgres_document_jobs(cutoff, message)
+            if settings.document_store == "postgres"
+            else _recover_document_jobs(db, cutoff, now, message)
+        ),
     }
     total = sum(results.values())
     if total:
         logger.warning("Recovered stale background jobs on startup: %s", results)
     return results
+
+
+def _recover_postgres_document_jobs(cutoff: datetime, message: str) -> int:
+    from modules.documents.postgres_repository import PostgresDocumentRepository
+    return PostgresDocumentRepository().recover_stale_jobs(cutoff, message)
 
 
 def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) -> int:

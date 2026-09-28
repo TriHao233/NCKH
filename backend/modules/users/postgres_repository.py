@@ -13,7 +13,8 @@ from core.config import settings
 from core.postgres import postgres_connection
 from modules.users.repository import MongoUserRepository
 
-JSON_FIELDS = {"permissions", "profile", "generation_presets", "task_calendar"}
+JSON_FIELDS = {"permissions", "permission_grants", "permission_revokes",
+               "review_subject_ids", "profile", "generation_presets", "task_calendar"}
 UPDATE_FIELDS = JSON_FIELDS | {"email", "display_name", "role", "is_active"}
 TASK_DATES = {"created_at", "updated_at", "completed_at", "due_date", "createdAt", "updatedAt"}
 
@@ -65,6 +66,7 @@ def _user(row: dict | None) -> dict | None:
     result["_id"] = ObjectId(result.pop("id"))
     result["task_calendar"] = _task_dates(result.get("task_calendar") or [])
     result["generation_presets"] = _task_dates(result.get("generation_presets") or [])
+    result["review_subject_ids"] = [ObjectId(item) for item in result.get("review_subject_ids") or []]
     return result
 
 
@@ -96,14 +98,19 @@ class PostgresUserRepository:
         with postgres_connection() as conn:
             row = conn.execute(
                 """INSERT INTO users (
-                    id, firebase_uid, email, display_name, role, permissions, profile,
+                    id, firebase_uid, email, display_name, role, permissions,
+                    permission_grants, permission_revokes, review_subject_ids, profile,
                     generation_presets, task_calendar, is_active, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, '[]'::jsonb, '[]'::jsonb, true, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                          '[]'::jsonb, '[]'::jsonb, true, %s, %s)
                 RETURNING *""",
                 (
                     user_id, data["firebase_uid"], data["email"].lower(),
                     data["display_name"], data.get("role", "Teacher"),
                     Jsonb(_json_value(data.get("permissions") or [])),
+                    Jsonb(_json_value(data.get("permission_grants") or [])),
+                    Jsonb(_json_value(data.get("permission_revokes") or [])),
+                    Jsonb(_json_value(data.get("review_subject_ids") or [])),
                     Jsonb(_json_value(data.get("profile") or {})), now, now,
                 ),
             ).fetchone()

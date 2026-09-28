@@ -425,62 +425,65 @@ def _ensure_collections(db, collection_names: tuple[str, ...]) -> None:
 
 
 def _ensure_indexes() -> None:
-    auth_db = get_auth_db()
     rag_db = get_rag_db()
-    auth_db["User"].create_indexes(
-        [
-            IndexModel([("uid", ASCENDING)], unique=True, name="uq_user_uid"),
-        ]
-    )
-    rag_db.users.create_indexes(
-        [
-            IndexModel([("firebase_uid", ASCENDING)], unique=True, name="uq_users_firebase_uid"),
-            IndexModel([("email", ASCENDING)], unique=True, name="uq_users_email"),
-            IndexModel([("role", ASCENDING), ("is_active", ASCENDING)], name="ix_users_role_active"),
-        ]
-    )
-    rag_db.subjects.create_index([("subject_code", ASCENDING)], unique=True, name="uq_subject_code")
-    rag_db.documents.create_indexes(
-        [
-            IndexModel(
-                [
-                    ("subject_id", ASCENDING),
-                    ("chapter_id", ASCENDING),
-                    ("status", ASCENDING),
-                    ("created_at", DESCENDING),
-                ],
-                name="ix_documents_catalog",
-            ),
-            IndexModel([("uploaded_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_documents_uploader"),
-            IndexModel([("subject_ids", ASCENDING), ("status", ASCENDING)], name="ix_documents_subjects_status"),
-            IndexModel([("artifacts.sha256", ASCENDING)], name="ix_documents_artifact_hash"),
-        ]
-    )
-    rag_db.document_jobs.create_indexes(
-        [
-            IndexModel(
-                [
-                    ("document_id", ASCENDING),
-                    ("document_version", ASCENDING),
-                    ("job_type", ASCENDING),
-                    ("attempt_no", ASCENDING),
-                ],
-                unique=True,
-                name="uq_document_job_attempt",
-            ),
-            IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_document_jobs_queue"),
-        ]
-    )
-    rag_db.document_pages.create_indexes(
-        [
-            IndexModel([("ocr_job_id", ASCENDING), ("page_number", ASCENDING)], unique=True, name="uq_ocr_job_page"),
-            IndexModel([("ocr_job_id", ASCENDING), ("unit_number", ASCENDING)], name="ix_ocr_job_unit"),
-            IndexModel(
-                [("document_id", ASCENDING), ("document_version", ASCENDING), ("page_number", ASCENDING)],
-                name="ix_document_pages_version",
-            ),
-        ]
-    )
+    if settings.user_store != "postgres":
+        get_auth_db()["User"].create_indexes(
+            [
+                IndexModel([("uid", ASCENDING)], unique=True, name="uq_user_uid"),
+            ]
+        )
+    if settings.user_store != "postgres":
+        rag_db.users.create_indexes(
+            [
+                IndexModel([("firebase_uid", ASCENDING)], unique=True, name="uq_users_firebase_uid"),
+                IndexModel([("email", ASCENDING)], unique=True, name="uq_users_email"),
+                IndexModel([("role", ASCENDING), ("is_active", ASCENDING)], name="ix_users_role_active"),
+            ]
+        )
+    if settings.catalog_store != "postgres":
+        rag_db.subjects.create_index([("subject_code", ASCENDING)], unique=True, name="uq_subject_code")
+    if settings.document_store != "postgres":
+        rag_db.documents.create_indexes(
+            [
+                IndexModel(
+                    [
+                        ("subject_id", ASCENDING),
+                        ("chapter_id", ASCENDING),
+                        ("status", ASCENDING),
+                        ("created_at", DESCENDING),
+                    ],
+                    name="ix_documents_catalog",
+                ),
+                IndexModel([("uploaded_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_documents_uploader"),
+                IndexModel([("subject_ids", ASCENDING), ("status", ASCENDING)], name="ix_documents_subjects_status"),
+                IndexModel([("artifacts.sha256", ASCENDING)], name="ix_documents_artifact_hash"),
+            ]
+        )
+        rag_db.document_jobs.create_indexes(
+            [
+                IndexModel(
+                    [
+                        ("document_id", ASCENDING),
+                        ("document_version", ASCENDING),
+                        ("job_type", ASCENDING),
+                        ("attempt_no", ASCENDING),
+                    ],
+                    unique=True,
+                    name="uq_document_job_attempt",
+                ),
+                IndexModel([("status", ASCENDING), ("queued_at", ASCENDING)], name="ix_document_jobs_queue"),
+            ]
+        )
+        rag_db.document_pages.create_indexes(
+            [
+                IndexModel([("ocr_job_id", ASCENDING), ("page_number", ASCENDING)], unique=True, name="uq_ocr_job_page"),
+                IndexModel([("ocr_job_id", ASCENDING), ("unit_number", ASCENDING)], name="ix_ocr_job_unit"),
+                IndexModel(
+                    [("document_id", ASCENDING), ("document_version", ASCENDING), ("page_number", ASCENDING)],
+                    name="ix_document_pages_version",
+                ),
+            ]
+        )
     rag_db.chunk_sets.create_indexes(
         [
             IndexModel([("chunk_job_id", ASCENDING)], unique=True, name="uq_chunk_set_job"),
@@ -643,38 +646,40 @@ def _ensure_indexes() -> None:
         [("question_id", ASCENDING), ("deleted_at", ASCENDING), ("created_at", ASCENDING)],
         name="ix_question_comments_thread",
     )
-    rag_db.audit_logs.create_index(
-        [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_audit_entity",
-    )
-    rag_db.audit_logs.create_index(
-        [("entity_type", ASCENDING), ("entity_id", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_audit_entity_flat",
-    )
-    rag_db.audit_logs.create_index(
-        [("actor_user_id", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_audit_actor_flat",
-    )
-    rag_db.audit_logs.create_index(
-        [("actor.user_id", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_audit_actor",
-    )
-    rag_db.audit_logs.create_index(
-        [("action", ASCENDING), ("created_at", DESCENDING)],
-        name="ix_audit_action",
-    )
-    rag_db.notifications.create_indexes(
-        [
-            IndexModel(
-                [("recipient_user_id", ASCENDING), ("is_read", ASCENDING), ("created_at", DESCENDING)],
-                name="ix_notifications_recipient_read",
-            ),
-            IndexModel(
-                [("recipient_user_id", ASCENDING), ("created_at", DESCENDING)],
-                name="ix_notifications_recipient_created",
-            ),
-        ]
-    )
+    if settings.audit_store != "postgres":
+        rag_db.audit_logs.create_index(
+            [("entity.type", ASCENDING), ("entity.id", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_audit_entity",
+        )
+        rag_db.audit_logs.create_index(
+            [("entity_type", ASCENDING), ("entity_id", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_audit_entity_flat",
+        )
+        rag_db.audit_logs.create_index(
+            [("actor_user_id", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_audit_actor_flat",
+        )
+        rag_db.audit_logs.create_index(
+            [("actor.user_id", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_audit_actor",
+        )
+        rag_db.audit_logs.create_index(
+            [("action", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_audit_action",
+        )
+    if settings.notification_store != "postgres":
+        rag_db.notifications.create_indexes(
+            [
+                IndexModel(
+                    [("recipient_user_id", ASCENDING), ("is_read", ASCENDING), ("created_at", DESCENDING)],
+                    name="ix_notifications_recipient_read",
+                ),
+                IndexModel(
+                    [("recipient_user_id", ASCENDING), ("created_at", DESCENDING)],
+                    name="ix_notifications_recipient_created",
+                ),
+            ]
+        )
     if settings.moodle_target_store != "postgres":
         rag_db.moodle_targets.create_indexes(
             [
@@ -706,23 +711,24 @@ def _seed_reference_data() -> None:
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     }
-    has_active_policy = db.evaluation_policies.find_one(
-        {"is_active": True}, {"_id": 1}
-    ) is not None
-    db.evaluation_policies.update_one(
-        {"policy_name": "Default question quality policy", "version": 2},
-        {
-            "$setOnInsert": {
-                "schema_version": SCHEMA_VERSION,
-                "weights": weights,
-                "weights_hash": hashlib.sha256(str(sorted(weights.items())).encode()).hexdigest(),
-                "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
-                "is_active": not has_active_policy,
-                "created_at": now,
-            }
-        },
-        upsert=True,
-    )
+    if settings.ai_config_store != "postgres":
+        has_active_policy = db.evaluation_policies.find_one(
+            {"is_active": True}, {"_id": 1}
+        ) is not None
+        db.evaluation_policies.update_one(
+            {"policy_name": "Default question quality policy", "version": 2},
+            {
+                "$setOnInsert": {
+                    "schema_version": SCHEMA_VERSION,
+                    "weights": weights,
+                    "weights_hash": hashlib.sha256(str(sorted(weights.items())).encode()).hexdigest(),
+                    "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
+                    "is_active": not has_active_policy,
+                    "created_at": now,
+                }
+            },
+            upsert=True,
+        )
     if settings.moodle_target_store != "postgres":
         db.moodle_targets.update_one(
             {"site_key": "demo-moodle"},
@@ -746,6 +752,8 @@ def _seed_reference_data() -> None:
             },
             upsert=True,
         )
+    if settings.ai_config_store == "postgres":
+        return
     for model in (
         {
             "model_code": "qwen3-8b",
@@ -893,12 +901,22 @@ def bootstrap_database() -> None:
     """Create or align V2 collections without deleting existing data."""
     if settings.auth_db_name == settings.rag_db_name:
         raise ValueError("AUTH_DB_NAME và RAG_DB_NAME phải là hai database khác nhau")
-    _ensure_collections(get_auth_db(), AUTH_COLLECTIONS)
+    if settings.user_store != "postgres":
+        _ensure_collections(get_auth_db(), AUTH_COLLECTIONS)
     _ensure_collections(
         get_rag_db(),
         tuple(name for name in RAG_COLLECTIONS
               if (name != "moodle_targets" or settings.moodle_target_store != "postgres")
-              and (name != "llm_slots" or settings.llm_slot_store != "postgres")),
+              and (name != "llm_slots" or settings.llm_slot_store != "postgres")
+              and (name not in {"documents", "document_jobs", "document_pages"}
+                   or settings.document_store != "postgres")
+              and (name not in {"ai_models", "prompt_templates", "evaluation_policies"}
+                   or settings.ai_config_store != "postgres")
+              and (name != "users" or settings.user_store != "postgres")
+              and (name != "subjects" or settings.catalog_store != "postgres")
+              and (name != "keywords" or settings.dictionary_store != "postgres")
+              and (name != "notifications" or settings.notification_store != "postgres")
+              and (name != "audit_logs" or settings.audit_store != "postgres")),
     )
     _ensure_indexes()
     _seed_reference_data()

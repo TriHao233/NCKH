@@ -11,6 +11,7 @@ from modules.admin.audit_service import AdminAuditService
 from modules.admin.jobs_service import ACTIVE_STATUSES, RETRYABLE_STATUSES, AdminJobService, json_safe
 from modules.admin.moodle_service import MoodleTargetService
 from modules.catalog.postgres_subject_repository import subject_records
+from modules.users.store import users_by_ids
 
 
 def utc_now() -> datetime:
@@ -243,7 +244,7 @@ class AdminOverviewService:
         if user_entity_ids:
             users_map = {
                 str(u['_id']): u.get('display_name') or str(u['_id'])
-                for u in self.db.users.find({'_id': {'$in': user_entity_ids}}, {'display_name': 1})
+                for u in users_by_ids(self.db, user_entity_ids)
             }
 
         for job in retryable_jobs['items']:
