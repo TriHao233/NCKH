@@ -44,13 +44,14 @@ services:
       - "${MONGO_HOST_PORT:-27018}:27017"
     volumes:
       - mongodb_data:/data/db
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--quiet"]
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
-      interval: 20s
+      interval: 2m
+      start_interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
     logging: &service-logging
       driver: local
