@@ -454,15 +454,19 @@ class MongoDocumentRepository:
 
     def list_pages_for_job(self, document_id: str | ObjectId,
                            ocr_job_id: str | ObjectId) -> list[dict]:
-        return list(self.db.document_pages.find({
+        pages = self.db.document_pages.find({
             "document_id": object_id(document_id, "document_id"),
             "ocr_job_id": object_id(ocr_job_id, "job_id"),
-        }).sort([("unit_number", 1), ("page_number", 1)]))
+        })
+        return sorted(pages, key=lambda page: (page.get("unit_number") or page.get("page_number") or 0,
+                                               page.get("page_number") or 0))
 
     def list_pages_for_document(self, document_id: str | ObjectId) -> list[dict]:
-        return list(self.db.document_pages.find({
+        pages = self.db.document_pages.find({
             "document_id": object_id(document_id, "document_id"),
-        }).sort([("unit_number", 1), ("page_number", 1)]))
+        })
+        return sorted(pages, key=lambda page: (page.get("unit_number") or page.get("page_number") or 0,
+                                               page.get("page_number") or 0))
 
     def update_page(
         self,

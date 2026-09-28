@@ -9,6 +9,7 @@ from bson import ObjectId
 
 from core.database import get_rag_db, mongo_transaction
 from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.rag.chromadb_engine import get_collection
 
 
@@ -62,8 +63,9 @@ class LineageValidator:
         ids = candidate.as_object_ids()
         errors: list[str] = []
         warnings: list[str] = []
-        document = self.db.documents.find_one({"_id": ids["document_id"], "archived_at": None})
-        ocr_job = self.db.document_jobs.find_one({"_id": ids["ocr_job_id"]})
+        document_repository = get_document_repository(self.db)
+        document = document_repository.find_by_id(ids["document_id"])
+        ocr_job = document_repository.find_job(ids["ocr_job_id"])
         chunk_set = self.db.chunk_sets.find_one({"_id": ids["chunk_set_id"]})
         vector = self.db.vector_collections.find_one({"_id": ids["vector_collection_id"]})
         ownership_mismatch = False
@@ -111,7 +113,7 @@ class LineageValidator:
                 },
             }
 
-        pages = list(self.db.document_pages.find({"document_id": ids["document_id"], "ocr_job_id": ids["ocr_job_id"]}))
+        pages = document_repository.list_pages_for_job(ids["document_id"], ids["ocr_job_id"])
         if not pages:
             errors.append("candidate has no persisted pages")
         pages_without_blocks: list[object] = []
@@ -266,7 +268,7 @@ class LineagePromotionService:
 
     def dry_run(self, candidate: CandidateLineage, *, smoke_queries: list[str]) -> dict:
         validation = self.validator.validate(candidate, smoke_queries=smoke_queries)
-        document = self.db.documents.find_one({"_id": object_id(candidate.document_id)}) or {}
+        document = get_document_repository(self.db).find_by_id(candidate.document_id) or {}
         return {
             "operation": "dry-run",
             "validation": validation,
