@@ -33,7 +33,7 @@ SOURCE_ORDER = (
     "generation_jobs", "generation_runs", "questions", "question_versions",
     "evaluation_jobs", "question_evaluations", "question_reviews",
     "question_review_drafts", "question_comments", "exams", "exam_variants",
-    "llm_slots", "notifications", "audit_logs", "moodle_targets",
+    "llm_slots", "notifications", "audit_logs", "review_settings", "moodle_targets",
     "moodle_publications",
 )
 JSON_COLUMNS = {
@@ -358,7 +358,8 @@ def projected_rows(name: str, item: dict):
             id=row_id, question_id=oid(item["question_id"]),
             question_version_id=oid(item["question_version_id"]),
             reviewer_user_id=oid(item["reviewer_user_id"]),
-            draft=data.get("draft") or {}, created_at=created, updated_at=updated,
+            draft=data.get("draft") or {}, payload=data,
+            created_at=created, updated_at=updated,
         )
         return
     if name == "question_comments":
@@ -417,6 +418,13 @@ def projected_rows(name: str, item: dict):
             changes=data.get("changes") or [],
             before_hash=item.get("before_hash"), after_hash=item.get("after_hash"),
             metadata=data.get("metadata") or {}, payload=data, created_at=created,
+        )
+        return
+    if name == "review_settings":
+        yield "review_settings", dict(
+            id=row_id, payload=data,
+            updated_by_user_id=oid(item.get("updated_by_user_id")),
+            updated_at=updated,
         )
         return
     if name == "moodle_targets":

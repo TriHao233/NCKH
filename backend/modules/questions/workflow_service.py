@@ -2708,7 +2708,11 @@ class QuestionWorkflowService:
         )
 
     def get_review_policy(self) -> dict:
-        stored = self.db.review_settings.find_one({"_id": REVIEW_POLICY_ID}) or {}
+        if settings.review_policy_store == "postgres":
+            from modules.questions.postgres_review_policy import PostgresReviewPolicyRepository
+            stored = PostgresReviewPolicyRepository().get()
+        else:
+            stored = self.db.review_settings.find_one({"_id": REVIEW_POLICY_ID}) or {}
         policy = ReviewPolicyPayload(
             secondary_on_override=bool(stored.get("secondary_on_override", False)),
             secondary_below_score=stored.get("secondary_below_score"),
@@ -2722,6 +2726,11 @@ class QuestionWorkflowService:
         return json_safe(policy)
 
     def update_review_policy(self, payload: ReviewPolicyPayload, current_user: CurrentUser) -> dict:
+        if settings.review_policy_store == "postgres":
+            from modules.questions.postgres_review_policy import PostgresReviewPolicyRepository
+            PostgresReviewPolicyRepository().update(payload, current_user.id,
+                                                    current_user.role)
+            return self.get_review_policy()
         before = self.get_review_policy()
         now = utc_now()
         subject_ids = []
@@ -2758,9 +2767,13 @@ class QuestionWorkflowService:
 
     def _policy_secondary_reasons(self, question: dict, payload: ReviewCreateRequest) -> list[str]:
         """Why the review policy forces this approval into a second review, if at all."""
-        if not hasattr(self.db, "review_settings"):
-            return []
-        policy = self.db.review_settings.find_one({"_id": REVIEW_POLICY_ID}) or {}
+        if settings.review_policy_store == "postgres":
+            from modules.questions.postgres_review_policy import PostgresReviewPolicyRepository
+            policy = PostgresReviewPolicyRepository().get()
+        else:
+            if not hasattr(self.db, "review_settings"):
+                return []
+            policy = self.db.review_settings.find_one({"_id": REVIEW_POLICY_ID}) or {}
         reasons = []
         if policy.get("secondary_on_override") and payload.override.applied:
             reasons.append("duyệt khác gợi ý AI (override)")

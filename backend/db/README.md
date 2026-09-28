@@ -13,6 +13,7 @@ Tài liệu này ghi **trạng thái mã nguồn hiện tại** của quá trìn
 | Thông báo và trạng thái đã đọc | PostgreSQL: `notifications` với `NOTIFICATION_STORE=postgres` | MongoDB |
 | Cấu hình Moodle target | PostgreSQL: `moodle_targets` với `MOODLE_TARGET_STORE=postgres` | MongoDB |
 | Khóa giới hạn đồng thời model AI | PostgreSQL: `llm_slots` với `LLM_SLOT_STORE=postgres` | MongoDB |
+| Chính sách duyệt hai vòng của Reviewer | PostgreSQL: `review_settings` với `REVIEW_POLICY_STORE=postgres` | MongoDB |
 | Tài liệu, trang OCR, câu hỏi/phiên bản, duyệt/đánh giá, đề thi, job, Moodle publication, phần lớn audit | Chưa chuyển luồng đọc/ghi; schema và công cụ sao chép PostgreSQL đã có | MongoDB |
 | Chunk, chunk set, embedding metadata và vector collection | Giữ MongoDB | MongoDB |
 | Lịch sử quyết định promote/rollback/archive/delete lineage | PostgreSQL: `document_lineage_events` khi `DOCUMENT_STORE=postgres` | MongoDB |
@@ -37,6 +38,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - Khi `DOCUMENT_STORE=postgres`, thống kê/lịch tài liệu của Teacher, số lượng tài liệu trên dashboard, danh sách và metrics document jobs của Admin đọc PostgreSQL. Câu hỏi và các job generation/evaluation vẫn dùng nguồn hiện tại. `AUDIT_STORE=postgres` cung cấp phân trang/lọc audit PostgreSQL cho Admin, nhưng chưa bật mặc định khi question/review còn ghi audit MongoDB.
 - Reviewer lookup, phân công tự động, mention, dashboard và nhắc hạn duyệt đọc user từ nguồn được chọn bởi `USER_STORE`. Bootstrap không tạo/seed collection MongoDB cho các nhóm đã bật PostgreSQL; collection question/review/job còn được giữ đến khi chuyển chính các luồng đó.
 - `modules/questions/postgres_repository.py` đã lưu question/current version trong cùng PostgreSQL transaction, tạo version mới với khóa hàng và kiểm tra `expected_version`, danh sách/lọc câu hỏi, gửi duyệt, chia sẻ và archive. Repository chưa gắn vào API vì workflow review/evaluation/generation vẫn ghi MongoDB; không bật nguồn câu hỏi PostgreSQL cho ứng dụng trước khi các luồng đó chuyển cùng nhau.
+- `0012_review_draft_aggregate.sql` giữ đầy đủ payload review draft và ràng buộc một draft trên mỗi câu hỏi/Reviewer qua các version. Repository PostgreSQL lưu claim/release/renew/assign, quyết định review, hủy evaluation job đang chạy, draft và comment cùng audit trong transaction. `0013_review_policy.sql` chuyển chính sách duyệt hai vòng và audit Admin sang PostgreSQL khi bật `REVIEW_POLICY_STORE=postgres`; cần `USER_STORE=postgres`.
 - `modules/catalog/postgres_subject_repository.py` xử lý học phần, chương, CLO trong PostgreSQL. Ghi dữ liệu và audit tương ứng cùng transaction; cập nhật chương/CLO khóa học phần và ghép thay đổi với bản mới nhất để tránh ghi đè trường khác.
 - Các đường đọc học phần của tài liệu, sinh câu hỏi, thống kê reviewer và trang quản trị dùng nguồn được chọn bởi `CATALOG_STORE`.
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.
@@ -75,6 +77,7 @@ NOTIFICATION_STORE=postgres
 DICTIONARY_STORE=postgres
 MOODLE_TARGET_STORE=postgres
 LLM_SLOT_STORE=postgres
+REVIEW_POLICY_STORE=postgres
 ```
 
 `CATALOG_STORE`, `NOTIFICATION_STORE` và `MOODLE_TARGET_STORE` yêu cầu `USER_STORE=postgres` để khóa ngoại owner/recipient/actor hợp lệ. Có thể bật từng nhóm sau khi dữ liệu nhóm đó đã được sao chép và kiểm tra. `MOODLE_TARGET_STORE` chỉ chuyển cấu hình target; các publication vẫn ghi MongoDB theo luồng câu hỏi. Không bật các cờ trên production khi câu hỏi, tài liệu, job và các luồng liên quan còn dùng MongoDB. Khởi động lại API/worker sau khi đổi cờ; không chuyển cờ trong lúc có ghi đồng thời ở hai nguồn.

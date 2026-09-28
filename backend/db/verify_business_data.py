@@ -37,6 +37,7 @@ CRITICAL_FIELDS = {
                                 "promotion_operation_id", "status"),
     "audit_logs": ("actor_user_id", "actor_type", "actor_role", "action",
                    "entity_type", "entity_id", "before_hash", "after_hash"),
+    "review_settings": ("updated_by_user_id",),
     "moodle_targets": ("site_key", "site_name", "mode", "secret_ref", "is_active"),
     "questions": (
         "question_code", "current_version", "current_version_id",
@@ -54,6 +55,7 @@ DOCUMENT_CONTENT_FIELDS = {
     "document_artifacts": ("payload",),
     "document_lineage_events": ("payload", "from_snapshot", "to_snapshot", "validation"),
     "audit_logs": ("payload", "before_state", "after_state", "changes", "metadata"),
+    "review_settings": ("payload",),
 }
 
 

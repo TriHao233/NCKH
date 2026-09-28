@@ -5,8 +5,11 @@ from __future__ import annotations
 from copy import deepcopy
 
 from bson import ObjectId
+from psycopg.types.json import Jsonb
 
+from core.config import settings
 from core.postgres import postgres_connection
+from core.postgres_audit import write_postgres_audit_event
 from db.bson_json import restore
 from db.copy_business_data import projected_rows, upsert
 from modules.questions.repository import object_id, utc_now
@@ -57,6 +60,371 @@ def _version(row: dict | None) -> dict | None:
 
 
 class PostgresQuestionRepository:
+    def __init__(self):
+        if settings.user_store != "postgres" or settings.catalog_store != "postgres":
+            raise RuntimeError("QUESTION_STORE=postgres requires USER_STORE and CATALOG_STORE=postgres")
+
+    @staticmethod
+    def _draft(row: dict | None) -> dict | None:
+        if row is None:
+            return None
+        record = restore(row["payload"] or {})
+        record.update({
+            "_id": ObjectId(row["id"]),
+            "question_id": ObjectId(row["question_id"]),
+            "question_version_id": ObjectId(row["question_version_id"]),
+            "reviewer_user_id": ObjectId(row["reviewer_user_id"]),
+            "draft": restore(row["draft"]),
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+        })
+        return record
+
+    def get_review_draft(self, question_id: str | ObjectId,
+                         reviewer_user_id: str | ObjectId) -> dict | None:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM question_review_drafts
+                   WHERE question_id=%s AND reviewer_user_id=%s""",
+                (str(object_id(question_id, "question_id")),
+                 str(object_id(reviewer_user_id, "reviewer_user_id"))),
+            ).fetchone()
+        return self._draft(row)
+
+    def save_review_draft(self, question_id: str | ObjectId,
+                          reviewer_user_id: ObjectId, *, expected_version: int,
+                          decision: str | None, draft: dict) -> dict:
+        key = str(object_id(question_id, "question_id"))
+        with postgres_connection() as conn:
+            pair = self._pair(conn, key, lock=True)
+            if not pair:
+                raise LookupError("Không tìm thấy câu hỏi")
+            question, version = pair
+            if question["current_version"] != expected_version:
+                raise RuntimeError("VERSION_CONFLICT")
+            existing = conn.execute(
+                """SELECT * FROM question_review_drafts
+                   WHERE question_id=%s AND reviewer_user_id=%s FOR UPDATE""",
+                (key, str(reviewer_user_id)),
+            ).fetchone()
+            now = utc_now()
+            record = self._draft(existing) if existing else {
+                "_id": ObjectId(), "question_id": question["_id"],
+                "reviewer_user_id": reviewer_user_id, "created_at": now,
+            }
+            record.update({
+                "schema_version": question.get("schema_version", 2),
+                "question_version_id": version["_id"],
+                "question_version": version["version"],
+                "decision": decision, "draft": draft, "updated_at": now,
+            })
+            for table, row in projected_rows("question_review_drafts", record):
+                upsert(conn, table, row)
+            return record
+
+    def delete_review_draft(self, question_id: str | ObjectId,
+                            reviewer_user_id: str | ObjectId) -> bool:
+        with postgres_connection() as conn:
+            result = conn.execute(
+                """DELETE FROM question_review_drafts
+                   WHERE question_id=%s AND reviewer_user_id=%s RETURNING id""",
+                (str(object_id(question_id, "question_id")),
+                 str(object_id(reviewer_user_id, "reviewer_user_id"))),
+            ).fetchone()
+        return result is not None
+
+    @staticmethod
+    def _comment(row: dict) -> dict:
+        record = restore(row["payload"] or {})
+        record.update({
+            "_id": ObjectId(row["id"]),
+            "question_id": ObjectId(row["question_id"]),
+            "question_version_id": ObjectId(row["question_version_id"]),
+            "author_user_id": ObjectId(row["author_user_id"]),
+            "body": row["body"], "created_at": row["created_at"],
+            "updated_at": row["updated_at"], "deleted_at": row["deleted_at"],
+        })
+        return record
+
+    def list_comments(self, question_id: str | ObjectId) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM question_comments WHERE question_id=%s
+                   AND deleted_at IS NULL ORDER BY created_at, id""",
+                (str(object_id(question_id, "question_id")),),
+            ).fetchall()
+        return [self._comment(row) for row in rows]
+
+    def add_comment(self, comment: dict, *, actor_role: str) -> dict:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, comment["question_id"], lock=True)
+            if not pair or pair[1]["_id"] != comment["question_version_id"]:
+                raise RuntimeError("VERSION_CONFLICT")
+            for table, row in projected_rows("question_comments", comment):
+                upsert(conn, table, row)
+            write_postgres_audit_event(
+                conn, action="QUESTION_COMMENT_ADDED", entity_type="question",
+                entity_id=comment["question_id"],
+                actor_user_id=comment["author_user_id"], actor_role=actor_role,
+                metadata={"comment_id": str(comment["_id"]),
+                          "question_version_id": str(comment["question_version_id"]),
+                          "mentions": [str(item) for item in comment.get("mention_user_ids") or []]},
+            )
+        return comment
+
+    def change_comment(self, question_id: str | ObjectId, comment_id: str | ObjectId,
+                       *, actor_user_id: ObjectId, actor_role: str,
+                       body: str | None = None, delete: bool = False) -> dict:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM question_comments WHERE id=%s AND question_id=%s
+                   AND deleted_at IS NULL FOR UPDATE""",
+                (str(object_id(comment_id, "comment_id")),
+                 str(object_id(question_id, "question_id"))),
+            ).fetchone()
+            if not row or (actor_role != "Admin" and row["author_user_id"] != str(actor_user_id)):
+                raise PermissionError("Bạn chỉ có thể sửa bình luận của mình")
+            comment = self._comment(row)
+            now = utc_now()
+            if delete:
+                comment.update(body="", deleted_at=now,
+                               deleted_by_user_id=actor_user_id)
+                action = "QUESTION_COMMENT_DELETED"
+            else:
+                comment.update(body=body or "", edited_at=now)
+                action = "QUESTION_COMMENT_UPDATED"
+            comment["updated_at"] = now
+            for table, projection in projected_rows("question_comments", comment):
+                upsert(conn, table, projection)
+            write_postgres_audit_event(
+                conn, action=action, entity_type="question", entity_id=question_id,
+                actor_user_id=actor_user_id, actor_role=actor_role,
+                metadata={"comment_id": str(comment["_id"]),
+                          "question_version_id": str(comment["question_version_id"])},
+            )
+            return comment
+
+    def active_evaluation_job_ids(self, question_id: str | ObjectId) -> list[ObjectId]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT id FROM evaluation_jobs WHERE question_id=%s
+                   AND status IN ('QUEUED','PROCESSING') ORDER BY created_at, id""",
+                (str(object_id(question_id, "question_id")),),
+            ).fetchall()
+        return [ObjectId(row["id"]) for row in rows]
+
+    def record_review(self, review: dict, question_fields: dict, *,
+                      expected_version_id: ObjectId,
+                      expected_latest_review_id: ObjectId | None,
+                      actor_role: str, audit_action: str) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, review["question_id"], lock=True)
+            if not pair:
+                raise RuntimeError("VERSION_CONFLICT")
+            question, version = pair
+            if (question["review_status"] != "PENDING"
+                    or version["_id"] != expected_version_id
+                    or question.get("latest_review_id") != expected_latest_review_id):
+                raise RuntimeError("VERSION_CONFLICT")
+            actor_id = review["reviewer_user_id"]
+            if actor_role != "Admin":
+                assignment = question.get("review_assignment") or {}
+                expires = assignment.get("lock_expires_at")
+                if (assignment.get("status") != "IN_REVIEW"
+                        or assignment.get("reviewer_user_id") != actor_id
+                        or (expires is not None and expires <= utc_now())):
+                    raise PermissionError("Bạn cần claim câu hỏi trước khi kiểm duyệt")
+            interrupted = review.get("interrupted_evaluation_job_ids") or []
+            if interrupted:
+                now = review["reviewed_at"]
+                conn.execute(
+                    """UPDATE evaluation_jobs SET status='CANCELLED',
+                       error=%s, lease_owner=NULL, lease_expires_at=NULL,
+                       next_attempt_at=NULL, updated_at=%s
+                       WHERE question_id=%s AND id=ANY(%s)
+                         AND status IN ('QUEUED','PROCESSING')""",
+                    (Jsonb({"message": "Người duyệt đã chốt kết quả nên dừng AI đánh giá",
+                            "stage": "REVIEWER_DECIDED", "at": now.isoformat()}),
+                     now, str(question["_id"]), [str(item) for item in interrupted]),
+                )
+            for table, row in projected_rows("question_reviews", review):
+                upsert(conn, table, row)
+            previous_status = question["review_status"]
+            question.update(question_fields)
+            self._save_question(conn, question)
+            conn.execute(
+                "DELETE FROM question_review_drafts WHERE question_id=%s AND reviewer_user_id=%s",
+                (str(question["_id"]), str(actor_id)),
+            )
+            write_postgres_audit_event(
+                conn, action=audit_action, entity_type="question",
+                entity_id=question["_id"], actor_user_id=actor_id,
+                actor_role=actor_role,
+                before={"review_status": previous_status},
+                after={"review_status": question["review_status"]},
+                metadata={
+                    "review_id": str(review["_id"]),
+                    "question_version_id": str(version["_id"]),
+                    "review_form": review.get("review_form") or {},
+                    "secondary_review": question.get("secondary_review") or {},
+                    "interrupted_evaluation_job_ids": [str(item) for item in interrupted],
+                    "self_review_reason": review.get("self_review_reason") or "",
+                },
+            )
+            return question, version
+
+    def find_review(self, review_id: str | ObjectId) -> dict | None:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM question_reviews WHERE id=%s",
+                (str(object_id(review_id, "review_id")),),
+            ).fetchone()
+        if not row:
+            return None
+        record = restore(row["payload"] or {})
+        record.update({
+            "_id": ObjectId(row["id"]),
+            "question_id": ObjectId(row["question_id"]),
+            "question_version_id": ObjectId(row["question_version_id"]),
+            "reviewer_user_id": (ObjectId(row["reviewer_user_id"])
+                                 if row["reviewer_user_id"] else None),
+            "decision": row["decision"], "reviewed_at": row["reviewed_at"],
+        })
+        return record
+
+    def set_secondary_review(self, question_id: str | ObjectId, *,
+                             expected_version_id: ObjectId,
+                             expected_review_status: str,
+                             fields: dict,
+                             actor_user_id: ObjectId,
+                             actor_role: str,
+                             reason: str) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, question_id, lock=True)
+            if not pair:
+                raise RuntimeError("VERSION_CONFLICT")
+            question, version = pair
+            if (version["_id"] != expected_version_id
+                    or question["review_status"] != expected_review_status):
+                raise RuntimeError("VERSION_CONFLICT")
+            before = question.get("secondary_review") or {}
+            question.update(fields)
+            self._save_question(conn, question)
+            write_postgres_audit_event(
+                conn, action="QUESTION_SECONDARY_REVIEW_SET",
+                entity_type="question", entity_id=question["_id"],
+                actor_user_id=actor_user_id, actor_role=actor_role,
+                before={"secondary_review": before},
+                after={"secondary_review": question.get("secondary_review") or {}},
+                metadata={"reason": reason,
+                          "question_version_id": str(version["_id"])},
+            )
+            return question, version
+
+    def _assignment_audit(self, conn, action: str, question: dict, version: dict,
+                          actor_user_id: ObjectId, actor_role: str,
+                          before: dict, after: dict, metadata: dict | None = None) -> None:
+        write_postgres_audit_event(
+            conn, action=action, entity_type="question", entity_id=question["_id"],
+            actor_user_id=actor_user_id, actor_role=actor_role,
+            before={"review_assignment": before},
+            after={"review_assignment": after},
+            metadata={"question_version_id": str(version["_id"]), **(metadata or {})},
+        )
+
+    def claim_review(self, question_id: str | ObjectId, *, actor_user_id: ObjectId,
+                     actor_role: str, lock_expires_at, now) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, question_id, lock=True)
+            if not pair:
+                raise LookupError("Không tìm thấy câu hỏi")
+            question, version = pair
+            if question["review_status"] != "PENDING":
+                raise ValueError("Chỉ câu hỏi đang chờ duyệt mới có thể claim")
+            secondary = question.get("secondary_review") or {}
+            if (secondary.get("status") == "AWAITING_SECONDARY"
+                    and secondary.get("primary_reviewer_user_id") == actor_user_id):
+                raise PermissionError("Người duyệt lần đầu không được nhận lượt duyệt lần hai")
+            if actor_role != "Admin" and actor_user_id in {
+                question.get("created_by_user_id"), version.get("created_by_user_id"),
+            }:
+                raise PermissionError("Bạn không thể kiểm duyệt câu hỏi do chính mình tạo hoặc chỉnh sửa")
+            previous = question.get("review_assignment") or {}
+            expires = previous.get("lock_expires_at")
+            if (actor_role != "Admin" and previous.get("status") != "UNASSIGNED"
+                    and previous.get("reviewer_user_id") != actor_user_id
+                    and expires is not None and expires > now):
+                raise PermissionError("Câu hỏi đang được Reviewer khác xử lý")
+            assignment = {
+                "status": "IN_REVIEW", "reviewer_user_id": actor_user_id,
+                "assigned_by_user_id": previous.get("assigned_by_user_id") or actor_user_id,
+                "assigned_at": previous.get("assigned_at") or now,
+                "claimed_at": now, "lock_expires_at": lock_expires_at,
+                "last_released_at": None, "release_reason": None,
+            }
+            question["review_assignment"] = assignment
+            question["updated_at"] = now
+            self._save_question(conn, question)
+            self._assignment_audit(conn, "QUESTION_REVIEW_CLAIMED", question, version,
+                                   actor_user_id, actor_role, previous, assignment)
+            return question, version
+
+    def release_review(self, question_id: str | ObjectId, *, actor_user_id: ObjectId,
+                       actor_role: str, assignment: dict, now) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, question_id, lock=True)
+            if not pair:
+                raise LookupError("Không tìm thấy câu hỏi")
+            question, version = pair
+            previous = question.get("review_assignment") or {}
+            if (question["review_status"] != "PENDING" or
+                    (actor_role != "Admin" and previous.get("reviewer_user_id") != actor_user_id)):
+                raise PermissionError("Bạn không thể release assignment này")
+            question["review_assignment"] = assignment
+            question["updated_at"] = now
+            self._save_question(conn, question)
+            self._assignment_audit(conn, "QUESTION_REVIEW_RELEASED", question, version,
+                                   actor_user_id, actor_role, previous, assignment)
+            return question, version
+
+    def renew_review(self, question_id: str | ObjectId, *, actor_user_id: ObjectId,
+                     lock_expires_at, now) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, question_id, lock=True)
+            if not pair:
+                raise LookupError("Không tìm thấy câu hỏi")
+            question, version = pair
+            assignment = question.get("review_assignment") or {}
+            if (question["review_status"] != "PENDING"
+                    or assignment.get("status") != "IN_REVIEW"
+                    or assignment.get("reviewer_user_id") != actor_user_id):
+                raise PermissionError("Bạn không còn giữ khóa kiểm duyệt câu hỏi này")
+            assignment["lock_expires_at"] = lock_expires_at
+            question["review_assignment"] = assignment
+            question["updated_at"] = now
+            self._save_question(conn, question)
+            return question, version
+
+    def assign_review(self, question_id: str | ObjectId, *,
+                      expected_version_id: ObjectId, assignment: dict,
+                      actor_user_id: ObjectId, actor_role: str,
+                      action: str, now, note: str | None = None) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, question_id, lock=True)
+            if not pair:
+                raise LookupError("Không tìm thấy câu hỏi")
+            question, version = pair
+            if (question["review_status"] != "PENDING"
+                    or version["_id"] != expected_version_id):
+                raise RuntimeError("VERSION_CONFLICT")
+            previous = question.get("review_assignment") or {}
+            question["review_assignment"] = assignment
+            question["updated_at"] = now
+            self._save_question(conn, question)
+            self._assignment_audit(conn, action, question, version,
+                                   actor_user_id, actor_role, previous, assignment,
+                                   {"note": note})
+            return question, version
+
     def list(
         self, page: int, page_size: int, review_status: str | None,
         search: str | None, *, question_type: str | None = None,
