@@ -4,9 +4,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
-import hashlib
 import os
 from pathlib import Path
+
+from modules.documents.storage import sha256_file
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ def deduplicate_artifact_file(source: str | Path, blob_root: str | Path) -> dict
     root = Path(blob_root).resolve()
     if not source_path.is_file():
         raise FileNotFoundError(source_path)
-    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    digest = sha256_file(source_path)
     suffix = "".join(source_path.suffixes[-2:]) or ".blob"
     destination = root / digest[:2] / f"{digest}{suffix}"
     destination.parent.mkdir(parents=True, exist_ok=True)

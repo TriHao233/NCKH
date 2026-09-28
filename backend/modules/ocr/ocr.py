@@ -1,8 +1,6 @@
 import asyncio
-import hashlib
 import logging
 import os
-import shutil
 import time
 from pathlib import Path
 
@@ -18,6 +16,7 @@ from core.config import resolve_path, settings
 from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.service import DocumentService, get_document_service
 from modules.documents.retention import deduplicate_artifact_file
+from modules.documents.storage import LocalArtifactStorage
 from modules.documents.ingest.base import UnsupportedDocumentError
 from modules.ocr.mongodb import (
     attach_original_artifact,
@@ -295,17 +294,12 @@ async def queue_document_upload(
     output_path = _OUTPUT_DIR / f"{document_id}_{job_id}_result.md"
 
     try:
-        with upload_path.open("wb") as destination:
-            shutil.copyfileobj(file.file, destination)
-        digest = hashlib.sha256()
-        with upload_path.open("rb") as source:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(block)
+        saved = LocalArtifactStorage(_UPLOAD_DIR).save_stream(upload_path.name, file.file)
         attach_original_artifact(
             document_id,
-            uri=str(upload_path),
-            size_bytes=file_size,
-            sha256=digest.hexdigest(),
+            uri=saved["uri"],
+            size_bytes=saved["size_bytes"],
+            sha256=saved["sha256"],
             artifact_type=upload_type["artifact_type"],
             mime_type=upload_type["mime_type"],
         )

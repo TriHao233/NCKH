@@ -34,6 +34,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - `modules/generation/llm/postgres_slots.py` cấp/duy trì/giải phóng slot bằng khóa hàng PostgreSQL và thời gian từ database; các API/worker dùng chung giới hạn đồng thời, dashboard đọc số slot từ cùng nguồn.
 - Repository PostgreSQL cho tài khoản/phiên và cấu hình AI đã có từ giai đoạn trước.
 - Khi `USER_STORE=postgres`, thống kê và lịch cá nhân vẫn đọc tài liệu/câu hỏi từ MongoDB vì đây còn là nguồn ghi chính của hai nhóm đó; không dùng các bảng PostgreSQL shadow copy có thể đã cũ.
+- Upload file gốc dùng `LocalArtifactStorage`, tính SHA-256 khi ghi và trả URI local tương thích dữ liệu cũ; bước dedup artifact OCR cũng hash theo từng khối thay vì đọc nguyên file vào RAM. Đây là ranh giới lưu file local, chưa có provider object storage/cloud và chưa chuyển URI cũ thành khóa đối tượng.
 
 ## Cấu hình và chạy thử
 
