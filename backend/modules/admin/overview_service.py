@@ -177,7 +177,8 @@ class AdminOverviewService:
         retryable_jobs = job_service.list_jobs(page=1, page_size=5, status="retryable")
         moodle_summary = MoodleTargetService(self.db)._publication_summary(None)
         audit_page = AdminAuditService(self.db).list(page=1, page_size=5)
-        pending_review = self._question_count({"review_status": "PENDING"})
+        question_summary = self._question_summary()
+        pending_review = question_summary["pending"]
         failed_documents = self._document_count({"status": "FAILED"})
         retryable_job_count = job_page["summary"].get("failed", 0)
         long_running_job_count = job_page["summary"].get("long_running", 0)
@@ -272,23 +273,8 @@ class AdminOverviewService:
         return json_safe(
             {
                 "generated_at": utc_now(),
-                "users": {
-                    "total": self._count("users", {}),
-                    "active": self._count("users", {"is_active": True}),
-                    "admins": self._count("users", {"role": "Admin", "is_active": True}),
-                    "teachers": self._count("users", {"role": "Teacher", "is_active": True}),
-                    "reviewers": self._count("users", {"role": "Reviewer", "is_active": True}),
-                },
-                "questions": {
-                    "total": self._question_count({}),
-                    "draft": self._question_count({"review_status": "DRAFT"}),
-                    "pending": pending_review,
-                    "approved": self._question_count({"review_status": "APPROVED"}),
-                    "needs_revision": self._question_count({"review_status": "NEEDS_REVISION"}),
-                    "rejected": self._question_count({"review_status": "REJECTED"}),
-                    "published": self._question_count({"publication_status": "PUBLISHED"}),
-                    "quality": self._quality_summary(),
-                },
+                "users": self._user_summary(),
+                "questions": question_summary,
                 "documents": {
                     "total": self._document_count({}),
                     "uploaded": self._document_count({"status": "UPLOADED"}),
@@ -321,6 +307,35 @@ class AdminOverviewService:
             from modules.admin.postgres_moodle_target_repository import PostgresMoodleTargetRepository
             return PostgresMoodleTargetRepository().count(active_only=active_only)
         return self._count("moodle_targets", {"is_active": True} if active_only else {})
+
+    def _user_summary(self) -> dict:
+        if settings.user_store == "postgres":
+            from modules.users.postgres_repository import PostgresUserRepository
+            return PostgresUserRepository().role_summary()
+        return {
+            "total": self._count("users", {}),
+            "active": self._count("users", {"is_active": True}),
+            "admins": self._count("users", {"role": "Admin", "is_active": True}),
+            "teachers": self._count("users", {"role": "Teacher", "is_active": True}),
+            "reviewers": self._count("users", {"role": "Reviewer", "is_active": True}),
+        }
+
+    def _question_summary(self) -> dict:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            row = PostgresQuestionRepository.status_summary()
+            quality = {key: row.pop(key) for key in ("green", "yellow", "red", "not_evaluated")}
+            return {**row, "quality": quality}
+        return {
+            "total": self._question_count({}),
+            "draft": self._question_count({"review_status": "DRAFT"}),
+            "pending": self._question_count({"review_status": "PENDING"}),
+            "approved": self._question_count({"review_status": "APPROVED"}),
+            "needs_revision": self._question_count({"review_status": "NEEDS_REVISION"}),
+            "rejected": self._question_count({"review_status": "REJECTED"}),
+            "published": self._question_count({"publication_status": "PUBLISHED"}),
+            "quality": self._quality_summary(),
+        }
 
     def _question_count(self, query: dict) -> int:
         return self._count(

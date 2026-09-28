@@ -142,6 +142,25 @@ class PostgresDocumentRepository:
                 (str(object_id(user_id, "user_id")),),
             ).fetchone()["n"]
 
+    def count_using_subject(self, subject_id, chapter_id=None) -> int:
+        """Tài liệu chưa lưu trữ đang gắn môn (hoặc chương của môn chính)."""
+        subject_key = str(object_id(subject_id, "subject_id"))
+        with postgres_connection() as conn:
+            if chapter_id is None:
+                return conn.execute(
+                    """SELECT count(*) AS n FROM documents d
+                       WHERE d.status<>'ARCHIVED' AND (d.subject_id=%s OR EXISTS (
+                         SELECT 1 FROM document_subjects ds
+                         WHERE ds.document_id=d.id AND ds.subject_id=%s))""",
+                    (subject_key, subject_key),
+                ).fetchone()["n"]
+            return conn.execute(
+                """SELECT count(*) AS n FROM documents
+                   WHERE status<>'ARCHIVED' AND subject_id=%s
+                     AND payload->>'chapter_id'=%s""",
+                (subject_key, str(object_id(chapter_id, "chapter_id"))),
+            ).fetchone()["n"]
+
     def count_by_status(self, statuses: list[str] | None = None) -> int:
         with postgres_connection() as conn:
             return conn.execute(

@@ -208,6 +208,35 @@ class CatalogService:
             return 0
         return collection.count_documents(query)
 
+    def _count_documents(self, subject_id, chapter_id=None) -> int:
+        if settings.document_store == "postgres":
+            from modules.documents.postgres_repository import PostgresDocumentRepository
+            return PostgresDocumentRepository().count_using_subject(subject_id, chapter_id)
+        if chapter_id is None:
+            return self._count(
+                "documents",
+                {
+                    "$or": [{"subject_ids": subject_id}, {"subject_id": subject_id}],
+                    "archived_at": None,
+                },
+            )
+        return self._count(
+            "documents",
+            {"subject_id": subject_id, "chapter_id": chapter_id, "archived_at": None},
+        )
+
+    def _count_questions_using(self, *, subject_id=None, chapter_id=None, clo_id=None) -> int:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.count_current_using(
+                subject_id=subject_id, chapter_id=chapter_id, clo_id=clo_id,
+            )
+        if subject_id is not None:
+            return self._count_current_questions({"classification.subject.id": subject_id})
+        if chapter_id is not None:
+            return self._count_current_questions({"classification.chapter.id": chapter_id})
+        return self._count_current_questions({"clos.id": clo_id})
+
     def _count_exams(self, *, subject_id=None, chapter_id=None) -> int:
         if settings.exam_store == "postgres":
             from modules.exams.postgres_repository import PostgresExamRepository
@@ -238,16 +267,8 @@ class CatalogService:
     def _usage_counts(self, subject: dict) -> dict[str, Any]:
         subject_id = subject["_id"]
         subject_counts = {
-            "documents": self._count(
-                "documents",
-                {
-                    "$or": [{"subject_ids": subject_id}, {"subject_id": subject_id}],
-                    "archived_at": None,
-                },
-            ),
-            "questions": self._count_current_questions(
-                {"classification.subject.id": subject_id}
-            ),
+            "documents": self._count_documents(subject_id),
+            "questions": self._count_questions_using(subject_id=subject_id),
             "exams": self._count_exams(subject_id=subject_id),
         }
         chapter_counts = {}
@@ -256,17 +277,8 @@ class CatalogService:
             if not chapter_id:
                 continue
             chapter_counts[str(chapter_id)] = {
-                "documents": self._count(
-                    "documents",
-                    {
-                        "subject_id": subject_id,
-                        "chapter_id": chapter_id,
-                        "archived_at": None,
-                    },
-                ),
-                "questions": self._count_current_questions(
-                    {"classification.chapter.id": chapter_id}
-                ),
+                "documents": self._count_documents(subject_id, chapter_id),
+                "questions": self._count_questions_using(chapter_id=chapter_id),
                 "exams": self._count_exams(chapter_id=chapter_id),
             }
         outcome_counts = {}
@@ -275,7 +287,7 @@ class CatalogService:
             if not outcome_id:
                 continue
             outcome_counts[str(outcome_id)] = {
-                "questions": self._count_current_questions({"clos.id": outcome_id}),
+                "questions": self._count_questions_using(clo_id=outcome_id),
             }
         return {
             "subject": subject_counts,

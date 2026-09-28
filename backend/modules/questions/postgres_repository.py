@@ -667,6 +667,79 @@ class PostgresQuestionRepository:
             ).fetchone()
         return dict(row)
 
+    @staticmethod
+    def status_summary() -> dict:
+        """Số câu hỏi active theo trạng thái duyệt, xuất bản và màu chất lượng."""
+        with postgres_connection() as conn:
+            return dict(conn.execute(
+                """SELECT count(*) AS total,
+                     count(*) FILTER (WHERE review_status='DRAFT') AS draft,
+                     count(*) FILTER (WHERE review_status='PENDING') AS pending,
+                     count(*) FILTER (WHERE review_status='APPROVED') AS approved,
+                     count(*) FILTER (WHERE review_status='NEEDS_REVISION') AS needs_revision,
+                     count(*) FILTER (WHERE review_status='REJECTED') AS rejected,
+                     count(*) FILTER (WHERE publication_status='PUBLISHED') AS published,
+                     count(*) FILTER (WHERE payload->'quality_summary'->>'color'='GREEN') AS green,
+                     count(*) FILTER (WHERE payload->'quality_summary'->>'color'='YELLOW') AS yellow,
+                     count(*) FILTER (WHERE payload->'quality_summary'->>'color'='RED') AS red,
+                     count(*) FILTER (WHERE payload->'quality_summary'->>'color' IS NULL)
+                       AS not_evaluated
+                   FROM questions WHERE lifecycle_status='ACTIVE'"""
+            ).fetchone())
+
+    @staticmethod
+    def owner_counts(user_id) -> dict:
+        with postgres_connection() as conn:
+            return dict(conn.execute(
+                """SELECT count(*) FILTER (WHERE lifecycle_status<>'ARCHIVED') AS questions_count,
+                     count(*) FILTER (WHERE review_status='PENDING') AS pending_questions_count
+                   FROM questions WHERE created_by_user_id=%s""",
+                (str(object_id(user_id, "user_id")),),
+            ).fetchone())
+
+    @staticmethod
+    def owned_questions(user_id) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM questions WHERE created_by_user_id=%s
+                   AND lifecycle_status<>'ARCHIVED' ORDER BY created_at, id""",
+                (str(object_id(user_id, "user_id")),),
+            ).fetchall()
+        return [_question(row) for row in rows]
+
+    @staticmethod
+    def document_ids_with_questions(document_ids: list) -> set[str]:
+        if not document_ids:
+            return set()
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT COALESCE(q.payload->>'document_id', v.payload->>'document_id')
+                          AS document_id
+                   FROM questions q
+                   LEFT JOIN question_versions v ON v.id=q.current_version_id
+                   WHERE q.lifecycle_status<>'ARCHIVED'
+                     AND COALESCE(q.payload->>'document_id', v.payload->>'document_id')=ANY(%s)""",
+                ([str(item) for item in document_ids],),
+            ).fetchall()
+        return {row["document_id"] for row in rows}
+
+    @staticmethod
+    def count_current_using(*, subject_id=None, chapter_id=None, clo_id=None) -> int:
+        """Câu hỏi active có version hiện hành dùng môn/chương/CLO này."""
+        if subject_id is not None:
+            clause, value = "v.classification->'subject'->>'id'=%s", str(subject_id)
+        elif chapter_id is not None:
+            clause, value = "v.classification->'chapter'->>'id'=%s", str(chapter_id)
+        else:
+            clause = "v.clos @> %s::jsonb"
+            value = '[{"id":"' + str(object_id(clo_id, "clo_id")) + '"}]'
+        with postgres_connection() as conn:
+            return conn.execute(
+                "SELECT count(*) AS n FROM questions q "
+                "JOIN question_versions v ON v.id=q.current_version_id "
+                "WHERE q.lifecycle_status='ACTIVE' AND " + clause, (value,),
+            ).fetchone()["n"]
+
     def _pairs(self, suffix: str, params: list) -> list[tuple[dict, dict]]:
         with postgres_connection() as conn:
             rows = conn.execute("SELECT q.* FROM questions q " + suffix, params).fetchall()

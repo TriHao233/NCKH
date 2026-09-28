@@ -189,6 +189,17 @@ class PostgresUserRepository:
             ).fetchone()
         return _user(row)
 
+    def role_summary(self) -> dict:
+        with postgres_connection() as conn:
+            return dict(conn.execute(
+                """SELECT count(*) AS total,
+                     count(*) FILTER (WHERE is_active) AS active,
+                     count(*) FILTER (WHERE is_active AND role='Admin') AS admins,
+                     count(*) FILTER (WHERE is_active AND role='Teacher') AS teachers,
+                     count(*) FILTER (WHERE is_active AND role='Reviewer') AS reviewers
+                   FROM users"""
+            ).fetchone())
+
     def count_active_admins(self) -> int:
         with postgres_connection() as conn:
             return conn.execute(
@@ -203,6 +214,10 @@ class PostgresUserRepository:
         if settings.document_store == "postgres":
             from modules.documents.postgres_repository import PostgresDocumentRepository
             document_count = PostgresDocumentRepository().count_owned(user_id)
+            if settings.question_store == "postgres":
+                from modules.questions.postgres_repository import PostgresQuestionRepository
+                return {"documents_count": document_count,
+                        **PostgresQuestionRepository.owner_counts(user_id)}
             db = get_database()
             oid = ObjectId(user_id)
             return {
@@ -224,7 +239,13 @@ class PostgresUserRepository:
         return _active_business_repository().get_calendar_documents(user_id)
 
     def get_calendar_questions(self, user_id: str | ObjectId) -> list[dict]:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.owned_questions(user_id)
         return _active_business_repository().get_calendar_questions(user_id)
 
     def get_document_ids_with_questions(self, document_ids: list[ObjectId]) -> set[str]:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.document_ids_with_questions(document_ids)
         return _active_business_repository().get_document_ids_with_questions(document_ids)

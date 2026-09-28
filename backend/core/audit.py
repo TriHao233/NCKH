@@ -26,6 +26,7 @@ from typing import Any
 
 from bson import ObjectId
 
+from core.config import settings
 from core.database import get_rag_db
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,13 @@ def record_audit_event(**fields: Any) -> None:
     """Best-effort audit write for request handlers that must not fail on logging."""
     action = fields.get("action")
     try:
+        if settings.audit_store == "postgres":
+            # Admin audit views read PostgreSQL in this mode, so write there too.
+            from core.postgres import postgres_connection
+            from core.postgres_audit import write_postgres_audit_event
+            with postgres_connection() as conn:
+                write_postgres_audit_event(conn, **fields)
+            return
         write_audit_event(get_rag_db(), **fields)
     except Exception as exc:
         logger.warning("Failed to write audit event %s: %s", action, exc)
