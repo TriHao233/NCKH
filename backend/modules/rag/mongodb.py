@@ -8,9 +8,12 @@ from pymongo import ReturnDocument
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
-from modules.documents.repository import MongoDocumentRepository, object_id
+from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.rag.chromadb_engine import (
+    chroma_persist_uri,
     embedding_config_hash,
+    embedding_config_matches,
     embedding_config_snapshot,
     model_scoped_collection_name,
 )
@@ -26,14 +29,11 @@ def stable_hash(value) -> str:
 
 
 def get_document_record(doc_id: str) -> dict | None:
-    return MongoDocumentRepository(get_database()).find_by_id(doc_id)
+    return get_document_repository().find_by_id(doc_id)
 
 
 def is_document_job_cancelled(job_id: str) -> bool:
-    job = get_database().document_jobs.find_one(
-        {"_id": object_id(job_id, "job_id")},
-        {"status": 1},
-    )
+    job = get_document_repository().find_job(job_id)
     return bool(job and job.get("status") == "CANCELLED")
 
 
@@ -44,9 +44,7 @@ def iter_document_pages(doc_id: str, ocr_job_id: str | ObjectId | None = None):
     ocr_job_id = ocr_job_id or (document.get("current_processing") or {}).get("ocr_job_id")
     if not ocr_job_id:
         return
-    cursor = get_database().document_pages.find(
-        {"document_id": document["_id"], "ocr_job_id": ocr_job_id}
-    ).sort([("unit_number", 1), ("page_number", 1)])
+    cursor = get_document_repository().list_pages_for_job(document["_id"], ocr_job_id)
     for page in cursor:
         yield {
             "unit_number": int(page.get("unit_number") or page.get("page_number") or 0),
@@ -61,7 +59,7 @@ def iter_document_pages(doc_id: str, ocr_job_id: str | ObjectId | None = None):
 
 
 def start_chunk_set(document_id: str, config: dict) -> tuple[str, str]:
-    repository = MongoDocumentRepository(get_database())
+    repository = get_document_repository()
     document = repository.find_by_id(document_id)
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
@@ -72,16 +70,11 @@ def start_chunk_set(document_id: str, config: dict) -> tuple[str, str]:
     job = repository.create_job(document_id, "CHUNK", config=config)
     repository.update_job(str(job["_id"]), "PROCESSING", progress=1)
     if config.get("dry_run"):
-        get_database().documents.update_one(
-            {"_id": document["_id"]},
-            {
-                "$set": {
-                    "status": document["status"],
-                    "pipeline_summary.chunk_status": (
-                        document.get("pipeline_summary") or {}
-                    ).get("chunk_status", "NOT_STARTED"),
-                }
-            },
+        summary = dict(document.get("pipeline_summary") or {})
+        summary["chunk_status"] = summary.get("chunk_status", "NOT_STARTED")
+        repository.update(
+            document["_id"],
+            {"status": document["status"], "pipeline_summary": summary},
         )
     now = utc_now()
     chunk_set = {
@@ -179,7 +172,7 @@ def persist_chunks(
             "$setOnInsert": {
                 "_id": ObjectId(),
                 "schema_version": SCHEMA_VERSION,
-                "persist_uri": settings.chromadb_path,
+                "persist_uri": chroma_persist_uri(),
                 "embedding_model": {
                     "provider": "SENTENCE_TRANSFORMERS",
                     **embedding_snapshot,
@@ -194,9 +187,7 @@ def persist_chunks(
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
-    indexed_model = (vector.get("embedding_model") or {}).get("model_name")
-    indexed_config_hash = vector.get("embedding_config_hash")
-    if indexed_model != settings.embedding_model_name or indexed_config_hash != current_embedding_config_hash:
+    if not embedding_config_matches(vector.get("embedding_model") or {}, vector.get("embedding_config_hash")):
         raise ValueError(
             "Collection ChromaDB đã dùng cấu hình embedding khác. "
             "Hãy chọn collection_name mới cho model/precision hiện tại."
@@ -290,6 +281,13 @@ def complete_chunk_set(
     stats: dict,
     dry_run: bool,
 ) -> None:
+    if settings.document_store == "postgres":
+        _complete_chunk_set_postgres(
+            document_id, chunk_job_id, chunk_set_id, vector_collection_id,
+            total_chunks=total_chunks, total_characters=total_characters,
+            stats=stats, dry_run=dry_run,
+        )
+        return
     db = get_database()
     document_oid = object_id(document_id)
     job_oid = object_id(chunk_job_id)
@@ -387,7 +385,59 @@ def complete_chunk_set(
             raise RuntimeError("DOCUMENT_ARCHIVED")
 
 
+def _complete_chunk_set_postgres(
+    document_id: str, chunk_job_id: str, chunk_set_id: str,
+    vector_collection_id: str | None, *, total_chunks: int,
+    total_characters: int, stats: dict, dry_run: bool,
+) -> None:
+    repository = get_document_repository()
+    job = repository.find_job(chunk_job_id)
+    if not job or str(job["document_id"]) != document_id:
+        raise ValueError("CHUNK job không thuộc tài liệu")
+    db = get_database()
+    set_oid = object_id(chunk_set_id)
+    vector_oid = object_id(vector_collection_id) if vector_collection_id else None
+    now = utc_now()
+    if job["status"] == "CANCELLED":
+        db.chunk_sets.update_one({"_id": set_oid},
+                                 {"$set": {"status": "CANCELLED", "completed_at": now}})
+        return
+    with mongo_transaction() as session:
+        chunk_set = db.chunk_sets.find_one(
+            {"_id": set_oid, "document_id": object_id(document_id)},
+            {"source_ocr_job_id": 1}, session=session,
+        )
+        if not chunk_set:
+            raise ValueError("Không tìm thấy chunk set của tài liệu")
+        db.chunk_sets.update_one(
+            {"_id": set_oid},
+            {"$set": {"status": "DRY_RUN" if dry_run else "COMPLETED",
+                      "total_chunks": total_chunks,
+                      "total_characters": total_characters, "completed_at": now}},
+            session=session,
+        )
+        if vector_oid:
+            db.chunk_embeddings.update_many(
+                {"chunk_set_id": set_oid, "vector_collection_id": vector_oid},
+                [{"$set": {"status": "INDEXED",
+                           "embedding_content_hash": "$chunk_content_hash",
+                           "indexed_at": now, "updated_at": now}}],
+                session=session,
+            )
+    promoted = repository.finish_chunk_job(
+        document_id, chunk_job_id, chunk_set_id,
+        chunk_set.get("source_ocr_job_id"), vector_collection_id,
+        total_chunks=total_chunks, stats=stats, dry_run=dry_run,
+    )
+    if not promoted:
+        db.chunk_sets.update_one({"_id": set_oid},
+                                 {"$set": {"status": "CANCELLED", "completed_at": utc_now()}})
+
+
 def fail_chunk_set(document_id: str, message: str) -> None:
+    if settings.document_store == "postgres":
+        _fail_chunk_set_postgres(document_id, message)
+        return
     db = get_database()
     document = db.documents.find_one(
         {"_id": object_id(document_id, "document_id")}
@@ -436,6 +486,46 @@ def fail_chunk_set(document_id: str, message: str) -> None:
         {"_id": document["_id"], "archived_at": None},
         {"$set": document_fields},
     )
+
+
+def _fail_chunk_set_postgres(document_id: str, message: str) -> None:
+    repository = get_document_repository()
+    document = repository.find_by_id(document_id)
+    if not document:
+        return
+    db = get_database()
+    latest = db.chunk_sets.find_one(
+        {"document_id": document["_id"], "status": "PROCESSING"},
+        sort=[("created_at", -1)],
+    )
+    now = utc_now()
+    if latest:
+        error = {"message": message, "at": now}
+        db.chunk_sets.update_one(
+            {"_id": latest["_id"]},
+            {"$set": {"status": "FAILED", "error": error, "completed_at": now}},
+        )
+        db.chunk_embeddings.update_many(
+            {"chunk_set_id": latest["_id"], "status": "PENDING"},
+            {"$set": {"status": "FAILED", "error": error, "updated_at": now}},
+        )
+    job_id = latest.get("chunk_job_id") if latest else None
+    if not job_id:
+        job_id = next((item["_id"] for item in repository.list_jobs(document_id)
+                       if item["job_type"] == "CHUNK" and item["status"] in {"QUEUED", "PROCESSING"}),
+                      None)
+    if job_id:
+        repository.update_job(job_id, "FAILED", error_message=message)
+    else:
+        summary = dict(document.get("pipeline_summary") or {})
+        if not (document.get("current_processing") or {}).get("chunk_set_id"):
+            summary.update(chunk_status="FAILED", index_status="FAILED")
+        repository.update(document_id, {
+            "status": document["status"] if (document.get("current_processing") or {}).get("chunk_set_id")
+                      else "FAILED",
+            "pipeline_summary": summary,
+            "latest_error": {"message": message, "at": now},
+        })
 
 
 def update_chunking_status(

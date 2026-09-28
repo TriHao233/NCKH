@@ -6,35 +6,59 @@ export const PERMISSIONS = Object.freeze({
   authenticated: Object.freeze(["Admin", "Teacher", "Reviewer"]),
 });
 
+// Danh mục quyền, khớp backend core/dependencies.py. Mỗi quyền đều được kiểm tra thật ở backend.
+// - Admin luôn có toàn bộ quyền; nhóm "Quản trị" chỉ thuộc vai trò Admin.
+// - Giảng viên/Người duyệt: mặc định theo vai trò, có thể thêm hoặc bỏ từng quyền nghiệp vụ.
+export const PERMISSION_GROUPS = Object.freeze([
+  Object.freeze({
+    id: "teacher",
+    label: "Giảng viên",
+    items: Object.freeze([
+      { value: "questions.generate", label: "Sinh câu hỏi bằng AI", description: "Trang Sinh câu hỏi, chạy tác vụ sinh và lưu cấu hình sinh." },
+      { value: "questions.manage_own", label: "Soạn và quản lý câu hỏi của mình", description: "Tạo, sửa, xoá, gửi duyệt câu hỏi do mình tạo." },
+      { value: "documents.manage_own", label: "Quản lý tài liệu của mình", description: "Tải lên, OCR, sửa và xoá tài liệu do mình tải." },
+      { value: "exams.manage_own", label: "Làm đề thi", description: "Tạo đề, ma trận đề, mã đề và xuất đề của mình." },
+      { value: "catalog.subjects.manage_own", label: "Tạo và sửa học phần của mình", description: "Thêm học phần, chương, CLO cho học phần mình tạo." },
+      { value: "questions.share_bank", label: "Chia sẻ câu hỏi và tài liệu", description: "Chia sẻ câu hỏi, tài liệu của mình cho người khác." },
+      { value: "questions.use_shared_bank", label: "Dùng câu hỏi, tài liệu được chia sẻ", description: "Xem và dùng câu hỏi, tài liệu người khác chia sẻ." },
+    ]),
+  }),
+  Object.freeze({
+    id: "review",
+    label: "Kiểm duyệt",
+    items: Object.freeze([
+      { value: "reviews.manage", label: "Kiểm duyệt câu hỏi", description: "Hộp việc, nhận câu, duyệt/yêu cầu sửa/từ chối và được giao câu." },
+      { value: "questions.export_moodle", label: "Đưa câu đã duyệt lên Moodle", description: "Ghi câu hỏi đã duyệt vào Moodle (cần kèm quyền kiểm duyệt)." },
+    ]),
+  }),
+  Object.freeze({
+    id: "admin",
+    label: "Quản trị (chỉ vai trò Quản trị viên)",
+    adminOnly: true,
+    items: Object.freeze([
+      { value: "admin.overview", label: "Xem tổng quan" },
+      { value: "admin.users", label: "Quản lý người dùng" },
+      { value: "admin.catalog", label: "Quản lý học phần và cấu hình AI" },
+      { value: "admin.jobs", label: "Quản lý tác vụ" },
+      { value: "admin.moodle", label: "Quản lý Moodle" },
+      { value: "admin.audit", label: "Xem nhật ký" },
+      { value: "questions.manage_all", label: "Quản lý mọi câu hỏi" },
+      { value: "documents.manage_all", label: "Quản lý mọi tài liệu" },
+    ]),
+  }),
+]);
+
+export const ALL_PERMISSIONS = Object.freeze(
+  PERMISSION_GROUPS.flatMap((group) => group.items.map((item) => item.value)),
+);
+export const ASSIGNABLE_PERMISSIONS = Object.freeze(
+  PERMISSION_GROUPS.filter((group) => !group.adminOnly).flatMap((group) => group.items.map((item) => item.value)),
+);
+
 export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
-  Admin: Object.freeze([
-    "admin.overview",
-    "admin.users",
-    "admin.catalog",
-    "admin.audit",
-    "admin.jobs",
-    "admin.moodle",
-    "admin.ai_review",
-    "documents.manage_all",
-    "questions.manage_all",
-    "questions.use_shared_bank",
-    "reviews.manage",
-  ]),
-  Teacher: Object.freeze([
-    "documents.manage_own",
-    "questions.generate",
-    "questions.manage_own",
-    "questions.share_bank",
-    "questions.use_shared_bank",
-    "exams.manage_own",
-    "catalog.subjects.manage_own",
-  ]),
-  Reviewer: Object.freeze([
-    "reviews.manage",
-    "questions.read_review_queue",
-    "questions.comment",
-    "questions.export_moodle",
-  ]),
+  Admin: ALL_PERMISSIONS,
+  Teacher: Object.freeze(PERMISSION_GROUPS[0].items.map((item) => item.value)),
+  Reviewer: Object.freeze(PERMISSION_GROUPS[1].items.map((item) => item.value)),
 });
 
 export const ROUTE_PERMISSION_KEYS = Object.freeze({
@@ -45,9 +69,12 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/quan-ly-tai-lieu": Object.freeze(["documents.manage_own"]),
   "/lam-de-thi/:examId": Object.freeze(["exams.manage_own"]),
   "/kiem-duyet": Object.freeze(["reviews.manage"]),
-  "/duyet-ai": Object.freeze(["admin.ai_review"]),
+  "/kiem-duyet/hieu-suat": Object.freeze(["reviews.manage"]),
+  "/kiem-duyet/:questionId": Object.freeze(["reviews.manage"]),
+  "/duyet-ai": Object.freeze(["admin.jobs"]),
   "/tong-quan": Object.freeze(["admin.overview"]),
   "/danh-muc": Object.freeze(["admin.catalog"]),
+  "/cau-hinh-ai": Object.freeze(["admin.catalog"]),
   "/quan-ly-nguoi-dung": Object.freeze(["admin.users"]),
   "/nhat-ky-he-thong": Object.freeze(["admin.audit"]),
   "/quan-ly-job": Object.freeze(["admin.jobs"]),
@@ -62,9 +89,12 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/quan-ly-hoc-phan": PERMISSIONS.teacherWorkspace,
   "/quan-ly-tai-lieu": PERMISSIONS.teacherAdminWorkspace,
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
+  "/kiem-duyet/hieu-suat": PERMISSIONS.reviewerWorkspace,
+  "/kiem-duyet/:questionId": PERMISSIONS.reviewerWorkspace,
   "/duyet-ai": PERMISSIONS.adminWorkspace,
   "/tong-quan": PERMISSIONS.adminWorkspace,
   "/danh-muc": PERMISSIONS.adminWorkspace,
+  "/cau-hinh-ai": PERMISSIONS.adminWorkspace,
   "/quan-ly-nguoi-dung": PERMISSIONS.adminWorkspace,
   "/nhat-ky-he-thong": PERMISSIONS.adminWorkspace,
   "/quan-ly-job": PERMISSIONS.adminWorkspace,
@@ -99,10 +129,18 @@ export function rolesForPath(pathname) {
   return entry?.[1] || null;
 }
 
+/**
+ * Quyền thực tế của người dùng. Backend trả `permissions` là danh sách đã tính
+ * (mặc định vai trò, trừ phần bị bỏ, cộng phần được thêm) nên dùng nguyên văn.
+ */
 export function permissionsForUser(userOrRole) {
   const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
-  const explicit = typeof userOrRole === "string" ? [] : (userOrRole?.permissions || []);
-  return Array.from(new Set([...(ROLE_DEFAULT_PERMISSIONS[role] || []), ...explicit]));
+  if (role === "Admin") return [...ALL_PERMISSIONS];
+  if (typeof userOrRole !== "string" && Array.isArray(userOrRole?.permissions)) {
+    // Quyền quản trị chỉ thuộc vai trò Admin.
+    return userOrRole.permissions.filter((permission) => ASSIGNABLE_PERMISSIONS.includes(permission));
+  }
+  return [...(ROLE_DEFAULT_PERMISSIONS[role] || [])];
 }
 
 export function permissionsForPath(pathname) {
@@ -116,9 +154,13 @@ export function canAccessPath(userOrRole, pathname) {
   const roles = rolesForPath(pathname);
   if (!roles) return true;
   const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
-  if (roles.includes(role)) return true;
+  if (!role) return false;
+  // Quản trị viên có mọi quyền nhưng chỉ vào các trang dành cho khu quản trị.
+  if (role === "Admin") return roles.includes("Admin");
   const requiredPermissions = permissionsForPath(pathname);
-  if (!requiredPermissions?.length) return false;
+  // Trang không gắn quyền cụ thể (hồ sơ, lịch) đi theo vai trò.
+  if (!requiredPermissions?.length) return roles.includes(role);
+  // Còn lại theo quyền thực tế: bỏ quyền thì mất trang, được thêm quyền thì có trang.
   const permissions = permissionsForUser(userOrRole);
   return requiredPermissions.every((permission) => permissions.includes(permission));
 }

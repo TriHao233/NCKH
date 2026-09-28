@@ -230,6 +230,18 @@ function SubjectManage() {
         description: subjectForm.description.trim(),
         is_active: subjectForm.is_active,
       };
+      if (
+        editingSubject
+        && usageTotal(editingSubject.usage_counts) > 0
+        && editingSubject.subject_code !== payload.subject_code
+      ) {
+        const confirmed = window.confirm(
+          `Đổi mã học phần ${editingSubject.subject_code} thành ${payload.subject_code}? `
+          + 'Các câu hỏi, tài liệu và đề thi hiện có vẫn gắn với học phần này, nhưng các phiên bản câu hỏi đã lưu trước đây vẫn ghi mã cũ. Chỉ đổi mã khi thật sự cần (ví dụ sửa lỗi gõ).',
+        );
+        if (!confirmed) return;
+        payload.confirm_code_change = true;
+      }
       const saved = editingSubject
         ? await updateSubject(refId(editingSubject), payload)
         : await saveSubject(payload);
@@ -805,7 +817,7 @@ function SubjectManage() {
                   />
                 </div>
                 <div className="field-group">
-                  <label className="field-label">Trọng số mục tiêu (0 - 1)</label>
+                  <label className="field-label">Trọng số tương đối (0 - 1, so với các CLO khác)</label>
                   <input
                     type="number"
                     min={0}

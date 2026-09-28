@@ -6,7 +6,8 @@ from bson import ObjectId
 
 from core.config import settings
 from core.database import get_rag_db
-from modules.dictionary.mongodb import add_pending_keywords
+from modules.documents.store import get_document_repository
+from modules.dictionary.service import add_pending_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,7 @@ async def run_dictionary_auto_learning(document_id: str, course_id: str = "it_fu
     db = get_rag_db()
 
     # 1. Lấy tối đa 15 trang V2 để làm mẫu học từ khóa.
-    pages_cursor = (
-        db.document_pages.find(_document_page_query(document_id))
-        .sort("page_number", 1)
-        .limit(15)
-    )
+    pages_cursor = get_document_repository(db).list_pages(document_id, limit=15)
 
     sample_texts = []
     for page in pages_cursor:

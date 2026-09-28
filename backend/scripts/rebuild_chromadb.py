@@ -11,7 +11,7 @@ sys.path.insert(0, str(BASE_DIR))
 from core.config import settings
 from core.database import get_database
 from modules.questions.repository import object_id
-from modules.rag.chromadb_engine import get_chroma_client, store_chunks
+from modules.rag.chromadb_engine import embedding_model_names_match, get_chroma_client, store_chunks
 
 
 def utc_now() -> datetime:
@@ -56,7 +56,7 @@ def vector_collection(db, collection_name: str) -> dict:
     if not record:
         raise RuntimeError(f"No active vector_collections record for '{collection_name}'")
     model_name = (record.get("embedding_model") or {}).get("model_name")
-    if model_name != settings.embedding_model_name:
+    if not embedding_model_names_match(model_name, settings.embedding_model_name):
         raise RuntimeError(
             "Embedding model mismatch: "
             f"MongoDB has '{model_name}', settings uses '{settings.embedding_model_name}'."

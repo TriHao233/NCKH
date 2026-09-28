@@ -1,9 +1,10 @@
 from datetime import date, datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from core.config import resolve_path, settings
 from core.dependencies import (
@@ -11,9 +12,11 @@ from core.dependencies import (
     get_current_user,
     require_permissions,
     require_reviewer_or_admin,
-    require_teacher_or_admin,
+    require_authenticated,
+    require_question_generator,
     require_teacher_reviewer_or_admin,
 )
+from modules.documents.storage import LOCAL, LocalArtifactStorage, artifact_storage
 from modules.users.schemas import (
     CalendarResponse,
     GenerationPresetListResponse,
@@ -47,6 +50,7 @@ AVATAR_CONTENT_TYPES = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+AVATAR_MEDIA_TYPES = {extension: media for media, extension in AVATAR_CONTENT_TYPES.items()}
 DEFAULT_AVATAR_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
 <rect width="128" height="128" rx="64" fill="#0c78d4"/>
 <circle cx="64" cy="48" r="24" fill="#fff"/>
@@ -93,31 +97,40 @@ async def upload_my_avatar(
         raise HTTPException(status_code=400, detail="File ảnh không hợp lệ.")
 
     filename = f"{current_user.id}-{uuid4().hex}{extension}"
-    destination = AVATAR_UPLOAD_DIR / filename
-    destination.write_bytes(content)
+    artifact_storage("avatars").save_stream(filename, BytesIO(content),
+                                            content_type=file.content_type)
     return {"avatar_url": f"{settings.api_prefix}/users/avatar/{filename}"}
 
 
 @router.get("/avatar/{filename}")
 def get_avatar(filename: str):
-    path = (AVATAR_UPLOAD_DIR / Path(filename).name).resolve()
-    if not path.is_relative_to(AVATAR_UPLOAD_DIR.resolve()):
+    if Path(filename).name != filename or filename in {".", ".."}:
         raise HTTPException(status_code=404, detail="Không tìm thấy ảnh đại diện")
-    if not path.is_file():
-        # User profiles can outlive an uploaded file (for example after restoring a
-        # database without the uploads directory). Return a valid default image so
-        # stale avatar references do not render as broken images or generate 404s.
-        return Response(
-            content=DEFAULT_AVATAR_SVG,
-            media_type="image/svg+xml",
-            headers={"Cache-Control": "no-store"},
+    # Configured storage first, then the local folder for avatars not migrated yet.
+    for storage in (artifact_storage("avatars"), LocalArtifactStorage(AVATAR_UPLOAD_DIR)):
+        uri = storage.uri_for(filename)
+        if not storage.exists(uri):
+            continue
+        if storage.provider == LOCAL:
+            return FileResponse(uri)
+        return StreamingResponse(
+            storage.iter_bytes(uri),
+            media_type=AVATAR_MEDIA_TYPES.get(Path(filename).suffix.lower(),
+                                              "application/octet-stream"),
         )
-    return FileResponse(path)
+    # User profiles can outlive an uploaded file (for example after restoring a
+    # database without the uploads directory). Return a valid default image so
+    # stale avatar references do not render as broken images or generate 404s.
+    return Response(
+        content=DEFAULT_AVATAR_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/me/generation-presets", response_model=GenerationPresetListResponse)
 def list_my_generation_presets(
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     service: UserService = Depends(get_user_service),
 ):
     result = service.list_generation_presets(str(current_user.id))
@@ -133,7 +146,7 @@ def list_my_generation_presets(
 )
 def save_my_generation_preset(
     payload: GenerationPresetPayload,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     service: UserService = Depends(get_user_service),
 ):
     preset = service.save_generation_preset(str(current_user.id), payload)
@@ -145,7 +158,7 @@ def save_my_generation_preset(
 @router.delete("/me/generation-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_my_generation_preset(
     preset_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_generator),
     service: UserService = Depends(get_user_service),
 ):
     deleted = service.delete_generation_preset(str(current_user.id), preset_id)

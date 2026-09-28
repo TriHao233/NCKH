@@ -142,9 +142,22 @@ def test_duplicate_subject_code_returns_conflict():
     assert response.json() == {"detail": "Mã môn học đã tồn tại"}
 
 
-def test_admin_cannot_create_subject():
+def test_admin_can_create_subject():
     service = FakeCatalogService()
     client = make_client(current_user("Admin"), service)
+
+    response = client.post(
+        "/api/v1/catalog/subjects",
+        json={"subject_code": "CTDL", "subject_name": "Cấu trúc dữ liệu"},
+    )
+
+    assert response.status_code == 201
+    assert len(service.created) == 1
+
+
+def test_user_without_subject_permission_cannot_create_subject():
+    service = FakeCatalogService()
+    client = make_client(current_user("Reviewer", ("reviews.manage",)), service)
 
     response = client.post(
         "/api/v1/catalog/subjects",

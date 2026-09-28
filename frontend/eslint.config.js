@@ -24,6 +24,7 @@ export default [
     rules: {
       ...reactHooks.configs.recommended.rules,
       'no-constant-binary-expression': 'error',
+      'no-undef': 'error',
       'no-duplicate-imports': 'error',
       'no-unreachable': 'error',
       'no-unsafe-finally': 'error',

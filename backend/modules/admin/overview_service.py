@@ -6,9 +6,12 @@ from typing import Any
 
 from pymongo.database import Database
 
+from core.config import settings
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.jobs_service import ACTIVE_STATUSES, RETRYABLE_STATUSES, AdminJobService, json_safe
 from modules.admin.moodle_service import MoodleTargetService
+from modules.catalog.postgres_subject_repository import subject_records
+from modules.users.store import users_by_ids
 
 
 def utc_now() -> datetime:
@@ -174,7 +177,8 @@ class AdminOverviewService:
         retryable_jobs = job_service.list_jobs(page=1, page_size=5, status="retryable")
         moodle_summary = MoodleTargetService(self.db)._publication_summary(None)
         audit_page = AdminAuditService(self.db).list(page=1, page_size=5)
-        pending_review = self._question_count({"review_status": "PENDING"})
+        question_summary = self._question_summary()
+        pending_review = question_summary["pending"]
         failed_documents = self._document_count({"status": "FAILED"})
         retryable_job_count = job_page["summary"].get("failed", 0)
         long_running_job_count = job_page["summary"].get("long_running", 0)
@@ -214,11 +218,17 @@ class AdminOverviewService:
 
         subjects_map = {
             str(s['_id']): s.get('subject_name') or s.get('subject_code')
-            for s in self.db.subjects.find({}, {'subject_name': 1, 'subject_code': 1})
+            for s in subject_records(self.db)
         }
+        from core.config import settings
+        if settings.ai_config_store == "postgres":
+            from modules.catalog.postgres_ai_repository import PostgresAiRepository
+            model_records = PostgresAiRepository().models()
+        else:
+            model_records = self.db.ai_models.find({}, {'model_name': 1, 'model_code': 1})
         models_map = {
             str(m.get('model_code')): m.get('model_name') or m.get('model_code')
-            for m in self.db.ai_models.find({}, {'model_name': 1, 'model_code': 1})
+            for m in model_records
         }
 
         user_entity_ids = []
@@ -235,7 +245,7 @@ class AdminOverviewService:
         if user_entity_ids:
             users_map = {
                 str(u['_id']): u.get('display_name') or str(u['_id'])
-                for u in self.db.users.find({'_id': {'$in': user_entity_ids}}, {'display_name': 1})
+                for u in users_by_ids(self.db, user_entity_ids)
             }
 
         for job in retryable_jobs['items']:
@@ -263,23 +273,8 @@ class AdminOverviewService:
         return json_safe(
             {
                 "generated_at": utc_now(),
-                "users": {
-                    "total": self._count("users", {}),
-                    "active": self._count("users", {"is_active": True}),
-                    "admins": self._count("users", {"role": "Admin", "is_active": True}),
-                    "teachers": self._count("users", {"role": "Teacher", "is_active": True}),
-                    "reviewers": self._count("users", {"role": "Reviewer", "is_active": True}),
-                },
-                "questions": {
-                    "total": self._question_count({}),
-                    "draft": self._question_count({"review_status": "DRAFT"}),
-                    "pending": pending_review,
-                    "approved": self._question_count({"review_status": "APPROVED"}),
-                    "needs_revision": self._question_count({"review_status": "NEEDS_REVISION"}),
-                    "rejected": self._question_count({"review_status": "REJECTED"}),
-                    "published": self._question_count({"publication_status": "PUBLISHED"}),
-                    "quality": self._quality_summary(),
-                },
+                "users": self._user_summary(),
+                "questions": question_summary,
                 "documents": {
                     "total": self._document_count({}),
                     "uploaded": self._document_count({"status": "UPLOADED"}),
@@ -292,8 +287,8 @@ class AdminOverviewService:
                     "breakdown": self._job_breakdown(job_page["items"]),
                 },
                 "moodle": {
-                    "targets": self._count("moodle_targets", {}),
-                    "active_targets": self._count("moodle_targets", {"is_active": True}),
+                    "targets": self._moodle_target_count(),
+                    "active_targets": self._moodle_target_count(active_only=True),
                     "publications": moodle_summary,
                 },
                 "model_performance": model_report["rows"],
@@ -307,6 +302,41 @@ class AdminOverviewService:
     def _count(self, collection_name: str, query: dict) -> int:
         return getattr(self.db, collection_name).count_documents(query)
 
+    def _moodle_target_count(self, *, active_only: bool = False) -> int:
+        if settings.moodle_target_store == "postgres":
+            from modules.admin.postgres_moodle_target_repository import PostgresMoodleTargetRepository
+            return PostgresMoodleTargetRepository().count(active_only=active_only)
+        return self._count("moodle_targets", {"is_active": True} if active_only else {})
+
+    def _user_summary(self) -> dict:
+        if settings.user_store == "postgres":
+            from modules.users.postgres_repository import PostgresUserRepository
+            return PostgresUserRepository().role_summary()
+        return {
+            "total": self._count("users", {}),
+            "active": self._count("users", {"is_active": True}),
+            "admins": self._count("users", {"role": "Admin", "is_active": True}),
+            "teachers": self._count("users", {"role": "Teacher", "is_active": True}),
+            "reviewers": self._count("users", {"role": "Reviewer", "is_active": True}),
+        }
+
+    def _question_summary(self) -> dict:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            row = PostgresQuestionRepository.status_summary()
+            quality = {key: row.pop(key) for key in ("green", "yellow", "red", "not_evaluated")}
+            return {**row, "quality": quality}
+        return {
+            "total": self._question_count({}),
+            "draft": self._question_count({"review_status": "DRAFT"}),
+            "pending": self._question_count({"review_status": "PENDING"}),
+            "approved": self._question_count({"review_status": "APPROVED"}),
+            "needs_revision": self._question_count({"review_status": "NEEDS_REVISION"}),
+            "rejected": self._question_count({"review_status": "REJECTED"}),
+            "published": self._question_count({"publication_status": "PUBLISHED"}),
+            "quality": self._quality_summary(),
+        }
+
     def _question_count(self, query: dict) -> int:
         return self._count(
             "questions",
@@ -314,6 +344,12 @@ class AdminOverviewService:
         )
 
     def _document_count(self, query: dict) -> int:
+        if settings.document_store == "postgres":
+            from modules.documents.postgres_repository import PostgresDocumentRepository
+            status = query.get("status")
+            statuses = (status.get("$in") if isinstance(status, dict)
+                        else [status] if status else None)
+            return PostgresDocumentRepository().count_by_status(statuses)
         return self._count(
             "documents",
             {"archived_at": None, **query},
@@ -452,17 +488,22 @@ class AdminOverviewService:
         )
 
     def _collect_evaluation_model_performance(self, groups: dict[str, dict], since: datetime) -> None:
-        collection = getattr(self.db, "evaluation_jobs", None)
-        if collection is None:
-            return
-        query = {
-            "$or": [
-                {"updated_at": {"$gte": since}},
-                {"finished_at": {"$gte": since}},
-                {"queued_at": {"$gte": since}},
-            ]
-        }
-        for job in collection.find(query).sort("updated_at", -1).limit(1000):
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+            jobs = PostgresEvaluationJobs().recent_jobs(since, 1000)
+        else:
+            collection = getattr(self.db, "evaluation_jobs", None)
+            if collection is None:
+                return
+            query = {
+                "$or": [
+                    {"updated_at": {"$gte": since}},
+                    {"finished_at": {"$gte": since}},
+                    {"queued_at": {"$gte": since}},
+                ]
+            }
+            jobs = collection.find(query).sort("updated_at", -1).limit(1000)
+        for job in jobs:
             model_code = job.get("evaluator_model_code") or "unknown"
             group = self._model_group(
                 groups,
@@ -473,17 +514,22 @@ class AdminOverviewService:
             self._add_model_job(group, job, _duration_ms(job, duration_path="duration_ms"))
 
     def _collect_generation_model_performance(self, groups: dict[str, dict], since: datetime) -> None:
-        collection = getattr(self.db, "generation_runs", None)
-        if collection is None:
-            return
-        query = {
-            "$or": [
-                {"updated_at": {"$gte": since}},
-                {"finished_at": {"$gte": since}},
-                {"created_at": {"$gte": since}},
-            ]
-        }
-        for run in collection.find(query).sort("finished_at", -1).limit(1000):
+        if settings.generation_store == "postgres":
+            from modules.generation.postgres_store import PostgresGenerationStore
+            runs = PostgresGenerationStore().recent_runs(since, 1000)
+        else:
+            collection = getattr(self.db, "generation_runs", None)
+            if collection is None:
+                return
+            query = {
+                "$or": [
+                    {"updated_at": {"$gte": since}},
+                    {"finished_at": {"$gte": since}},
+                    {"created_at": {"$gte": since}},
+                ]
+            }
+            runs = collection.find(query).sort("finished_at", -1).limit(1000)
+        for run in runs:
             model = run.get("model") or {}
             model_code = (
                 model.get("model_code")

@@ -20,6 +20,7 @@ import {
 } from '../api/documents';
 import { listSubjects } from '../api/catalog';
 import { AuthContext } from '../context/AuthContext';
+import { canAccessPath } from '../auth/permissions';
 import '../css/DocumentManagePage.css';
 
 const PAGE_SIZE = 12;
@@ -190,9 +191,12 @@ function DocumentManagePage() {
           <h1>Quản lý tài liệu</h1>
           <p>Quản lý tài liệu đã tải lên, nội dung OCR và phạm vi sử dụng giữa các học phần.</p>
         </div>
-        <button type="button" className="document-primary-btn" onClick={() => navigate('/sinh-cau-hoi')}>
-          <FontAwesomeIcon icon={faUpload} /> Tải tài liệu mới
-        </button>
+        {/* Tải tài liệu nằm ở trang Sinh câu hỏi (không gian giảng viên); ai không vào được trang đó thì không hiện nút. */}
+        {canAccessPath(user, '/sinh-cau-hoi') && (
+          <button type="button" className="document-primary-btn" onClick={() => navigate('/sinh-cau-hoi')}>
+            <FontAwesomeIcon icon={faUpload} /> Tải tài liệu mới
+          </button>
+        )}
       </header>
 
       <section className="document-stats" aria-label="Thống kê tài liệu">

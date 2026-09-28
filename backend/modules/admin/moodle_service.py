@@ -12,8 +12,10 @@ from pymongo import ReturnDocument
 
 from core.audit import record_audit_event
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.dependencies import CurrentUser
 from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.admin.postgres_moodle_target_repository import PostgresMoodleTargetRepository
 from modules.questions.repository import json_safe
 from modules.questions.workflow_schemas import MoodlePublicationRequest
 
@@ -112,8 +114,16 @@ def _safe_publication_item(record: dict) -> dict:
 class MoodleTargetService:
     def __init__(self, database):
         self.db = database
+        self.target_repository = (
+            PostgresMoodleTargetRepository() if settings.moodle_target_store == "postgres" else None
+        )
 
     def list_targets(self, *, include_inactive: bool = True) -> dict:
+        if self.target_repository:
+            return {"items": [
+                _target_public(item)
+                for item in self.target_repository.list(include_inactive=include_inactive)
+            ]}
         query = {} if include_inactive else {"is_active": True}
         targets = [
             _target_public(item)
@@ -122,6 +132,8 @@ class MoodleTargetService:
         return {"items": targets}
 
     def find_target(self, identifier: str | ObjectId, *, active_only: bool = False) -> dict | None:
+        if self.target_repository:
+            return self.target_repository.find(identifier, active_only=active_only)
         query: dict = {"site_key": str(identifier)}
         try:
             oid = object_id(identifier)
@@ -133,6 +145,11 @@ class MoodleTargetService:
         return self.db.moodle_targets.find_one(query)
 
     def save_target(self, payload: MoodleTargetPayload, current_user: CurrentUser) -> dict:
+        if self.target_repository:
+            record = self.target_repository.save(
+                payload.model_dump(), current_user.id, current_user.role,
+            )
+            return _target_public(record)
         now = utc_now()
         data = payload.model_dump()
         record = self.db.moodle_targets.find_one_and_update(
@@ -158,6 +175,13 @@ class MoodleTargetService:
         return _target_public(record)
 
     def deactivate_target(self, identifier: str, current_user: CurrentUser) -> dict:
+        if self.target_repository:
+            record = self.target_repository.deactivate(
+                identifier, current_user.id, current_user.role,
+            )
+            if not record:
+                raise LookupError("Không tìm thấy Moodle target")
+            return _target_public(record)
         now = utc_now()
         target = self.find_target(identifier)
         if not target:
@@ -176,12 +200,18 @@ class MoodleTargetService:
             raise LookupError("Không tìm thấy Moodle target")
         started = time.perf_counter()
         check = self._run_check(target, started)
-        record = self.db.moodle_targets.find_one_and_update(
-            {"_id": target["_id"]},
-            {"$set": {"last_check": check, "updated_by_user_id": current_user.id, "updated_at": utc_now()}},
-            return_document=ReturnDocument.AFTER,
-        )
-        self._audit(current_user, "admin.moodle_target_check", target["site_key"], metadata=check)
+        if self.target_repository:
+            record = self.target_repository.update_check(
+                target["_id"], check, current_user.id, current_user.role,
+            )
+        else:
+            record = self.db.moodle_targets.find_one_and_update(
+                {"_id": target["_id"]},
+                {"$set": {"last_check": check, "updated_by_user_id": current_user.id, "updated_at": utc_now()}},
+                return_document=ReturnDocument.AFTER,
+            )
+        if not self.target_repository:
+            self._audit(current_user, "admin.moodle_target_check", target["site_key"], metadata=check)
         return {"target": _target_public(record), "check": json_safe(check)}
 
     def list_publications(
@@ -193,6 +223,21 @@ class MoodleTargetService:
         site_key: str | None = None,
         search: str | None = None,
     ) -> dict:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            items, total = PostgresQuestionRepository.list_publications(
+                page=page, page_size=page_size,
+                status=status.upper() if status and status != "all" else None,
+                site_key=site_key if site_key and site_key != "all" else None,
+                search=search,
+            )
+            return {
+                "items": [_safe_publication_item(item) for item in items],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "summary": self._publication_summary(site_key),
+            }
         query: dict = {}
         if status and status != "all":
             query["status"] = status.upper()
@@ -220,9 +265,7 @@ class MoodleTargetService:
         }
 
     def retry_publication(self, publication_id: str, current_user: CurrentUser) -> dict:
-        publication = self.db.moodle_publications.find_one(
-            {"_id": object_id(publication_id, "publication_id")}
-        )
+        publication = self._find_publication(object_id(publication_id, "publication_id"))
         if not publication:
             raise LookupError("Không tìm thấy Moodle publication")
         if publication.get("status") != "FAILED":
@@ -257,7 +300,7 @@ class MoodleTargetService:
         )
         saved_id = result.get("_id") or result.get("id")
         saved = (
-            self.db.moodle_publications.find_one({"_id": object_id(saved_id, "publication_id")})
+            self._find_publication(object_id(saved_id, "publication_id"))
             if saved_id
             else None
         )
@@ -329,7 +372,18 @@ class MoodleTargetService:
                 "latency_ms": int((time.perf_counter() - started) * 1000),
             }
 
+    def _find_publication(self, publication_id) -> dict | None:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.find_publication(publication_id)
+        return self.db.moodle_publications.find_one({"_id": publication_id})
+
     def _publication_summary(self, site_key: str | None = None) -> dict:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository.publication_summary(
+                None if not site_key or site_key == "all" else site_key
+            )
         match = {} if not site_key or site_key == "all" else {"target.moodle_site_id": site_key}
         simulated_match = {
             **match,
@@ -357,6 +411,16 @@ class MoodleTargetService:
         metadata: dict | None = None,
         entity_type: str = "moodle_target",
     ) -> None:
+        if entity_type == "moodle_publication" and settings.question_store == "postgres":
+            from core.postgres import postgres_connection
+            from core.postgres_audit import write_postgres_audit_event
+            with postgres_connection() as conn:
+                write_postgres_audit_event(
+                    conn, action=action, entity_type=entity_type, entity_id=entity_id,
+                    actor_user_id=current_user.id, actor_role=current_user.role,
+                    after=after, metadata=metadata or {},
+                )
+            return
         record_audit_event(
             action=action,
             entity_type=entity_type,

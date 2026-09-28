@@ -48,8 +48,10 @@ export function listAvailableAiModels(capability = 'QUESTION_GENERATION') {
   return apiRequest(`/catalog/ai-models/available?capability=${encodeURIComponent(capability)}`);
 }
 
-export function saveAiModel(payload) {
-  return apiRequest('/catalog/ai-models', { method: 'POST', body: payload });
+export function saveAiModel(payload, { isNew = true } = {}) {
+  return apiRequest(isNew ? '/catalog/ai-models' : `/catalog/ai-models/${encodeURIComponent(payload.model_code)}`, {
+    method: isNew ? 'POST' : 'PUT', body: payload,
+  });
 }
 
 export function setAiModelActive(payload) {

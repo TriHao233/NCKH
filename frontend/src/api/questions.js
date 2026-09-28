@@ -1,4 +1,4 @@
-import { auth } from '../firebase';
+import { authHeaders } from './client';
 import { apiRequest, ApiError } from '../services/apiClient';
 
 const API_BASE_URL = (
@@ -33,6 +33,8 @@ export function listQuestions({
   creatorUserId,
   waitingHoursMin,
   overdueOnly = false,
+  slaBreachedOnly = false,
+  overrideOnly = false,
   createdFrom,
   createdTo,
   submittedFrom,
@@ -63,6 +65,8 @@ export function listQuestions({
   if (creatorUserId) params.set('creator_user_id', creatorUserId);
   if (waitingHoursMin) params.set('waiting_hours_min', waitingHoursMin);
   if (overdueOnly) params.set('overdue_only', 'true');
+  if (slaBreachedOnly) params.set('sla_breached_only', 'true');
+  if (overrideOnly) params.set('override_only', 'true');
   if (createdFrom) params.set('created_from', localDateBoundary(createdFrom));
   if (createdTo) params.set('created_to', localDateBoundary(createdTo, true));
   if (submittedFrom) params.set('submitted_from', localDateBoundary(submittedFrom));
@@ -88,19 +92,13 @@ function filenameFromDisposition(disposition) {
 }
 
 export async function fetchQuestionSourcePdf(id) {
-  if (!auth) {
-    throw new ApiError('Firebase web app chưa được cấu hình', 503, null);
+  let headers;
+  try {
+    headers = await authHeaders();
+  } catch (error) {
+    throw new ApiError(error.message || 'Bạn chưa đăng nhập', 401, null);
   }
-  await auth.authStateReady();
-  const firebaseUser = auth.currentUser;
-  if (!firebaseUser) {
-    throw new ApiError('Bạn chưa đăng nhập', 401, null);
-  }
-  const response = await fetch(`${API_BASE_URL}/questions/${id}/source-pdf`, {
-    headers: {
-      Authorization: `Bearer ${await firebaseUser.getIdToken()}`,
-    },
-  });
+  const response = await fetch(`${API_BASE_URL}/questions/${id}/source-pdf`, { headers });
   if (!response.ok) {
     let payload = null;
     try {
@@ -175,6 +173,26 @@ export function claimQuestionReview(id) {
 
 export function releaseQuestionReview(id) {
   return apiRequest(`/questions/${id}/review-assignment/release`, { method: 'POST' });
+}
+
+export function renewQuestionReview(id) {
+  return apiRequest(`/questions/${id}/review-assignment/renew`, { method: 'POST' });
+}
+
+export function getReviewPolicy() {
+  return apiRequest('/questions/review-policy');
+}
+
+export function updateReviewPolicy(payload) {
+  return apiRequest('/questions/review-policy', { method: 'PUT', body: payload });
+}
+
+export function getReviewSubjectSuggestions(reviewerUserId) {
+  return apiRequest(`/questions/review-subject-suggestions?reviewer_user_id=${encodeURIComponent(reviewerUserId)}`);
+}
+
+export function autoAssignReviews(payload = {}) {
+  return apiRequest('/questions/review-assignments/auto', { method: 'POST', body: payload });
 }
 
 export function assignQuestionReview(id, payload) {

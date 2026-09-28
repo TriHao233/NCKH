@@ -1,7 +1,26 @@
 import unittest
+from unittest.mock import patch
 
 from modules.questions.workflow_schemas import EvaluationScores
 from modules.questions.workflow_service import EvidenceGateError, QuestionWorkflowService
+from modules.rag.search import get_evaluation_evidence
+
+
+def test_evaluation_retrieval_uses_active_model_scoped_collection():
+    class EmptyCollection:
+        def query(self, **_kwargs):
+            return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    with (
+        patch("modules.rag.search._active_vector_snapshot", return_value=("chunk-set", "vector-id", "chunks_model")),
+        patch("modules.rag.search.get_collection", return_value=EmptyCollection()) as get_collection,
+        patch("modules.rag.search.get_rag_db"),
+    ):
+        result = get_evaluation_evidence("64b64b64b64b64b64b64b64b", "Hàng đợi FIFO")
+
+    get_collection.assert_called_once_with("chunks_model")
+    assert result["collection_name"] == "chunks_model"
+    assert result["results"] == []
 
 
 class EvaluationGroundingTests(unittest.TestCase):

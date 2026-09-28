@@ -8,7 +8,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
-from core.dependencies import effective_permissions
+from core.dependencies import DEFAULT_ROLE_PERMISSIONS, effective_permissions
 
 
 def utc_now() -> datetime:
@@ -42,6 +42,13 @@ def serialize_user(user: dict) -> dict:
         "display_name": user["display_name"],
         "role": user["role"],
         "permissions": list(effective_permissions(user)),
+        "permission_grants": sorted(
+            set(effective_permissions(user)) - DEFAULT_ROLE_PERMISSIONS.get(user["role"], set())
+        ),
+        "permission_revokes": sorted(
+            DEFAULT_ROLE_PERMISSIONS.get(user["role"], set()) - set(effective_permissions(user))
+        ),
+        "review_subject_ids": [str(item) for item in user.get("review_subject_ids") or []],
         "profile": profile,
         "is_active": user.get("is_active", True),
         "created_at": user["created_at"],
@@ -91,7 +98,9 @@ class MongoUserRepository:
             "email": data["email"].lower(),
             "display_name": data["display_name"],
             "role": data.get("role", "Teacher"),
-            "permissions": data.get("permissions") or [],
+            "permissions": [],
+            "permission_grants": data.get("permission_grants") or [],
+            "permission_revokes": data.get("permission_revokes") or [],
             "profile": data.get("profile") or {"school": "", "address": "", "avatar": ""},
             "is_active": True,
             "created_at": now,
