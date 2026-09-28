@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import QuestionContent from '../components/QuestionContent';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faLayerGroup, faUpload } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faLayerGroup, faUpload, faWandMagicSparkles, faMicrochip, faRobot, faRotateRight, faBookOpen, faArrowRight, faPlus, faPen, faPaperPlane, faTrashCan, faFloppyDisk, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { chunkDocument } from '../api/chunk';
 import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listDocuments } from '../api/documents';
@@ -22,6 +24,7 @@ import {
 } from '../constants/generationEnums';
 import { pollJob, watchJob } from '../hooks/useJobPoll';
 import { buildGenerationRequest } from '../utils/generationRequest';
+import { modelPresentation } from '../utils/modelPresentation';
 import { formatChoices, mapGeneratedQuestions } from '../utils/mapGeneratedQuestion';
 import {
   SINGLE_CHOICE_TYPES,
@@ -333,6 +336,9 @@ function GeneratePage() {
     ? subjects.find((item) => (item.id || item._id) === selectedDocument.subject_id)?.subject_name
     : null;
   const selectedModel = availableModels.find((model) => model.code === selectedModelCode);
+  const modelDisplay = modelPresentation(selectedModel);
+  const modelIcon = modelDisplay.family === 'gemini' ? faWandMagicSparkles
+    : modelDisplay.family === 'qwen' ? faMicrochip : faRobot;
   const draftPageCount = Math.max(1, Math.ceil(drafts.length / DRAFTS_PER_PAGE));
   const safeDraftPage = Math.min(draftPage, draftPageCount - 1);
   const visibleDrafts = drafts.slice(
@@ -1306,6 +1312,9 @@ function GeneratePage() {
           <p className="page-hero-desc">
             Chọn tài liệu, đặt ma trận Bloom và độ khó, rồi rà từng câu nháp kèm đáp án và dẫn chứng nguồn.
           </p>
+          <Link to="/huong-dan" className="gen-help-link">
+            <FontAwesomeIcon icon={faBookOpen} aria-hidden="true" /> Hướng dẫn sinh câu hỏi
+          </Link>
         </div>
       </section>
 
@@ -1611,11 +1620,13 @@ function GeneratePage() {
                         <button
                           type="button"
                           className="plan-remove-btn"
-                          title="Xóa dòng"
+                          title={planItems.length === 1 ? 'Cần giữ ít nhất một dòng' : 'Xóa dòng này'}
+                          aria-label={`Xóa dòng ${index + 1}`}
                           disabled={isBusy || planItems.length === 1}
                           onClick={() => removePlanItem(item.id)}
                         >
-                          Xóa
+                          <FontAwesomeIcon icon={faTrashCan} aria-hidden="true" />
+                          <span>Xóa dòng</span>
                         </button>
                       </div>
                       <div className="plan-builder-fields">
@@ -1709,12 +1720,25 @@ function GeneratePage() {
                 disabled={isBusy || totalQuestions >= MAX_TOTAL_QUESTIONS}
                 onClick={addPlanItem}
               >
-                + Thêm dòng
+                <FontAwesomeIcon icon={faPlus} aria-hidden="true" /> Thêm dòng
               </button>
             </div>
 
             <div className="field-group">
-              <label className="field-label" htmlFor="generation-model">Mô hình AI</label>
+              <div className="gen-model-heading">
+                <label className="field-label" htmlFor="generation-model">Mô hình ngôn ngữ</label>
+                <button type="button" className="gen-model-refresh" onClick={fetchAvailableModels} disabled={isBusy || modelsLoading}>
+                  <FontAwesomeIcon icon={faRotateRight} aria-hidden="true" /> {modelsLoading ? 'Đang tải...' : 'Tải lại'}
+                </button>
+              </div>
+              <div className={`gen-model-summary gen-model-summary--${modelDisplay.family}`}>
+                <span className="gen-model-icon"><FontAwesomeIcon icon={modelIcon} aria-hidden="true" /></span>
+                <div>
+                  <strong>{modelsLoading ? 'Đang tải mô hình...' : selectedModel ? modelDisplay.label : 'Mô hình mặc định'}</strong>
+                  {selectedModel && modelDisplay.detail && <small>{modelDisplay.detail}</small>}
+                </div>
+                {selectedModel?.is_default && <span className="gen-model-default">Mặc định</span>}
+              </div>
               <select
                 id="generation-model"
                 className="field-select"
@@ -1727,7 +1751,7 @@ function GeneratePage() {
                 )}
                 {availableModels.map((model) => (
                   <option key={model.code} value={model.code}>
-                    {model.name}{model.version ? ` · ${model.version}` : ''}
+                    {modelPresentation(model).label}{model.is_default ? ' · Mặc định' : ''}
                   </option>
                 ))}
               </select>
@@ -1795,6 +1819,7 @@ function GeneratePage() {
                 <h2 className="gen-card-title">Bảng nháp câu hỏi</h2>
               </div>
               <div className="gen-preview-actions">
+                <Link to="/quan-ly" className="gen-bank-link">Quản lý câu hỏi <FontAwesomeIcon icon={faArrowRight} aria-hidden="true" /></Link>
                 <span className="gen-preview-count">{drafts.length} câu hỏi</span>
                 {submittableDraftCount > 0 && (
                   <button
@@ -1935,7 +1960,7 @@ function GeneratePage() {
                         <div className="draft-item-body">
                           <section className="draft-section">
                             <h4 className="draft-section-label">Nội dung</h4>
-                            <p className="draft-item-text">{question.text}</p>
+                            <QuestionContent text={question.text} />
                           </section>
 
                           {question.validationWarnings?.length ? (
@@ -1990,7 +2015,7 @@ function GeneratePage() {
                               disabled={isSaving || isRemoving}
                               onClick={() => handleSaveDraft(question)}
                             >
-                              {isSaving ? 'Đang lưu...' : 'Lưu chỉnh sửa'}
+                              <FontAwesomeIcon icon={faFloppyDisk} aria-hidden="true" /> {isSaving ? 'Đang lưu...' : 'Lưu chỉnh sửa'}
                             </button>
                             <button
                               type="button"
@@ -1998,7 +2023,7 @@ function GeneratePage() {
                               disabled={isSaving || isRemoving}
                               onClick={cancelEditDraft}
                             >
-                              Hủy
+                              <FontAwesomeIcon icon={faXmark} aria-hidden="true" /> Hủy
                             </button>
                           </>
                         ) : (
@@ -2010,7 +2035,7 @@ function GeneratePage() {
                                 disabled={actionBusy}
                                 onClick={() => handleSubmitDraftForReview(question)}
                               >
-                                {isSubmitting ? 'Đang gửi...' : 'Gửi duyệt'}
+                                <FontAwesomeIcon icon={faPaperPlane} aria-hidden="true" /> {isSubmitting ? 'Đang gửi...' : 'Gửi duyệt'}
                               </button>
                             )}
                             <button
@@ -2019,7 +2044,7 @@ function GeneratePage() {
                               disabled={actionBusy}
                               onClick={() => startEditDraft(question)}
                             >
-                              Sửa
+                              <FontAwesomeIcon icon={faPen} aria-hidden="true" /> Sửa
                             </button>
                             <button
                               type="button"
@@ -2027,7 +2052,7 @@ function GeneratePage() {
                               disabled={actionBusy}
                               onClick={() => handleRemoveDraft(question)}
                             >
-                              {isRemoving ? 'Đang bỏ...' : 'Bỏ câu'}
+                              <FontAwesomeIcon icon={faTrashCan} aria-hidden="true" /> {isRemoving ? 'Đang bỏ...' : 'Bỏ câu'}
                             </button>
                           </>
                         )}

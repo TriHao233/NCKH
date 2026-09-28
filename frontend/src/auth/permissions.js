@@ -69,7 +69,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/nhat-ky-he-thong": PERMISSIONS.adminWorkspace,
   "/quan-ly-job": PERMISSIONS.adminWorkspace,
   "/quan-ly-moodle": PERMISSIONS.adminWorkspace,
-  "/lich-cong-viec": PERMISSIONS.authenticated,
+  "/lich-cong-viec": PERMISSIONS.reviewerWorkspace,
   "/ho-so": PERMISSIONS.authenticated,
 });
 

@@ -1,0 +1,32 @@
+/* Shared page backdrop: preserve opaque cards, forms and table surfaces. */
+body {
+  background-color: #f5f9fd;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)),
+    url('/images/body-background.png');
+  background-size: 100% 100%, 100% auto;
+  background-position: center top;
+  background-repeat: no-repeat, repeat-y;
+}
+
+.app-shell .page-main > main,
+.app-shell .page-main > main > :is(
+  .page-hero, .hero, .workflow, .editor, .research, .moodle, .closing,
+  .problem-solution, .capabilities, .tech, .architecture, .flow, .advisors, .team,
+  .roles, .steps, .faq, .guide-cta, .contact-body,
+  .gen-body, .manage-body, .builder-body, .exam-list-body
+) {
+  background: transparent;
+}
+
+@media (max-width: 640px) {
+  body {
+    background-size: 100% 100%, auto 1100px;
+  }
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+}

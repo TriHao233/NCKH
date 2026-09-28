@@ -33,7 +33,6 @@ from modules.users.schemas import (
     UserListResponse,
     UserResponse,
     UserSelfUpdateRequest,
-    UserStatsResponse,
 )
 from modules.users.service import UserService, get_user_service
 
@@ -116,17 +115,6 @@ def get_avatar(filename: str):
     return FileResponse(path)
 
 
-@router.get("/me/stats", response_model=UserStatsResponse)
-def get_my_stats(
-    current_user: CurrentUser = Depends(get_current_user),
-    service: UserService = Depends(get_user_service),
-):
-    stats = service.get_stats(str(current_user.id))
-    if stats is None:
-        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
-    return stats
-
-
 @router.get("/me/generation-presets", response_model=GenerationPresetListResponse)
 def list_my_generation_presets(
     current_user: CurrentUser = Depends(require_teacher_or_admin),
@@ -174,7 +162,7 @@ def get_my_calendar(
     to: date | None = Query(None),
     status_filter: str = Query("all", alias="status"),
     priority: str = Query("all"),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     date_from = datetime.combine(from_, datetime.min.time(), tzinfo=timezone.utc) if from_ else None
@@ -197,7 +185,7 @@ def get_my_calendar(
 )
 def create_my_calendar_task(
     payload: TaskCalendarPayload,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     task = service.create_task(str(current_user.id), payload)
@@ -210,7 +198,7 @@ def create_my_calendar_task(
 def update_my_calendar_task(
     event_id: str,
     payload: TaskCalendarUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     result = service.update_task(str(current_user.id), event_id, payload)
@@ -224,7 +212,7 @@ def update_my_calendar_task(
 @router.delete("/me/calendar/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_my_calendar_task(
     event_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     deleted = service.delete_task(str(current_user.id), event_id)

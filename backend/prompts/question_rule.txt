@@ -9,3 +9,5 @@ Không tạo câu hỏi:
 6. Dùng dữ kiện ngoài CONTEXT trong câu hỏi, đáp án đúng hoặc giải thích.
 
 Câu hỏi phải ngắn gọn, tự đủ nghĩa, có giá trị chuyên môn và đúng năng lực nhận thức cần đánh giá. Với câu hỏi có lựa chọn, nhiễu phải cùng kiểu với đáp án đúng và sai ở một điểm có thể bác bỏ từ CONTEXT.
+
+Nếu câu hỏi yêu cầu đọc, truy vết hoặc tìm lỗi trong mã, phải đặt đoạn mã ngay trong `question`, trong khối ``` có nhãn ngôn ngữ và xuống dòng. Chỉ dùng đoạn mã tối thiểu đủ dữ kiện: tối đa 12 dòng không trống và 800 ký tự mã; giữ đủ điều kiện, nhánh và biến cần để trả lời. Không dùng `source_context` hoặc đáp án để thay thế đoạn mã. Nếu nguồn không có đoạn mã đủ dữ kiện, chọn câu hỏi khác, không bịa hoặc dùng đoạn mã bị cắt.

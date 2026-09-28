@@ -6,6 +6,7 @@ import './index.css';
 import './css/shared.css';
 import './css/admin-shared.css';
 import './css/system-responsive.css';
+import './css/body-background.css';
 
 import { AuthProvider } from './context/AuthContext';
 

@@ -1,6 +1,77 @@
 /* Hallmark pre-emit critique: P4 H5 E4 S5 R4 V4 */
 /* Hallmark genre: modern-minimal; macrostructure: Workbench; designed-as-app; contrast: pass (40-41) */
 
+.generate-page .gen-help-link,
+.generate-page .gen-bank-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--gen-accent-deep);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.generate-page .gen-help-link { margin-top: 16px; }
+.generate-page .gen-help-link:hover,
+.generate-page .gen-bank-link:hover { text-decoration: underline; }
+.generate-page .gen-model-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.generate-page .gen-model-heading .field-label { margin: 0; }
+.generate-page .gen-model-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--gen-rule);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-accent-deep);
+  background: var(--gen-paper);
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.generate-page .gen-model-refresh:hover:not(:disabled) { background: var(--gen-accent-wash); }
+.generate-page .gen-model-refresh:disabled { opacity: 0.6; cursor: not-allowed; }
+.generate-page .gen-model-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid var(--gen-rule);
+  border-radius: var(--gen-radius-md);
+  background: var(--gen-paper);
+}
+.generate-page .gen-model-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: var(--gen-accent-deep);
+  background: var(--gen-accent-wash);
+  font-size: 1.05rem;
+}
+.generate-page .gen-model-summary > div { min-width: 0; overflow-wrap: anywhere; }
+.generate-page .gen-model-summary strong { font-size: 0.9rem; color: var(--gen-ink); }
+.generate-page .gen-model-summary small { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--gen-muted); }
+.generate-page .gen-model-default {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: var(--gen-accent-deep);
+  background: var(--gen-accent-wash);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.generate-page .draft-item-actions .icon-btn { display: inline-flex; align-items: center; gap: 7px; }
+
 .generate-page {
   width: 100%;
   min-width: 0;
@@ -647,6 +718,31 @@
   gap: var(--gen-space-xs);
 }
 
+.generate-page .plan-row-header .plan-remove-btn {
+  min-height: 36px;
+  padding: 0 12px;
+  gap: 7px;
+  border-radius: 9px;
+  background: var(--gen-red-wash);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.generate-page .plan-row-header .plan-remove-btn:hover:not(:disabled) {
+  background: var(--gen-red);
+  border-color: var(--gen-red);
+  color: white;
+  box-shadow: 0 3px 8px color-mix(in oklch, var(--gen-red) 18%, transparent);
+}
+
+.generate-page .plan-row-header .plan-remove-btn:disabled {
+  background: var(--gen-paper-2);
+  border-color: var(--gen-rule);
+  color: var(--gen-muted);
+  opacity: 0.65;
+  box-shadow: none;
+}
+
 .generate-page .plan-row-index {
   display: inline-flex;
   align-items: center;
@@ -1002,11 +1098,27 @@
 }
 
 .generate-page .draft-item-text {
+  white-space: pre-wrap;
   margin: 0;
   color: var(--gen-ink);
   font-size: 1rem;
   font-weight: 800;
   line-height: 1.55;
+}
+
+.generate-page .draft-question-code {
+  margin: 12px 0;
+  padding: 14px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  border: 1px solid var(--gen-rule);
+  border-radius: var(--gen-radius-md);
+  background: var(--gen-paper-2);
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.6;
 }
 
 .generate-page .draft-item-explanation,

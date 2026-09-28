@@ -23,6 +23,7 @@ from modules.generation.postprocessing import (
     question_fingerprint,
     rejection_counts,
     validate_source_grounding,
+    validate_question_code,
     validate_true_false_clarity,
 )
 from modules.generation.prompt_builder import PromptBuilder
@@ -635,7 +636,9 @@ async def _generate_questions_for_plan_item(
 
 def _clean_llm_output(text: str) -> str:
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'```json|```', '', text)
+    # Strip only the response wrapper; preserve code fences inside JSON strings.
+    text = re.sub(r'^\s*```(?:json)?\s*\n', '', text, count=1, flags=re.IGNORECASE)
+    text = re.sub(r'\n\s*```\s*$', '', text, count=1)
     match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
     return match.group(1) if match else text.strip()
 
@@ -951,6 +954,7 @@ def _validate_and_format(
             question_type=question_type,
             candidate_index=candidate_index,
         )
+        candidate_errors.extend(validate_question_code(item, candidate_index=candidate_index))
         if question_type == "dung_sai":
             candidate_errors.extend(
                 validate_true_false_clarity(item, candidate_index=candidate_index)

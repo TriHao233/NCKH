@@ -68,30 +68,11 @@ class UserRepository(Protocol):
 
     def delete_by_id(self, user_id: str | ObjectId) -> None: ...
 
-    def get_stats(self, user_id: str | ObjectId) -> dict: ...
-
 
 class MongoUserRepository:
     def __init__(self, database: Database):
         self.db = database
         self.collection = database.users
-
-    def get_stats(self, user_id: str | ObjectId) -> dict:
-        oid = object_id(user_id)
-        documents_count = self.db.documents.count_documents(
-            {"uploaded_by_user_id": oid, "status": {"$ne": "ARCHIVED"}}
-        )
-        questions_count = self.db.questions.count_documents(
-            {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
-        )
-        pending_questions_count = self.db.questions.count_documents(
-            {"created_by_user_id": oid, "review_status": "PENDING"}
-        )
-        return {
-            "documents_count": documents_count,
-            "questions_count": questions_count,
-            "pending_questions_count": pending_questions_count,
-        }
 
     def find_by_id(self, user_id: str | ObjectId) -> dict | None:
         return self.collection.find_one({"_id": object_id(user_id)})

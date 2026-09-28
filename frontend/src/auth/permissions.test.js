@@ -42,6 +42,13 @@ test("teacher can access teacher workspace routes", () => {
   assert.equal(canAccessPath("Teacher", "/lam-de-thi/abc123"), true);
 });
 
+test("calendar is available only to reviewers and admins", () => {
+  assert.equal(canAccessPath("Teacher", "/lich-cong-viec"), false);
+  assert.equal(canAccessPath(null, "/lich-cong-viec"), false);
+  assert.equal(canAccessPath("Reviewer", "/lich-cong-viec"), true);
+  assert.equal(canAccessPath("Admin", "/lich-cong-viec"), true);
+});
+
 test("teacher cannot access reviewer or admin-only routes", () => {
   assert.equal(canAccessPath("Teacher", "/kiem-duyet"), false);
   assert.equal(canAccessPath("Teacher", "/duyet-ai"), false);

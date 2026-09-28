@@ -69,6 +69,7 @@ def _build_context(
         "exam_code": exam_code,
         "questions": rendered_questions,
         "answer_rows": answer_rows,
+        "answer_groups": [answer_rows[index:index + 10] for index in range(0, len(answer_rows), 10)],
         "show_questions": show_questions,
         "show_answers": show_answers,
         "show_answer_table": show_answer_table,
@@ -102,7 +103,18 @@ async def render_exam_pdf(
         try:
             page = await browser.new_page()
             await page.set_content(html, wait_until="load")
-            pdf_bytes = await page.pdf(format="A4", print_background=True)
+            pdf_bytes = await page.pdf(
+                format="A4",
+                prefer_css_page_size=True,
+                print_background=True,
+                display_header_footer=True,
+                header_template="<span></span>",
+                footer_template=(
+                    '<div style="width:100%;font-family:Times New Roman,Liberation Serif,serif;'
+                    'font-size:9pt;text-align:center;color:#000;">'
+                    'Trang <span class="pageNumber"></span>/<span class="totalPages"></span></div>'
+                ),
+            )
         finally:
             await browser.close()
     return pdf_bytes

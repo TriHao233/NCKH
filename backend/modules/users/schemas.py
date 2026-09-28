@@ -266,9 +266,3 @@ class UserListResponse(BaseModel):
     total: int
     page: int
     page_size: int
-
-
-class UserStatsResponse(BaseModel):
-    documents_count: int
-    questions_count: int
-    pending_questions_count: int

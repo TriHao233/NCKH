@@ -230,12 +230,6 @@ class UserService:
         user = self.repository.find_by_id(user_id)
         return serialize_user(user) if user else None
 
-    def get_stats(self, user_id: str) -> dict | None:
-        user = self.repository.find_by_id(user_id)
-        if not user:
-            return None
-        return self.repository.get_stats(user_id)
-
     def get_by_firebase_uid(self, firebase_uid: str) -> dict | None:
         user = self.repository.find_by_firebase_uid(firebase_uid)
         return serialize_user(user) if user else None

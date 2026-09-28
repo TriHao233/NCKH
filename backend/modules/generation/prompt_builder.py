@@ -230,7 +230,9 @@ Set `clo_codes` to the best matching codes from this list. Do not invent codes.
 """
         mode_block = (
             "CONTENT MODE: CODE\nCreate questions that require reading, tracing, debugging, or reasoning about code "
-            "grounded in CONTEXT. Include a code snippet only when CONTEXT supports it."
+            "grounded in CONTEXT. Put the required code directly in question as a fenced code block, "
+            "at most 12 non-empty lines and 800 code characters. Preserve all necessary conditions and variables. "
+            "If CONTEXT does not support a complete short snippet, choose another question."
             if content_mode == "code"
             else "CONTENT MODE: GENERAL\nPrioritize conceptual and non-code knowledge grounded in CONTEXT."
         )
@@ -329,7 +331,9 @@ EVIDENCE RULES:
         ]
         clo_block = "\n".join(clo_lines) or "- Không có"
         mode_rule = (
-            "Đọc, truy vết hoặc suy luận về mã nguồn; chỉ đưa code khi CONTEXT hỗ trợ."
+            "Đọc, truy vết hoặc suy luận về mã nguồn. Bắt buộc kèm mã cần đọc trong question bằng khối ```, "
+            "tối đa 12 dòng không trống và 800 ký tự mã, đủ điều kiện và biến cần thiết. "
+            "Nếu CONTEXT không có mã đủ dữ kiện, chọn câu hỏi khác."
             if content_mode == "code"
             else "Ưu tiên kiến thức khái niệm và phi mã nguồn."
         )

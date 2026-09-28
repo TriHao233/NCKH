@@ -34,6 +34,18 @@ const UserProfileMenu = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        menuRef.current?.querySelector('.user-menu-trigger')?.focus();
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen]);
+
   const handleLogout = async () => {
     await logout();
     navigate('/dang-nhap'); // Chuyển hướng về đăng nhập
@@ -58,19 +70,29 @@ const UserProfileMenu = () => {
   return (
     <div className="user-menu-container" ref={menuRef}>
       <button 
+        type="button"
         className={`user-menu-trigger ${isOpen ? 'active' : ''}`}
         onClick={() => setIsOpen(!isOpen)}
+        aria-label={`Tài khoản ${displayName}`}
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? 'header-account-panel' : undefined}
       >
-        <img src={avatarUrl} alt="Avatar" className="user-avatar" referrerPolicy="no-referrer" />
-        <span className="user-name">{displayName}</span>
+        <img src={avatarUrl} alt="" className="user-avatar" referrerPolicy="no-referrer" />
+        <span className="user-identity">
+          <span className="user-name">{displayName}</span>
+          <span className="user-role">{displayRole}</span>
+        </span>
         <FontAwesomeIcon icon={faChevronDown} className="user-chevron" />
       </button>
 
       {isOpen && (
-        <div className="user-dropdown">
+        <div className="user-dropdown" id="header-account-panel">
           <div className="dropdown-header">
-            <p className="dropdown-name">{displayName}</p>
-            <p className="dropdown-role">{displayRole}</p>
+            <img src={avatarUrl} alt="" className="dropdown-avatar" referrerPolicy="no-referrer" />
+            <div className="dropdown-identity">
+              <p className="dropdown-name">{displayName}</p>
+              <p className="dropdown-role">{displayRole}</p>
+            </div>
           </div>
           
           <div className="dropdown-divider"></div>
@@ -97,7 +119,7 @@ const UserProfileMenu = () => {
             </>
           )}
 
-          {['Admin', 'Teacher', 'Reviewer'].includes(user.role) && (
+          {['Admin', 'Reviewer'].includes(user.role) && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
               Lịch công việc

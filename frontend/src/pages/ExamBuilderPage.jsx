@@ -839,7 +839,8 @@ function ExportStep({ exam }) {
 
   return (
     <div>
-      <h3 className="step-title">Xuất đề thi</h3>
+      <h3 className="step-title">Xuất đề thi giấy</h3>
+      <p className="empty-note">Bản PDF dùng khổ A4, lề in chuẩn, font serif hỗ trợ tiếng Việt và có số trang. Hãy kiểm tra bản PDF trước khi in chính thức.</p>
       {variants.length === 0 && <p className="empty-note">Chưa có mã đề nào, hãy tạo mã đề ở bước trước.</p>}
       <div className="export-list">
         {variants.map((variant) => (
