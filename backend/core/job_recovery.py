@@ -50,7 +50,7 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
 def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) -> int:
     result = db.generation_jobs.update_many(
         {
-            "status": "processing",
+            "status": {"$in": ["queued", "processing"]},
             **_stale_time_filter(cutoff),
         },
         {
@@ -61,6 +61,27 @@ def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) 
             }
         },
     )
+    return result.modified_count
+
+
+def cancel_unfinished_generation_jobs_on_worker_start() -> int:
+    """Never resume generation left by a previous worker process."""
+    now = utc_now()
+    result = get_database().generation_jobs.update_many(
+        {"status": {"$in": ["queued", "processing"]}},
+        {
+            "$set": {
+                "status": "failed",
+                "error_message": "Job đã bị dừng khi worker khởi động lại",
+                "updated_at": now,
+                "expires_at": now + timedelta(days=settings.job_retention_days),
+                "progress": {"stage": "cancelled", "completed": 0, "total": 1},
+            },
+            "$unset": {"locked_by": "", "lease_expires_at": "", "heartbeat_at": "", "next_attempt_at": ""},
+        },
+    )
+    if result.modified_count:
+        logger.warning("Cancelled %s unfinished generation jobs from previous worker", result.modified_count)
     return result.modified_count
 
 

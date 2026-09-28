@@ -5,18 +5,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from bson import ObjectId
 
 from core import database
-from core.job_worker import process_available_jobs_once
+from core.job_worker import process_available_jobs_once, run_job_worker
 from modules.admin.job_metrics import collect_job_metrics
 from modules.generation.mongodb import retry_or_dead_letter_generation_job
 from modules.generation.llm.model_registry import (
     GENERATION_CAPABILITY,
     available_model_options,
+    resolve_direct_model_snapshot,
     resolve_model_snapshot,
 )
 from modules.generation.llm.base import LLMProvider
 from modules.generation.llm.factory import get_llm_execution_snapshot
 from modules.generation.llm.fallback import FallbackProvider
 from modules.questions import workflow_service as workflow_service_module
+from modules.rag.chromadb_engine import model_scoped_collection_name
 
 
 class MongoTransactionTests(unittest.TestCase):
@@ -36,6 +38,13 @@ class MongoTransactionTests(unittest.TestCase):
         ):
             with database.mongo_transaction() as session:
                 self.assertIsNone(session)
+
+
+class ChromaCollectionNamingTests(unittest.TestCase):
+    def test_collection_name_is_scoped_to_embedding_config_hash(self):
+        with patch("modules.rag.chromadb_engine.embedding_config_hash", return_value="abcdef123456"):
+            self.assertEqual(model_scoped_collection_name("chunks"), "chunks_abcdef12")
+            self.assertEqual(model_scoped_collection_name("chunks_abcdef12"), "chunks_abcdef12")
 
 
 class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -68,6 +77,49 @@ class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generation_processor.await_args.args[0], "generation-job")
         self.assertEqual(evaluation_processor.await_args.args[0], "evaluation-job")
         self.assertEqual(generation_processor.await_args.args[1], evaluation_processor.await_args.args[1])
+
+    async def test_ollama_and_gemini_lanes_do_not_wait_for_each_other(self):
+        stop_event = asyncio.Event()
+        ollama_started = asyncio.Event()
+        gemini_started = asyncio.Event()
+        release_ollama = asyncio.Event()
+        returned_jobs = {"ollama": False, "gemini": False}
+
+        def next_generation_job(provider_group):
+            if returned_jobs[provider_group]:
+                return None
+            returned_jobs[provider_group] = True
+            return f"{provider_group}-job"
+
+        async def process_generation(job_id, _worker_id):
+            if job_id == "ollama-job":
+                ollama_started.set()
+                await release_ollama.wait()
+                return
+            self.assertTrue(ollama_started.is_set())
+            gemini_started.set()
+            release_ollama.set()
+            stop_event.set()
+
+        with (
+            patch(
+                "modules.generation.mongodb.get_next_queued_generation_job_id",
+                side_effect=next_generation_job,
+            ),
+            patch(
+                "core.job_worker.get_next_queued_evaluation_job_id",
+                return_value=None,
+            ),
+            patch(
+                "modules.generation.generate.process_generate_background",
+                side_effect=process_generation,
+            ),
+            patch.object(database.settings, "job_worker_poll_seconds", 0.01),
+        ):
+            await asyncio.wait_for(run_job_worker(stop_event), timeout=1)
+
+        self.assertTrue(ollama_started.is_set())
+        self.assertTrue(gemini_started.is_set())
 
     async def test_superseded_evaluation_cancels_in_flight_model_call(self):
         job_id = str(ObjectId())
@@ -172,7 +224,7 @@ class ModelRegistryTests(unittest.TestCase):
         )
         database.ai_models.find_one.return_value = {
             "model_code": "qwen-fast",
-            "model_name": "qwen2.5:7b",
+            "model_name": "qwen3:8b",
             "runtime": "OLLAMA",
             "capabilities": [GENERATION_CAPABILITY],
             "is_active": True,
@@ -218,7 +270,7 @@ class ModelRegistryTests(unittest.TestCase):
         database = MagicMock()
         database.ai_models.find_one.return_value = {
             "model_code": "paused",
-            "model_name": "qwen2.5:7b",
+            "model_name": "qwen3:8b",
             "runtime": "OLLAMA",
             "is_active": False,
         }
@@ -233,7 +285,7 @@ class ModelRegistryTests(unittest.TestCase):
             {
                 "model_code": "generation-model",
                 "display_name": "Model sinh câu hỏi",
-                "model_name": "qwen2.5:7b",
+                "model_name": "qwen3:8b",
                 "runtime": "OLLAMA",
                 "capabilities": [GENERATION_CAPABILITY],
                 "is_active": True,
@@ -255,6 +307,54 @@ class ModelRegistryTests(unittest.TestCase):
         )
 
         self.assertEqual([item["code"] for item in result["items"]], ["generation-model"])
+
+    def test_available_models_include_gemini_when_api_key_configured(self):
+        database = MagicMock()
+        cursor = MagicMock()
+        cursor.sort.return_value = []
+        database.ai_models.find.return_value = cursor
+        database.ai_models.find_one.return_value = None
+
+        with patch("modules.generation.llm.model_registry.settings.gemini_api_key", "configured"):
+            result = available_model_options(
+                database,
+                capability=GENERATION_CAPABILITY,
+                default_code="qwen",
+            )
+
+        codes = [item["code"] for item in result["items"]]
+        self.assertIn("gemini", codes)
+        self.assertEqual(
+            next(item for item in result["items"] if item["code"] == "gemini")["name"],
+            "Gemini 3.6 Flash",
+        )
+        self.assertEqual(
+            next(item for item in result["items"] if item["code"] == "gemini")["runtime"],
+            "GEMINI",
+        )
+
+    def test_direct_gemini_snapshot_uses_safe_output_limit(self):
+        with patch("modules.generation.llm.model_registry.settings.gemini_api_key", "configured"):
+            snapshot = resolve_direct_model_snapshot("gemini", capability=GENERATION_CAPABILITY)
+
+        self.assertEqual(snapshot["runtime"], "GEMINI")
+        self.assertGreaterEqual(snapshot["parameters"]["max_output_tokens"], 8192)
+
+    def test_available_models_hide_gemini_when_api_key_missing(self):
+        database = MagicMock()
+        cursor = MagicMock()
+        cursor.sort.return_value = []
+        database.ai_models.find.return_value = cursor
+        database.ai_models.find_one.return_value = None
+
+        with patch("modules.generation.llm.model_registry.settings.gemini_api_key", ""):
+            result = available_model_options(
+                database,
+                capability=GENERATION_CAPABILITY,
+                default_code="qwen",
+            )
+
+        self.assertNotIn("gemini", [item["code"] for item in result["items"]])
 
 
 class _FailingProvider(LLMProvider):

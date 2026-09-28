@@ -88,6 +88,9 @@ function filenameFromDisposition(disposition) {
 }
 
 export async function fetchQuestionSourcePdf(id) {
+  if (!auth) {
+    throw new ApiError('Firebase web app chưa được cấu hình', 503, null);
+  }
   await auth.authStateReady();
   const firebaseUser = auth.currentUser;
   if (!firebaseUser) {

@@ -31,6 +31,22 @@ class FallbackProvider(LLMProvider):
             )
             return await self.fallback.generate_text(prompt)
 
+    async def generate_chat(self, **kwargs) -> str:
+        try:
+            self.last_used = "primary"
+            self.primary_error = None
+            return await self.primary.generate_chat(**kwargs)
+        except (RuntimeError, TimeoutError) as exc:
+            self.last_used = "fallback"
+            self.primary_error = str(exc)
+            self.fallback_was_used = True
+            logger.warning(
+                "Primary LLM chat failed; using fallback model %s",
+                self.fallback_model_name,
+                exc_info=True,
+            )
+            return await self.fallback.generate_chat(**kwargs)
+
     def execution_snapshot(self) -> dict:
         primary = dict(getattr(self.primary, "runtime_snapshot", {}) or {})
         fallback = dict(getattr(self.fallback, "runtime_snapshot", {}) or {})

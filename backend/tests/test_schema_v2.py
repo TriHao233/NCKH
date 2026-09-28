@@ -2425,10 +2425,10 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertIn(f"[MODEL_CONTEXT] {generation_context}", heuristic_context)
 
     def test_llm_factory_accepts_ollama_model_alias(self):
-        provider = get_llm_service("ollama:qwen2.5:7b")
+        provider = get_llm_service("ollama:qwen3:8b")
         self.assertIsInstance(provider, ConcurrencyLimitedProvider)
         self.assertIsInstance(provider.wrapped, OllamaProvider)
-        self.assertEqual(provider.model_name, "qwen2.5:7b")
+        self.assertEqual(provider.model_name, "qwen3:8b")
 
     def test_moodle_publication_request_has_demo_defaults(self):
         payload = MoodlePublicationRequest(expected_version=1)
@@ -5153,6 +5153,7 @@ class SchemaV2Tests(unittest.TestCase):
                 self.generation_jobs = InMemoryCollection(
                     [
                         {"_id": ObjectId(), "status": "processing", "updated_at": old},
+                        {"_id": ObjectId(), "status": "queued", "updated_at": old},
                         {"_id": fresh_generation_id, "status": "processing", "updated_at": fresh},
                     ]
                 )
@@ -5213,7 +5214,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            {"generation_failed": 1, "evaluation_stale": 1, "document_failed": 1},
+            {"generation_failed": 2, "evaluation_stale": 1, "document_failed": 1},
         )
         self.assertEqual(db.generation_jobs.find_one({"_id": fresh_generation_id})["status"], "processing")
         self.assertEqual(db.evaluation_jobs.find_one({"_id": evaluation_job_id})["status"], "STALE")
@@ -5631,12 +5632,12 @@ class SchemaV2Tests(unittest.TestCase):
             bloom_level=BloomLevel.HIEU,
             question_plan=[
                 {"question_type": QuestionType.TRAC_NGHIEM, "bloom_level": BloomLevel.HIEU, "num_questions": 3},
-                {"question_type": QuestionType.DUNG_SAI, "bloom_level": BloomLevel.PHAN_TICH, "num_questions": 2},
+                {"question_type": QuestionType.DUNG_SAI, "bloom_level": BloomLevel.PHAN_TICH, "num_questions": 4},
             ],
             instruction="Tập trung vào cây nhị phân tìm kiếm.",
         )
 
-        self.assertEqual(sum(item.num_questions for item in req.effective_plan()), 5)
+        self.assertEqual(sum(item.num_questions for item in req.effective_plan()), 7)
         self.assertEqual(req.effective_plan()[1].bloom_level, BloomLevel.PHAN_TICH)
         self.assertEqual(req.instruction, "Tập trung vào cây nhị phân tìm kiếm.")
 
@@ -5646,9 +5647,8 @@ class SchemaV2Tests(unittest.TestCase):
                 document_id="507f1f77bcf86cd799439011",
                 bloom_level=BloomLevel.HIEU,
                 question_plan=[
-                    {"question_type": QuestionType.TRAC_NGHIEM, "num_questions": 10},
-                    {"question_type": QuestionType.DUNG_SAI, "num_questions": 10},
-                    {"question_type": QuestionType.DIEN_KHUYET, "num_questions": 1},
+                    {"question_type": QuestionType.TRAC_NGHIEM, "num_questions": 4},
+                    {"question_type": QuestionType.DUNG_SAI, "num_questions": 4},
                 ],
             )
 
@@ -5842,8 +5842,8 @@ class SchemaV2Tests(unittest.TestCase):
             difficulty="kho",
         )
 
-        self.assertIn("TARGET DIFFICULTY: kho", prompt)
-        self.assertIn('Set `difficulty` in the JSON output exactly to "kho".', prompt)
+        self.assertIn("TARGET ESTIMATED DIFFICULTY:", prompt)
+        self.assertIn("Generate questions whose `difficulty` is exactly `kho`.", prompt)
 
     def test_normalize_difficulty_accepts_known_labels(self):
         self.assertEqual(_normalize_difficulty("de"), "de")

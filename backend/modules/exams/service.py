@@ -150,6 +150,14 @@ class ExamService:
         return True
 
     def _validate_ready_payload(self, exam: dict) -> None:
+        header = exam.get("header") or {}
+        for field, label in (
+            ("school_name", "tên trường"),
+            ("exam_name", "tên kỳ thi"),
+            ("subject_name", "tên môn học"),
+        ):
+            if not str(header.get(field) or "").strip():
+                raise ValueError(f"Cần nhập {label} trước khi chốt đề giấy")
         questions = exam.get("questions", [])
         if len(questions) != int(exam["question_count"]):
             raise ValueError(

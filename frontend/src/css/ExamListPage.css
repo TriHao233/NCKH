@@ -1,5 +1,5 @@
 .exam-list-page { width: 100%; }
-.exam-list-page .container { width: 100%; max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+.exam-list-page .container { width: 100%; max-width: 1160px; margin: 0 auto; padding: 0 clamp(44px, 5vw, 72px); }
 
 .exam-list-page .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

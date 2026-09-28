@@ -9,6 +9,7 @@ const PROTECTED_APP_ROUTES = [
   "/lam-de-thi",
   "/lam-de-thi/:examId",
   "/quan-ly-hoc-phan",
+  "/quan-ly-tai-lieu",
   "/kiem-duyet",
   "/duyet-ai",
   "/tong-quan",
@@ -24,6 +25,7 @@ const PROTECTED_APP_ROUTES = [
 test("admin can access reviewer supervision, admin, question management, and exam routes", () => {
   assert.equal(canAccessPath("Admin", "/sinh-cau-hoi"), false);
   assert.equal(canAccessPath("Admin", "/quan-ly"), true);
+  assert.equal(canAccessPath("Admin", "/quan-ly-tai-lieu"), true);
   assert.equal(canAccessPath("Admin", "/lam-de-thi/abc123"), true);
   assert.equal(canAccessPath("Admin", "/kiem-duyet"), true);
   assert.equal(canAccessPath("Admin", "/duyet-ai"), true);
@@ -36,7 +38,15 @@ test("admin can access reviewer supervision, admin, question management, and exa
 test("teacher can access teacher workspace routes", () => {
   assert.equal(canAccessPath("Teacher", "/sinh-cau-hoi"), true);
   assert.equal(canAccessPath("Teacher", "/quan-ly"), true);
+  assert.equal(canAccessPath("Teacher", "/quan-ly-tai-lieu"), true);
   assert.equal(canAccessPath("Teacher", "/lam-de-thi/abc123"), true);
+});
+
+test("calendar is available only to reviewers and admins", () => {
+  assert.equal(canAccessPath("Teacher", "/lich-cong-viec"), false);
+  assert.equal(canAccessPath(null, "/lich-cong-viec"), false);
+  assert.equal(canAccessPath("Reviewer", "/lich-cong-viec"), true);
+  assert.equal(canAccessPath("Admin", "/lich-cong-viec"), true);
 });
 
 test("teacher cannot access reviewer or admin-only routes", () => {

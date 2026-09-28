@@ -27,19 +27,26 @@ export function buildBulkQuestionUpdatePayload(question, draft = {}) {
   return Object.keys(payload).length > 2 ? payload : null;
 }
 
-export function summarizeBulkSettled(results = []) {
+export function summarizeBulkSettled(results = [], questions = []) {
   return results.reduce(
-    (summary, result) => {
+    (summary, result, index) => {
       if (result.status === 'fulfilled') {
         summary.success += 1;
       } else {
+        const question = questions[index] || {};
+        const message = result.reason?.message || 'Thao tác thất bại';
         summary.failed += 1;
         if (!summary.firstError) {
-          summary.firstError = result.reason?.message || 'Thao tác thất bại';
+          summary.firstError = message;
         }
+        summary.failures.push({
+          id: question.id || '',
+          code: question.question_code || question.id || `Câu ${index + 1}`,
+          message,
+        });
       }
       return summary;
     },
-    { success: 0, failed: 0, firstError: '' },
+    { success: 0, failed: 0, firstError: '', failures: [] },
   );
 }

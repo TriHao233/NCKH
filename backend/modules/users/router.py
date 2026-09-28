@@ -2,8 +2,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, Response
 
 from core.config import resolve_path, settings
 from core.dependencies import (
@@ -33,7 +33,6 @@ from modules.users.schemas import (
     UserListResponse,
     UserResponse,
     UserSelfUpdateRequest,
-    UserStatsResponse,
 )
 from modules.users.service import UserService, get_user_service
 
@@ -48,6 +47,11 @@ AVATAR_CONTENT_TYPES = {
     "image/webp": ".webp",
     "image/gif": ".gif",
 }
+DEFAULT_AVATAR_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<rect width="128" height="128" rx="64" fill="#0c78d4"/>
+<circle cx="64" cy="48" r="24" fill="#fff"/>
+<path d="M24 116c4-25 19-38 40-38s36 13 40 38" fill="#fff"/>
+</svg>"""
 
 
 @router.get("/me", response_model=UserResponse)
@@ -75,7 +79,6 @@ def update_me(
 
 @router.post("/me/avatar")
 async def upload_my_avatar(
-    request: Request,
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -92,27 +95,24 @@ async def upload_my_avatar(
     filename = f"{current_user.id}-{uuid4().hex}{extension}"
     destination = AVATAR_UPLOAD_DIR / filename
     destination.write_bytes(content)
-    base_url = str(request.base_url).rstrip("/")
-    return {"avatar_url": f"{base_url}{settings.api_prefix}/users/avatar/{filename}"}
+    return {"avatar_url": f"{settings.api_prefix}/users/avatar/{filename}"}
 
 
 @router.get("/avatar/{filename}")
 def get_avatar(filename: str):
     path = (AVATAR_UPLOAD_DIR / Path(filename).name).resolve()
-    if not str(path).startswith(str(AVATAR_UPLOAD_DIR.resolve())) or not path.exists():
+    if not path.is_relative_to(AVATAR_UPLOAD_DIR.resolve()):
         raise HTTPException(status_code=404, detail="Không tìm thấy ảnh đại diện")
+    if not path.is_file():
+        # User profiles can outlive an uploaded file (for example after restoring a
+        # database without the uploads directory). Return a valid default image so
+        # stale avatar references do not render as broken images or generate 404s.
+        return Response(
+            content=DEFAULT_AVATAR_SVG,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-store"},
+        )
     return FileResponse(path)
-
-
-@router.get("/me/stats", response_model=UserStatsResponse)
-def get_my_stats(
-    current_user: CurrentUser = Depends(get_current_user),
-    service: UserService = Depends(get_user_service),
-):
-    stats = service.get_stats(str(current_user.id))
-    if stats is None:
-        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
-    return stats
 
 
 @router.get("/me/generation-presets", response_model=GenerationPresetListResponse)
@@ -162,7 +162,7 @@ def get_my_calendar(
     to: date | None = Query(None),
     status_filter: str = Query("all", alias="status"),
     priority: str = Query("all"),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     date_from = datetime.combine(from_, datetime.min.time(), tzinfo=timezone.utc) if from_ else None
@@ -185,7 +185,7 @@ def get_my_calendar(
 )
 def create_my_calendar_task(
     payload: TaskCalendarPayload,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     task = service.create_task(str(current_user.id), payload)
@@ -198,7 +198,7 @@ def create_my_calendar_task(
 def update_my_calendar_task(
     event_id: str,
     payload: TaskCalendarUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     result = service.update_task(str(current_user.id), event_id, payload)
@@ -212,7 +212,7 @@ def update_my_calendar_task(
 @router.delete("/me/calendar/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_my_calendar_task(
     event_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
     service: UserService = Depends(get_user_service),
 ):
     deleted = service.delete_task(str(current_user.id), event_id)

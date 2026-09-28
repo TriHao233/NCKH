@@ -4,7 +4,13 @@
 
 /* ─── Footer ────────────────────────────────────────────────── */
 .footer {
-  background-color: var(--primary, #0c78d4);
+  background-color: #063568;
+  background-image:
+    linear-gradient(90deg, rgba(2, 25, 58, 0.76), rgba(2, 25, 58, 0.68)),
+    var(--footer-background);
+  background-size: cover;
+  background-position: center right;
+  background-repeat: no-repeat;
   color: #ffffff;
   padding: 64px 0 0;
 }
@@ -18,52 +24,63 @@
 
 .footer .container {
   background: transparent;
+  max-width: 100%;
 }
 
 .footer-grid {
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr 1fr;
-  gap: 40px;
-  padding: 0 24px 48px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.3fr) minmax(0, 0.65fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 32px;
+  padding: 0 var(--page-gutter, 56px) 48px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .footer-brand {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  min-width: 0;
 }
 
 .footer-logo-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 20px;
 }
 
 .footer-logo {
-  height: 44px;
-  width: auto;
+  display: block;
+  height: 152px;
+  width: 152px;
+  flex-shrink: 0;
   object-fit: contain;
   background: transparent;
-  border-radius: 6px;
-  padding: 3px 5px;
 }
 
-.footer-name {
-  font-family: var(--font-display, inherit);
-  font-size: 1.05rem;
-  font-weight: 700;
+.footer-brand-copy {
+  min-width: 0;
+  padding-left: 16px;
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.footer-brand-title {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
   color: #ffffff;
 }
 
-.footer-name-sub {
+.footer-brand-subtitle {
+  margin-top: 8px;
   font-size: 0.75rem;
-  font-weight: 700;
+  line-height: 1.6;
   color: rgba(255, 255, 255, 0.82);
-  letter-spacing: 0.06em;
 }
 
 .footer-tagline {
+  margin: 0;
+  text-align: justify;
   font-size: 0.875rem;
   color: rgba(255, 255, 255, 0.82);
   line-height: 1.7;
@@ -74,10 +91,44 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+}
+
+.footer-partner-logos {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.footer-support .footer-col-text {
+  text-align: justify;
+}
+
+.footer-partner-link {
+  display: inline-flex;
+  border-radius: 4px;
+}
+
+.footer-partner-link img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+
+.footer-partner-link:hover {
+  opacity: 0.85;
+}
+
+.footer-partner-link:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 5px;
 }
 
 .footer-col-title {
   font-size: 0.8rem;
+  line-height: 1.5;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -114,6 +165,7 @@
 
 /* Bottom bar */
 .footer-bottom {
+  background-color: rgba(3, 34, 76, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -126,36 +178,43 @@
 /* ─── Responsive ────────────────────────────────────────────── */
 @media (max-width: 960px) {
   .footer-grid {
-    grid-template-columns: 1.2fr 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 32px;
   }
 
-  .footer-logo { height: 40px; }
-  .footer-name { font-size: 1rem; }
+  .footer-logo { height: 136px; width: 136px; }
+  .footer-logo-row { gap: 12px; }
+  .footer-brand-copy { padding-left: 12px; }
+  .footer-brand-title { font-size: 0.9rem; }
   .footer-tagline { font-size: 0.8rem; }
   .footer-col-text { font-size: 0.8rem; }
   .footer-link { font-size: 0.8rem; }
 }
 
 @media (max-width: 640px) {
-  .footer { padding: 44px 0 0; }
+  .footer {
+    padding: 44px 0 0;
+    background-image:
+      linear-gradient(180deg, rgba(3, 34, 76, 0.65), rgba(3, 34, 76, 0.45)),
+      var(--footer-background);
+    background-size: 100% 100%, auto 640px;
+    background-position: center, bottom right;
+  }
   .footer-grid {
     grid-template-columns: 1fr;
     gap: 28px;
-    padding: 0 16px 36px;
+    padding: 0 20px 36px;
   }
-  .footer-logo-row { gap: 10px; }
-  .footer-logo { height: 38px; }
-  .footer-name { font-size: 0.95rem; }
+  .footer-logo { height: 128px; width: 128px; }
   .footer-tagline { font-size: 0.75rem; }
-  .footer-col-title { font-size: 0.75rem; margin-top: 8px; }
+  .footer-col-title { font-size: 0.75rem; }
   .footer-col-text { font-size: 0.75rem; }
   .footer-link { font-size: 0.75rem; }
   .footer-bottom {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
-    padding: 18px 16px;
+    padding: 18px 20px;
     font-size: 0.7rem;
   }
 }

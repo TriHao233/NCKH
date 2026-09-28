@@ -42,6 +42,7 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/quan-ly": Object.freeze(["questions.manage_own"]),
   "/lam-de-thi": Object.freeze(["exams.manage_own"]),
   "/quan-ly-hoc-phan": Object.freeze(["catalog.subjects.manage_own"]),
+  "/quan-ly-tai-lieu": Object.freeze(["documents.manage_own"]),
   "/lam-de-thi/:examId": Object.freeze(["exams.manage_own"]),
   "/kiem-duyet": Object.freeze(["reviews.manage"]),
   "/duyet-ai": Object.freeze(["admin.ai_review"]),
@@ -58,7 +59,8 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/quan-ly": PERMISSIONS.teacherAdminWorkspace,
   "/lam-de-thi": PERMISSIONS.teacherAdminWorkspace,
   "/lam-de-thi/:examId": PERMISSIONS.teacherAdminWorkspace,
-  "/quan-ly-hoc-phan": PERMISSIONS.teacherAdminWorkspace,
+  "/quan-ly-hoc-phan": PERMISSIONS.teacherWorkspace,
+  "/quan-ly-tai-lieu": PERMISSIONS.teacherAdminWorkspace,
   "/kiem-duyet": PERMISSIONS.reviewerWorkspace,
   "/duyet-ai": PERMISSIONS.adminWorkspace,
   "/tong-quan": PERMISSIONS.adminWorkspace,
@@ -67,7 +69,7 @@ export const PROTECTED_ROUTE_ROLES = Object.freeze({
   "/nhat-ky-he-thong": PERMISSIONS.adminWorkspace,
   "/quan-ly-job": PERMISSIONS.adminWorkspace,
   "/quan-ly-moodle": PERMISSIONS.adminWorkspace,
-  "/lich-cong-viec": PERMISSIONS.authenticated,
+  "/lich-cong-viec": PERMISSIONS.reviewerWorkspace,
   "/ho-so": PERMISSIONS.authenticated,
 });
 

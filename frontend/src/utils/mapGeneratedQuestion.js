@@ -60,5 +60,9 @@ export function mapGeneratedQuestions(questions = []) {
       || question.question_data?.post_processing?.warnings
       || [],
     falseMutation: question.false_mutation || null,
+    documentId: question.document_id || null,
+    generationRunId: question.generation_run_id || null,
+    sourceChunkIds: question.source_chunk_ids || [],
+    cloIds: question.clo_ids || [],
   }));
 }

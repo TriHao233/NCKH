@@ -98,7 +98,7 @@
 .users-page .modal-card {
   background: #fff;
   border-radius: 16px;
-  padding: 28px;
+  padding: 30px;
   width: 100%;
   max-width: 520px;
   max-height: 90vh;
@@ -106,7 +106,7 @@
   box-shadow: 0 20px 60px rgba(5, 40, 90, 0.25);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 .users-page .modal-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 700; color: #003a75; }
 .users-page .field-group { margin: 0; }
@@ -134,8 +134,8 @@
 .users-page .permission-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px 12px;
-  padding: 10px;
+  gap: 12px 16px;
+  padding: 14px;
   border: 1px solid #d9e6f2;
   border-radius: 8px;
   background: #fafcff;
@@ -152,9 +152,9 @@
   border: 1px solid #d9e6f2;
   border-radius: 8px;
   background: #f8fbff;
-  padding: 12px;
+  padding: 16px;
   display: grid;
-  gap: 8px;
+  gap: 12px;
   font-size: 0.82rem;
 }
 .users-page .users-result-box-header {
@@ -178,7 +178,7 @@
 }
 .users-page .copy-btn:hover { border-color: #0c78d4; color: #0c78d4; }
 
-.users-page .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.users-page .modal-actions { display: flex; justify-content: flex-end; gap: 14px; margin-top: 8px; }
 
 /* ─── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 640px) {

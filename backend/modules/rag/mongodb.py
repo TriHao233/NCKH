@@ -9,7 +9,11 @@ from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database, mongo_transaction
 from modules.documents.repository import MongoDocumentRepository, object_id
-from modules.rag.chromadb_engine import embedding_config_hash, embedding_config_snapshot
+from modules.rag.chromadb_engine import (
+    embedding_config_hash,
+    embedding_config_snapshot,
+    model_scoped_collection_name,
+)
 
 
 def utc_now():
@@ -107,6 +111,7 @@ def persist_chunks(
     collection_name: str,
     chunks: list[dict],
 ) -> tuple[str, list[str], list[str], list[dict]]:
+    collection_name = model_scoped_collection_name(collection_name)
     db = get_database()
     document_oid = object_id(document_id, "document_id")
     set_oid = object_id(chunk_set_id, "chunk_set_id")

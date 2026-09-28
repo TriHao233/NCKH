@@ -41,10 +41,20 @@ def _translate(exc: Exception):
     raise exc
 
 
-# Giáo viên tự quản lý học phần của mình; quản trị viên catalog quản lý tất cả.
+# Giáo viên tự quản lý học phần của mình; quản trị viên catalog giám sát và quản trị dữ liệu.
 require_subject_manager = require_any_permission(
     "admin.catalog",
     "catalog.subjects.manage_own",
+)
+
+require_subject_reader = require_any_permission(
+    "admin.catalog",
+    "catalog.subjects.manage_own",
+    "questions.generate",
+    "questions.manage_own",
+    "questions.read_review_queue",
+    "reviews.manage",
+    "exams.manage_own",
 )
 
 
@@ -66,7 +76,7 @@ def runtime_config(
 
 @router.get("/subjects", response_model=list[SubjectResponse])
 def list_subjects(
-    user: CurrentUser = Depends(require_teacher_reviewer_or_admin),
+    user: CurrentUser = Depends(require_subject_reader),
     service: CatalogService = Depends(get_catalog_service),
 ):
     return service.list_subjects(user)
@@ -75,7 +85,7 @@ def list_subjects(
 @router.post("/subjects", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 def create_subject(
     payload: SubjectPayload,
-    user: CurrentUser = Depends(require_permissions("admin.catalog")),
+    user: CurrentUser = Depends(require_permissions("catalog.subjects.manage_own")),
     service: CatalogService = Depends(get_catalog_service),
 ):
     try:

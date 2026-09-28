@@ -64,11 +64,16 @@ function DangKy() {
   const handleGoogleAuth = async () => {
     setLoading(true);
     try {
+      if (!auth || !googleProvider) {
+        throw new Error("Firebase web app chưa khởi tạo được với project nckh-e6817. Vui lòng rebuild frontend và tải lại trang.");
+      }
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await login(result.user);
       navigate(landingPathForRole(appUser.role), { replace: true });
     } catch (error) {
-      await signOut(auth).catch(() => {});
+      if (auth) {
+        await signOut(auth).catch(() => {});
+      }
       alert("Đăng nhập/Đăng ký Google thất bại: " + error.message);
     } finally {
       setLoading(false);

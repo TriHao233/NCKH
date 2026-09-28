@@ -2,8 +2,15 @@ import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import MagicMock, patch
 
+from modules.generation.llm.gemini import GeminiProvider
 from modules.generation.llm.ollama import OllamaProvider, close_ollama_client
+from modules.generation.llm.model_registry import (
+    GENERATION_CAPABILITY,
+    resolve_direct_model_snapshot,
+    resolve_model_snapshot,
+)
 
 
 class FakeOllamaHandler(BaseHTTPRequestHandler):
@@ -13,15 +20,23 @@ class FakeOllamaHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(content_length) or b"{}")
         type(self).last_payload = payload
-        response = {
-            "response": json.dumps(
+        generated = json.dumps({"model_received": payload.get("model"), "status": "ok"})
+        midpoint = len(generated) // 2
+        if self.path.endswith("/api/chat"):
+            chunks = [
+                {"message": {"role": "assistant", "content": generated[:midpoint]}, "done": False},
                 {
-                    "model_received": payload.get("model"),
-                    "status": "ok",
-                }
-            )
-        }
-        body = json.dumps(response).encode("utf-8")
+                    "message": {"role": "assistant", "content": generated[midpoint:]},
+                    "done": True,
+                    "done_reason": "stop",
+                },
+            ]
+        else:
+            chunks = [
+                {"response": generated[:midpoint], "done": False},
+                {"response": generated[midpoint:], "done": True, "done_reason": "stop"},
+            ]
+        body = ("\n".join(json.dumps(chunk) for chunk in chunks) + "\n").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -56,4 +71,75 @@ class OllamaHttpIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["model_received"], "fake-model")
+        self.assertTrue(FakeOllamaHandler.last_payload["stream"])
         self.assertEqual(FakeOllamaHandler.last_payload["options"]["num_ctx"], 8192)
+        self.assertEqual(provider.last_response_metadata["done_reason"], "stop")
+
+    async def test_provider_sends_roles_and_schema_to_chat_endpoint(self):
+        provider = OllamaProvider("fake-model", timeout_seconds=2, num_ctx=8192)
+        provider.url = f"http://127.0.0.1:{self.server.server_port}/api/generate"
+        schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+
+        result = json.loads(
+            await provider.generate_chat(
+                system_prompt="system rules",
+                user_prompt="user task",
+                output_schema=schema,
+            )
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(FakeOllamaHandler.last_payload["stream"])
+        self.assertEqual(provider.last_response_metadata["done_reason"], "stop")
+        self.assertEqual(FakeOllamaHandler.last_payload["messages"][0]["role"], "system")
+        self.assertEqual(FakeOllamaHandler.last_payload["messages"][1]["role"], "user")
+        self.assertEqual(FakeOllamaHandler.last_payload["format"], schema)
+        self.assertNotIn("think", FakeOllamaHandler.last_payload)
+
+    async def test_qwen3_uses_its_own_model_and_disables_thinking(self):
+        snapshot = resolve_direct_model_snapshot("qwen3-8b", GENERATION_CAPABILITY)
+        self.assertEqual(snapshot["model_name"], "qwen3:8b")
+        self.assertIs(snapshot["parameters"]["think"], False)
+        provider = OllamaProvider("qwen3:8b", think=snapshot["parameters"]["think"])
+        provider.url = f"http://127.0.0.1:{self.server.server_port}/api/generate"
+
+        result = json.loads(await provider.generate_chat(system_prompt="rules", user_prompt="question"))
+
+        self.assertEqual(result["model_received"], "qwen3:8b")
+        self.assertIs(FakeOllamaHandler.last_payload["think"], False)
+
+
+class RemovedModelTests(unittest.TestCase):
+    def test_removed_qwen_version_cannot_be_selected_directly(self):
+        with self.assertRaisesRegex(ValueError, "đã được gỡ"):
+            resolve_direct_model_snapshot("ollama:qwen2.5:7b", GENERATION_CAPABILITY)
+
+    def test_removed_qwen_catalog_record_cannot_be_selected(self):
+        database = MagicMock()
+        database.ai_models.find_one.return_value = {
+            "model_code": "qwen",
+            "model_name": "qwen2.5:7b",
+            "runtime": "OLLAMA",
+            "is_active": True,
+        }
+        with self.assertRaisesRegex(ValueError, "đã được gỡ"):
+            resolve_model_snapshot("qwen", database=database)
+
+
+class GeminiProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_gemini_3_uses_interactions_api_and_cleans_json_fences(self):
+        response = MagicMock()
+        response.output_text = '```json\n{"ok": true}\n```'
+        client = MagicMock()
+        client.interactions.create.return_value = response
+
+        with (
+            patch("modules.generation.llm.gemini.settings.gemini_api_key", "test-key"),
+            patch("modules.generation.llm.gemini.genai.Client", return_value=client),
+        ):
+            provider = GeminiProvider(model_name="gemini-3.6-flash", max_output_tokens=2048)
+            result = await provider.generate_text("prompt")
+
+        self.assertEqual(result, '{"ok": true}')
+        client.interactions.create.assert_called_once()
+        client.models.generate_content.assert_not_called()

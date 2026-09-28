@@ -1,23 +1,39 @@
-// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+export const CANONICAL_FIREBASE_PROJECT_ID = "nckh-e6817";
+
 const firebaseConfig = {
-  apiKey: "AIzaSyDDPsHgdDyAbyNL4pTQUUInyw9s4VMQVeM",
-  authDomain: "nckh-c0ef6.firebaseapp.com",
-  projectId: "nckh-c0ef6",
-  storageBucket: "nckh-c0ef6.firebasestorage.app",
-  messagingSenderId: "953198341983",
-  appId: "1:953198341983:web:22a5e6810096bca9be10ea",
-  measurementId: "G-BV5PSNEMVP"
+  apiKey: "AIzaSyCA0WPy--PUOvHcgQgDQRYCqgaeSy029_E",
+  authDomain: "nckh-e6817.firebaseapp.com",
+  projectId: CANONICAL_FIREBASE_PROJECT_ID,
+  storageBucket: "nckh-e6817.firebasestorage.app",
+  messagingSenderId: "920272280208",
+  appId: "1:920272280208:web:454fd58bf1f15b58479615",
+  measurementId: "G-ZLLP495N0E",
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const analytics = getAnalytics(app);
-export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: "select_account" });
+const hasFirebaseWebConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.appId);
+const usesRegisterProject = firebaseConfig.projectId === CANONICAL_FIREBASE_PROJECT_ID;
+
+let authInstance = null;
+let analyticsInstance = null;
+let googleProviderInstance = null;
+
+if (hasFirebaseWebConfig && usesRegisterProject) {
+  try {
+    authInstance = getAuth(app);
+    analyticsInstance = firebaseConfig.measurementId ? getAnalytics(app) : null;
+    googleProviderInstance = new GoogleAuthProvider();
+    googleProviderInstance.setCustomParameters({ prompt: "select_account" });
+  } catch (error) {
+    console.error("Firebase web app config is invalid for nckh-e6817.", error);
+  }
+}
+
+export const isFirebaseConfigured = Boolean(authInstance);
+export const analytics = analyticsInstance;
+export const auth = authInstance;
+export const googleProvider = googleProviderInstance;

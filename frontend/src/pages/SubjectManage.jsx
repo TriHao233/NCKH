@@ -1,4 +1,5 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   addSubjectChapter,
   addSubjectLearningOutcome,
@@ -9,13 +10,29 @@ import {
   updateSubjectChapter,
   updateSubjectLearningOutcome,
 } from '../api/catalog';
+import { listQuestions } from '../api/questions';
 import { permissionsForUser } from '../auth/permissions';
 import { AuthContext } from '../context/AuthContext';
+import { difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import '../css/SubjectManage.css';
 
 const EMPTY_SUBJECT = { subject_code: '', subject_name: '', description: '', is_active: true };
 const EMPTY_CHAPTER = { chapter_code: '', chapter_name: '', sequence_no: 1, is_active: true };
 const EMPTY_CLO = { clo_code: '', description: '', target_weight: 1, is_active: true };
+
+const REVIEW_STATUS_LABEL = {
+  DRAFT: 'Nháp',
+  PENDING: 'Chờ duyệt',
+  APPROVED: 'Đã duyệt',
+  NEEDS_REVISION: 'Cần sửa',
+  REJECTED: 'Từ chối',
+};
+
+const STATUS_FILTERS = [
+  { value: 'active', label: 'Đang dùng' },
+  { value: 'mine', label: 'Của tôi' },
+  { value: 'all', label: 'Tất cả' },
+];
 
 function refId(value) {
   if (!value) return '';
@@ -28,9 +45,36 @@ function usageTotal(counts) {
   return Object.values(counts).reduce((sum, value) => sum + (Number(value) || 0), 0);
 }
 
+function subjectSearchText(subject) {
+  return `${subject.subject_code || ''} ${subject.subject_name || ''} ${subject.description || ''}`.toLowerCase();
+}
+
+function sortActiveChildren(items = []) {
+  return [...items].sort((left, right) => {
+    const leftOff = left.is_active === false ? 1 : 0;
+    const rightOff = right.is_active === false ? 1 : 0;
+    return leftOff - rightOff || (left.sequence_no || 0) - (right.sequence_no || 0);
+  });
+}
+
+function questionKind(question) {
+  return questionTypeLabel((question.classification?.assessment_type || '').toLowerCase()) || 'Câu hỏi';
+}
+
+function questionBloom(question) {
+  return question.classification?.bloom?.name || 'Chưa gắn Bloom';
+}
+
+function questionDifficulty(question) {
+  return difficultyLabel(question.classification?.difficulty) || 'Chưa ước lượng';
+}
+
 function SubjectManage() {
+  const navigate = useNavigate();
   const { user } = useContext(AuthContext);
-  const canCreateSubjects = permissionsForUser(user).includes('admin.catalog');
+  const permissions = permissionsForUser(user);
+  const canCreateSubjects = permissions.includes('catalog.subjects.manage_own');
+
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -39,15 +83,14 @@ function SubjectManage() {
   const [busyId, setBusyId] = useState(null);
 
   const [keyword, setKeyword] = useState('');
-  const [showInactive, setShowInactive] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  const [questionsBySubject, setQuestionsBySubject] = useState({});
 
-  // Modal học phần: editing=null nghĩa là đang tạo mới.
   const [subjectModalOpen, setSubjectModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
   const [subjectForm, setSubjectForm] = useState(EMPTY_SUBJECT);
 
-  // Modal chương / CLO dùng chung một khung, phân biệt bằng childMode.
   const [childModal, setChildModal] = useState(null);
   const [chapterForm, setChapterForm] = useState(EMPTY_CHAPTER);
   const [cloForm, setCloForm] = useState(EMPTY_CLO);
@@ -56,7 +99,12 @@ function SubjectManage() {
     setLoading(true);
     setError('');
     try {
-      setSubjects(await listSubjects());
+      const items = await listSubjects();
+      setSubjects(items);
+      setSelectedSubjectId((current) => {
+        if (current && items.some((subject) => refId(subject) === current)) return current;
+        return refId(items.find((subject) => subject.is_active !== false) || items[0]);
+      });
     } catch (err) {
       setError(err.message || 'Không tải được danh sách học phần');
     } finally {
@@ -64,9 +112,47 @@ function SubjectManage() {
     }
   };
 
+  const fetchSubjectQuestions = async (subjectId, { force = false } = {}) => {
+    if (!subjectId) return;
+    if (!force && questionsBySubject[subjectId]?.loaded) return;
+    setQuestionsBySubject((current) => ({
+      ...current,
+      [subjectId]: { ...(current[subjectId] || {}), loading: true, error: '' },
+    }));
+    try {
+      const result = await listQuestions({ subjectId, page: 1, pageSize: 6 });
+      setQuestionsBySubject((current) => ({
+        ...current,
+        [subjectId]: {
+          items: result.items || [],
+          total: result.total || 0,
+          loading: false,
+          error: '',
+          loaded: true,
+        },
+      }));
+    } catch (err) {
+      setQuestionsBySubject((current) => ({
+        ...current,
+        [subjectId]: {
+          ...(current[subjectId] || {}),
+          loading: false,
+          error: err.message || 'Không tải được câu hỏi của học phần',
+          loaded: true,
+        },
+      }));
+    }
+  };
+
   useEffect(() => {
     fetchSubjects();
   }, []);
+
+  useEffect(() => {
+    if (!selectedSubjectId) return;
+    fetchSubjectQuestions(selectedSubjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSubjectId]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -77,17 +163,35 @@ function SubjectManage() {
   const visibleSubjects = useMemo(() => {
     const needle = keyword.trim().toLowerCase();
     return subjects.filter((subject) => {
-      if (!showInactive && !subject.is_active) return false;
+      if (statusFilter === 'active' && subject.is_active === false) return false;
+      if (statusFilter === 'mine' && !subject.can_manage) return false;
       if (!needle) return true;
-      return `${subject.subject_code} ${subject.subject_name}`.toLowerCase().includes(needle);
+      return subjectSearchText(subject).includes(needle);
     });
-  }, [subjects, keyword, showInactive]);
+  }, [subjects, keyword, statusFilter]);
+
+  const selectedSubject = useMemo(
+    () => subjects.find((subject) => refId(subject) === selectedSubjectId) || null,
+    [subjects, selectedSubjectId],
+  );
+
+  const selectedQuestionState = questionsBySubject[selectedSubjectId] || {
+    items: [],
+    total: selectedSubject?.usage_counts?.questions || 0,
+    loading: false,
+    error: '',
+    loaded: false,
+  };
 
   const stats = useMemo(() => ({
     total: subjects.length,
-    active: subjects.filter((item) => item.is_active).length,
+    active: subjects.filter((item) => item.is_active !== false).length,
     owned: subjects.filter((item) => item.can_manage).length,
+    questions: subjects.reduce((sum, item) => sum + (Number(item.usage_counts?.questions) || 0), 0),
   }), [subjects]);
+
+  const activeChapters = sortActiveChildren(selectedSubject?.chapters || []);
+  const activeClos = sortActiveChildren(selectedSubject?.learning_outcomes || []);
 
   const openCreateSubject = () => {
     setEditingSubject(null);
@@ -126,13 +230,12 @@ function SubjectManage() {
         description: subjectForm.description.trim(),
         is_active: subjectForm.is_active,
       };
-      if (editingSubject) {
-        await updateSubject(refId(editingSubject), payload);
-        setNotice('Đã cập nhật học phần.');
-      } else {
-        await saveSubject(payload);
-        setNotice('Đã tạo học phần mới.');
-      }
+      const saved = editingSubject
+        ? await updateSubject(refId(editingSubject), payload)
+        : await saveSubject(payload);
+      const savedId = refId(saved);
+      setSelectedSubjectId(savedId);
+      setNotice(editingSubject ? 'Đã cập nhật học phần.' : 'Đã tạo học phần mới.');
       setSubjectModalOpen(false);
       await fetchSubjects();
     } catch (err) {
@@ -169,7 +272,8 @@ function SubjectManage() {
     setBusyId(refId(subject));
     setError('');
     try {
-      await updateSubject(refId(subject), { is_active: true });
+      const updated = await updateSubject(refId(subject), { is_active: true });
+      setSelectedSubjectId(refId(updated));
       setNotice('Đã khôi phục học phần.');
       await fetchSubjects();
     } catch (err) {
@@ -269,210 +373,304 @@ function SubjectManage() {
     }
   };
 
+  const goToQuestionManager = (subjectId = selectedSubjectId) => {
+    if (!subjectId) return;
+    navigate(`/quan-ly?subject_id=${encodeURIComponent(subjectId)}`);
+  };
+
   return (
     <main className="subject-manage-page">
-      <section className="page-hero">
-        <div className="container subject-hero-row">
-          <div>
-            <div className="page-hero-badge">Giảng viên</div>
-            <h1 className="page-hero-title">Quản lý học phần</h1>
-            <p className="page-hero-desc">
-              Tạo và duy trì danh mục học phần của bạn cùng cấu trúc chương và chuẩn đầu ra (CLO).
-              Đây là nền tảng phân loại cho toàn bộ tài liệu, câu hỏi và đề thi.
-            </p>
-          </div>
-          {canCreateSubjects && (
-            <button type="button" className="btn btn--primary" onClick={openCreateSubject}>
-              + Thêm học phần
-            </button>
-          )}
-        </div>
-      </section>
-
-      <section className="subject-manage-body">
+      <section className="subject-workspace">
         <div className="container">
-          <div className="subject-stats">
-            <div className="stat-chip"><b>{stats.total}</b><span>Tổng học phần</span></div>
-            <div className="stat-chip"><b>{stats.active}</b><span>Đang sử dụng</span></div>
-            <div className="stat-chip"><b>{stats.owned}</b><span>Bạn quản lý</span></div>
+          <div className="subject-topbar">
+            <div>
+              <h1>Quản lý học phần</h1>
+              <p>
+                Tạo học phần cá nhân, duy trì chương/CLO và xem nhanh ngân hàng câu hỏi đang gắn với từng học phần.
+              </p>
+            </div>
+            <div className="subject-topbar-actions">
+              <button type="button" className="btn btn--outline" onClick={fetchSubjects} disabled={loading}>
+                Làm mới
+              </button>
+              {canCreateSubjects && (
+                <button type="button" className="btn btn--primary" onClick={openCreateSubject}>
+                  Thêm học phần
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="subject-toolbar">
-            <input
-              className="field-input subject-search"
-              placeholder="Tìm theo mã hoặc tên học phần..."
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-            />
-            <label className="subject-switch">
-              <input
-                type="checkbox"
-                checked={showInactive}
-                onChange={(event) => setShowInactive(event.target.checked)}
-              />
-              Hiện học phần đã ngừng
-            </label>
+          <div className="subject-stat-grid">
+            <div><b>{stats.total}</b><span>Tổng học phần</span></div>
+            <div><b>{stats.active}</b><span>Đang dùng</span></div>
+            <div><b>{stats.owned}</b><span>Bạn quản lý</span></div>
+            <div><b>{stats.questions}</b><span>Câu hỏi đã gắn</span></div>
           </div>
 
           {error && <p className="subject-alert subject-alert--error">{error}</p>}
           {notice && <p className="subject-alert subject-alert--ok">{notice}</p>}
 
-          {loading ? (
-            <p className="empty-note">Đang tải danh sách học phần...</p>
-          ) : visibleSubjects.length === 0 ? (
-            <p className="empty-note">
-              {keyword
-                ? 'Không tìm thấy học phần phù hợp.'
-                : canCreateSubjects
-                  ? 'Chưa có học phần nào. Bấm "Thêm học phần" để bắt đầu.'
-                  : 'Chưa có học phần nào được phân quyền cho bạn.'}
-            </p>
-          ) : (
-            <div className="subject-list">
-              {visibleSubjects.map((subject) => {
-                const id = refId(subject);
-                const expanded = expandedId === id;
-                const editable = subject.can_manage;
-                const counts = subject.usage_counts || {};
-                return (
-                  <article className={`subject-card ${subject.is_active ? '' : 'subject-card--muted'}`} key={id}>
-                    <header className="subject-card-head">
-                      <div className="subject-card-title">
-                        <span className="subject-code">{subject.subject_code}</span>
-                        <h3>{subject.subject_name}</h3>
-                        {!subject.is_active && <span className="tag tag--muted">Đã ngừng</span>}
-                        {!editable && <span className="tag tag--lock">Chỉ xem</span>}
+          <div className="subject-shell">
+            <aside className="subject-sidebar" aria-label="Danh sách học phần">
+              <div className="subject-sidebar-head">
+                <input
+                  className="field-input subject-search"
+                  placeholder="Tìm mã, tên hoặc mô tả..."
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                />
+                <div className="subject-segments">
+                  {STATUS_FILTERS.map((filter) => (
+                    <button
+                      type="button"
+                      key={filter.value}
+                      className={statusFilter === filter.value ? 'is-active' : ''}
+                      onClick={() => setStatusFilter(filter.value)}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {loading ? (
+                <p className="empty-note">Đang tải học phần...</p>
+              ) : visibleSubjects.length === 0 ? (
+                <p className="empty-note">
+                  {keyword
+                    ? 'Không tìm thấy học phần phù hợp.'
+                    : canCreateSubjects
+                      ? 'Chưa có học phần nào trong bộ lọc này.'
+                      : 'Chưa có học phần nào được phân quyền cho bạn.'}
+                </p>
+              ) : (
+                <div className="subject-list">
+                  {visibleSubjects.map((subject) => {
+                    const id = refId(subject);
+                    const counts = subject.usage_counts || {};
+                    return (
+                      <button
+                        type="button"
+                        className={`subject-row ${selectedSubjectId === id ? 'is-selected' : ''} ${subject.is_active === false ? 'is-muted' : ''}`}
+                        key={id}
+                        onClick={() => setSelectedSubjectId(id)}
+                      >
+                        <span className="subject-row-code">{subject.subject_code}</span>
+                        <span className="subject-row-main">
+                          <b>{subject.subject_name}</b>
+                          <small>{counts.questions || 0} câu hỏi · {subject.chapters?.length || 0} chương · {subject.learning_outcomes?.length || 0} CLO</small>
+                        </span>
+                        <span className="subject-row-tags">
+                          {!subject.can_manage && <span>Chỉ xem</span>}
+                          {subject.is_active === false && <span>Đã ngừng</span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </aside>
+
+            <section className="subject-panel" aria-label="Chi tiết học phần">
+              {!selectedSubject ? (
+                <div className="subject-placeholder">
+                  <h2>Chọn một học phần</h2>
+                  <p>Chi tiết học phần, chương, CLO và câu hỏi sẽ hiển thị tại đây.</p>
+                </div>
+              ) : (
+                <>
+                  <header className="subject-detail-header">
+                    <div>
+                      <span className="subject-code-pill">{selectedSubject.subject_code}</span>
+                      <h2>{selectedSubject.subject_name}</h2>
+                      {selectedSubject.description && <p>{selectedSubject.description}</p>}
+                      <div className="subject-meta-strip">
+                        <span>{selectedSubject.owner_email || 'Chưa có email chủ sở hữu'}</span>
+                        <span>{selectedSubject.is_active === false ? 'Đã ngừng sử dụng' : 'Đang sử dụng'}</span>
+                        <span>{selectedSubject.can_manage ? 'Có quyền chỉnh sửa' : 'Chỉ xem'}</span>
                       </div>
-                      <div className="subject-card-tools">
-                        <button
-                          type="button"
-                          className="btn btn--ghost"
-                          onClick={() => setExpandedId(expanded ? null : id)}
-                        >
-                          {expanded ? 'Thu gọn' : 'Chi tiết'}
-                        </button>
-                        {editable && (
-                          <>
-                            <button type="button" className="btn btn--outline" onClick={() => openEditSubject(subject)}>
-                              Sửa
+                    </div>
+                    <div className="subject-action-stack">
+                      <button type="button" className="btn btn--outline" onClick={() => goToQuestionManager()}>
+                        Quản lý câu hỏi
+                      </button>
+                      {selectedSubject.can_manage && (
+                        <>
+                          <button type="button" className="btn btn--outline" onClick={() => openEditSubject(selectedSubject)}>
+                            Sửa học phần
+                          </button>
+                          {selectedSubject.is_active !== false ? (
+                            <button
+                              type="button"
+                              className="btn btn--danger"
+                              disabled={busyId === selectedSubjectId}
+                              onClick={() => handleDeactivate(selectedSubject)}
+                            >
+                              Ngừng dùng
                             </button>
-                            {subject.is_active ? (
-                              <button
-                                type="button"
-                                className="btn btn--danger"
-                                disabled={busyId === id}
-                                onClick={() => handleDeactivate(subject)}
-                              >
-                                {busyId === id ? '...' : 'Ngừng dùng'}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="btn btn--outline"
-                                disabled={busyId === id}
-                                onClick={() => handleRestore(subject)}
-                              >
-                                {busyId === id ? '...' : 'Khôi phục'}
-                              </button>
-                            )}
-                          </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn--outline"
+                              disabled={busyId === selectedSubjectId}
+                              onClick={() => handleRestore(selectedSubject)}
+                            >
+                              Khôi phục
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </header>
+
+                  <div className="subject-summary-grid">
+                    <div><b>{activeChapters.length}</b><span>Chương</span></div>
+                    <div><b>{activeClos.length}</b><span>CLO</span></div>
+                    <div><b>{selectedSubject.usage_counts?.documents || 0}</b><span>Tài liệu</span></div>
+                    <div><b>{selectedSubject.usage_counts?.questions || 0}</b><span>Câu hỏi</span></div>
+                    <div><b>{selectedSubject.usage_counts?.exams || 0}</b><span>Đề thi</span></div>
+                  </div>
+
+                  <div className="subject-detail-grid">
+                    <div className="detail-block">
+                      <div className="detail-head">
+                        <h3>Chương</h3>
+                        {selectedSubject.can_manage && (
+                          <button type="button" className="link-button" onClick={() => openChildModal(selectedSubject, 'chapter')}>
+                            Thêm chương
+                          </button>
                         )}
                       </div>
-                    </header>
-
-                    {subject.description && <p className="subject-desc">{subject.description}</p>}
-
-                    <div className="subject-metrics">
-                      <span>{subject.chapters?.length || 0} chương</span>
-                      <span>{subject.learning_outcomes?.length || 0} CLO</span>
-                      <span>{counts.documents || 0} tài liệu</span>
-                      <span>{counts.questions || 0} câu hỏi</span>
-                      <span>{counts.exams || 0} đề thi</span>
-                      {subject.owner_email && <span className="subject-owner">{subject.owner_email}</span>}
+                      {activeChapters.length ? (
+                        <ul className="detail-list">
+                          {activeChapters.map((chapter) => (
+                            <li key={refId(chapter)} className={chapter.is_active === false ? 'is-off' : ''}>
+                              <div>
+                                <b>{chapter.chapter_code}</b>
+                                <span>{chapter.chapter_name}</span>
+                                <small>{chapter.usage_counts?.questions || 0} câu hỏi</small>
+                              </div>
+                              {selectedSubject.can_manage && (
+                                <div className="detail-actions">
+                                  <button type="button" onClick={() => openChildModal(selectedSubject, 'chapter', chapter)}>Sửa</button>
+                                  <button
+                                    type="button"
+                                    disabled={busyId === refId(chapter)}
+                                    onClick={() => toggleChildActive(selectedSubject, 'chapter', chapter)}
+                                  >
+                                    {chapter.is_active === false ? 'Bật' : 'Tắt'}
+                                  </button>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="detail-empty">Chưa có chương nào.</p>
+                      )}
                     </div>
 
-                    {expanded && (
-                      <div className="subject-detail">
-                        <div className="detail-block">
-                          <div className="detail-head">
-                            <h4>Chương</h4>
-                            {editable && (
-                              <button type="button" className="btn btn--ghost" onClick={() => openChildModal(subject, 'chapter')}>
-                                + Thêm chương
-                              </button>
-                            )}
-                          </div>
-                          {subject.chapters?.length ? (
-                            <ul className="detail-list">
-                              {subject.chapters.map((chapter) => (
-                                <li key={refId(chapter)} className={chapter.is_active === false ? 'is-off' : ''}>
-                                  <div>
-                                    <b>{chapter.chapter_code}</b> — {chapter.chapter_name}
-                                    <small>{chapter.usage_counts?.questions || 0} câu hỏi</small>
-                                  </div>
-                                  {editable && (
-                                    <div className="detail-actions">
-                                      <button type="button" onClick={() => openChildModal(subject, 'chapter', chapter)}>Sửa</button>
-                                      <button
-                                        type="button"
-                                        disabled={busyId === refId(chapter)}
-                                        onClick={() => toggleChildActive(subject, 'chapter', chapter)}
-                                      >
-                                        {chapter.is_active === false ? 'Bật' : 'Tắt'}
-                                      </button>
-                                    </div>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="detail-empty">Chưa có chương nào.</p>
-                          )}
-                        </div>
-
-                        <div className="detail-block">
-                          <div className="detail-head">
-                            <h4>Chuẩn đầu ra (CLO)</h4>
-                            {editable && (
-                              <button type="button" className="btn btn--ghost" onClick={() => openChildModal(subject, 'clo')}>
-                                + Thêm CLO
-                              </button>
-                            )}
-                          </div>
-                          {subject.learning_outcomes?.length ? (
-                            <ul className="detail-list">
-                              {subject.learning_outcomes.map((clo) => (
-                                <li key={refId(clo)} className={clo.is_active === false ? 'is-off' : ''}>
-                                  <div>
-                                    <b>{clo.clo_code}</b> — {clo.description}
-                                    <small>Trọng số {clo.target_weight ?? 1}</small>
-                                  </div>
-                                  {editable && (
-                                    <div className="detail-actions">
-                                      <button type="button" onClick={() => openChildModal(subject, 'clo', clo)}>Sửa</button>
-                                      <button
-                                        type="button"
-                                        disabled={busyId === refId(clo)}
-                                        onClick={() => toggleChildActive(subject, 'clo', clo)}
-                                      >
-                                        {clo.is_active === false ? 'Bật' : 'Tắt'}
-                                      </button>
-                                    </div>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="detail-empty">Chưa có CLO nào.</p>
-                          )}
-                        </div>
+                    <div className="detail-block">
+                      <div className="detail-head">
+                        <h3>Chuẩn đầu ra</h3>
+                        {selectedSubject.can_manage && (
+                          <button type="button" className="link-button" onClick={() => openChildModal(selectedSubject, 'clo')}>
+                            Thêm CLO
+                          </button>
+                        )}
                       </div>
+                      {activeClos.length ? (
+                        <ul className="detail-list">
+                          {activeClos.map((clo) => (
+                            <li key={refId(clo)} className={clo.is_active === false ? 'is-off' : ''}>
+                              <div>
+                                <b>{clo.clo_code}</b>
+                                <span>{clo.description}</span>
+                                <small>Trọng số {clo.target_weight ?? 1}</small>
+                              </div>
+                              {selectedSubject.can_manage && (
+                                <div className="detail-actions">
+                                  <button type="button" onClick={() => openChildModal(selectedSubject, 'clo', clo)}>Sửa</button>
+                                  <button
+                                    type="button"
+                                    disabled={busyId === refId(clo)}
+                                    onClick={() => toggleChildActive(selectedSubject, 'clo', clo)}
+                                  >
+                                    {clo.is_active === false ? 'Bật' : 'Tắt'}
+                                  </button>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="detail-empty">Chưa có CLO nào.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="question-preview">
+                    <div className="detail-head">
+                      <div>
+                        <h3>Câu hỏi trong học phần</h3>
+                        <p>Chỉ xem nhanh. Sửa và duyệt câu hỏi thực hiện ở module Quản lý câu hỏi.</p>
+                      </div>
+                      <div className="question-preview-actions">
+                        <button
+                          type="button"
+                          className="btn btn--outline"
+                          disabled={selectedQuestionState.loading}
+                          onClick={() => fetchSubjectQuestions(selectedSubjectId, { force: true })}
+                        >
+                          Tải lại
+                        </button>
+                        <button type="button" className="btn btn--primary" onClick={() => goToQuestionManager()}>
+                          Xem tất cả
+                        </button>
+                      </div>
+                    </div>
+
+                    {selectedQuestionState.error && (
+                      <p className="subject-alert subject-alert--error">{selectedQuestionState.error}</p>
                     )}
-                  </article>
-                );
-              })}
-            </div>
-          )}
+                    {selectedQuestionState.loading ? (
+                      <p className="empty-note">Đang tải câu hỏi...</p>
+                    ) : selectedQuestionState.items.length ? (
+                      <>
+                        <div className="question-readonly-list">
+                          {selectedQuestionState.items.map((question) => (
+                            <article className="question-readonly-item" key={question.id}>
+                              <div className="question-readonly-head">
+                                <span>{question.question_code}</span>
+                                <b>{REVIEW_STATUS_LABEL[question.review_status] || question.review_status}</b>
+                              </div>
+                              <p>{question.content}</p>
+                              <div className="question-readonly-tags">
+                                <span>{questionKind(question)}</span>
+                                <span>{questionBloom(question)}</span>
+                                <span>{questionDifficulty(question)}</span>
+                                {(question.clos || []).slice(0, 3).map((clo) => (
+                                  <span key={refId(clo.id || clo)}>{clo.code || clo.clo_code || 'CLO'}</span>
+                                ))}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                        {selectedQuestionState.total > selectedQuestionState.items.length && (
+                          <p className="question-preview-more">
+                            Còn {selectedQuestionState.total - selectedQuestionState.items.length} câu hỏi khác trong học phần này.
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="detail-empty">Học phần này chưa có câu hỏi nào.</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
         </div>
       </section>
 
@@ -524,7 +722,7 @@ function SubjectManage() {
             </label>
 
             <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={closeSubjectModal} disabled={saving}>Huỷ</button>
+              <button type="button" className="btn btn--outline" onClick={closeSubjectModal} disabled={saving}>Hủy</button>
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Lưu học phần'}
               </button>
@@ -630,7 +828,7 @@ function SubjectManage() {
             )}
 
             <div className="modal-actions">
-              <button type="button" className="btn btn--outline" onClick={closeChildModal} disabled={saving}>Huỷ</button>
+              <button type="button" className="btn btn--outline" onClick={closeChildModal} disabled={saving}>Hủy</button>
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Lưu'}
               </button>

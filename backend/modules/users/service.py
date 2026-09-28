@@ -87,12 +87,11 @@ class UserService:
         )
         user = None
         try:
-            user = self.repository.create(
+            user = self.repository.sync_identity(
                 {
-                    "firebase_uid": firebase_user.uid,
+                    "uid": firebase_user.uid,
                     "email": str(payload.email),
-                    "display_name": payload.full_name,
-                    "role": "Teacher",
+                    "name": payload.full_name,
                 }
             )
             self.sessions.upsert(firebase_user.uid, None)
@@ -230,12 +229,6 @@ class UserService:
     def get(self, user_id: str) -> dict | None:
         user = self.repository.find_by_id(user_id)
         return serialize_user(user) if user else None
-
-    def get_stats(self, user_id: str) -> dict | None:
-        user = self.repository.find_by_id(user_id)
-        if not user:
-            return None
-        return self.repository.get_stats(user_id)
 
     def get_by_firebase_uid(self, firebase_uid: str) -> dict | None:
         user = self.repository.find_by_firebase_uid(firebase_uid)

@@ -54,6 +54,8 @@ class UserRepository(Protocol):
 
     def find_by_firebase_uid(self, firebase_uid: str) -> dict | None: ...
 
+    def find_by_email(self, email: str) -> dict | None: ...
+
     def create(self, data: dict) -> dict: ...
 
     def sync_identity(self, claims: dict) -> dict: ...
@@ -66,36 +68,20 @@ class UserRepository(Protocol):
 
     def delete_by_id(self, user_id: str | ObjectId) -> None: ...
 
-    def get_stats(self, user_id: str | ObjectId) -> dict: ...
-
 
 class MongoUserRepository:
     def __init__(self, database: Database):
         self.db = database
         self.collection = database.users
 
-    def get_stats(self, user_id: str | ObjectId) -> dict:
-        oid = object_id(user_id)
-        documents_count = self.db.documents.count_documents(
-            {"uploaded_by_user_id": oid, "status": {"$ne": "ARCHIVED"}}
-        )
-        questions_count = self.db.questions.count_documents(
-            {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
-        )
-        pending_questions_count = self.db.questions.count_documents(
-            {"created_by_user_id": oid, "review_status": "PENDING"}
-        )
-        return {
-            "documents_count": documents_count,
-            "questions_count": questions_count,
-            "pending_questions_count": pending_questions_count,
-        }
-
     def find_by_id(self, user_id: str | ObjectId) -> dict | None:
         return self.collection.find_one({"_id": object_id(user_id)})
 
     def find_by_firebase_uid(self, firebase_uid: str) -> dict | None:
         return self.collection.find_one({"firebase_uid": firebase_uid})
+
+    def find_by_email(self, email: str) -> dict | None:
+        return self.collection.find_one({"email": email.lower()})
 
     def create(self, data: dict) -> dict:
         now = utc_now()
@@ -122,8 +108,13 @@ class MongoUserRepository:
         avatar = claims.get("picture") or ""
         profile_defaults = {"school": "", "address": "", "avatar": ""}
         profile_overlay = {"avatar": avatar} if avatar else {}
+        identity_filter = (
+            {"$or": [{"firebase_uid": firebase_uid}, {"email": email}]}
+            if claims.get("email")
+            else {"firebase_uid": firebase_uid}
+        )
         return self.collection.find_one_and_update(
-            {"firebase_uid": firebase_uid},
+            identity_filter,
             [
                 {
                     "$set": {

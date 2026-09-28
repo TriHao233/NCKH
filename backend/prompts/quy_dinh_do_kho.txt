@@ -1,35 +1,12 @@
-QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ
+QUY ĐỊNH ĐỘ KHÓ ƯỚC LƯỢNG
 
-Nhiệm vụ: gán đúng MỘT nhãn độ khó cho mỗi câu hỏi. Chỉ dùng ba giá trị:
-- de
-- trung_binh
-- kho
+Chỉ dùng một trong ba nhãn: `de`, `trung_binh`, `kho`.
 
-Độ khó khác Bloom. Bloom là thao tác tư duy (nhớ, hiểu, vận dụng...). Độ khó là mức dễ hay khó để người học trả lời đúng. Phải đo từ chính nội dung câu hỏi, không bịa thêm kiến thức ngoài CONTEXT, không tự làm khó bằng chi tiết vụn vặt.
+Độ khó là mức thử thách dự kiến trong cùng một mức Bloom; không mặc định Bloom thấp là dễ hoặc Bloom cao là khó. Không đổi Bloom, dùng câu mơ hồ hoặc thêm kiến thức ngoài CONTEXT để điều chỉnh độ khó.
 
-Đo theo ba tiêu chí, theo thứ tự ưu tiên.
+Đánh giá theo kiến thức cần nhớ, số bước suy luận, lượng dữ kiện/ràng buộc và độ gần nhau của phương án:
+- `de`: một ý quen thuộc, nhận diện hoặc áp dụng trực tiếp trong một bước; dữ kiện rõ, nhiễu dễ phân biệt.
+- `trung_binh`: nối một vài dữ kiện hoặc thực hiện một đến hai bước; lựa chọn tương đối gần nhưng vẫn phân biệt rõ.
+- `kho`: chi tiết dễ nhầm, nhiều bước/ràng buộc, ngoại lệ hoặc lựa chọn gần nghĩa; vẫn phải công bằng và có đáp án xác định.
 
-1. MỨC BLOOM (tiêu chí chính)
-- Bloom 1 Nhớ, 2 Hiểu: mặc định nghiêng de. Chỉ lên trung_binh nếu câu dài, nhiều điều kiện hoặc dùng keyword khó.
-- Bloom 3 Vận dụng, 4 Phân tích: mặc định trung_binh. Xuống de nếu chỉ nhận diện thuật ngữ rất ngắn. Lên kho nếu phải so sánh nhiều nhánh, ngoại lệ, hoặc suy nhiều bước.
-- Bloom 5 Đánh giá, 6 Sáng tạo: mặc định kho. Chỉ xuống trung_binh nếu tình huống rất ngắn, ràng buộc rõ, gần như áp dụng một quy tắc.
-
-2. KEYWORD TRONG CÂU HỎI
-Keyword dễ (kéo về de): là gì, định nghĩa, gọi tên, liệt kê, nhận biết, ký hiệu, thuật ngữ, đúng hay sai.
-Keyword khó (kéo về kho): so sánh, phân tích, phân biệt, ngoại lệ, tại sao, chứng minh, tối ưu, độ phức tạp, hậu quả, kết hợp, thiết kế, đánh giá, ưu nhược, trường hợp nào.
-
-Nếu có keyword khó, không gắn de dù Bloom thấp, trừ khi câu chỉ hỏi nhận diện một thuật ngữ.
-
-3. ĐỘ DÀI VÀ CẤU TRÚC
-- Stem ngắn, hỏi trực tiếp một ý: dễ hơn.
-- Stem dài, nhiều mệnh đề, có nếu / khi / trong trường hợp, tình huống nhiều dữ kiện: khó hơn.
-- Đếm cả phần câu hỏi và lựa chọn. Nhiều lựa chọn gần nghĩa, nhiễu tinh vi: khó hơn. Lựa chọn lộ đáp án: dễ hơn, nhưng không vì thế mà hạ Bloom.
-
-CÁCH CHỐT NHÃN
-- de: nhớ/nhận diện, câu ngắn, keyword dễ, một bước.
-- trung_binh: vận dụng hoặc hiểu có điều kiện, độ dài vừa, một đến hai bước.
-- kho: phân tích / đánh giá / sáng tạo, nhiều điều kiện, keyword khó, hoặc phải kết hợp nhiều ý.
-
-Khi giảng viên chỉ định TARGET DIFFICULTY, ưu tiên nhãn đó: viết nội dung khớp độ khó được chọn và gán đúng nhãn đó trong JSON. Vẫn giữ Bloom đúng thao tác tư duy đã yêu cầu.
-
-Không dùng nhãn khác. Không để trống nếu đã viết được câu hỏi hợp lệ.
+Độ dài hay từ khóa chỉ là tín hiệu phụ; chốt nhãn theo thao tác thực tế người học phải làm.

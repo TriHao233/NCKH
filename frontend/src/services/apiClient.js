@@ -1,4 +1,5 @@
 import { auth } from "../firebase";
+import { demoAuthHeaders } from "../auth/demoSession";
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "/api/v1"
@@ -23,6 +24,17 @@ export async function apiRequest(
   }
 
   if (authRequired) {
+    const demoHeaders = demoAuthHeaders();
+    if (demoHeaders) {
+      Object.assign(requestHeaders, demoHeaders);
+      authRequired = false;
+    }
+  }
+
+  if (authRequired) {
+    if (!auth) {
+      throw new ApiError("Firebase web app chưa được cấu hình", 503, null);
+    }
     await auth.authStateReady();
     const firebaseUser = auth.currentUser;
     if (!firebaseUser) {

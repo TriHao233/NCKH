@@ -70,7 +70,6 @@ import { buildQuestionCoverage } from '../utils/questionCoverage';
 import {
   buildBulkQuestionUpdatePayload,
   filterSubmittableQuestions,
-  selectedQuestionsForIds,
   summarizeBulkSettled,
 } from '../utils/questionBulkActions';
 import {
@@ -359,7 +358,7 @@ function versionDiffRows(left, right) {
       after: rightClassification.bloom?.name || rightClassification.bloom?.level,
     },
     {
-      label: 'Độ khó',
+      label: 'Độ khó ước lượng',
       before: leftClassification.difficulty,
       after: rightClassification.difficulty,
     },
@@ -482,7 +481,8 @@ function ManagePage() {
   const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
   const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
   const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
-  const canCreateSubjects = permissionsForUser(user).includes('admin.catalog');
+  const permissions = permissionsForUser(user);
+  const canCreateSubjects = permissions.includes('catalog.subjects.manage_own');
 
   const [questions, setQuestions] = useState([]);
   const [questionTotal, setQuestionTotal] = useState(0);
@@ -547,7 +547,9 @@ function ManagePage() {
   const [editChangeNote, setEditChangeNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState([]);
+  const [selectedQuestionCache, setSelectedQuestionCache] = useState({});
   const [bulkActionBusy, setBulkActionBusy] = useState('');
+  const [bulkActionReport, setBulkActionReport] = useState(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkEditDraft, setBulkEditDraft] = useState({
     bloomLevel: '',
@@ -709,6 +711,18 @@ function ManagePage() {
     setSelectedSavedFilterId('');
     setSavedFilterName('');
   }, [savedFilterStorageKey]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const subjectId = params.get('subject_id') || '';
+    const chapterId = params.get('chapter_id') || '';
+    const cloId = params.get('clo_id') || '';
+    if (!subjectId) return;
+    setSubjectFilter(subjectId);
+    setChapterFilter(chapterId || 'all-chapters');
+    setCloFilter(cloId || 'all-clos');
+    setFiltersOpen(true);
+  }, [location.search]);
 
   useEffect(() => {
     const loadTeacherOptions = async () => {
@@ -917,6 +931,9 @@ function ManagePage() {
 
   useEffect(() => {
     setQuestionPage(0);
+    setSelectedQuestionIds([]);
+    setSelectedQuestionCache({});
+    setBulkActionReport(null);
   }, [
     searchTerm,
     statusFilter,
@@ -956,10 +973,6 @@ function ManagePage() {
       setSelectedQuestion(fresh);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questions]);
-
-  useEffect(() => {
-    setSelectedQuestionIds((current) => current.filter((id) => questions.some((question) => question.id === id)));
   }, [questions]);
 
   useEffect(() => {
@@ -1062,10 +1075,12 @@ function ManagePage() {
     { key: 'chapters', label: 'Chương', rows: questionCoverage.chapters, gapCount: questionCoverage.gaps.chapters },
     { key: 'clos', label: 'CLO', rows: questionCoverage.clos, gapCount: questionCoverage.gaps.clos },
   ];
-  const selectedQuestions = useMemo(
-    () => selectedQuestionsForIds(questions, selectedQuestionIds),
-    [questions, selectedQuestionIds],
-  );
+  const selectedQuestions = useMemo(() => {
+    const currentPageById = new Map(questions.map((question) => [question.id, question]));
+    return selectedQuestionIds
+      .map((id) => currentPageById.get(id) || selectedQuestionCache[id])
+      .filter(Boolean);
+  }, [questions, selectedQuestionCache, selectedQuestionIds]);
   const selectedSubmittableQuestions = useMemo(
     () => filterSubmittableQuestions(selectedQuestions, SUBMITTABLE_REVIEW_STATUSES),
     [selectedQuestions],
@@ -1191,7 +1206,7 @@ function ManagePage() {
   };
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`Xoá câu hỏi "${item.question_code}"? Hành động này sẽ lưu trữ câu hỏi và ẩn khỏi ngân hàng.`)) {
+    if (!window.confirm(`Đưa câu hỏi "${item.question_code}" vào lưu trữ? Câu hỏi sẽ bị ẩn khỏi ngân hàng.`)) {
       return;
     }
     setDeletingId(item.id);
@@ -1269,11 +1284,21 @@ function ManagePage() {
   };
 
   const toggleQuestionSelection = (questionId) => {
-    setSelectedQuestionIds((current) => (
-      current.includes(questionId)
-        ? current.filter((id) => id !== questionId)
-        : [...current, questionId]
-    ));
+    const question = questions.find((item) => item.id === questionId);
+    setSelectedQuestionIds((current) => {
+      if (current.includes(questionId)) {
+        setSelectedQuestionCache((cache) => {
+          const next = { ...cache };
+          delete next[questionId];
+          return next;
+        });
+        return current.filter((id) => id !== questionId);
+      }
+      if (question) {
+        setSelectedQuestionCache((cache) => ({ ...cache, [questionId]: question }));
+      }
+      return [...current, questionId];
+    });
   };
 
   const toggleFilteredSelection = () => {
@@ -1281,11 +1306,70 @@ function ManagePage() {
       const next = new Set(current);
       if (allFilteredSelected) {
         filteredQuestionIds.forEach((id) => next.delete(id));
+        setSelectedQuestionCache((cache) => {
+          const updated = { ...cache };
+          filteredQuestionIds.forEach((id) => delete updated[id]);
+          return updated;
+        });
       } else {
         filteredQuestionIds.forEach((id) => next.add(id));
+        setSelectedQuestionCache((cache) => ({
+          ...cache,
+          ...Object.fromEntries(filtered.map((question) => [question.id, question])),
+        }));
       }
       return Array.from(next);
     });
+  };
+
+  const clearQuestionSelection = () => {
+    setSelectedQuestionIds([]);
+    setSelectedQuestionCache({});
+  };
+
+  const removeQuestionsFromSelection = (questionIds) => {
+    const removed = new Set(questionIds);
+    setSelectedQuestionIds((current) => current.filter((id) => !removed.has(id)));
+    setSelectedQuestionCache((cache) => {
+      const next = { ...cache };
+      removed.forEach((id) => delete next[id]);
+      return next;
+    });
+  };
+
+  const selectAllFilteredQuestions = async () => {
+    if (questionTotal === 0 || bulkActionBusy) return;
+    setBulkActionBusy('select-all');
+    setBulkActionReport(null);
+    try {
+      const pageSize = 100;
+      const firstPage = await listQuestions(questionListRequest({
+        page: 1,
+        pageSize,
+        search: searchTerm,
+      }));
+      const allQuestions = [...(firstPage.items || [])];
+      const pageCount = Math.ceil((firstPage.total || 0) / pageSize);
+      for (let page = 2; page <= pageCount; page += 1) {
+        const result = await listQuestions(questionListRequest({ page, pageSize, search: searchTerm }));
+        allQuestions.push(...(result.items || []));
+      }
+      setSelectedQuestionIds(allQuestions.map((question) => question.id));
+      setSelectedQuestionCache(Object.fromEntries(allQuestions.map((question) => [question.id, question])));
+      setBulkActionReport({
+        tone: 'success',
+        title: `Đã chọn toàn bộ ${allQuestions.length} câu hỏi khớp bộ lọc.`,
+        failures: [],
+      });
+    } catch (error) {
+      setBulkActionReport({
+        tone: 'error',
+        title: error.message || 'Không thể chọn toàn bộ kết quả.',
+        failures: [],
+      });
+    } finally {
+      setBulkActionBusy('');
+    }
   };
 
   const resetBulkEditDraft = () => {
@@ -1330,18 +1414,20 @@ function ManagePage() {
           submitQuestionForReview(question.id).then(() => question.id)
         )),
       );
-      const summary = summarizeBulkSettled(results);
+      const summary = summarizeBulkSettled(results, selectedSubmittableQuestions);
       const successfulIds = new Set(
         results
           .filter((result) => result.status === 'fulfilled')
           .map((result) => result.value),
       );
-      setSelectedQuestionIds((current) => current.filter((id) => !successfulIds.has(id)));
+      removeQuestionsFromSelection(successfulIds);
       await fetchQuestions(searchTerm);
       setWorkflowMessage(`Đã gửi duyệt ${summary.success}/${selectedSubmittableQuestions.length} câu hỏi.`);
-      if (summary.failed > 0) {
-        alert(`Có ${summary.failed} câu gửi duyệt thất bại. Lỗi đầu tiên: ${summary.firstError}`);
-      }
+      setBulkActionReport({
+        tone: summary.failed > 0 ? 'warning' : 'success',
+        title: `Gửi duyệt: ${summary.success} thành công, ${summary.failed} thất bại.`,
+        failures: summary.failures,
+      });
     } finally {
       setBulkActionBusy('');
     }
@@ -1349,24 +1435,26 @@ function ManagePage() {
 
   const handleBulkArchive = async () => {
     if (selectedQuestions.length === 0) return;
-    if (!window.confirm(`Lưu trữ ${selectedQuestions.length} câu hỏi đã chọn?`)) return;
+    if (!window.confirm(`Xóa ${selectedQuestions.length} câu hỏi đã chọn? Các câu hỏi sẽ được đưa vào lưu trữ và ẩn khỏi ngân hàng.`)) return;
     setBulkActionBusy('archive');
     try {
       const results = await Promise.allSettled(
         selectedQuestions.map((question) => deleteQuestion(question.id).then(() => question.id)),
       );
-      const summary = summarizeBulkSettled(results);
+      const summary = summarizeBulkSettled(results, selectedQuestions);
       const successfulIds = new Set(
         results
           .filter((result) => result.status === 'fulfilled')
           .map((result) => result.value),
       );
-      setSelectedQuestionIds((current) => current.filter((id) => !successfulIds.has(id)));
+      removeQuestionsFromSelection(successfulIds);
       await fetchQuestions(searchTerm);
       setWorkflowMessage(`Đã lưu trữ ${summary.success}/${selectedQuestions.length} câu hỏi.`);
-      if (summary.failed > 0) {
-        alert(`Có ${summary.failed} câu lưu trữ thất bại. Lỗi đầu tiên: ${summary.firstError}`);
-      }
+      setBulkActionReport({
+        tone: summary.failed > 0 ? 'warning' : 'success',
+        title: `Lưu trữ: ${summary.success} thành công, ${summary.failed} thất bại.`,
+        failures: summary.failures,
+      });
     } finally {
       setBulkActionBusy('');
     }
@@ -1395,21 +1483,24 @@ function ManagePage() {
           updateQuestion(question.id, payload).then(() => question.id)
         )),
       );
-      const summary = summarizeBulkSettled(results);
+      const workQuestions = workItems.map(({ question }) => question);
+      const summary = summarizeBulkSettled(results, workQuestions);
       const successfulIds = new Set(
         results
           .filter((result) => result.status === 'fulfilled')
           .map((result) => result.value),
       );
-      setSelectedQuestionIds((current) => current.filter((id) => !successfulIds.has(id)));
+      removeQuestionsFromSelection(successfulIds);
       await fetchQuestions(searchTerm);
       setWorkflowMessage(`Đã cập nhật hàng loạt ${summary.success}/${workItems.length} câu hỏi.`);
       if (summary.success > 0) {
         setBulkEditOpen(false);
       }
-      if (summary.failed > 0) {
-        alert(`Có ${summary.failed} câu cập nhật thất bại. Lỗi đầu tiên: ${summary.firstError}`);
-      }
+      setBulkActionReport({
+        tone: summary.failed > 0 ? 'warning' : 'success',
+        title: `Cập nhật: ${summary.success} thành công, ${summary.failed} thất bại.`,
+        failures: summary.failures,
+      });
     } finally {
       setBulkActionBusy('');
     }
@@ -2200,7 +2291,7 @@ function ManagePage() {
                     value={difficultyFilter}
                     onChange={(e) => setDifficultyFilter(e.target.value)}
                   >
-                    <option value="all-difficulties">Tất cả độ khó</option>
+                    <option value="all-difficulties">Tất cả độ khó ước lượng</option>
                     {DIFFICULTIES.map((difficulty) => (
                       <option key={difficulty.id} value={difficulty.id}>{difficulty.label}</option>
                     ))}
@@ -2295,10 +2386,30 @@ function ManagePage() {
                       disabled={filteredQuestionIds.length === 0 || Boolean(bulkActionBusy)}
                       onChange={toggleFilteredSelection}
                     />
-                    <span>Chọn tất cả đang hiển thị</span>
+                    <span>Chọn tất cả trên trang</span>
                   </label>
                   <span className="bulk-count">{selectedQuestions.length} đã chọn</span>
                   <div className="bulk-actions">
+                    {questionTotal > filteredQuestionIds.length && selectedQuestions.length < questionTotal && (
+                      <button
+                        type="button"
+                        className="btn btn--outline"
+                        disabled={Boolean(bulkActionBusy)}
+                        onClick={selectAllFilteredQuestions}
+                      >
+                        {bulkActionBusy === 'select-all' ? 'Đang chọn...' : `Chọn toàn bộ ${questionTotal} kết quả`}
+                      </button>
+                    )}
+                    {selectedQuestions.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn--outline"
+                        disabled={Boolean(bulkActionBusy)}
+                        onClick={clearQuestionSelection}
+                      >
+                        Bỏ chọn
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn--outline"
@@ -2321,9 +2432,28 @@ function ManagePage() {
                       disabled={selectedQuestions.length === 0 || Boolean(bulkActionBusy)}
                       onClick={handleBulkArchive}
                     >
-                      Lưu trữ
+                      Xóa tất cả đã chọn
                     </button>
                   </div>
+                </div>
+              )}
+
+              {bulkActionReport && (
+                <div className={`bulk-action-report bulk-action-report--${bulkActionReport.tone}`} role="status">
+                  <div className="bulk-action-report__header">
+                    <strong>{bulkActionReport.title}</strong>
+                    <button type="button" onClick={() => setBulkActionReport(null)} aria-label="Đóng báo cáo">×</button>
+                  </div>
+                  {bulkActionReport.failures.length > 0 && (
+                    <ul>
+                      {bulkActionReport.failures.slice(0, 8).map((failure) => (
+                        <li key={`${failure.id}-${failure.code}`}><b>{failure.code}:</b> {failure.message}</li>
+                      ))}
+                      {bulkActionReport.failures.length > 8 && (
+                        <li>Và {bulkActionReport.failures.length - 8} lỗi khác.</li>
+                      )}
+                    </ul>
+                  )}
                 </div>
               )}
 
@@ -2351,7 +2481,7 @@ function ManagePage() {
                           <span className="q-tag">{questionTypeLabel((item.classification?.assessment_type || '').toLowerCase())}</span>
                           <span className="bloom-tag">{item.classification?.bloom?.name || '—'}</span>
                           <span className={`difficulty-tag ${item.classification?.difficulty ? `difficulty-tag--${item.classification.difficulty}` : 'difficulty-tag--empty'}`}>
-                            {difficultyLabel(item.classification?.difficulty) || 'Chưa gán độ khó'}
+                            {difficultyLabel(item.classification?.difficulty) || 'Chưa ước lượng độ khó'}
                           </span>
                           {(item.clos || []).slice(0, 2).map((clo) => (
                             <span className="clo-tag" key={refId(clo.id || clo)}>
@@ -2461,7 +2591,7 @@ function ManagePage() {
                               <button
                                 type="button"
                                 className="icon-btn icon-btn--danger"
-                                title="Xoá"
+                                title="Đưa vào lưu trữ"
                                 disabled={deletingId === item.id}
                                 onClick={() => handleDelete(item)}
                               >
@@ -3013,7 +3143,7 @@ function ManagePage() {
               <span className="q-tag">{questionTypeLabel((viewingQuestion.classification?.assessment_type || '').toLowerCase())}</span>
               <span className="bloom-tag">{viewingQuestion.classification?.bloom?.name || '—'}</span>
               <span className={`difficulty-tag ${viewingQuestion.classification?.difficulty ? `difficulty-tag--${viewingQuestion.classification.difficulty}` : 'difficulty-tag--empty'}`}>
-                {difficultyLabel(viewingQuestion.classification?.difficulty) || 'Chưa gán độ khó'}
+                {difficultyLabel(viewingQuestion.classification?.difficulty) || 'Chưa ước lượng độ khó'}
               </span>
               <span className={`status-badge ${REVIEW_STATUS_CLASS[viewingQuestion.review_status] || ''}`}>
                 {REVIEW_STATUS_LABEL[viewingQuestion.review_status] || viewingQuestion.review_status}
@@ -3054,7 +3184,7 @@ function ManagePage() {
             <h3 className="profile-card-title">Sửa hàng loạt {selectedQuestions.length} câu hỏi</h3>
 
             <div className="field-group">
-              <label className="field-label">Mức Bloom</label>
+              <label className="field-label">Mức nhận thức Bloom</label>
               <select
                 className="field-select"
                 value={bulkEditDraft.bloomLevel}
@@ -3070,13 +3200,13 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Độ khó</label>
+              <label className="field-label">Độ khó ước lượng</label>
               <select
                 className="field-select"
                 value={bulkEditDraft.difficulty}
                 onChange={(e) => setBulkEditDraft((current) => ({ ...current, difficulty: e.target.value }))}
               >
-                <option value="">Không đổi độ khó</option>
+                <option value="">Không đổi độ khó ước lượng</option>
                 {DIFFICULTIES.map((difficulty) => (
                   <option key={difficulty.id} value={difficulty.id}>{difficulty.label}</option>
                 ))}

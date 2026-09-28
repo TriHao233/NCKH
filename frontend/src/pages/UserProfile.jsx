@@ -1,8 +1,9 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBriefcase,
-  faChartSimple,
+  faArrowUpRightFromSquare,
   faCircleCheck,
   faEnvelope,
   faFileLines,
@@ -22,24 +23,23 @@ import {
 } from 'firebase/auth';
 import { AuthContext } from '../context/AuthContext';
 import { auth } from '../firebase';
-import { getMe, getMyStats, updateMe, uploadMyAvatar } from '../api/users';
+import { getMe, updateMe, uploadMyAvatar } from '../api/users';
+import { canAccessPath } from '../auth/permissions';
+import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/UserProfile.css';
 
 const MAX_SCHOOL_LENGTH = 200;
 const MAX_ADDRESS_LENGTH = 300;
 const MAX_AVATAR_FILE_SIZE = 2 * 1024 * 1024;
-const URL_PATTERN = /^https?:\/\/[^\s]+$/i;
-
-function buildFallbackAvatar(name) {
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'U')}&background=0c78d4&color=fff`;
-}
+const URL_PATTERN = /^(?:https?:\/\/[^\s]+|\/api\/[^\s]+)$/i;
+const ROLE_LABELS = { Teacher: 'Giảng viên', Admin: 'Quản trị viên', Reviewer: 'Người duyệt' };
 
 function toFormState(user) {
   return {
     displayName: user?.display_name || '',
     school: user?.profile?.school || '',
     address: user?.profile?.address || '',
-    avatar: user?.profile?.avatar || '',
+    avatar: normalizeAvatarUrl(user?.profile?.avatar),
   };
 }
 
@@ -55,7 +55,7 @@ function validateForm(form) {
     errors.address = `Địa chỉ không vượt quá ${MAX_ADDRESS_LENGTH} ký tự.`;
   }
   if (form.avatar.trim() && !URL_PATTERN.test(form.avatar.trim())) {
-    errors.avatar = 'Ảnh đại diện phải là một URL hợp lệ (bắt đầu bằng http:// hoặc https://) hoặc để trống.';
+    errors.avatar = 'Ảnh đại diện phải là URL hợp lệ, đường dẫn /api/... hoặc để trống.';
   }
   return errors;
 }
@@ -147,7 +147,7 @@ function InfoTab({ user, onProfileUpdated }) {
     setFieldErrors((prev) => ({ ...prev, avatar: undefined }));
     try {
       const result = await uploadMyAvatar(file);
-      setForm((prev) => ({ ...prev, avatar: result.avatar_url || '' }));
+      setForm((prev) => ({ ...prev, avatar: normalizeAvatarUrl(result.avatar_url) }));
       setBanner({ type: 'success', message: 'Đã tải ảnh lên. Bấm Lưu thay đổi để cập nhật hồ sơ.' });
     } catch (error) {
       setFieldErrors((prev) => ({
@@ -181,7 +181,7 @@ function InfoTab({ user, onProfileUpdated }) {
         profile: {
           school: form.school.trim(),
           address: form.address.trim(),
-          avatar: form.avatar.trim(),
+          avatar: normalizeAvatarUrl(form.avatar),
         },
       });
       onProfileUpdated(updated);
@@ -196,7 +196,7 @@ function InfoTab({ user, onProfileUpdated }) {
     }
   };
 
-  const avatarPreview = form.avatar.trim() || buildFallbackAvatar(form.displayName);
+  const avatarPreview = normalizeAvatarUrl(form.avatar) || buildFallbackAvatar(form.displayName);
 
   return (
     <form className="card profile-card" onSubmit={handleSubmit}>
@@ -215,17 +215,21 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section profile-form-section--avatar">
         <h4><FontAwesomeIcon icon={faUser} /> Ảnh đại diện</h4>
         <div className="field-group">
-          <label className="field-label">Ảnh đại diện</label>
           <div className="avatar-edit-row">
             <img src={avatarPreview} alt="Xem trước ảnh đại diện" className="avatar-preview" referrerPolicy="no-referrer" />
             <div className="avatar-edit-controls">
-              <input
+              <details className="avatar-url-options">
+                <summary>Dùng ảnh từ liên kết</summary>
+                <label className="field-label" htmlFor="profile-avatar-url">Liên kết ảnh</label>
+                <input
+                id="profile-avatar-url"
                 className="field-input"
                 placeholder="Dán URL ảnh (https://...)"
                 value={form.avatar}
                 onChange={handleChange('avatar')}
                 disabled={isLoading || isUploadingAvatar}
-              />
+                />
+              </details>
               <div className="avatar-button-row">
                 <input
                   ref={avatarInputRef}
@@ -251,7 +255,7 @@ function InfoTab({ user, onProfileUpdated }) {
                   disabled={isLoading || isUploadingAvatar}
                 >
                   <FontAwesomeIcon icon={faTrashCan} />
-                  Dùng avatar mặc định
+                  Dùng ảnh mặc định
                 </button>
               </div>
             </div>
@@ -263,8 +267,9 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section">
         <h4><FontAwesomeIcon icon={faUser} /> Thông tin cơ bản</h4>
         <div className="field-group">
-          <label className="field-label">Họ và tên</label>
+          <label className="field-label" htmlFor="profile-display-name">Họ và tên</label>
           <input
+            id="profile-display-name"
             className="field-input"
             value={form.displayName}
             onChange={handleChange('displayName')}
@@ -281,7 +286,7 @@ function InfoTab({ user, onProfileUpdated }) {
           </div>
           <div className="field-group">
             <label className="field-label">Vai trò</label>
-            <input className="field-input" value={user?.role || ''} disabled />
+            <input className="field-input" value={ROLE_LABELS[user?.role] || user?.role || ''} disabled />
             <span className="field-hint">Chỉ quản trị viên mới thay đổi được vai trò.</span>
           </div>
         </div>
@@ -353,7 +358,7 @@ function InfoTab({ user, onProfileUpdated }) {
 }
 
 function SecurityTab() {
-  const isPasswordAccount = (auth.currentUser?.providerData || []).some(
+  const isPasswordAccount = (auth?.currentUser?.providerData || []).some(
     (provider) => provider.providerId === 'password',
   );
 
@@ -376,6 +381,9 @@ function SecurityTab() {
     setIsSubmitting(true);
     setBanner(null);
     try {
+      if (!auth?.currentUser) {
+        throw new Error('Firebase web app chưa được cấu hình hoặc phiên đăng nhập đã hết hạn.');
+      }
       const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
       await reauthenticateWithCredential(auth.currentUser, credential);
       await updatePassword(auth.currentUser, newPassword);
@@ -460,22 +468,13 @@ function SecurityTab() {
 }
 
 function ProfileSidebar({ user }) {
-  const [stats, setStats] = useState(null);
-  const [statsError, setStatsError] = useState(null);
-
-  useEffect(() => {
-    let active = true;
-    getMyStats()
-      .then((data) => {
-        if (active) setStats(data);
-      })
-      .catch((error) => {
-        if (active) setStatsError(error.message || 'Không tải được thống kê.');
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const quickLinks = [
+    { path: '/lich-cong-viec', label: 'Lịch công việc' },
+    { path: '/quan-ly', label: 'Quản lý câu hỏi' },
+    { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+    { path: '/huong-dan', label: 'Hướng dẫn sử dụng' },
+    { path: '/lien-he', label: 'Liên hệ hỗ trợ' },
+  ].filter((link) => canAccessPath(user, link.path));
 
   const displayStatus = user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động';
   const joinedAt = user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—';
@@ -491,7 +490,7 @@ function ProfileSidebar({ user }) {
         <ul className="info-list">
           <li>
             <span className="info-list-label"><FontAwesomeIcon icon={faUserGroup} /> Vai trò</span>
-            <span>{user?.role || '—'}</span>
+            <span>{ROLE_LABELS[user?.role] || user?.role || '—'}</span>
           </li>
           <li>
             <span className="info-list-label"><FontAwesomeIcon icon={faFileLines} /> Ngày tham gia</span>
@@ -501,25 +500,15 @@ function ProfileSidebar({ user }) {
       </div>
 
       <div className="card side-card">
-        <h3><FontAwesomeIcon icon={faChartSimple} /> Thống kê cá nhân</h3>
-        {statsError && <p className="side-note">{statsError}</p>}
-        {!statsError && !stats && <p className="side-note">Đang tải...</p>}
-        {stats && (
-          <ul className="info-list">
-            <li>
-              <span className="info-list-label">Tài liệu đã tải lên</span>
-              <span>{stats.documents_count}</span>
-            </li>
-            <li>
-              <span className="info-list-label">Câu hỏi đã tạo</span>
-              <span>{stats.questions_count}</span>
-            </li>
-            <li>
-              <span className="info-list-label">Câu hỏi chờ duyệt</span>
-              <span>{stats.pending_questions_count}</span>
-            </li>
-          </ul>
-        )}
+        <h3><FontAwesomeIcon icon={faArrowUpRightFromSquare} /> Truy cập nhanh</h3>
+        <nav className="profile-quick-links" aria-label="Truy cập nhanh từ hồ sơ">
+          {quickLinks.map((link) => (
+            <Link key={link.path} to={link.path}>
+              <span>{link.label}</span>
+              <FontAwesomeIcon icon={faArrowUpRightFromSquare} aria-hidden="true" />
+            </Link>
+          ))}
+        </nav>
       </div>
     </aside>
   );
@@ -531,16 +520,24 @@ function UserProfile() {
 
   const displayName = user?.display_name || 'Giảng viên';
   const displayEmail = user?.email || '';
-  const displayRole = user?.role || 'Teacher';
-  const avatarUrl = user?.profile?.avatar || buildFallbackAvatar(displayName);
+  const displayRole = ROLE_LABELS[user?.role] || user?.role || 'Giảng viên';
+  const avatarUrl = normalizeAvatarUrl(user?.profile?.avatar) || buildFallbackAvatar(displayName);
+  const handleEditProfile = () => {
+    setActiveTab('info');
+    window.requestAnimationFrame(() => {
+      const field = document.getElementById('profile-display-name');
+      field?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      field?.focus({ preventScroll: true });
+    });
+  };
 
   return (
     <main className="profile-page">
       <section className="page-hero">
-        <div className="container profile-hero-row">
+        <div className="container">
+        <div className="profile-hero-row">
           <div className="profile-avatar-wrap">
             <img src={avatarUrl} alt="Ảnh đại diện" className="profile-avatar" referrerPolicy="no-referrer" />
-            <span className="profile-avatar-action"><FontAwesomeIcon icon={faPen} /></span>
           </div>
           <div className="profile-hero-text">
             <span className="profile-role-badge">{displayRole}</span>
@@ -553,10 +550,12 @@ function UserProfile() {
           <button
             type="button"
             className="btn profile-edit-button"
+            onClick={handleEditProfile}
           >
             <FontAwesomeIcon icon={faPen} />
             Chỉnh sửa hồ sơ
           </button>
+        </div>
         </div>
       </section>
 

@@ -9,7 +9,9 @@ from typing import Iterable
 from modules.generation.schemas import GeneratedQuestion, GenerationRejection
 
 
-POSTPROCESSOR_VERSION = "question-post-v2"
+POSTPROCESSOR_VERSION = "question-post-v3"
+MAX_QUESTION_CODE_LINES = 12
+MAX_QUESTION_CODE_CHARS = 800
 MAX_TRUE_FALSE_LENGTH = 320
 MAX_SOURCE_KEYWORDS = 6
 MIN_SOURCE_CONTEXT_CHARS = 24
@@ -193,6 +195,16 @@ def validate_source_grounding(
 ) -> list[GenerationRejection]:
     errors: list[GenerationRejection] = []
     source_context = str(item.get("source_context") or "").strip()
+    # Small Ollama models sometimes copy the RAG wrapper together with the
+    # evidence. Remove only that wrapper; the quote must still match content.
+    source_context = re.sub(
+        r"^Nội dung:\s*(?:\.{3}|…)?\s*",
+        "",
+        source_context,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    item["source_context"] = source_context
     statement = str(item.get("question") or "").strip()
 
     if not source_context:
@@ -359,12 +371,41 @@ def validate_source_grounding(
     return errors
 
 
+def validate_question_code(item: dict, *, candidate_index: int) -> list[GenerationRejection]:
+    question = str(item.get("question") or "")
+    blocks = re.findall(r"```[^\n`]*\n([\s\S]*?)```", question)
+    prose = re.sub(r"```[\s\S]*?```", "", question)
+    depends_on_code = re.search(
+        r"(?:đoạn\s+(?:mã|code)|mã nguồn|chương trình)\s+(?:sau|dưới đây|này|trên)"
+        r"|(?:cho|xét)\s+(?:đoạn\s+)?(?:mã|code|chương trình)"
+        r"|(?:kết quả|đầu ra|tìm lỗi|thực thi|chạy)\b[^.?!\n]{0,80}\bđoạn\s+(?:mã|code)",
+        prose,
+        flags=re.IGNORECASE,
+    )
+    if depends_on_code and (not blocks or not any(block.strip() for block in blocks)):
+        return [_rejection(
+            "QUESTION_CODE_MISSING",
+            "Câu hỏi tham chiếu mã nhưng thiếu khối mã trong question. Kèm mã nguồn đủ dữ kiện "
+            "trong khối ```, tối đa 12 dòng không trống và 800 ký tự; không thay bằng source_context.",
+            item=item, candidate_index=candidate_index, repairable=True,
+        )]
+    code = "\n".join(block.strip() for block in blocks)
+    if len(code) > MAX_QUESTION_CODE_CHARS or sum(bool(line.strip()) for line in code.splitlines()) > MAX_QUESTION_CODE_LINES:
+        return [_rejection(
+            "QUESTION_CODE_TOO_LONG",
+            "Rút đoạn mã về tối đa 12 dòng không trống và 800 ký tự, vẫn giữ đủ dữ kiện để trả lời.",
+            item=item, candidate_index=candidate_index, repairable=True,
+        )]
+    return []
+
+
 def validate_true_false_clarity(
     item: dict,
     *,
     candidate_index: int,
 ) -> list[GenerationRejection]:
-    statement = re.sub(r"\s+", " ", str(item.get("question") or "")).strip()
+    prose = re.sub(r"```[\s\S]*?```", "", str(item.get("question") or ""))
+    statement = re.sub(r"\s+", " ", prose).strip()
     normalized = normalize_exact_text(statement)
     errors: list[GenerationRejection] = []
 
@@ -435,6 +476,8 @@ def rejection_counts(rejections: Iterable[GenerationRejection]) -> dict[str, int
             "MULTIPLE_PROPOSITIONS",
             "DOUBLE_NEGATION",
             "CONTEXT_DEPENDENT_STATEMENT",
+            "QUESTION_CODE_MISSING",
+            "QUESTION_CODE_TOO_LONG",
         }:
             counts["clarity"] += 1
         else:

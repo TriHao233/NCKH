@@ -25,7 +25,7 @@ export async function pollJob(fetchStatus, jobId, options = {}) {
     maxIntervalMs = 15000,
     backoffFactor = 1.5,
     jitterRatio = 0.2,
-    terminal = ['completed', 'failed'],
+    terminal = ['completed', 'failed', 'cancelled'],
     signal,
     timeoutMs = 600000,
     onUpdate,

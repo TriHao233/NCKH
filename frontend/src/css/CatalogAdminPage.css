@@ -10,6 +10,10 @@
   margin: 0 auto;
 }
 
+.catalog-header {
+  margin-bottom: 26px;
+}
+
 /* .catalog-header (layout, span/h1) dùng chung — xem css/admin-shared.css */
 
 .catalog-page button {
@@ -32,14 +36,14 @@
 .catalog-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 18px;
+  gap: 26px;
 }
 
 .catalog-card {
   background: #fff;
   border: 1px solid #eaf3fc;
   border-radius: 8px;
-  padding: 18px;
+  padding: 22px;
   box-shadow: 0 6px 20px rgba(5, 40, 90, 0.04);
 }
 
@@ -54,14 +58,14 @@
 .runtime-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 16px;
 }
 
 .runtime-grid div {
   border: 1px solid #eaf3fc;
   border-radius: 8px;
   background: #fafcff;
-  padding: 10px;
+  padding: 14px;
 }
 
 .runtime-grid small,
@@ -107,8 +111,8 @@
 .catalog-warning-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .catalog-warning-list span,
@@ -142,11 +146,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 16px;
 }
 
 .catalog-card-title-row {
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 
 .catalog-card-title-row h2,
@@ -155,7 +159,7 @@
 }
 
 .catalog-detail-head {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .catalog-detail-head p {
@@ -176,7 +180,7 @@
 .catalog-form {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 14px;
 }
 
 .catalog-card-note {
@@ -188,7 +192,7 @@
 
 .catalog-model-field {
   display: grid;
-  gap: 5px;
+  gap: 8px;
 }
 
 .catalog-model-field > span,
@@ -201,7 +205,7 @@
 .catalog-model-capabilities {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 
 .catalog-model-capabilities > span {
@@ -209,7 +213,7 @@
 }
 
 .catalog-model-advanced {
-  padding: 10px 12px;
+  padding: 14px;
   border: 1px solid #d9e6f2;
   border-radius: 8px;
   background: #f8fbff;
@@ -224,14 +228,14 @@
 
 .catalog-model-advanced[open] {
   display: grid;
-  gap: 9px;
+  gap: 14px;
 }
 
 .catalog-form--inline {
   display: grid;
   grid-template-columns: 130px 210px minmax(180px, 1fr) 110px 110px;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 14px;
+  margin-bottom: 22px;
 }
 
 .catalog-form input,
@@ -285,13 +289,13 @@
 .prompt-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  gap: 16px;
+  gap: 24px;
 }
 
 .subject-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .subject-list button {
@@ -333,14 +337,14 @@
 .catalog-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 20px;
 }
 
 .catalog-list {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-top: 14px;
+  gap: 12px;
+  margin-top: 18px;
 }
 
 .catalog-list span {
@@ -361,8 +365,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
+  gap: 14px;
+  padding: 12px;
 }
 
 .catalog-list-item.inactive {
@@ -390,8 +394,8 @@
   border: 1px solid #eaf3fc;
   border-radius: 8px;
   background: #fbfdff;
-  margin-top: 14px;
-  padding: 12px;
+  margin-top: 18px;
+  padding: 16px;
 }
 
 .prompt-preview pre {

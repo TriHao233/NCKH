@@ -403,7 +403,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
             <tr>
               <th>Chương</th>
               <th>Mức nhận thức</th>
-              <th>Độ khó</th>
+              <th>Độ khó ước lượng</th>
               <th>Số câu</th>
               <th />
             </tr>
@@ -609,7 +609,7 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
               ))}
             </select>
             <select className="field-select" value={difficultyFilter} onChange={(event) => setDifficultyFilter(event.target.value)}>
-              <option value="">Tất cả độ khó</option>
+              <option value="">Tất cả độ khó ước lượng</option>
               {DIFFICULTIES.map((difficulty) => (
                 <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>
               ))}
@@ -839,7 +839,8 @@ function ExportStep({ exam }) {
 
   return (
     <div>
-      <h3 className="step-title">Xuất đề thi</h3>
+      <h3 className="step-title">Xuất đề thi giấy</h3>
+      <p className="empty-note">Bản PDF dùng khổ A4, lề in chuẩn, font serif hỗ trợ tiếng Việt và có số trang. Hãy kiểm tra bản PDF trước khi in chính thức.</p>
       {variants.length === 0 && <p className="empty-note">Chưa có mã đề nào, hãy tạo mã đề ở bước trước.</p>}
       <div className="export-list">
         {variants.map((variant) => (

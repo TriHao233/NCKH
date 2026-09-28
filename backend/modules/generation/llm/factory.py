@@ -30,6 +30,7 @@ def _provider_from_snapshot(snapshot: dict) -> LLMProvider:
             num_ctx=parameters.get("num_ctx"),
             num_predict=parameters.get("num_predict"),
             temperature=parameters.get("temperature"),
+            think=parameters.get("think"),
             url=parameters.get("endpoint"),
         )
         concurrency_code = f"ollama:{snapshot['model_name']}"
@@ -38,7 +39,7 @@ def _provider_from_snapshot(snapshot: dict) -> LLMProvider:
             snapshot["model_name"],
             timeout_seconds=parameters.get("timeout_seconds", 300),
             temperature=parameters.get("temperature", 0),
-            max_output_tokens=parameters.get("max_output_tokens", 2048),
+            max_output_tokens=parameters.get("max_output_tokens", settings.gemini_max_output_tokens),
         )
         concurrency_code = "gemini"
     else:
@@ -75,7 +76,7 @@ def _get_single_provider(provider: str, snapshot: dict | None = None) -> LLMProv
 
 
 def get_llm_service(
-    provider: str = "qwen",
+    provider: str = "qwen3-8b",
     fallback_provider: str | None = None,
     *,
     model_snapshot: dict | None = None,

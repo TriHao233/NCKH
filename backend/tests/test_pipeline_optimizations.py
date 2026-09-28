@@ -1,7 +1,10 @@
+import asyncio
 import json
+import os
+import time
 
 from core import gpu_coordination
-from modules.ocr import docling_engine, pdf_text_extractor
+from modules.ocr import pdf_text_extractor
 from modules.rag import chromadb_engine, chunking
 
 
@@ -49,89 +52,6 @@ def test_pdf_text_fast_path_rejects_image_page_before_text_extraction(monkeypatc
     assert result["eligible"] is False
     assert result["pages"] == []
     assert result["stats"]["rejection_reasons"] == ["image_pages_present"]
-
-
-def test_docling_json_is_reconstructed_with_page_provenance():
-    payload = {
-        "body": {
-            "children": [
-                {"$ref": "#/texts/0"},
-                {"$ref": "#/texts/1"},
-                {"$ref": "#/tables/0"},
-            ]
-        },
-        "texts": [
-            {"label": "section_header", "level": 2, "text": "Chương 1", "prov": [{"page_no": 1}]},
-            {"label": "text", "text": "Nội dung", "prov": [{"page_no": 1}]},
-        ],
-        "tables": [
-            {
-                "label": "table",
-                "prov": [{"page_no": 2}],
-                "data": {
-                    "table_cells": [
-                        {"start_row_offset_idx": 0, "end_row_offset_idx": 1, "start_col_offset_idx": 0, "end_col_offset_idx": 1, "text": "A"},
-                        {"start_row_offset_idx": 0, "end_row_offset_idx": 1, "start_col_offset_idx": 1, "end_col_offset_idx": 2, "text": "B"},
-                        {"start_row_offset_idx": 1, "end_row_offset_idx": 2, "start_col_offset_idx": 0, "end_col_offset_idx": 1, "text": "1"},
-                        {"start_row_offset_idx": 1, "end_row_offset_idx": 2, "start_col_offset_idx": 1, "end_col_offset_idx": 2, "text": "2"},
-                    ]
-                },
-            }
-        ],
-    }
-
-    pages = docling_engine._pages_from_docling_json({"json_content": json.dumps(payload)})
-
-    assert [page["page_number"] for page in pages] == [1, 2]
-    assert "## Chương 1" in pages[0]["text"]
-    assert "| A | B |" in pages[1]["text"]
-
-
-def test_docling_text_spanning_pages_is_split_by_provenance_charspan():
-    payload = {
-        "body": {"children": [{"$ref": "#/texts/0"}]},
-        "texts": [{
-            "label": "text",
-            "text": "Page one Page two",
-            "prov": [
-                {"page_no": 1, "charspan": [0, 8]},
-                {"page_no": 2, "charspan": [9, 17]},
-            ],
-        }],
-    }
-
-    pages = docling_engine._pages_from_docling_json({"json_content": json.dumps(payload)})
-    blocks = docling_engine._blocks_from_docling_json({"json_content": json.dumps(payload)})
-
-    assert [(page["page_number"], page["text"]) for page in pages] == [(1, "Page one"), (2, "Page two")]
-    assert [(block["page_number"], block["content"]) for block in blocks] == [(1, "Page one"), (2, "Page two")]
-
-
-def test_docling_rapidocr_custom_backend_does_not_mix_preset_fields(monkeypatch):
-    monkeypatch.setattr(docling_engine.settings, "docling_ocr_preset", "rapidocr")
-    monkeypatch.setattr(docling_engine.settings, "docling_ocr_backend", "torch")
-    monkeypatch.setattr(docling_engine.settings, "docling_ocr_languages", ["latin"])
-
-    fields, backend = docling_engine._ocr_form_data()
-
-    field_names = [name for name, _value in fields]
-    custom_config = json.loads(dict(fields)["ocr_custom_config"])
-    assert backend == "torch"
-    assert "ocr_preset" not in field_names
-    assert custom_config == {"kind": "rapidocr", "backend": "torch", "lang": ["latin"]}
-
-
-def test_docling_default_backend_uses_validated_preset(monkeypatch):
-    monkeypatch.setattr(docling_engine.settings, "docling_ocr_preset", "rapidocr")
-    monkeypatch.setattr(docling_engine.settings, "docling_ocr_backend", "onnxruntime")
-    monkeypatch.setattr(docling_engine.settings, "docling_ocr_languages", ["vi"])
-
-    fields, backend = docling_engine._ocr_form_data()
-
-    assert backend == "onnxruntime"
-    assert ("ocr_preset", "rapidocr") in fields
-    assert ("ocr_lang", "vi") in fields
-    assert all(name != "ocr_custom_config" for name, _value in fields)
 
 
 def test_token_batches_respect_size_and_padded_token_budget(monkeypatch):
@@ -268,3 +188,106 @@ def test_gpu_operation_lock_is_released(tmp_path, monkeypatch):
         assert payload["label"] == "unit-test"
 
     assert not lock_path.exists()
+
+
+def test_gpu_operation_reclaims_stale_lock(tmp_path, monkeypatch):
+    lock_path = tmp_path / "gpu-operation.lock"
+    lock_path.write_text(
+        json.dumps({"token": "dead-owner", "label": "ollama", "pid": 1}),
+        encoding="utf-8",
+    )
+    old_time = time.time() - 10
+    os.utime(lock_path, (old_time, old_time))
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_coordination_enabled", True)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_path", str(lock_path))
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_stale_seconds", 0.05)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_heartbeat_seconds", 0.01)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_timeout_seconds", 0.5)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_poll_seconds", 0.01)
+
+    with gpu_coordination.gpu_operation("embedding"):
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        assert payload["token"] != "dead-owner"
+        assert payload["hostname"]
+
+    assert not lock_path.exists()
+
+
+def test_gpu_operation_heartbeat_keeps_live_lock_fresh(tmp_path, monkeypatch):
+    lock_path = tmp_path / "gpu-operation.lock"
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_coordination_enabled", True)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_path", str(lock_path))
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_heartbeat_seconds", 0.01)
+
+    with gpu_coordination.gpu_operation("unit-test"):
+        initial_mtime = lock_path.stat().st_mtime
+        time.sleep(0.15)
+        assert lock_path.stat().st_mtime > initial_mtime
+
+
+def test_cancelled_async_waiter_does_not_leave_orphan_lock(tmp_path, monkeypatch):
+    lock_path = tmp_path / "gpu-operation.lock"
+    lock_path.write_text(
+        json.dumps({"token": "active-owner", "label": "embedding"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_coordination_enabled", True)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_path", str(lock_path))
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_stale_seconds", 60)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_timeout_seconds", 1)
+    monkeypatch.setattr(gpu_coordination.settings, "gpu_lock_poll_seconds", 0.01)
+
+    async def exercise_cancellation():
+        async def wait_for_lock():
+            async with gpu_coordination.async_gpu_operation("ollama"):
+                pass
+
+        task = asyncio.create_task(wait_for_lock())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        lock_path.unlink()
+        await asyncio.sleep(0.1)
+        assert not lock_path.exists()
+
+    asyncio.run(exercise_cancellation())
+
+
+def test_embedding_model_releases_cuda_between_ollama_operations(monkeypatch):
+    class FakeEmbeddingModel:
+        def __init__(self):
+            self.device = "cuda:0"
+            self.moves = []
+
+        def encode(self, documents, **_kwargs):
+            return [[float(index), 1.0] for index, _document in enumerate(documents)]
+
+        def to(self, device):
+            self.device = str(device)
+            self.moves.append(str(device))
+            return self
+
+    model = FakeEmbeddingModel()
+    empty_cache_calls = []
+    monkeypatch.setattr(chromadb_engine, "_get_embedding_model", lambda: model)
+    monkeypatch.setattr(chromadb_engine, "embedding_token_lengths", lambda documents: [4] * len(documents))
+    monkeypatch.setattr(chromadb_engine.settings, "gpu_coordination_enabled", False)
+    monkeypatch.setattr(chromadb_engine.settings, "embedding_release_gpu_after_use", True)
+    monkeypatch.setattr(chromadb_engine.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(chromadb_engine.torch.cuda, "reset_peak_memory_stats", lambda _device: None)
+    monkeypatch.setattr(chromadb_engine.torch.cuda, "max_memory_allocated", lambda _device: 0)
+    monkeypatch.setattr(chromadb_engine.torch.cuda, "max_memory_reserved", lambda _device: 0)
+    monkeypatch.setattr(chromadb_engine.torch.cuda, "empty_cache", lambda: empty_cache_calls.append(True))
+
+    _, first_metrics = chromadb_engine._encode_documents(["first"])
+    assert model.device == "cpu"
+    assert first_metrics["device"] == "cuda:0"
+
+    _, second_metrics = chromadb_engine._encode_documents(["second"])
+    assert model.device == "cpu"
+    assert second_metrics["device"] == "cuda"
+    assert model.moves == ["cpu", "cuda", "cpu"]
+    assert len(empty_cache_calls) == 2

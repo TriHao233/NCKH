@@ -1,11 +1,12 @@
 import { apiRequest } from '../services/apiClient';
 
-export function listDocuments({ page = 1, pageSize = 20, status, search } = {}) {
+export function listDocuments({ page = 1, pageSize = 20, status, search, subjectId } = {}) {
   const params = new URLSearchParams();
   params.set('page', page);
   params.set('page_size', pageSize);
   if (status) params.set('status', status);
   if (search) params.set('search', search);
+  if (subjectId) params.set('subject_id', subjectId);
   return apiRequest(`/documents?${params.toString()}`);
 }
 

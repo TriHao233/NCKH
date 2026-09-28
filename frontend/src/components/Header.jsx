@@ -1,7 +1,13 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faBars, faBell, faCheckDouble, faRightToBracket, faXmark } from '@fortawesome/free-solid-svg-icons';
+import {
+  faBars, faBell, faCheckDouble, faRightToBracket, faXmark,
+  faCircleInfo, faHouse, faWandMagicSparkles, faFilePen, faBookOpen,
+  faEnvelope, faClipboardCheck, faChartLine, faLayerGroup, faUsers,
+  faClockRotateLeft, faListCheck, faGraduationCap, faCircleQuestion,
+  faRobot, faChartColumn,
+} from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { canAccessPath } from '../auth/permissions';
 import {
@@ -12,6 +18,27 @@ import {
 } from '../api/notifications';
 import UserProfileMenu from './UserProfileMenu'; 
 import './Header.css';
+
+const navIcons = {
+  'Giới thiệu': faCircleInfo,
+  'Trang chủ': faHouse,
+  'Sinh câu hỏi': faWandMagicSparkles,
+  'Làm đề thi': faFilePen,
+  'Đề thi': faFilePen,
+  'Hướng dẫn': faBookOpen,
+  'Liên hệ': faEnvelope,
+  'Hàng kiểm duyệt': faClipboardCheck,
+  'Tổng quan': faChartLine,
+  'Danh mục': faLayerGroup,
+  'Người dùng': faUsers,
+  'Nhật ký': faClockRotateLeft,
+  'Lịch sử': faClockRotateLeft,
+  'Hàng đợi': faListCheck,
+  'Thống kê': faChartColumn,
+  'Moodle': faGraduationCap,
+  'Câu hỏi': faCircleQuestion,
+  'Thẩm định AI': faRobot,
+};
 
 const Header = () => {
   const location = useLocation();
@@ -117,8 +144,6 @@ const Header = () => {
       items: [
         { path: '/gioi-thieu', label: 'Giới thiệu' },
         { path: '/trang-chu', label: 'Trang chủ' },
-        { path: '/huong-dan', label: 'Hướng dẫn' },
-        { path: '/lien-he', label: 'Liên hệ' },
       ],
     },
     {
@@ -127,6 +152,15 @@ const Header = () => {
       items: [
         { path: '/sinh-cau-hoi', label: 'Sinh câu hỏi' },
         { path: '/lam-de-thi', label: 'Làm đề thi' },
+      ],
+    },
+    {
+      id: 'support',
+      label: 'Hỗ trợ',
+      isPublic: true,
+      items: [
+        { path: '/huong-dan', label: 'Hướng dẫn' },
+        { path: '/lien-he', label: 'Liên hệ' },
       ],
     },
     {
@@ -170,8 +204,9 @@ const Header = () => {
       items: group.items.filter((item) => !role || canAccessPath(user, item.path)),
     }))
     .filter((group) => {
+      if (!signedIn) return ['public', 'teacher', 'support'].includes(group.id);
       if (role === 'Admin' && group.id === 'public') return false;
-      return group.id === 'public' || (signedIn && group.items.length > 0);
+      return group.isPublic || group.id === 'public' || (signedIn && group.items.length > 0);
     });
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
 
@@ -191,20 +226,20 @@ const Header = () => {
   }, [mobileNavOpen]);
 
   return (
-    <header className="navbar" id="navbar">
+    <header
+      className="navbar"
+      id="navbar"
+      style={{ '--header-background': `url("${import.meta.env.BASE_URL}images/header-background.png")` }}
+    >
       <div className="nav-container">
         <div className="nav-brand">
           <Link to="/" className="nav-brand-link">
             <img 
-              src="https://www.ctu.edu.vn/images/upload/logo.png" 
-              alt="Logo Đại học Cần Thơ" 
+              src={`${import.meta.env.BASE_URL}images/qbankctu-header-logo.png`}
+              alt="QBankCTU - Đại học Cần Thơ"
               className="nav-logo" 
             />
           </Link>
-          <div className="nav-title-group">
-            <span className="nav-title">QBankCTU</span>
-            <span className="nav-subtitle">Đại Học Cần Thơ</span>
-          </div>
         </div>
 
         <nav className="nav-menu" aria-label="Điều hướng chính" ref={navMenuRef}>
@@ -223,8 +258,10 @@ const Header = () => {
                       key={link.path}
                       to={link.path}
                       className={`nav-link ${isActive ? 'nav-link--active' : ''}`}
+                      title={!signedIn && !canAccessPath(null, link.path) ? 'Đăng nhập để sử dụng chức năng này' : undefined}
                     >
-                      {link.label}
+                      <FontAwesomeIcon icon={navIcons[link.label]} className="nav-link-icon" aria-hidden="true" />
+                      <span>{link.label}</span>
                     </Link>
                   );
                 })}
@@ -242,8 +279,9 @@ const Header = () => {
                   type="button"
                   className={`notification-button ${unreadCount > 0 ? 'notification-button--unread' : ''}`}
                   onClick={toggleNotifications}
-                  aria-label="Thông báo"
+                  aria-label={unreadCount > 0 ? `Thông báo: ${unreadCount} chưa đọc` : 'Thông báo'}
                   aria-expanded={notificationOpen}
+                  aria-busy={notificationLoading}
                 >
                   <FontAwesomeIcon icon={faBell} />
                   {unreadCount > 0 && (
@@ -327,9 +365,11 @@ const Header = () => {
                         key={link.path}
                         to={link.path}
                         className={`mobile-nav-link ${isActive ? 'mobile-nav-link--active' : ''}`}
+                        title={!signedIn && !canAccessPath(null, link.path) ? 'Đăng nhập để sử dụng chức năng này' : undefined}
                         onClick={() => setMobileNavOpen(false)}
                       >
-                        {link.label}
+                        <FontAwesomeIcon icon={navIcons[link.label]} className="nav-link-icon" aria-hidden="true" />
+                        <span>{link.label}</span>
                       </Link>
                     );
                   })}
