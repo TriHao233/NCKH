@@ -13,7 +13,9 @@ from psycopg.rows import dict_row
 from pymongo import MongoClient
 
 from core.config import settings
-from db.copy_business_data import SOURCE_ORDER, fingerprint, projected_rows
+from db.copy_business_data import (
+    SOURCE_ORDER, fingerprint, known_user_ids, projected_rows, reconcile_deleted_users,
+)
 
 CHILD_TABLES = {
     "subject_chapters", "learning_outcomes", "ai_model_versions",
@@ -134,10 +136,14 @@ def _document_vector_errors(mongo_db, target: dict[str, dict]) -> list[str]:
 
 def verify(mongo_db, postgres_connection) -> list[str]:
     expected: dict[str, dict] = {}
+    user_ids = known_user_ids(mongo_db)
     for name in SOURCE_ORDER:
         for document in mongo_db[name].find():
             for table, row in projected_rows(name, document):
-                expected.setdefault(table, {})[row_key(table, row)] = row
+                # Same deleted-user rules as the copy, so skipped rows are not "missing".
+                row, _action = reconcile_deleted_users(table, row, user_ids)
+                if row is not None:
+                    expected.setdefault(table, {})[row_key(table, row)] = row
     tables = (set(SOURCE_ORDER) - {"dictionaries", "pipeline_lineage_events"}) | CHILD_TABLES
     errors = []
     targets: dict[str, dict] = {}

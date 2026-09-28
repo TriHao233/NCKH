@@ -32,6 +32,7 @@ Ngưỡng chấp nhận (điền sau diễn tập):
 ## 3. Điều kiện trước khi lên lịch
 
 - [ ] Diễn tập (mục 2) đạt tất cả ngưỡng.
+- [ ] Đã chạy thử `copy_business_data` + `verify_business_data` trên bản sao dữ liệu thật và xử lý hết dữ liệu mồ côi (xem 6.3, 6.4). Lần thử trên dữ liệu dev ngày 28/09/2026 phát hiện 12 audit và 2 thông báo trỏ tới tài khoản đã xóa (đã có quy tắc xử lý) cùng 7 embedding trỏ tới chunk không còn tồn tại (cần dọn).
 - [ ] Môi trường thật đang chạy **toàn bộ cờ `*_STORE=mongo`** (mặc định). Nếu có nhóm nào đã ghi vào PostgreSQL trên môi trường thật, **dừng lại**: dữ liệu nhóm đó chỉ có ở PostgreSQL và cách chép sạch trong runbook này sẽ làm mất nó; cần kế hoạch riêng cho nhóm đó.
 - [ ] Commit deploy chứa migration mới nhất (hiện tới `0017`) và đã chạy xong test: `RUN_POSTGRES_INTEGRATION=1` cho `tests/test_postgres_*.py`, cùng `tests/test_schema_v2.py`.
 - [ ] MongoDB chạy replica set (`REQUIRE_MONGO_TRANSACTIONS=true` như compose).
@@ -110,6 +111,8 @@ export CUTOVER_DSN=postgresql://nckh:<mật-khẩu>@postgres:5432/$CUTOVER_DB
 
    Ghi thời gian: ____ phút.
 
+   Tham chiếu tới tài khoản đã bị xóa được xử lý theo quy tắc cố định và in riêng trong kết quả: dòng audit vẫn được chép nhưng bỏ trống `actor_user_id` (ID gốc còn trong `payload`) — `audit_logs (actor_detached: user deleted)`; thông báo gửi cho tài khoản đã xóa bị bỏ qua — `notifications (skipped: user deleted)`. Mọi bảng khác gặp tham chiếu mồ côi sẽ làm lệnh dừng với lỗi khóa ngoại: dừng lại, tìm bản ghi đó, không tự gán chủ sở hữu.
+
 4. Đối soát ID, số lượng, trường quan trọng và nội dung JSON đã theo dõi:
 
    ```bash
@@ -117,7 +120,7 @@ export CUTOVER_DSN=postgresql://nckh:<mật-khẩu>@postgres:5432/$CUTOVER_DB
      python -m db.verify_business_data | tee cutover/verify-output.txt
    ```
 
-   **Phải kết thúc bằng** `Business IDs and critical fields match`. Bất kỳ dòng nào có `missing`, `extra`, `critical_mismatch` hoặc `content_mismatch` khác 0 → **no-go**, chuyển mục 9.1.
+   **Phải kết thúc bằng** `Business IDs and critical fields match`. Dòng `vector_document_links` phải toàn số 0; embedding/chunk trỏ tới dữ liệu không còn tồn tại (thường do test cũ để lại) phải được dọn có backup trước ngày cutover, không dọn trong cửa sổ dừng. Bất kỳ dòng nào có `missing`, `extra`, `critical_mismatch` hoặc `content_mismatch` khác 0 → **no-go**, chuyển mục 9.1.
 
 5. Kiểm tra bổ sung bằng SQL (Phụ lục B): không có câu hỏi thiếu version hiện hành, không có đề đã chốt thiếu snapshot, không có job đang chạy.
 6. Backup database vừa chép (điểm khôi phục nếu phải làm lại):

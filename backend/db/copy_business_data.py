@@ -455,6 +455,35 @@ def projected_rows(name: str, item: dict):
     raise ValueError(f"No PostgreSQL projection for MongoDB collection {name}")
 
 
+# Rows that still point at user accounts deleted from MongoDB. Anything not
+# listed here must reference an existing user, or the copy fails on the
+# foreign key instead of guessing an owner.
+DELETED_USER_POLICIES = {
+    # Keep audit history; only the FK column is cleared, payload keeps the id.
+    "audit_logs": ("actor_user_id", "actor_detached"),
+    # Nobody can read an inbox item of a deleted account.
+    "notifications": ("recipient_user_id", "skipped"),
+}
+
+
+def known_user_ids(mongo_db) -> set[str]:
+    return {str(item["_id"]) for item in mongo_db["users"].find({}, {"_id": 1})}
+
+
+def reconcile_deleted_users(table: str, row: dict,
+                            user_ids: set[str]) -> tuple[dict | None, str | None]:
+    """Apply DELETED_USER_POLICIES; return the row to write (or None) and the action."""
+    policy = DELETED_USER_POLICIES.get(table)
+    if not policy:
+        return row, None
+    column, action = policy
+    if row.get(column) is None or row[column] in user_ids:
+        return row, None
+    if action == "skipped":
+        return None, action
+    return {**row, column: None}, action
+
+
 def upsert(connection, table: str, row: dict) -> None:
     columns = tuple(row)
     key_columns = (
@@ -483,10 +512,17 @@ def copy_business_data(mongo_db, connection, *, apply: bool) -> dict[str, int]:
     counts: dict[str, int] = {}
     if apply:
         connection.execute("SET CONSTRAINTS ALL DEFERRED")
+    user_ids = known_user_ids(mongo_db)
     for name in SOURCE_ORDER:
         count = 0
         for item in mongo_db[name].find():
             for table, row in projected_rows(name, item):
+                row, action = reconcile_deleted_users(table, row, user_ids)
+                if action:
+                    key = f"{table} ({action}: user deleted)"
+                    counts[key] = counts.get(key, 0) + 1
+                if row is None:
+                    continue
                 counts[table] = counts.get(table, 0) + 1
                 if apply:
                     upsert(connection, table, row)
@@ -528,7 +564,8 @@ def main() -> None:
             counts = copy_business_data(database, None, apply=False)
     mode = "shadow-copied" if args.apply else "source records"
     for name, count in sorted(counts.items()):
-        print(f"{name}: {count} {mode}")
+        # Deleted-user entries are a report, not a copied table.
+        print(f"{name}: {count}" if "user deleted" in name else f"{name}: {count} {mode}")
     print("MongoDB vector collections were not copied:", ", ".join(sorted(VECTOR_COLLECTIONS)))
 
 
