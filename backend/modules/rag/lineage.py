@@ -448,6 +448,18 @@ class LineagePromotionService:
     def archive(self, candidate: CandidateLineage, *, actor: str, reason: str) -> dict:
         self._require_audit(actor, reason)
         ids = candidate.as_object_ids()
+        if settings.document_store == "postgres":
+            chunk_set = self.db.chunk_sets.find_one({
+                "_id": ids["chunk_set_id"], "document_id": ids["document_id"],
+                "source_ocr_job_id": ids["ocr_job_id"], "archived_at": None,
+            })
+            if not chunk_set:
+                raise ValueError("lineage missing or already archived")
+            return get_document_repository(self.db).queue_archive_lineage(
+                candidate.document_id,
+                {key: value for key, value in ids.items() if key != "document_id"},
+                operation_id=str(uuid.uuid4()), actor=actor, reason=reason,
+            )
         document = get_document_repository(self.db).find_by_id(ids["document_id"]) or {}
         referenced = {
             *((document.get("current_processing") or {}).values()),
@@ -516,6 +528,14 @@ class LineagePromotionService:
         chunk_set = self.db.chunk_sets.find_one({"_id": ids["chunk_set_id"], "archived_at": {"$ne": None}})
         if not chunk_set:
             raise ValueError("candidate must be archived before permanent deletion")
+        if settings.document_store == "postgres":
+            if chunk_set.get("document_id") != ids["document_id"]:
+                raise ValueError("chunk set belongs to another document")
+            return get_document_repository(self.db).request_permanent_delete(
+                candidate.document_id,
+                {key: value for key, value in ids.items() if key != "document_id"},
+                operation_id=str(uuid.uuid4()), actor=actor, reason=reason,
+            )
         operation_id = str(uuid.uuid4())
         self.db.pipeline_lineage_events.insert_one(
             {
@@ -541,6 +561,10 @@ class LineagePromotionService:
         expected = f"EXECUTE_DELETE:{request_operation_id}"
         if confirmation != expected:
             raise PermissionError("invalid execution confirmation token")
+        if settings.document_store == "postgres":
+            return get_document_repository(self.db).queue_permanent_delete(
+                request_operation_id,
+            )
         request = self.db.pipeline_lineage_events.find_one(
             {
                 "operation_id": request_operation_id,

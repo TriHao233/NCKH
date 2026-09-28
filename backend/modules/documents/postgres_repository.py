@@ -687,6 +687,178 @@ class PostgresDocumentRepository:
             )
         return {"operation_id": rollback_id, "restored_snapshot": before}
 
+    def queue_archive_lineage(self, document_id: str | ObjectId, snapshot: dict, *,
+                              operation_id: str, actor: str, reason: str) -> dict:
+        key = str(object_id(document_id, "document_id"))
+        set_id = str(object_id(snapshot["chunk_set_id"], "chunk_set_id"))
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s FOR UPDATE", (key,),
+            ).fetchone()
+            if not row:
+                raise LookupError("document missing")
+            document = self._load(conn, row)
+            referenced = {
+                (document.get("current_processing") or {}).get("chunk_set_id"),
+                (document.get("pending_processing") or {}).get("chunk_set_id"),
+            }
+            if object_id(set_id, "chunk_set_id") in referenced:
+                raise ValueError("active or pending lineage cannot be archived")
+            rollback_ref = conn.execute(
+                """SELECT 1 FROM document_lineage_events
+                   WHERE document_id=%s AND rollback_available
+                     AND (from_snapshot->>'chunk_set_id'=%s
+                          OR to_snapshot->>'chunk_set_id'=%s)
+                   LIMIT 1""",
+                (key, set_id, set_id),
+            ).fetchone()
+            if rollback_ref:
+                raise ValueError("rollback lineage cannot be archived")
+            created = utc_now()
+            event_payload = normalized({
+                "operation_id": operation_id, "event_type": "ARCHIVE",
+                "document_id": key, "actor": actor, "reason": reason,
+                "from_snapshot": snapshot, "to_snapshot": {"archive_requested_at": created},
+                "status": "PENDING", "created_at": created,
+            })
+            conn.execute(
+                """INSERT INTO document_lineage_events
+                   (operation_id, document_id, event_type, actor, reason,
+                    from_snapshot, to_snapshot, status, payload, created_at)
+                   VALUES (%s,%s,'ARCHIVE',%s,%s,%s,%s,'PENDING',%s,%s)""",
+                (operation_id, key, actor, reason, Jsonb(normalized(snapshot)),
+                 Jsonb({"archive_requested_at": created.isoformat()}),
+                 Jsonb(event_payload), created),
+            )
+            conn.execute(
+                """INSERT INTO outbox_events
+                   (id, event_key, event_type, aggregate_type, aggregate_id, payload)
+                   VALUES (%s,%s,'document.chunk_archive','document',%s,%s)""",
+                (str(ObjectId()), f"document.chunk_archive:{operation_id}", key,
+                 Jsonb({"operation_id": operation_id, "document_id": key,
+                        "chunk_set_id": set_id, "actor": actor, "reason": reason})),
+            )
+            write_postgres_audit_event(
+                conn, action="document.lineage_archive_requested",
+                entity_type="document", entity_id=key,
+                metadata={"operation_id": operation_id, "actor": actor,
+                          "reason": reason, "chunk_set_id": set_id},
+            )
+        return {"operation_id": operation_id, "status": "PENDING",
+                "archived_at": None}
+
+    def request_permanent_delete(self, document_id: str | ObjectId, snapshot: dict, *,
+                                 operation_id: str, actor: str, reason: str) -> dict:
+        key = str(object_id(document_id, "document_id"))
+        set_id = str(object_id(snapshot["chunk_set_id"], "chunk_set_id"))
+        with postgres_connection() as conn:
+            row = conn.execute("SELECT * FROM documents WHERE id=%s FOR UPDATE",
+                               (key,)).fetchone()
+            if not row:
+                raise LookupError("document missing")
+            document = self._load(conn, row)
+            referenced = {
+                (document.get("current_processing") or {}).get("chunk_set_id"),
+                (document.get("pending_processing") or {}).get("chunk_set_id"),
+            }
+            if object_id(set_id, "chunk_set_id") in referenced:
+                raise ValueError("active or pending lineage cannot be deleted")
+            rollback_ref = conn.execute(
+                """SELECT 1 FROM document_lineage_events
+                   WHERE document_id=%s AND rollback_available
+                     AND (from_snapshot->>'chunk_set_id'=%s
+                          OR to_snapshot->>'chunk_set_id'=%s)
+                   LIMIT 1""",
+                (key, set_id, set_id),
+            ).fetchone()
+            if rollback_ref:
+                raise ValueError("rollback lineage cannot be deleted")
+            now = utc_now()
+            status = "AWAITING_OFFLINE_BACKUP_AND_EXECUTION"
+            event_payload = normalized({
+                "operation_id": operation_id,
+                "event_type": "PERMANENT_DELETE_REQUESTED",
+                "document_id": key, "actor": actor, "reason": reason,
+                "to_snapshot": snapshot, "status": status, "created_at": now,
+            })
+            conn.execute(
+                """INSERT INTO document_lineage_events
+                   (operation_id, document_id, event_type, actor, reason,
+                    to_snapshot, status, payload, created_at)
+                   VALUES (%s,%s,'PERMANENT_DELETE_REQUESTED',%s,%s,%s,%s,%s,%s)""",
+                (operation_id, key, actor, reason, Jsonb(normalized(snapshot)),
+                 status, Jsonb(event_payload), now),
+            )
+            write_postgres_audit_event(
+                conn, action="document.lineage_delete_requested",
+                entity_type="document", entity_id=key,
+                metadata={"operation_id": operation_id, "actor": actor,
+                          "reason": reason, "chunk_set_id": set_id},
+            )
+        return {"operation_id": operation_id, "status": status, "deleted": False}
+
+    def queue_permanent_delete(self, request_operation_id: str) -> dict:
+        with postgres_connection() as conn:
+            request = conn.execute(
+                """SELECT * FROM document_lineage_events
+                   WHERE operation_id=%s AND event_type='PERMANENT_DELETE_REQUESTED'
+                     AND status='AWAITING_OFFLINE_BACKUP_AND_EXECUTION' FOR UPDATE""",
+                (request_operation_id,),
+            ).fetchone()
+            if not request:
+                raise LookupError("delete request missing or already executed")
+            document_row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s FOR UPDATE",
+                (request["document_id"],),
+            ).fetchone()
+            if not document_row:
+                raise LookupError("document missing")
+            document = self._load(conn, document_row)
+            target = request["to_snapshot"]
+            set_id = target["chunk_set_id"]
+            ocr_id = target["ocr_job_id"]
+            referenced = {
+                *((document.get("current_processing") or {}).values()),
+                *((document.get("pending_processing") or {}).values()),
+            }
+            if ObjectId(set_id) in referenced or ObjectId(ocr_id) in referenced:
+                raise ValueError("active or pending lineage cannot be deleted")
+            rollback_ref = conn.execute(
+                """SELECT 1 FROM document_lineage_events
+                   WHERE document_id=%s AND rollback_available
+                     AND (from_snapshot->>'chunk_set_id'=%s
+                          OR to_snapshot->>'chunk_set_id'=%s) LIMIT 1""",
+                (request["document_id"], set_id, set_id),
+            ).fetchone()
+            if rollback_ref:
+                raise ValueError("rollback lineage cannot be deleted")
+            conn.execute(
+                """UPDATE document_lineage_events
+                   SET status='DELETE_QUEUED',
+                       payload=jsonb_set(payload, '{status}', '"DELETE_QUEUED"'::jsonb)
+                   WHERE operation_id=%s""",
+                (request_operation_id,),
+            )
+            conn.execute(
+                """INSERT INTO outbox_events
+                   (id, event_key, event_type, aggregate_type, aggregate_id, payload)
+                   VALUES (%s,%s,'document.chunk_delete','document',%s,%s)""",
+                (str(ObjectId()), f"document.chunk_delete:{request_operation_id}",
+                 request["document_id"],
+                 Jsonb({"operation_id": request_operation_id,
+                        "document_id": request["document_id"],
+                        "ocr_job_id": ocr_id, "chunk_set_id": set_id,
+                        "vector_collection_id": target["vector_collection_id"]})),
+            )
+            write_postgres_audit_event(
+                conn, action="document.lineage_delete_queued",
+                entity_type="document", entity_id=request["document_id"],
+                metadata={"operation_id": request_operation_id,
+                          "chunk_set_id": set_id},
+            )
+        return {"operation_id": request_operation_id,
+                "status": "DELETE_QUEUED", "deleted": False}
+
     def save_pages(self, document_id: str, ocr_job_id: str, pages: list[dict]) -> int:
         document_key = str(object_id(document_id, "document_id"))
         job_key = str(object_id(ocr_job_id, "job_id"))

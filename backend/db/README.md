@@ -14,7 +14,8 @@ Tài liệu này ghi **trạng thái mã nguồn hiện tại** của quá trìn
 | Cấu hình Moodle target | PostgreSQL: `moodle_targets` với `MOODLE_TARGET_STORE=postgres` | MongoDB |
 | Khóa giới hạn đồng thời model AI | PostgreSQL: `llm_slots` với `LLM_SLOT_STORE=postgres` | MongoDB |
 | Tài liệu, trang OCR, câu hỏi/phiên bản, duyệt/đánh giá, đề thi, job, Moodle publication, phần lớn audit | Chưa chuyển luồng đọc/ghi; schema và công cụ sao chép PostgreSQL đã có | MongoDB |
-| Chunk, chunk set, embedding metadata, vector collection và lineage của index | Giữ MongoDB | MongoDB |
+| Chunk, chunk set, embedding metadata và vector collection | Giữ MongoDB | MongoDB |
+| Lịch sử quyết định promote/rollback/archive/delete lineage | PostgreSQL: `document_lineage_events` khi `DOCUMENT_STORE=postgres` | MongoDB |
 | Chỉ mục/vector truy xuất RAG | ChromaDB local hoặc server chung với `CHROMA_MODE=http` | ChromaDB local |
 | File gốc, artifact OCR, bản xuất | Chưa có cloud storage adapter | Filesystem local |
 
@@ -29,8 +30,9 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - `0009_audit_event_shape.sql` bổ sung actor type/role, danh sách thay đổi, hash trước/sau và payload đầy đủ cho audit. Công cụ shadow copy đọc được cả event lồng nhau hiện hành lẫn field phẳng cũ; phần audit của question workflow vẫn ghi MongoDB cho đến khi chuyển cùng transaction câu hỏi/review.
 - `modules/documents/postgres_repository.py` đã có repository PostgreSQL cho metadata tài liệu, học phần gắn tài liệu, artifact, job OCR/CHUNK và trang OCR, gồm transaction khi cập nhật nhiều bảng. Repository này chưa được gắn vào API/worker vì đường hoàn tất chunk/index và các module đọc tài liệu vẫn truy cập MongoDB trực tiếp.
 - Hủy CHUNK job trong repository PostgreSQL ghi `outbox_events` cùng transaction; worker chuyển sự kiện sang các collection vector MongoDB, có lease và retry. Event lỗi chỉ lưu tên loại exception, không lưu thông tin kết nối/secret.
-- Bộ chọn `DOCUMENT_STORE` đã nối API tài liệu, OCR, bước chunk/reindex cơ bản, kiểm tra/promote/rollback lineage và các đường đọc nguồn của RAG/sinh câu hỏi tới repository tương ứng. Cờ vẫn mặc định `mongo` và **chưa được phép bật cho toàn ứng dụng**: archive/permanent delete lineage, Admin jobs/dashboard, user calendar và các luồng đọc/ghi tài liệu trực tiếp còn cần chuyển, kiểm thử và đối soát trước cutover.
-- `0010_document_lineage_events.sql` lưu lịch sử quyết định lineage trong PostgreSQL. Promote/rollback khi dùng repository PostgreSQL kiểm tra con trỏ hiện hành và ghi tài liệu, lineage event, audit trong một transaction. Shadow copy chuyển cả lịch sử `pipeline_lineage_events` cũ; archive/permanent delete và các màn hình quản trị còn cần chuyển trước cutover.
+- Bộ chọn `DOCUMENT_STORE` đã nối API tài liệu, OCR, bước chunk/reindex cơ bản, lineage và các đường đọc nguồn của RAG/sinh câu hỏi tới repository tương ứng. Cờ vẫn mặc định `mongo` và **chưa được phép bật cho toàn ứng dụng**: Admin jobs/dashboard, user calendar và các luồng đọc/ghi tài liệu trực tiếp còn cần chuyển, kiểm thử và đối soát trước cutover.
+- `0010_document_lineage_events.sql` lưu lịch sử quyết định lineage trong PostgreSQL. Promote/rollback khi dùng repository PostgreSQL kiểm tra con trỏ hiện hành và ghi tài liệu, lineage event, audit trong một transaction. Shadow copy chuyển cả lịch sử `pipeline_lineage_events` cũ.
+- Archive và xóa vĩnh viễn lineage ở chế độ PostgreSQL ghi quyết định/outbox vào PostgreSQL; worker thao tác Mongo vector và Chroma theo trạng thái có thể retry. OCR pages/job được xóa khỏi PostgreSQL sau khi xóa vector, trừ khi OCR job còn được chunk set khác sử dụng. Lệnh xóa vĩnh viễn vẫn cần bản backup offline do người vận hành xác nhận; chưa có cơ chế kiểm chứng backup tự động.
 - `modules/catalog/postgres_subject_repository.py` xử lý học phần, chương, CLO trong PostgreSQL. Ghi dữ liệu và audit tương ứng cùng transaction; cập nhật chương/CLO khóa học phần và ghép thay đổi với bản mới nhất để tránh ghi đè trường khác.
 - Các đường đọc học phần của tài liệu, sinh câu hỏi, thống kê reviewer và trang quản trị dùng nguồn được chọn bởi `CATALOG_STORE`.
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.

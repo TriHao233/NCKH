@@ -9,6 +9,7 @@ import pytest
 from bson import ObjectId
 
 from core.config import settings
+from core import outbox
 from core.postgres import postgres_connection
 from db.copy_business_data import projected_rows, upsert
 from modules.documents import postgres_repository
@@ -159,9 +160,126 @@ def test_lineage_promotion_and_rollback_are_atomic_in_postgres(monkeypatch):
         assert copied["event_type"] == "ROLLBACK"
         assert copied["promotion_operation_id"] == legacy_promotion_id
         assert copied["payload"]["to_snapshot"]["chunk_set_id"] == str(set_a)
+
+        with pytest.raises(ValueError, match="active or pending"):
+            service.archive(
+                CandidateLineage(str(document_id), str(ocr_a["_id"]),
+                                 str(set_a), str(vector_a)),
+                actor="admin", reason="must stay active",
+            )
+        queued = service.archive(candidate, actor="admin", reason="retire old set")
+        assert queued["status"] == "PENDING"
+
+        class ArchiveSets:
+            archived = None
+            operation_id = None
+
+            def find_one(self, *_args, **_kwargs):
+                return {"_id": set_b, "document_id": document_id,
+                        "archived_at": self.archived,
+                        "archive_operation_id": self.operation_id}
+
+            def update_one(self, _query, update):
+                self.archived = update["$set"]["archived_at"]
+                self.operation_id = update["$set"]["archive_operation_id"]
+                return SimpleNamespace(modified_count=1)
+
+        archive_sets = ArchiveSets()
+        monkeypatch.setattr(outbox, "get_database",
+                            lambda: SimpleNamespace(chunk_sets=archive_sets))
+        assert outbox.process_available_outbox_once("archive-worker") is True
+        assert archive_sets.archived is not None
+        with postgres_connection() as conn:
+            archived = conn.execute(
+                "SELECT status FROM document_lineage_events WHERE operation_id=%s",
+                (queued["operation_id"],),
+            ).fetchone()
+        assert archived["status"] == "COMPLETED"
+        with postgres_connection() as conn:
+            conn.execute(
+                """UPDATE outbox_events SET status='PENDING', next_attempt_at=now()
+                   WHERE event_key=%s""",
+                (f"document.chunk_archive:{queued['operation_id']}",),
+            )
+        assert outbox.process_available_outbox_once("archive-worker") is True
+        assert archive_sets.operation_id == queued["operation_id"]
+        vectors.chunk_sets = SimpleNamespace(find_one=lambda *_args, **_kwargs: {
+            "document_id": document_id, "archived_at": archive_sets.archived,
+        })
+        requested = service.request_permanent_delete(
+            candidate, actor="admin", reason="offline backup ready",
+            confirmation=f"DELETE:{document_id}:{set_b}",
+        )
+        assert requested["status"] == "AWAITING_OFFLINE_BACKUP_AND_EXECUTION"
+        with postgres_connection() as conn:
+            assert conn.execute(
+                "SELECT event_type FROM document_lineage_events WHERE operation_id=%s",
+                (requested["operation_id"],),
+            ).fetchone()["event_type"] == "PERMANENT_DELETE_REQUESTED"
+        queued_delete = service.execute_permanent_delete(
+            requested["operation_id"],
+            confirmation=f"EXECUTE_DELETE:{requested['operation_id']}",
+        )
+        assert queued_delete["status"] == "DELETE_QUEUED"
+
+        class DeletingSets:
+            deleted = False
+
+            def find_one(self, query):
+                if self.deleted or "source_ocr_job_id" in query:
+                    return None
+                return {"_id": set_b, "document_id": document_id,
+                        "archived_at": archive_sets.archived}
+
+            def delete_one(self, *_args, **_kwargs):
+                self.deleted = True
+
+        class DeletingEmbeddings:
+            deleted = False
+
+            def find(self, *_args):
+                return [] if self.deleted else [{"external_vector_id": "vector-b"}]
+
+            def delete_many(self, *_args, **_kwargs):
+                self.deleted = True
+
+        delete_sets = DeletingSets()
+        delete_embeddings = DeletingEmbeddings()
+        deleted_chunks = []
+        vector_db = SimpleNamespace(
+            chunk_sets=delete_sets, chunk_embeddings=delete_embeddings,
+            document_chunks=SimpleNamespace(
+                delete_many=lambda *_args, **_kwargs: deleted_chunks.append(True)),
+            vector_collections=SimpleNamespace(
+                find_one=lambda *_args: {"collection_name": "lineage-vectors"}),
+        )
+        monkeypatch.setattr(outbox, "get_database", lambda: vector_db)
+        from contextlib import contextmanager
+
+        @contextmanager
+        def no_mongo_transaction():
+            yield None
+
+        monkeypatch.setattr(outbox, "mongo_transaction", no_mongo_transaction)
+        from modules.rag import chromadb_engine
+        deleted_vectors = []
+        monkeypatch.setattr(chromadb_engine, "get_collection",
+                            lambda _name: SimpleNamespace(
+                                delete=lambda **kwargs: deleted_vectors.extend(kwargs["ids"])))
+        assert outbox.process_available_outbox_once("delete-worker") is True
+        assert deleted_vectors == ["vector-b"]
+        assert delete_sets.deleted and delete_embeddings.deleted and deleted_chunks
+        assert repository.find_job(ocr_b["_id"]) is None
+        with postgres_connection() as conn:
+            assert conn.execute(
+                "SELECT status FROM document_lineage_events WHERE operation_id=%s",
+                (requested["operation_id"],),
+            ).fetchone()["status"] == "DELETED"
     finally:
         with postgres_connection() as conn:
             if document_id:
+                conn.execute("DELETE FROM outbox_events WHERE aggregate_id=%s",
+                             (str(document_id),))
                 conn.execute("DELETE FROM audit_logs WHERE entity_id=%s", (str(document_id),))
                 conn.execute("DELETE FROM document_lineage_events WHERE document_id=%s",
                              (str(document_id),))
