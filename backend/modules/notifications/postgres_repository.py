@@ -40,6 +40,23 @@ def _record(row: dict | None) -> dict | None:
     return record
 
 
+def insert_notifications(conn, records: list[dict] | None) -> int:
+    """Write notifications in the caller's transaction.
+
+    Recipients that no longer exist are skipped so a stale owner or mention
+    never rolls back the business change the notifications belong to.
+    """
+    inserted = 0
+    for record in records or []:
+        inserted += conn.execute("""
+            INSERT INTO notifications (id, recipient_user_id, kind, payload, read_at, created_at)
+            SELECT %s,%s,%s,%s,%s,%s WHERE EXISTS (SELECT 1 FROM users WHERE id=%s)
+        """, (str(record["_id"]), str(record["recipient_user_id"]), record["type"],
+              Jsonb(_json(record)), record["read_at"], record["created_at"],
+              str(record["recipient_user_id"]))).rowcount
+    return inserted
+
+
 class PostgresNotificationRepository:
     def __init__(self) -> None:
         if settings.user_store != "postgres":

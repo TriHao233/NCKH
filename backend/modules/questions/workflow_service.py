@@ -226,6 +226,17 @@ def _as_aware_utc(value):
     return value.astimezone(timezone.utc)
 
 
+def notification_outbox() -> list[dict] | None:
+    """Collect notifications to write in the same PostgreSQL transaction.
+
+    Returns None when questions or notifications are not both in PostgreSQL;
+    callers then notify after the change as before.
+    """
+    if settings.question_store == "postgres" and settings.notification_store == "postgres":
+        return []
+    return None
+
+
 class QuestionWorkflowService:
     def __init__(self, database):
         self.db = database
@@ -2638,12 +2649,19 @@ class QuestionWorkflowService:
         else:
             assignment = _empty_review_assignment(now, payload.note or "unassigned")
             action = "QUESTION_REVIEW_UNASSIGNED"
+        outbox = notification_outbox()
+        if outbox is not None and payload.reviewer_user_id:
+            NotificationService(self.db, sink=outbox).notify_review_assigned(
+                question=question, version=version,
+                reviewer_user_id=assignment["reviewer_user_id"],
+                actor_user_id=current_user.id,
+            )
         if settings.question_store == "postgres":
             updated, version = self.questions.assign_review(
                 question_id, expected_version_id=version["_id"],
                 assignment=assignment, actor_user_id=current_user.id,
                 actor_role=current_user.role, action=action, now=now,
-                note=payload.note,
+                note=payload.note, notifications=outbox,
             )
         else:
             updated = self.db.questions.find_one_and_update(
@@ -2668,7 +2686,7 @@ class QuestionWorkflowService:
                 after=assignment,
                 metadata={"note": payload.note},
             )
-        if payload.reviewer_user_id:
+        if payload.reviewer_user_id and outbox is None:
             safe_notify_review_assigned(
                 database=self.db,
                 question=updated,
@@ -3220,12 +3238,35 @@ class QuestionWorkflowService:
             },
             created_at=now,
         )
+        def notify_review(notifications: NotificationService) -> None:
+            if not request_secondary:
+                notifications.notify_review_decision(
+                    question=question, version=version, review=review,
+                    actor_user_id=current_user.id,
+                )
+                return
+            notifications.notify_secondary_review_pending(
+                question=question, version=version,
+                reason=question_fields["secondary_review"].get("reason") or "",
+                actor_user_id=current_user.id,
+            )
+            if question_fields["review_assignment"].get("status") == "ASSIGNED":
+                notifications.notify_review_assigned(
+                    question=question, version=version,
+                    reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
+                    actor_user_id=current_user.id,
+                )
+
+        outbox = notification_outbox()
+        if outbox is not None:
+            notify_review(NotificationService(self.db, sink=outbox))
         if settings.question_store == "postgres":
             self.questions.record_review(
                 review, question_fields,
                 expected_version_id=version["_id"],
                 expected_latest_review_id=question.get("latest_review_id"),
                 actor_role=current_user.role, audit_action=audit_action,
+                notifications=outbox,
             )
         else:
             with mongo_transaction() as session:
@@ -3270,30 +3311,31 @@ class QuestionWorkflowService:
                 if not result.matched_count:
                     raise RuntimeError("VERSION_CONFLICT")
                 self.db.audit_logs.insert_one(audit, session=session)
-        if not request_secondary:
-            safe_notify_review_decision(
-                database=self.db,
-                question=question,
-                version=version,
-                review=review,
-                actor_user_id=current_user.id,
-            )
-        else:
-            safe_notify_secondary_review_pending(
-                database=self.db,
-                question=question,
-                version=version,
-                reason=question_fields["secondary_review"].get("reason") or "",
-                actor_user_id=current_user.id,
-            )
-            if question_fields["review_assignment"].get("status") == "ASSIGNED":
-                safe_notify_review_assigned(
+        if outbox is None:
+            if not request_secondary:
+                safe_notify_review_decision(
                     database=self.db,
                     question=question,
                     version=version,
-                    reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
+                    review=review,
                     actor_user_id=current_user.id,
                 )
+            else:
+                safe_notify_secondary_review_pending(
+                    database=self.db,
+                    question=question,
+                    version=version,
+                    reason=question_fields["secondary_review"].get("reason") or "",
+                    actor_user_id=current_user.id,
+                )
+                if question_fields["review_assignment"].get("status") == "ASSIGNED":
+                    safe_notify_review_assigned(
+                        database=self.db,
+                        question=question,
+                        version=version,
+                        reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
+                        actor_user_id=current_user.id,
+                    )
         if settings.question_store != "postgres" and hasattr(self.db, "question_review_drafts"):
             self.db.question_review_drafts.delete_one(
                 {
@@ -3366,38 +3408,42 @@ class QuestionWorkflowService:
             "created_at": now,
             "updated_at": now,
         }
+        mentions = [
+            {
+                "recipient_user_id": user["_id"],
+                "actor_user_id": current_user.id,
+                "type": "QUESTION_MENTION",
+                "title": f"{question.get('question_code', 'Câu hỏi')} có mention mới",
+                "body": comment["body"][:200],
+                "link": (
+                    f"/kiem-duyet?questionId={question['_id']}"
+                    if _user_can_review(user)
+                    else f"/quan-ly?questionId={question['_id']}"
+                ),
+                "entity": {
+                    "type": "QUESTION",
+                    "id": str(question["_id"]),
+                    "version_id": str(version["_id"]),
+                    "comment_id": str(comment["_id"]),
+                },
+            }
+            for user in mentioned_users
+            if user["_id"] != current_user.id
+        ]
+        outbox = notification_outbox()
+        if outbox is not None:
+            NotificationService(self.db, sink=outbox).create_many(mentions)
         if settings.question_store == "postgres":
-            self.questions.add_comment(comment, actor_role=current_user.role)
+            self.questions.add_comment(comment, actor_role=current_user.role,
+                                       notifications=outbox)
         else:
             self.db.question_comments.insert_one(comment)
             self._comment_audit(
                 "QUESTION_COMMENT_ADDED", question, version, current_user,
                 {"comment_id": comment["_id"], "mentions": json_safe(mention_ids)}, now,
             )
-        NotificationService(self.db).create_many(
-            [
-                {
-                    "recipient_user_id": user["_id"],
-                    "actor_user_id": current_user.id,
-                    "type": "QUESTION_MENTION",
-                    "title": f"{question.get('question_code', 'Câu hỏi')} có mention mới",
-                    "body": comment["body"][:200],
-                    "link": (
-                        f"/kiem-duyet?questionId={question['_id']}"
-                        if _user_can_review(user)
-                        else f"/quan-ly?questionId={question['_id']}"
-                    ),
-                    "entity": {
-                        "type": "QUESTION",
-                        "id": str(question["_id"]),
-                        "version_id": str(version["_id"]),
-                        "comment_id": str(comment["_id"]),
-                    },
-                }
-                for user in mentioned_users
-                if user["_id"] != current_user.id
-            ]
-        )
+        if outbox is None:
+            NotificationService(self.db).create_many(mentions)
         return json_safe(comment)
 
     def update_comment(
@@ -3558,12 +3604,21 @@ class QuestionWorkflowService:
                     "last_released_at": None,
                     "release_reason": payload.reason or None,
                 }
+        assigns_reviewer = bool(
+            reviewer and (fields.get("review_assignment") or {}).get("status") == "ASSIGNED"
+        )
+        outbox = notification_outbox()
+        if outbox is not None and assigns_reviewer:
+            NotificationService(self.db, sink=outbox).notify_review_assigned(
+                question=question, version=version,
+                reviewer_user_id=reviewer["_id"], actor_user_id=current_user.id,
+            )
         if settings.question_store == "postgres":
             updated, version = self.questions.set_secondary_review(
                 question_id, expected_version_id=version["_id"],
                 expected_review_status=review_status, fields=fields,
                 actor_user_id=current_user.id, actor_role=current_user.role,
-                reason=payload.reason,
+                reason=payload.reason, notifications=outbox,
             )
         else:
             updated = self.db.questions.find_one_and_update(
@@ -3585,7 +3640,7 @@ class QuestionWorkflowService:
                 before=question.get("secondary_review") or {}, after=secondary,
                 metadata={"reason": payload.reason}, path="secondary_review",
             )
-        if reviewer and (fields.get("review_assignment") or {}).get("status") == "ASSIGNED":
+        if assigns_reviewer and outbox is None:
             safe_notify_review_assigned(
                 database=self.db,
                 question=updated,
@@ -4419,11 +4474,6 @@ class QuestionWorkflowService:
             submitted_at = (question.get("review_submission") or {}).get("submitted_at")
             if (question.get("review_sla") or {}).get("reminded_submission_at") == submitted_at:
                 continue
-            if postgres:
-                if not self.questions.mark_sla_reminded(question["_id"], submitted_at, now):
-                    continue
-            elif not self._mark_mongo_sla_reminded(question, submitted_at, now):
-                continue
             assignment = question.get("review_assignment") or {}
             if assignment.get("status") in {"ASSIGNED", "IN_REVIEW"} and assignment.get("reviewer_user_id"):
                 recipients = [assignment["reviewer_user_id"]]
@@ -4432,26 +4482,35 @@ class QuestionWorkflowService:
                     admin_ids = active_admin_ids(self.db)
                 recipients = admin_ids
             question_code = question.get("question_code", "Câu hỏi")
-            notifications.create_many(
-                [
-                    {
-                        "recipient_user_id": recipient,
-                        "type": "QUESTION_REVIEW_SLA_BREACHED",
-                        "title": f"{question_code} đã chờ duyệt quá {settings.review_sla_hours} giờ",
-                        "body": "Câu hỏi đã vượt hạn kiểm duyệt, cần được xử lý hoặc phân công lại.",
-                        "link": f"/kiem-duyet?questionId={question['_id']}",
-                        "entity": json_safe(
-                            {
-                                "type": "QUESTION",
-                                "id": question["_id"],
-                                "version_id": question.get("current_version_id"),
-                                "question_code": question_code,
-                            }
-                        ),
-                    }
-                    for recipient in recipients
-                ]
-            )
+            reminders = [
+                {
+                    "recipient_user_id": recipient,
+                    "type": "QUESTION_REVIEW_SLA_BREACHED",
+                    "title": f"{question_code} đã chờ duyệt quá {settings.review_sla_hours} giờ",
+                    "body": "Câu hỏi đã vượt hạn kiểm duyệt, cần được xử lý hoặc phân công lại.",
+                    "link": f"/kiem-duyet?questionId={question['_id']}",
+                    "entity": json_safe(
+                        {
+                            "type": "QUESTION",
+                            "id": question["_id"],
+                            "version_id": question.get("current_version_id"),
+                            "question_code": question_code,
+                        }
+                    ),
+                }
+                for recipient in recipients
+            ]
+            outbox = notification_outbox()
+            if outbox is not None:
+                NotificationService(self.db, sink=outbox).create_many(reminders)
+            if postgres:
+                if not self.questions.mark_sla_reminded(question["_id"], submitted_at, now,
+                                                        notifications=outbox):
+                    continue
+            elif not self._mark_mongo_sla_reminded(question, submitted_at, now):
+                continue
+            if outbox is None:
+                notifications.create_many(reminders)
             sent += 1
         return sent
 

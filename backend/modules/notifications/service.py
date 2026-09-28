@@ -41,9 +41,12 @@ def _serialize(record: dict) -> dict:
 
 
 class NotificationService:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, *, sink: list[dict] | None = None):
         self.db = database
         self.repo = PostgresNotificationRepository() if settings.notification_store == "postgres" else None
+        # With a sink, notifications are only built; the caller writes them in
+        # the same PostgreSQL transaction as the change they report.
+        self.sink = sink
 
     def create(
         self,
@@ -75,7 +78,9 @@ class NotificationService:
             "read_at": None,
             "created_at": now,
         }
-        if self.repo:
+        if self.sink is not None:
+            self.sink.append(record)
+        elif self.repo:
             record = self.repo.create(record)
         else:
             self.db.notifications.insert_one(record)

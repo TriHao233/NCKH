@@ -1214,7 +1214,7 @@ class SchemaV2Tests(unittest.TestCase):
                     "current_version": 2,
                 }
 
-            def submit_for_review(self, _question_id, _current_user):
+            def submit_for_review(self, _question_id, _current_user, notifications=None):
                 return {
                     "id": question_id,
                     "review_status": "PENDING",

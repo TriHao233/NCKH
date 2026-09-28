@@ -13,6 +13,7 @@ from core.postgres import postgres_connection
 from core.postgres_audit import write_postgres_audit_event
 from db.bson_json import restore
 from db.copy_business_data import projected_rows, upsert
+from modules.notifications.postgres_repository import insert_notifications
 from modules.questions.repository import object_id, utc_now
 
 
@@ -251,7 +252,8 @@ class PostgresQuestionRepository:
             ).fetchall()
         return [self._comment(row) for row in rows]
 
-    def add_comment(self, comment: dict, *, actor_role: str) -> dict:
+    def add_comment(self, comment: dict, *, actor_role: str,
+                    notifications: list[dict] | None = None) -> dict:
         with postgres_connection() as conn:
             pair = self._pair(conn, comment["question_id"], lock=True)
             if not pair or pair[1]["_id"] != comment["question_version_id"]:
@@ -266,6 +268,7 @@ class PostgresQuestionRepository:
                           "question_version_id": str(comment["question_version_id"]),
                           "mentions": [str(item) for item in comment.get("mention_user_ids") or []]},
             )
+            insert_notifications(conn, notifications)
         return comment
 
     def change_comment(self, question_id: str | ObjectId, comment_id: str | ObjectId,
@@ -312,7 +315,8 @@ class PostgresQuestionRepository:
     def record_review(self, review: dict, question_fields: dict, *,
                       expected_version_id: ObjectId,
                       expected_latest_review_id: ObjectId | None,
-                      actor_role: str, audit_action: str) -> tuple[dict, dict]:
+                      actor_role: str, audit_action: str,
+                      notifications: list[dict] | None = None) -> tuple[dict, dict]:
         with postgres_connection() as conn:
             pair = self._pair(conn, review["question_id"], lock=True)
             if not pair:
@@ -380,6 +384,7 @@ class PostgresQuestionRepository:
                     "self_review_reason": review.get("self_review_reason") or "",
                 },
             )
+            insert_notifications(conn, notifications)
             return question, version
 
     def find_review(self, review_id: str | ObjectId) -> dict | None:
@@ -575,7 +580,8 @@ class PostgresQuestionRepository:
             ).fetchall()
         return [_question(row) for row in rows]
 
-    def mark_sla_reminded(self, question_id: ObjectId, submitted_at, now) -> bool:
+    def mark_sla_reminded(self, question_id: ObjectId, submitted_at, now,
+                          notifications: list[dict] | None = None) -> bool:
         """Chỉ nhắc một lần cho mỗi lượt gửi duyệt, kể cả khi nhiều worker cùng chạy."""
         with postgres_connection() as conn:
             pair = self._pair(conn, question_id, lock=True)
@@ -586,6 +592,7 @@ class PostgresQuestionRepository:
                 return False
             question["review_sla"] = {"reminded_submission_at": submitted_at, "reminded_at": now}
             self._save_question(conn, question)
+            insert_notifications(conn, notifications)
             return True
 
     def record_moodle_publication(self, publication: dict, *,
@@ -762,7 +769,8 @@ class PostgresQuestionRepository:
                              fields: dict,
                              actor_user_id: ObjectId,
                              actor_role: str,
-                             reason: str) -> tuple[dict, dict]:
+                             reason: str,
+                             notifications: list[dict] | None = None) -> tuple[dict, dict]:
         with postgres_connection() as conn:
             pair = self._pair(conn, question_id, lock=True)
             if not pair:
@@ -783,6 +791,7 @@ class PostgresQuestionRepository:
                 metadata={"reason": reason,
                           "question_version_id": str(version["_id"])},
             )
+            insert_notifications(conn, notifications)
             return question, version
 
     def _assignment_audit(self, conn, action: str, question: dict, version: dict,
@@ -872,7 +881,8 @@ class PostgresQuestionRepository:
     def assign_review(self, question_id: str | ObjectId, *,
                       expected_version_id: ObjectId, assignment: dict,
                       actor_user_id: ObjectId, actor_role: str,
-                      action: str, now, note: str | None = None) -> tuple[dict, dict]:
+                      action: str, now, note: str | None = None,
+                      notifications: list[dict] | None = None) -> tuple[dict, dict]:
         with postgres_connection() as conn:
             pair = self._pair(conn, question_id, lock=True)
             if not pair:
@@ -888,6 +898,7 @@ class PostgresQuestionRepository:
             self._assignment_audit(conn, action, question, version,
                                    actor_user_id, actor_role, previous, assignment,
                                    {"note": note})
+            insert_notifications(conn, notifications)
             return question, version
 
     def list(
@@ -1094,7 +1105,8 @@ class PostgresQuestionRepository:
         return aggregate, version
 
     def create_version(self, question_id: str | ObjectId, expected_version: int,
-                       version: dict, *, review_submission: dict | None = None
+                       version: dict, *, review_submission: dict | None = None,
+                       notifications: list[dict] | None = None
                        ) -> tuple[dict, dict] | None:
         with postgres_connection() as conn:
             pair = self._pair(conn, question_id, lock=True)
@@ -1128,11 +1140,13 @@ class PostgresQuestionRepository:
             })
             self._save_version(conn, new_version)
             self._save_question(conn, question)
+            insert_notifications(conn, notifications)
             return question, new_version
 
     def update_review_status(self, question_id: str | ObjectId,
                              allowed_statuses: set[str], review_status: str, *,
-                             review_submission: dict | None = None
+                             review_submission: dict | None = None,
+                             notifications: list[dict] | None = None
                              ) -> tuple[dict, dict] | None:
         with postgres_connection() as conn:
             pair = self._pair(conn, question_id, lock=True)
@@ -1153,6 +1167,7 @@ class PostgresQuestionRepository:
                 submitted["submitted_at"] = now
                 question["review_submission"] = submitted
             self._save_question(conn, question)
+            insert_notifications(conn, notifications)
             return question, version
 
     def archive(self, question_id: str | ObjectId) -> bool:

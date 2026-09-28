@@ -22,16 +22,34 @@ from modules.questions.schemas import (
 )
 from modules.questions.service import QuestionService, get_question_service
 from modules.notifications.service import (
+    NotificationService,
     safe_notify_exam_owners_question_reopened,
     safe_notify_question_resubmitted,
 )
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
     get_workflow_service,
+    notification_outbox,
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Questions"])
 logger = logging.getLogger(__name__)
+
+
+def _collect_notifications(workflow_service: QuestionWorkflowService, build) -> list[dict] | None:
+    """Build notifications to store with the question change (PostgreSQL only).
+
+    Returns None when they must be sent after the change instead. A failure
+    while building never blocks the teacher's edit or submission.
+    """
+    outbox = notification_outbox()
+    if outbox is not None:
+        try:
+            build(NotificationService(workflow_service.db, sink=outbox))
+        except Exception as exc:
+            logger.warning("Failed to prepare question notifications: %s", exc)
+            outbox.clear()
+    return outbox
 
 
 @router.get("", response_model=QuestionListResponse)
@@ -230,6 +248,15 @@ def update_question(
     service: QuestionService = Depends(get_question_service),
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
+    outbox = _collect_notifications(
+        workflow_service,
+        lambda notifier: notifier.notify_exam_owners_question_reopened(
+            question_id=question_id,
+            question_code=(workflow_service.questions.find_pair(question_id) or [{}])[0]
+            .get("question_code") or "Câu hỏi",
+            actor_user_id=current_user.id,
+        ),
+    )
     try:
         question = service.update(
             question_id,
@@ -237,6 +264,7 @@ def update_question(
             current_user.id,
             actor_role=current_user.role,
             current_user=current_user,
+            notifications=outbox,
         )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
@@ -250,12 +278,13 @@ def update_question(
         raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
     # The edit created a new version, so open exams pinned to the old one can
     # no longer be finalized until it is reviewed and re-selected.
-    safe_notify_exam_owners_question_reopened(
-        database=workflow_service.db,
-        question_id=question_id,
-        question_code=question.get("question_code") or "Câu hỏi",
-        actor_user_id=current_user.id,
-    )
+    if outbox is None:
+        safe_notify_exam_owners_question_reopened(
+            database=workflow_service.db,
+            question_id=question_id,
+            question_code=question.get("question_code") or "Câu hỏi",
+            actor_user_id=current_user.id,
+        )
     return question
 
 
@@ -287,7 +316,14 @@ def submit_question_for_review(
     try:
         previous_question = service.get(question_id, current_user)
         previous_review_status = previous_question.get("review_status") if previous_question else None
-        question = service.submit_for_review(question_id, current_user)
+        outbox = _collect_notifications(
+            workflow_service,
+            lambda notifier: notifier.notify_question_resubmitted(
+                question_id=question_id, previous_review_status=previous_review_status,
+                actor_user_id=current_user.id,
+            ),
+        )
+        question = service.submit_for_review(question_id, current_user, notifications=outbox)
         if question:
             if (
                 previous_review_status != "PENDING"
@@ -321,12 +357,13 @@ def submit_question_for_review(
                             question_id,
                         )
                 question = service.get(question_id, current_user)
-            safe_notify_question_resubmitted(
-                database=workflow_service.db,
-                question_id=question_id,
-                previous_review_status=previous_review_status,
-                actor_user_id=current_user.id,
-            )
+            if outbox is None:
+                safe_notify_question_resubmitted(
+                    database=workflow_service.db,
+                    question_id=question_id,
+                    previous_review_status=previous_review_status,
+                    actor_user_id=current_user.id,
+                )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
             raise HTTPException(status_code=409, detail="Câu hỏi đã được cập nhật bởi người khác") from exc

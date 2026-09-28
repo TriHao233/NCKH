@@ -973,6 +973,7 @@ class QuestionService:
         created_by_user_id,
         actor_role: str | None = None,
         current_user: CurrentUser | None = None,
+        notifications: list[dict] | None = None,
     ) -> dict | None:
         pair = self.repository.find_pair(question_id)
         if not pair:
@@ -1161,6 +1162,7 @@ class QuestionService:
             question_id,
             payload.expected_version,
             next_version,
+            **_transactional(notifications),
             review_submission=self._review_submission(
                 actor,
                 next_version,
@@ -1212,6 +1214,7 @@ class QuestionService:
         self,
         question_id: str,
         current_user: CurrentUser | None = None,
+        notifications: list[dict] | None = None,
     ) -> dict | None:
         pair = self.repository.find_pair(question_id)
         if not pair:
@@ -1235,6 +1238,7 @@ class QuestionService:
             SUBMITTABLE_REVIEW_STATUSES,
             "PENDING",
             review_submission=submission,
+            **_transactional(notifications),
         )
         if not updated:
             raise RuntimeError("VERSION_CONFLICT")
@@ -1263,6 +1267,11 @@ class QuestionService:
             return False
         self._ensure_write_access(pair, current_user)
         return self.repository.archive(question_id)
+
+
+def _transactional(notifications: list[dict] | None) -> dict:
+    # Only the PostgreSQL repository writes notifications with the change.
+    return {"notifications": notifications} if notifications is not None else {}
 
 
 def get_question_service() -> QuestionService:
