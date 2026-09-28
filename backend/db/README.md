@@ -15,7 +15,7 @@ Tài liệu này ghi **trạng thái mã nguồn hiện tại** của quá trìn
 | Khóa giới hạn đồng thời model AI | PostgreSQL: `llm_slots` với `LLM_SLOT_STORE=postgres` | MongoDB |
 | Tài liệu, trang OCR, câu hỏi/phiên bản, duyệt/đánh giá, đề thi, job, Moodle publication, phần lớn audit | Chưa chuyển luồng đọc/ghi; schema và công cụ sao chép PostgreSQL đã có | MongoDB |
 | Chunk, chunk set, embedding metadata, vector collection và lineage của index | Giữ MongoDB | MongoDB |
-| Chỉ mục/vector truy xuất RAG | ChromaDB | ChromaDB local |
+| Chỉ mục/vector truy xuất RAG | ChromaDB local hoặc server chung với `CHROMA_MODE=http` | ChromaDB local |
 | File gốc, artifact OCR, bản xuất | Chưa có cloud storage adapter | Filesystem local |
 
 ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API và liên kết hiện tại. Bảng PostgreSQL dùng cột có kiểu cho khóa/trạng thái quan trọng; `payload jsonb` giữ các trường cũ chưa được chuẩn hóa. Dữ liệu chương/CLO đọc từ bảng con, không lấy từ mảng nhúng trong `subjects.payload`.
@@ -37,6 +37,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - Repository PostgreSQL cho tài khoản/phiên và cấu hình AI đã có từ giai đoạn trước.
 - Khi `USER_STORE=postgres`, thống kê và lịch cá nhân vẫn đọc tài liệu/câu hỏi từ MongoDB vì đây còn là nguồn ghi chính của hai nhóm đó; không dùng các bảng PostgreSQL shadow copy có thể đã cũ.
 - Upload file gốc dùng `LocalArtifactStorage`, tính SHA-256 khi ghi và trả URI local tương thích dữ liệu cũ; bước dedup artifact OCR cũng hash theo từng khối thay vì đọc nguyên file vào RAM. Đây là ranh giới lưu file local, chưa có provider object storage/cloud và chưa chuyển URI cũ thành khóa đối tượng.
+- ChromaDB có chế độ `CHROMA_MODE=local` (mặc định) hoặc `CHROMA_MODE=http` cho server chung. API/worker dùng cùng `CHROMA_HOST`, `CHROMA_PORT`, `CHROMA_SSL`; nếu có `CHROMA_AUTH_TOKEN`, chỉ đưa vào header kết nối, không ghi vào metadata/log. `vector_collections.persist_uri` ghi endpoint không chứa token. Trước khi đổi từ local sang server phải sao chép/rebuild chỉ mục và đối soát ID/hash vector.
 
 ## Cấu hình và chạy thử
 

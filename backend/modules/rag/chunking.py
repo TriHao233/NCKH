@@ -24,6 +24,7 @@ from modules.dictionary.dictionary import run_dictionary_auto_learning
 from modules.dictionary.service import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import (
+    chroma_persist_uri,
     embedding_config_hash,
     embedding_config_matches,
     embedding_config_snapshot,
@@ -211,7 +212,7 @@ def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, st
             "$setOnInsert": {
                 "_id": ObjectId(),
                 "schema_version": SCHEMA_VERSION,
-                "persist_uri": settings.chromadb_path,
+                "persist_uri": chroma_persist_uri(),
                 "embedding_model": {"provider": "SENTENCE_TRANSFORMERS", **embedding_config_snapshot()},
                 "embedding_config_hash": current_config_hash,
                 "distance_metric": "COSINE",

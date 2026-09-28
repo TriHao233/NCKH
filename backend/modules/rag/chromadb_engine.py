@@ -307,11 +307,33 @@ def get_chroma_client() -> chromadb.ClientAPI:
         return _chroma_client
     with _client_lock:
         if _chroma_client is None:
-            chroma_path = str(resolve_path(settings.chromadb_path))
             client_settings = chromadb.config.Settings(anonymized_telemetry=False)
-            _chroma_client = chromadb.PersistentClient(path=chroma_path, settings=client_settings)
-            logger.info("ChromaDB initialized at %s", chroma_path)
+            if settings.chroma_mode == "local":
+                chroma_path = str(resolve_path(settings.chromadb_path))
+                _chroma_client = chromadb.PersistentClient(path=chroma_path, settings=client_settings)
+                logger.info("ChromaDB initialized at %s", chroma_path)
+            elif settings.chroma_mode == "http":
+                if not settings.chroma_host or not 1 <= settings.chroma_port <= 65535:
+                    raise ValueError("CHROMA_HOST and CHROMA_PORT must identify a Chroma server")
+                headers = ({"Authorization": f"Bearer {settings.chroma_auth_token}"}
+                           if settings.chroma_auth_token else None)
+                _chroma_client = chromadb.HttpClient(
+                    host=settings.chroma_host, port=settings.chroma_port,
+                    ssl=settings.chroma_ssl, headers=headers, settings=client_settings,
+                )
+                logger.info("ChromaDB initialized at %s", chroma_persist_uri())
+            else:
+                raise ValueError("CHROMA_MODE must be local or http")
     return _chroma_client
+
+
+def chroma_persist_uri() -> str:
+    if settings.chroma_mode == "http":
+        scheme = "https" if settings.chroma_ssl else "http"
+        return f"{scheme}://{settings.chroma_host}:{settings.chroma_port}"
+    if settings.chroma_mode == "local":
+        return str(resolve_path(settings.chromadb_path))
+    raise ValueError("CHROMA_MODE must be local or http")
 
 
 def get_collection(collection_name: str | None = None):

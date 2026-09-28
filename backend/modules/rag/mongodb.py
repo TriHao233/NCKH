@@ -6,10 +6,10 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 
 from core.bootstrap import SCHEMA_VERSION
-from core.config import settings
 from core.database import get_database, mongo_transaction
 from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.rag.chromadb_engine import (
+    chroma_persist_uri,
     embedding_config_hash,
     embedding_config_matches,
     embedding_config_snapshot,
@@ -180,7 +180,7 @@ def persist_chunks(
             "$setOnInsert": {
                 "_id": ObjectId(),
                 "schema_version": SCHEMA_VERSION,
-                "persist_uri": settings.chromadb_path,
+                "persist_uri": chroma_persist_uri(),
                 "embedding_model": {
                     "provider": "SENTENCE_TRANSFORMERS",
                     **embedding_snapshot,

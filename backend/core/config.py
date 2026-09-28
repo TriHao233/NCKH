@@ -211,6 +211,11 @@ class Settings(BaseModel):
     )
 
     chromadb_path: str = os.getenv("CHROMADB_PATH", "./data/chroma_data")
+    chroma_mode: str = os.getenv("CHROMA_MODE", "local").strip().lower()
+    chroma_host: str = os.getenv("CHROMA_HOST", "localhost").strip()
+    chroma_port: int = int(os.getenv("CHROMA_PORT", "8000"))
+    chroma_ssl: bool = _env_bool("CHROMA_SSL", False)
+    chroma_auth_token: str = os.getenv("CHROMA_AUTH_TOKEN", "")
     output_dir: str = os.getenv("OUTPUT_DIR", "./data/outputs")
     metadata_dir: str = os.getenv("METADATA_DIR", "./data/metadata")
     chunk_output_dir: str = os.getenv("CHUNK_OUTPUT_DIR", "./data/chunk_outputs")
