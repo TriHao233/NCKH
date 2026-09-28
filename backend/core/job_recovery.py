@@ -66,6 +66,9 @@ def _recover_postgres_evaluation_jobs(cutoff: datetime, message: str) -> int:
 
 
 def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) -> int:
+    if settings.generation_store == "postgres":
+        from modules.generation.postgres_store import PostgresGenerationStore
+        return PostgresGenerationStore().fail_active(message, updated_before=cutoff)
     result = db.generation_jobs.update_many(
         {
             "status": {"$in": ["queued", "processing"]},
@@ -84,6 +87,12 @@ def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) 
 
 def cancel_unfinished_generation_jobs_on_worker_start() -> int:
     """Never resume generation left by a previous worker process."""
+    if settings.generation_store == "postgres":
+        from modules.generation.postgres_store import PostgresGenerationStore
+        changed = PostgresGenerationStore().fail_active("Job đã bị dừng khi worker khởi động lại")
+        if changed:
+            logger.warning("Cancelled %s unfinished generation jobs from previous worker", changed)
+        return changed
     now = utc_now()
     result = get_database().generation_jobs.update_many(
         {"status": {"$in": ["queued", "processing"]}},

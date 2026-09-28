@@ -21,6 +21,18 @@ from modules.documents.store import get_document_repository
 from modules.generation.mongodb import create_generation_job, get_generation_job
 from modules.questions.workflow_service import QuestionWorkflowService
 
+def _postgres_generation_store():
+    if settings.generation_store != "postgres":
+        return None
+    from modules.generation.postgres_store import PostgresGenerationStore
+    return PostgresGenerationStore()
+
+
+def _generation_statuses(status: str | None) -> list[str] | None:
+    value = _generation_status_filter(status)
+    return value.get("$in") if isinstance(value, dict) else [value] if value else None
+
+
 def _postgres_evaluation_jobs():
     if settings.question_store != "postgres":
         return None
@@ -339,9 +351,15 @@ class AdminJobService:
     ) -> int:
         total = 0
         if "generation" in requested_kinds:
-            total += self.db.generation_jobs.count_documents(
-                self._generation_query(status, user_oid, date_from, date_to)
-            )
+            generation_store = _postgres_generation_store()
+            if generation_store is not None:
+                total += generation_store.count_admin_jobs(
+                    _generation_statuses(status), user_oid, date_from, date_to,
+                )
+            else:
+                total += self.db.generation_jobs.count_documents(
+                    self._generation_query(status, user_oid, date_from, date_to)
+                )
         if "evaluation" in requested_kinds:
             evaluation_jobs = _postgres_evaluation_jobs()
             if evaluation_jobs is not None:
@@ -401,6 +419,14 @@ class AdminJobService:
         date_to: datetime | None = None,
         limit: int = 500,
     ) -> list[dict]:
+        generation_store = _postgres_generation_store()
+        if generation_store is not None:
+            return [
+                self._normalize_generation(job)
+                for job in generation_store.admin_jobs(
+                    _generation_statuses(status), user_oid, date_from, date_to, limit,
+                )
+            ]
         query = self._generation_query(status, user_oid, date_from, date_to)
         return [
             self._normalize_generation(job)
@@ -659,7 +685,10 @@ class AdminJobService:
         background_tasks: BackgroundTasks,
         current_user: CurrentUser,
     ) -> dict:
-        job = self.db.generation_jobs.find_one({"_id": _parse_object_id(job_id, "job_id")})
+        job_oid = _parse_object_id(job_id, "job_id")
+        generation_store = _postgres_generation_store()
+        job = (generation_store.get(job_oid) if generation_store is not None
+               else self.db.generation_jobs.find_one({"_id": job_oid}))
         if not job:
             raise LookupError("Không tìm thấy job")
         if job.get("status") not in RETRYABLE_STATUSES:
@@ -668,8 +697,8 @@ class AdminJobService:
             job.get("request") or {},
             requested_by_user_id=job.get("requested_by_user_id"),
             model_snapshot=job.get("model_snapshot"),
+            code_model_snapshot=job.get("code_model_snapshot"),
             fallback_model_snapshot=job.get("fallback_model_snapshot"),
-            fallback_to_heuristic=bool(job.get("fallback_to_heuristic")),
         )
         self._audit(current_user, "admin.job_retry", "generation", job_id, {"new_job_id": new_job_id})
         return {"job": json_safe(get_generation_job(new_job_id))}
@@ -737,6 +766,16 @@ class AdminJobService:
         return result
 
     def _cancel_generation(self, job_id: str, current_user: CurrentUser) -> dict:
+        generation_store = _postgres_generation_store()
+        if generation_store is not None:
+            result = generation_store.cancel(
+                _parse_object_id(job_id, "job_id"),
+                message=f"Cancelled by admin {current_user.email}", stage="failed",
+            )
+            if not result:
+                raise ValueError("Job không ở trạng thái có thể hủy")
+            self._audit(current_user, "admin.job_cancel", "generation", job_id)
+            return {"job": json_safe(result)}
         now = utc_now()
         result = self.db.generation_jobs.find_one_and_update(
             {"_id": _parse_object_id(job_id, "job_id"), "status": {"$in": ["queued", "processing"]}},
@@ -810,7 +849,8 @@ class AdminJobService:
         metadata: dict | None = None,
     ) -> None:
         if ((entity_type == "document" and settings.document_store == "postgres")
-                or (entity_type == "evaluation" and settings.question_store == "postgres")):
+                or (entity_type == "evaluation" and settings.question_store == "postgres")
+                or (entity_type == "generation" and settings.generation_store == "postgres")):
             with postgres_connection() as conn:
                 write_postgres_audit_event(
                     conn, action=action, entity_type=entity_type, entity_id=entity_id,

@@ -39,14 +39,25 @@ def _postgres_evaluation_queue_metrics(now: datetime) -> dict:
     }
 
 
+def _postgres_generation_queue_metrics(now: datetime) -> dict:
+    from modules.generation.postgres_store import PostgresGenerationStore
+    row = PostgresGenerationStore().queue_metrics()
+    return {
+        "queued": row["queued"], "processing": row["processing"],
+        "retry_wait": row["retry_wait"], "dead_lettered": row["dead_lettered"],
+        "expired_leases": row["expired_leases"],
+        "oldest_queued_seconds": _seconds_since(row["oldest_queued"], now),
+    }
+
+
 def collect_job_metrics(database) -> dict:
     now = datetime.now(timezone.utc)
-    generation = database.generation_jobs
+    generation = database.generation_jobs if settings.generation_store != "postgres" else None
     evaluation = database.evaluation_jobs if settings.question_store != "postgres" else None
     documents = database.document_jobs if settings.document_store != "postgres" else None
     oldest_generation = generation.find_one(
         {"status": "queued"}, sort=[("created_at", 1)], projection={"created_at": 1}
-    )
+    ) if generation is not None else None
     oldest_evaluation = evaluation.find_one(
         {"status": "QUEUED"}, sort=[("queued_at", 1)], projection={"queued_at": 1}
     ) if evaluation is not None else None
@@ -56,7 +67,7 @@ def collect_job_metrics(database) -> dict:
     return {
         "observed_at": now,
         "queues": {
-            "generation": {
+            "generation": _postgres_generation_queue_metrics(now) if generation is None else {
                 "queued": generation.count_documents({"status": "queued"}),
                 "processing": generation.count_documents({"status": "processing"}),
                 "retry_wait": generation.count_documents(

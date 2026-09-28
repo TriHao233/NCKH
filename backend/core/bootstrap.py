@@ -522,20 +522,21 @@ def _ensure_indexes() -> None:
             IndexModel([("operation_id", ASCENDING)], unique=True, name="uq_lineage_operation"),
         ]
     )
-    rag_db.generation_jobs.create_indexes(
-        [
-            IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
-            IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_jobs_requester"),
-            IndexModel(
-                [("requested_by_user_id", ASCENDING), ("idempotency_key", ASCENDING)],
-                unique=True,
-                partialFilterExpression={"idempotency_key": {"$type": "string"}},
-                name="uq_generation_jobs_idempotency",
-            ),
-            IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_generation_jobs_lease"),
-            IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_generation_jobs"),
-        ]
-    )
+    if settings.generation_store != "postgres":
+        rag_db.generation_jobs.create_indexes(
+            [
+                IndexModel([("status", ASCENDING), ("created_at", ASCENDING)], name="ix_generation_jobs_queue"),
+                IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_jobs_requester"),
+                IndexModel(
+                    [("requested_by_user_id", ASCENDING), ("idempotency_key", ASCENDING)],
+                    unique=True,
+                    partialFilterExpression={"idempotency_key": {"$type": "string"}},
+                    name="uq_generation_jobs_idempotency",
+                ),
+                IndexModel([("status", ASCENDING), ("lease_expires_at", ASCENDING)], name="ix_generation_jobs_lease"),
+                IndexModel([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_generation_jobs"),
+            ]
+        )
     if settings.llm_slot_store != "postgres":
         rag_db.llm_slots.create_indexes(
             [
@@ -550,12 +551,13 @@ def _ensure_indexes() -> None:
                 ),
             ]
         )
-    rag_db.generation_runs.create_indexes(
-        [
-            IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
-            IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"),
-        ]
-    )
+    if settings.generation_store != "postgres":
+        rag_db.generation_runs.create_indexes(
+            [
+                IndexModel([("document_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_document"),
+                IndexModel([("requested_by_user_id", ASCENDING), ("created_at", DESCENDING)], name="ix_generation_requester"),
+            ]
+        )
     rag_db.questions.create_indexes(
         [
             IndexModel([("question_code", ASCENDING)], unique=True, name="uq_question_code"),
@@ -916,7 +918,9 @@ def bootstrap_database() -> None:
               and (name != "subjects" or settings.catalog_store != "postgres")
               and (name != "keywords" or settings.dictionary_store != "postgres")
               and (name != "notifications" or settings.notification_store != "postgres")
-              and (name != "audit_logs" or settings.audit_store != "postgres")),
+              and (name != "audit_logs" or settings.audit_store != "postgres")
+              and (name not in {"generation_jobs", "generation_runs"}
+                   or settings.generation_store != "postgres")),
     )
     _ensure_indexes()
     _seed_reference_data()

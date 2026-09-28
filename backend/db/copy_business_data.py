@@ -274,10 +274,12 @@ def projected_rows(name: str, item: dict):
             idempotency_key=item.get("idempotency_key"), status=item["status"],
             request=data.get("request") or {}, model_snapshot=data.get("model_snapshot") or {},
             result=data.get("result"), metrics=data.get("metrics"),
-            attempt_no=item.get("attempt_count", 0), lease_owner=item.get("worker_id"),
+            attempt_no=item.get("attempt_count", 0),
+            lease_owner=item.get("locked_by") or item.get("worker_id"),
             lease_expires_at=item.get("lease_expires_at"),
             next_attempt_at=item.get("next_attempt_at"),
-            error_message=item.get("error_message"), created_at=created, updated_at=updated,
+            error_message=item.get("error_message"), payload=data,
+            created_at=created, updated_at=updated,
         )
         return
     if name == "generation_runs":

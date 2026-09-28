@@ -499,17 +499,22 @@ class AdminOverviewService:
             self._add_model_job(group, job, _duration_ms(job, duration_path="duration_ms"))
 
     def _collect_generation_model_performance(self, groups: dict[str, dict], since: datetime) -> None:
-        collection = getattr(self.db, "generation_runs", None)
-        if collection is None:
-            return
-        query = {
-            "$or": [
-                {"updated_at": {"$gte": since}},
-                {"finished_at": {"$gte": since}},
-                {"created_at": {"$gte": since}},
-            ]
-        }
-        for run in collection.find(query).sort("finished_at", -1).limit(1000):
+        if settings.generation_store == "postgres":
+            from modules.generation.postgres_store import PostgresGenerationStore
+            runs = PostgresGenerationStore().recent_runs(since, 1000)
+        else:
+            collection = getattr(self.db, "generation_runs", None)
+            if collection is None:
+                return
+            query = {
+                "$or": [
+                    {"updated_at": {"$gte": since}},
+                    {"finished_at": {"$gte": since}},
+                    {"created_at": {"$gte": since}},
+                ]
+            }
+            runs = collection.find(query).sort("finished_at", -1).limit(1000)
+        for run in runs:
             model = run.get("model") or {}
             model_code = (
                 model.get("model_code")

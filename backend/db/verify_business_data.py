@@ -61,6 +61,8 @@ DOCUMENT_CONTENT_FIELDS = {
     "evaluation_jobs": ("payload", "model_snapshot", "policy_snapshot",
                         "source_snapshot", "result", "error"),
     "moodle_publications": ("payload", "request_payload", "response_payload"),
+    "generation_jobs": ("payload", "request", "model_snapshot", "result", "metrics"),
+    "generation_runs": ("result", "model_snapshot", "retrieval_snapshot", "metrics"),
 }
 
 
