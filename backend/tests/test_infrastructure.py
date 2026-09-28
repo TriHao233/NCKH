@@ -160,6 +160,9 @@ class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
             def heartbeat_evaluation_job(self, *_args):
                 return True
 
+            def evaluation_job_state(self, *_args):
+                return self.db.evaluation_jobs.find_one()
+
             async def process_evaluation_job(self, *_args):
                 process_started.set()
                 try:

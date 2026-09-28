@@ -38,7 +38,11 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
     )
     results = {
         "generation_failed": _recover_generation_jobs(db, cutoff, now, message),
-        "evaluation_stale": _recover_evaluation_jobs(db, cutoff, now, message),
+        "evaluation_stale": (
+            _recover_postgres_evaluation_jobs(cutoff, message)
+            if settings.question_store == "postgres"
+            else _recover_evaluation_jobs(db, cutoff, now, message)
+        ),
         "document_failed": (
             _recover_postgres_document_jobs(cutoff, message)
             if settings.document_store == "postgres"
@@ -54,6 +58,11 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
 def _recover_postgres_document_jobs(cutoff: datetime, message: str) -> int:
     from modules.documents.postgres_repository import PostgresDocumentRepository
     return PostgresDocumentRepository().recover_stale_jobs(cutoff, message)
+
+
+def _recover_postgres_evaluation_jobs(cutoff: datetime, message: str) -> int:
+    from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+    return PostgresEvaluationJobs().recover_stale(cutoff, message)
 
 
 def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) -> int:

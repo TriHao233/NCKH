@@ -89,6 +89,41 @@ def test_evaluation_queue_dedupes_claims_and_finishes_with_version_guard(monkeyp
         assert jobs.finish(job_id, "worker-a", {"passed": True}) is True
         assert jobs.get(job_id)["status"] == "COMPLETED"
         assert jobs.next_queued_id() is None
+
+        with postgres_connection() as conn:
+            conn.execute(
+                """UPDATE questions SET evaluation_status='FAILED',
+                   payload=jsonb_set(payload, '{evaluation_status}', '"FAILED"'::jsonb)
+                   WHERE id=%s""",
+                (str(question_id),),
+            )
+        retry_id = ObjectId()
+        retried = jobs.enqueue(question_id, version_id, {
+            **request, "_id": retry_id, "dedupe_key": f"retry-{suffix}",
+            "max_attempts": 2,
+        })
+        assert retried["attempt_no"] == 2
+        assert jobs.claim(retry_id, "worker-b")["processing_attempt_count"] == 1
+        scheduled = jobs.retry_or_dead_letter(retry_id, "worker-b", "temporary",
+                                              duration_ms=10)
+        assert scheduled["status"] == "QUEUED"
+        assert jobs.claim(retry_id, "worker-b") is None
+        with postgres_connection() as conn:
+            conn.execute(
+                "UPDATE evaluation_jobs SET next_attempt_at=now()-interval '1 second' "
+                "WHERE id=%s", (str(retry_id),),
+            )
+        assert jobs.claim(retry_id, "worker-b")["processing_attempt_count"] == 2
+        dead = jobs.retry_or_dead_letter(retry_id, "worker-b", "permanent",
+                                         duration_ms=20)
+        assert dead["status"] == "ERROR"
+        assert dead["dead_lettered_at"] is not None
+        assert questions.find_pair(question_id)[0]["evaluation_status"] == "ERROR"
+        changed = jobs.mark_enqueue_error(
+            question_id, expected_version=1, evaluator_model_code="gemini",
+            message="provider unavailable",
+        )
+        assert changed["quality_summary"]["error"]["stage"] == "ENQUEUE"
     finally:
         with postgres_connection() as conn:
             conn.execute("DELETE FROM audit_logs WHERE entity_id=%s", (str(question_id),))

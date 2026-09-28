@@ -3,15 +3,22 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from bson import ObjectId
 
 from core.config import settings
+from core.dependencies import CurrentUser
 from core.postgres import postgres_connection
 from db.copy_business_data import projected_rows, upsert
 from modules.questions.postgres_repository import PostgresQuestionRepository
+from modules.questions.workflow_service import QuestionWorkflowService
+from modules.questions.workflow_schemas import (
+    EvaluationCreateRequest, EvaluationScores, ReviewCreateRequest,
+    ReviewDraftUpsertRequest, SecondaryReviewRequest,
+)
 from modules.questions.repository import serialize_question
 from modules.users.postgres_repository import PostgresUserRepository
 
@@ -25,6 +32,7 @@ pytestmark = pytest.mark.skipif(
 def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypatch):
     monkeypatch.setattr(settings, "user_store", "postgres")
     monkeypatch.setattr(settings, "catalog_store", "postgres")
+    monkeypatch.setattr(settings, "notification_store", "postgres")
     suffix = uuid4().hex[:12]
     now = datetime.now(timezone.utc)
     user = PostgresUserRepository().create({
@@ -87,7 +95,9 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
         assert [item["version"] for item in repository.list_versions(question_id)] == [2, 1]
         assert repository.list_versions(question_id)[1]["content"] == "Câu hỏi một"
 
-        scoring_job_id, evaluation_id = ObjectId(), ObjectId()
+        monkeypatch.setattr(settings, "question_store", "postgres")
+        workflow = QuestionWorkflowService(SimpleNamespace())
+        scoring_job_id = ObjectId()
         with postgres_connection() as conn:
             for table, row in projected_rows("evaluation_jobs", {
                 "_id": scoring_job_id, "question_id": question_id,
@@ -97,24 +107,28 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
                 "created_at": now, "updated_at": now,
             }):
                 upsert(conn, table, row)
-        evaluation = {
-            "_id": evaluation_id, "question_id": question_id,
-            "question_version_id": next_pair[1]["_id"],
-            "evaluation_job_id": scoring_job_id,
-            "requested_by_user_id": user["_id"],
-            "evaluator_model": {"model_code": "gemini"},
-            "policy": {"version": 1},
-            "scores": {"overall": 0.9}, "color": "GREEN",
-            "passed": True, "created_at": now,
-        }
-        evaluated, _ = repository.record_evaluation(
-            evaluation, expected_version_id=next_pair[1]["_id"],
-            evaluation_status="PASSED",
-            quality_summary={"latest_evaluation_id": evaluation_id,
-                             "overall_score": 0.9, "color": "GREEN"},
-            require_active_job=True,
+        evaluation = workflow.evaluate(
+            str(question_id), EvaluationCreateRequest(
+                expected_version=2,
+                scores=EvaluationScores(
+                    faithfulness=0.9, contextual_relevancy=0.9,
+                    answer_relevancy=0.9, bloom_alignment=0.9,
+                    clo_alignment=0.9,
+                ),
+                model_snapshot={"model_code": "gemini"},
+                policy_snapshot={
+                    "version": 1,
+                    "weights": {key: 0.2 for key in (
+                        "faithfulness", "contextual_relevancy",
+                        "answer_relevancy", "bloom_alignment", "clo_alignment")},
+                    "thresholds": {"yellow_min": 0.5, "green_min": 0.75,
+                                   "pass_min": 0.65},
+                },
+                evaluation_job_id=str(scoring_job_id),
+            ), user["_id"], require_active_job=True,
         )
-        assert evaluated["evaluation_status"] == "PASSED"
+        assert evaluation["passed"] is True
+        assert repository.find_pair(question_id)[0]["evaluation_status"] == "PASSED"
         assert repository.find_pair(question_id)[0]["quality_summary"]["color"] == "GREEN"
         with postgres_connection() as conn:
             assert conn.execute("SELECT count(*) AS n FROM question_evaluations WHERE question_id=%s",
@@ -129,6 +143,13 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
         assert submitted[0]["review_status"] == "PENDING"
         assert submitted[0]["review_submission"]["submitted_by_user_id"] == user["_id"]
         assert repository.update_review_status(question_id, {"DRAFT"}, "PENDING") is None
+
+        reviewer_actor = CurrentUser(
+            id=reviewer["_id"], firebase_uid="", email="reviewer@example.test",
+            role="Reviewer", is_active=True, permissions=("reviews.manage",),
+        )
+        assert workflow.claim_review(str(question_id), reviewer_actor)["review_assignment"]["status"] == "IN_REVIEW"
+        assert workflow.release_review(str(question_id), reviewer_actor)["review_assignment"]["status"] == "UNASSIGNED"
 
         claimed = repository.claim_review(
             question_id, actor_user_id=reviewer["_id"], actor_role="Reviewer",
@@ -154,17 +175,18 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
             assert conn.execute(
                 "SELECT count(*) AS n FROM audit_logs WHERE entity_id=%s",
                 (str(question_id),),
-            ).fetchone()["n"] == 3
-        draft = repository.save_review_draft(
-            question_id, reviewer["_id"], expected_version=2,
-            decision="APPROVED", draft={"overall_note": "Đạt"},
+            ).fetchone()["n"] == 5
+        draft = workflow.save_review_draft(
+            str(question_id), ReviewDraftUpsertRequest(
+                expected_version=2, decision="APPROVED", draft={"overall_note": "Đạt"}),
+            reviewer_actor,
         )
-        assert repository.get_review_draft(question_id, reviewer["_id"])["_id"] == draft["_id"]
+        assert workflow.get_review_draft(str(question_id), reviewer_actor)["_id"] == draft["_id"]
         saved_again = repository.save_review_draft(
             question_id, reviewer["_id"], expected_version=2,
             decision="NEEDS_REVISION", draft={"overall_note": "Sửa"},
         )
-        assert saved_again["_id"] == draft["_id"]
+        assert str(saved_again["_id"]) == draft["_id"]
         assert saved_again["decision"] == "NEEDS_REVISION"
 
         comment_id = ObjectId()
@@ -176,7 +198,7 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
             "created_at": now, "updated_at": now,
         }, actor_role="Reviewer")
         assert comment["body"] == "Nhận xét"
-        assert repository.list_comments(question_id)[0]["_id"] == comment_id
+        assert workflow.list_comments(str(question_id), reviewer_actor)["items"][0]["_id"] == str(comment_id)
         with pytest.raises(PermissionError):
             repository.change_comment(question_id, comment_id,
                                       actor_user_id=user["_id"], actor_role="Teacher",
@@ -222,32 +244,23 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
             }):
                 upsert(conn, table, row)
         assert repository.active_evaluation_job_ids(question_id) == [evaluation_job_id]
-        review_id = ObjectId()
-        review = {
-            "_id": review_id, "question_id": question_id,
-            "question_version_id": next_pair[1]["_id"],
-            "reviewer_user_id": reviewer["_id"],
-            "decision": "APPROVED", "review_form": {"overall_note": "Đạt"},
-            "interrupted_evaluation_job_ids": [evaluation_job_id],
-            "reviewed_at": now,
-        }
-        decided, _ = repository.record_review(
-            review,
-            {"latest_review_id": review_id, "review_status": "APPROVED",
-             "approved_version_id": next_pair[1]["_id"],
-             "evaluation_status": "NOT_STARTED",
-             "review_assignment": {"status": "UNASSIGNED"}, "updated_at": now},
-            expected_version_id=next_pair[1]["_id"],
-            expected_latest_review_id=None, actor_role="Reviewer",
-            audit_action="QUESTION_APPROVED",
+        reviewed = workflow.review(
+            str(question_id), ReviewCreateRequest(expected_version=2,
+                                                  decision="APPROVED", note="Đạt"),
+            reviewer_actor,
         )
+        review_id = ObjectId(reviewed["_id"])
+        decided = repository.find_pair(question_id)[0]
         assert decided["review_status"] == "APPROVED"
         assert decided["approved_version_id"] == next_pair[1]["_id"]
         assert repository.find_review(review_id)["reviewer_user_id"] == reviewer["_id"]
         assert repository.get_review_draft(question_id, reviewer["_id"]) is None
         with pytest.raises(RuntimeError, match="VERSION_CONFLICT"):
             repository.record_review(
-                {**review, "_id": ObjectId()},
+                {"_id": ObjectId(), "question_id": question_id,
+                 "question_version_id": next_pair[1]["_id"],
+                 "reviewer_user_id": reviewer["_id"], "decision": "APPROVED",
+                 "reviewed_at": now},
                 {"review_status": "APPROVED"},
                 expected_version_id=next_pair[1]["_id"],
                 expected_latest_review_id=None, actor_role="Reviewer",
@@ -277,6 +290,15 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
         assert secondary[0]["review_status"] == "PENDING"
         assert secondary[0]["approved_version_id"] is None
         assert secondary[0]["secondary_review"]["primary_review_id"] == review_id
+        admin_actor = CurrentUser(
+            id=user["_id"], firebase_uid="", email="admin@example.test",
+            role="Admin", is_active=True,
+        )
+        configured = workflow.set_secondary_review(
+            str(question_id), SecondaryReviewRequest(required=True, reason="Double check"),
+            admin_actor,
+        )
+        assert configured["secondary_review"]["status"] == "AWAITING_SECONDARY"
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(
                 repository.create_version, question_id, 2,
@@ -299,6 +321,8 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
         assert len(repository.list_versions(question_id)) == 3
     finally:
         with postgres_connection() as conn:
+            conn.execute("DELETE FROM notifications WHERE recipient_user_id=ANY(%s)",
+                         ([str(user["_id"]), str(reviewer["_id"])],))
             conn.execute("DELETE FROM audit_logs WHERE entity_id=%s", (str(question_id),))
             conn.execute("DELETE FROM question_comments WHERE question_id=%s",
                          (str(question_id),))

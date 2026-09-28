@@ -229,7 +229,14 @@ def _as_aware_utc(value):
 class QuestionWorkflowService:
     def __init__(self, database):
         self.db = database
-        self.questions = MongoQuestionRepository(database)
+        self.evaluation_jobs = None
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            self.questions = PostgresQuestionRepository()
+            self.evaluation_jobs = PostgresEvaluationJobs()
+        else:
+            self.questions = MongoQuestionRepository(database)
 
     def _pair(self, question_id: str) -> tuple[dict, dict]:
         pair = self.questions.find_pair(question_id)
@@ -1356,46 +1363,55 @@ class QuestionWorkflowService:
             },
             created_at=now,
         )
-        with mongo_transaction() as session:
-            if require_active_job:
-                # Ghi vào job trong cùng transaction để xung đột với lúc người duyệt
-                # dừng AI; job không còn PROCESSING thì bỏ kết quả.
-                job_touch = self.db.evaluation_jobs.update_one(
-                    {"_id": evaluation_job_id, "status": "PROCESSING"},
-                    {"$set": {"updated_at": now}},
+        quality_summary = {
+            "latest_evaluation_id": evaluation["_id"],
+            "latest_evaluation_job_id": evaluation_job_id,
+            "evaluated_version_id": version["_id"],
+            "overall_score": overall,
+            "color": color,
+            "evaluated_at": now,
+            "evaluator_model_code": evaluation["evaluator_model"].get("model_code"),
+            "feedback": payload.feedback,
+            "evidence": payload.evidence,
+        }
+        if settings.question_store == "postgres":
+            self.questions.record_evaluation(
+                evaluation, expected_version_id=version["_id"],
+                evaluation_status="PASSED" if passed else "FAILED",
+                quality_summary=quality_summary,
+                require_active_job=require_active_job,
+            )
+        else:
+            with mongo_transaction() as session:
+                if require_active_job:
+                    # Ghi vào job trong cùng transaction để xung đột với lúc người duyệt
+                    # dừng AI; job không còn PROCESSING thì bỏ kết quả.
+                    job_touch = self.db.evaluation_jobs.update_one(
+                        {"_id": evaluation_job_id, "status": "PROCESSING"},
+                        {"$set": {"updated_at": now}},
+                        session=session,
+                    )
+                    if not job_touch.matched_count:
+                        raise EvaluationInterruptedError("Tác vụ AI đánh giá đã bị dừng")
+                self.db.question_evaluations.insert_one(evaluation, session=session)
+                result = self.db.questions.update_one(
+                    {
+                        "_id": question["_id"],
+                        "current_version_id": version["_id"],
+                        "lifecycle_status": "ACTIVE",
+                    },
+                    {
+                        "$set": {
+                            "evaluation_status": "PASSED" if passed else "FAILED",
+                            "quality_summary": quality_summary,
+                            "updated_at": now,
+                        }
+                    },
                     session=session,
                 )
-                if not job_touch.matched_count:
-                    raise EvaluationInterruptedError("Tác vụ AI đánh giá đã bị dừng")
-            self.db.question_evaluations.insert_one(evaluation, session=session)
-            result = self.db.questions.update_one(
-                {
-                    "_id": question["_id"],
-                    "current_version_id": version["_id"],
-                    "lifecycle_status": "ACTIVE",
-                },
-                {
-                    "$set": {
-                        "evaluation_status": "PASSED" if passed else "FAILED",
-                        "quality_summary": {
-                            "latest_evaluation_id": evaluation["_id"],
-                            "latest_evaluation_job_id": evaluation_job_id,
-                            "evaluated_version_id": version["_id"],
-                            "overall_score": overall,
-                            "color": color,
-                            "evaluated_at": now,
-                            "evaluator_model_code": evaluation["evaluator_model"].get("model_code"),
-                            "feedback": payload.feedback,
-                            "evidence": payload.evidence,
-                        },
-                        "updated_at": now,
-                    }
-                },
-                session=session,
-            )
-            if not result.matched_count:
-                raise RuntimeError("VERSION_CONFLICT")
-            self.db.audit_logs.insert_one(audit, session=session)
+                if not result.matched_count:
+                    raise RuntimeError("VERSION_CONFLICT")
+                self.db.audit_logs.insert_one(audit, session=session)
         return json_safe(evaluation)
 
     async def auto_evaluate(self, question_id: str, payload: AutoEvaluationRequest, user_id) -> dict:
@@ -1642,16 +1658,18 @@ class QuestionWorkflowService:
             raise ValueError("Câu hỏi đã có kết quả AI đạt cho phiên bản hiện tại")
 
         dedupe_key = self._evaluation_dedupe_key(version, evaluator_model_code)
-        active_job = self.db.evaluation_jobs.find_one(
-            {"dedupe_key": dedupe_key, "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)}}
-        )
-        if active_job:
-            return json_safe(active_job)
+        if self.evaluation_jobs is None:
+            active_job = self.db.evaluation_jobs.find_one(
+                {"dedupe_key": dedupe_key, "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)}}
+            )
+            if active_job:
+                return json_safe(active_job)
 
         policy = self._policy()
         _, prompt_snapshot, source_chunks = self._build_evaluation_prompt(question, version, policy)
         now = utc_now()
-        attempt_no = (
+        # PostgreSQL tính attempt_no trong transaction enqueue.
+        attempt_no = 0 if self.evaluation_jobs is not None else (
             self.db.evaluation_jobs.count_documents(
                 {
                     "question_version_id": version["_id"],
@@ -1700,6 +1718,9 @@ class QuestionWorkflowService:
             "updated_at": now,
         }
 
+        if self.evaluation_jobs is not None:
+            # Enqueue khóa câu hỏi, dedupe job active và supersede job của version cũ.
+            return json_safe(self.evaluation_jobs.enqueue(question["_id"], version["_id"], job))
         try:
             with mongo_transaction() as session:
                 self.db.evaluation_jobs.insert_one(job, session=session)
@@ -1764,6 +1785,12 @@ class QuestionWorkflowService:
         evaluator_model_code: str,
         message: str,
     ) -> dict | None:
+        if self.evaluation_jobs is not None:
+            updated = self.evaluation_jobs.mark_enqueue_error(
+                question_id, expected_version=expected_version,
+                evaluator_model_code=evaluator_model_code, message=message,
+            )
+            return json_safe(updated) if updated else None
         now = utc_now()
         error = {"message": message, "at": now, "stage": "ENQUEUE"}
         updated = self.db.questions.find_one_and_update(
@@ -1801,6 +1828,18 @@ class QuestionWorkflowService:
         duration_ms: int | None = None,
         dead_lettered: bool = False,
     ) -> dict:
+        if self.evaluation_jobs is not None:
+            saved = self.evaluation_jobs.mark_error(
+                job["_id"], worker_id=job.get("locked_by"), message=message,
+                status=status, question_status=question_status, code=code,
+                evidence=evidence, raw_response_excerpt=raw_model_response,
+                duration_ms=duration_ms, dead_lettered=dead_lettered,
+            )
+            if saved:
+                return json_safe({**saved, "evidence": evidence or {}})
+            # Mất lease hoặc job đã kết thúc ở nơi khác: giữ nguyên trạng thái đã lưu.
+            return json_safe({**job, "status": status, "error": {"code": code, "message": message},
+                              "evidence": evidence or {}})
         now = utc_now()
         error = {
             "code": code,
@@ -1864,6 +1903,8 @@ class QuestionWorkflowService:
         )
 
     def heartbeat_evaluation_job(self, job_id: str, worker_id: str) -> bool:
+        if self.evaluation_jobs is not None:
+            return self.evaluation_jobs.heartbeat(job_id, worker_id)
         now = utc_now()
         result = self.db.evaluation_jobs.update_one(
             {
@@ -1889,6 +1930,12 @@ class QuestionWorkflowService:
         raw_model_response: str | None,
         duration_ms: int,
     ) -> dict:
+        if self.evaluation_jobs is not None:
+            saved = self.evaluation_jobs.retry_or_dead_letter(
+                job["_id"], job.get("locked_by"), message,
+                duration_ms=duration_ms, raw_response_excerpt=raw_model_response,
+            )
+            return json_safe(saved or {**job, "error": {"message": message}})
         attempts = int(job.get("processing_attempt_count") or 1)
         max_attempts = int(job.get("max_attempts") or settings.job_max_attempts)
         if attempts >= max_attempts:
@@ -1940,7 +1987,74 @@ class QuestionWorkflowService:
             )
         return json_safe({**job, "status": "QUEUED", "error": error})
 
+    def _claim_evaluation_job_postgres(
+        self, job_id: str, worker_id: str,
+    ) -> tuple[dict, dict, dict] | None:
+        # Claim đã kiểm tra version, đánh STALE nếu lệch và chuyển câu hỏi sang PROCESSING.
+        job = self.evaluation_jobs.claim(job_id, worker_id)
+        if not job:
+            return None
+        pair = self.questions.find_pair(job["question_id"])
+        if not pair or pair[1]["_id"] != job["question_version_id"]:
+            self._mark_evaluation_job_error(
+                job, "Phiên bản câu hỏi đã thay đổi trước khi AI đánh giá", status="STALE",
+            )
+            return None
+        return job, pair[0], pair[1]
+
+    def _save_evaluation_job_snapshots(self, job_id: ObjectId, fields: dict) -> None:
+        if self.evaluation_jobs is not None:
+            self.evaluation_jobs.update_snapshots(job_id, fields)
+            return
+        self.db.evaluation_jobs.update_one(
+            {"_id": job_id, "status": "PROCESSING"},
+            {"$set": {**fields, "updated_at": utc_now()}},
+        )
+
+    def _finish_evaluation_job(self, job: dict, worker_id: str, result: dict, **fields) -> None:
+        if self.evaluation_jobs is not None:
+            self.evaluation_jobs.finish(job["_id"], worker_id, result, **fields)
+            return
+        finished_at = utc_now()
+        self.db.evaluation_jobs.update_one(
+            {"_id": job["_id"], "status": "PROCESSING", "locked_by": worker_id},
+            {
+                "$set": {
+                    "status": "COMPLETED",
+                    "result": result,
+                    **fields,
+                    "finished_at": finished_at,
+                    "expires_at": finished_at + timedelta(days=settings.job_retention_days),
+                    "updated_at": finished_at,
+                },
+                "$unset": {
+                    "locked_by": "",
+                    "lease_expires_at": "",
+                    "heartbeat_at": "",
+                    "next_attempt_at": "",
+                },
+            },
+        )
+
+    def evaluation_job_state(self, job_id: str) -> dict | None:
+        """Trạng thái tối thiểu để worker biết job còn active hay đã bị dừng."""
+        if self.evaluation_jobs is not None:
+            return self.evaluation_jobs.get(job_id)
+        return self.db.evaluation_jobs.find_one(
+            {"_id": object_id(job_id, "evaluation_job_id")},
+            {"status": 1, "locked_by": 1, "error.stage": 1},
+        )
+
     async def process_evaluation_job(self, job_id: str, worker_id: str) -> dict | None:
+        if self.evaluation_jobs is not None:
+            claimed = await asyncio.to_thread(
+                self._claim_evaluation_job_postgres, job_id, worker_id,
+            )
+            if not claimed:
+                return None
+            job, question, version = claimed
+            return await self._run_evaluation_job(job, question, version, worker_id)
+
         job_oid = object_id(job_id, "evaluation_job_id")
         now = utc_now()
         job = await asyncio.to_thread(
@@ -2013,7 +2127,11 @@ class QuestionWorkflowService:
                 }
             },
         )
+        return await self._run_evaluation_job(job, question, version, worker_id)
 
+    async def _run_evaluation_job(
+        self, job: dict, question: dict, version: dict, worker_id: str,
+    ) -> dict:
         raw_model_response = None
         started = time.perf_counter()
         retrieval_snapshot: dict = {}
@@ -2046,22 +2164,19 @@ class QuestionWorkflowService:
                 source_chunks=source_chunks,
             )
             await asyncio.to_thread(
-                self.db.evaluation_jobs.update_one,
-                {"_id": job["_id"], "status": "PROCESSING"},
+                self._save_evaluation_job_snapshots,
+                job["_id"],
                 {
-                    "$set": {
-                        "prompt_snapshot": prompt_snapshot,
-                        "retrieval_snapshot": retrieval_snapshot,
-                        "source_snapshot": [
-                            {
-                                key: value
-                                for key, value in source.items()
-                                if key != "excerpt"
-                            }
-                            for source in source_chunks
-                        ],
-                        "updated_at": utc_now(),
-                    }
+                    "prompt_snapshot": prompt_snapshot,
+                    "retrieval_snapshot": retrieval_snapshot,
+                    "source_snapshot": [
+                        {
+                            key: value
+                            for key, value in source.items()
+                            if key != "excerpt"
+                        }
+                        for source in source_chunks
+                    ],
                 },
             )
             prompt, prompt_snapshot, effective_model_snapshot = _prepare_evaluation_attempt(
@@ -2156,36 +2271,18 @@ class QuestionWorkflowService:
                 job.get("requested_by_user_id"),
                 require_active_job=True,
             )
-            finished_at = utc_now()
             await asyncio.to_thread(
-                self.db.evaluation_jobs.update_one,
+                self._finish_evaluation_job,
+                job,
+                worker_id,
                 {
-                    "_id": job["_id"],
-                    "status": "PROCESSING",
-                    "locked_by": worker_id,
+                    "evaluation_id": object_id(evaluation.get("_id"), "evaluation_id"),
+                    "passed": evaluation.get("passed"),
+                    "overall_score": (evaluation.get("scores") or {}).get("overall"),
+                    "color": evaluation.get("color"),
                 },
-                {
-                    "$set": {
-                        "status": "COMPLETED",
-                        "result": {
-                            "evaluation_id": object_id(evaluation.get("_id"), "evaluation_id"),
-                            "passed": evaluation.get("passed"),
-                            "overall_score": (evaluation.get("scores") or {}).get("overall"),
-                            "color": evaluation.get("color"),
-                        },
-                        "duration_ms": duration_ms,
-                        "model_execution": get_llm_execution_snapshot(llm),
-                        "finished_at": finished_at,
-                        "expires_at": finished_at + timedelta(days=settings.job_retention_days),
-                        "updated_at": finished_at,
-                    },
-                    "$unset": {
-                        "locked_by": "",
-                        "lease_expires_at": "",
-                        "heartbeat_at": "",
-                        "next_attempt_at": "",
-                    },
-                },
+                duration_ms=duration_ms,
+                model_execution=get_llm_execution_snapshot(llm),
             )
             return evaluation
         except EvaluationInterruptedError:
@@ -2308,6 +2405,14 @@ class QuestionWorkflowService:
         )
 
     def claim_review(self, question_id: str, current_user: CurrentUser) -> dict:
+        if settings.question_store == "postgres":
+            now = utc_now()
+            updated = self.questions.claim_review(
+                question_id, actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                lock_expires_at=self._lock_expires_at(now), now=now,
+            )
+            return serialize_question(*updated)
         pair = self._pair(question_id)
         question, version = pair
         if question["review_status"] != "PENDING":
@@ -2360,6 +2465,14 @@ class QuestionWorkflowService:
         return serialize_question(updated, version)
 
     def release_review(self, question_id: str, current_user: CurrentUser) -> dict:
+        if settings.question_store == "postgres":
+            now = utc_now()
+            updated = self.questions.release_review(
+                question_id, actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                assignment=_empty_review_assignment(now, "released"), now=now,
+            )
+            return serialize_question(*updated)
         pair = self._pair(question_id)
         question, version = pair
         now = utc_now()
@@ -2395,6 +2508,13 @@ class QuestionWorkflowService:
         An expired lock can still be renewed as long as nobody else has
         claimed the question in the meantime.
         """
+        if settings.question_store == "postgres":
+            now = utc_now()
+            updated = self.questions.renew_review(
+                question_id, actor_user_id=current_user.id,
+                lock_expires_at=self._lock_expires_at(now), now=now,
+            )
+            return serialize_question(*updated)
         question, version = self._pair(question_id)
         now = utc_now()
         updated = self.db.questions.find_one_and_update(
@@ -2512,27 +2632,36 @@ class QuestionWorkflowService:
         else:
             assignment = _empty_review_assignment(now, payload.note or "unassigned")
             action = "QUESTION_REVIEW_UNASSIGNED"
-        updated = self.db.questions.find_one_and_update(
-            {
-                "_id": question["_id"],
-                "current_version_id": version["_id"],
-                "lifecycle_status": "ACTIVE",
-                "review_status": "PENDING",
-            },
-            {"$set": {"review_assignment": assignment, "updated_at": now}},
-            return_document=ReturnDocument.AFTER,
-        )
+        if settings.question_store == "postgres":
+            updated, version = self.questions.assign_review(
+                question_id, expected_version_id=version["_id"],
+                assignment=assignment, actor_user_id=current_user.id,
+                actor_role=current_user.role, action=action, now=now,
+                note=payload.note,
+            )
+        else:
+            updated = self.db.questions.find_one_and_update(
+                {
+                    "_id": question["_id"],
+                    "current_version_id": version["_id"],
+                    "lifecycle_status": "ACTIVE",
+                    "review_status": "PENDING",
+                },
+                {"$set": {"review_assignment": assignment, "updated_at": now}},
+                return_document=ReturnDocument.AFTER,
+            )
         if not updated:
             raise RuntimeError("VERSION_CONFLICT")
-        self._assignment_audit(
-            action=action,
-            question=updated,
-            version=version,
-            current_user=current_user,
-            before=question.get("review_assignment"),
-            after=assignment,
-            metadata={"note": payload.note},
-        )
+        if settings.question_store != "postgres":
+            self._assignment_audit(
+                action=action,
+                question=updated,
+                version=version,
+                current_user=current_user,
+                before=question.get("review_assignment"),
+                after=assignment,
+                metadata={"note": payload.note},
+            )
         if payload.reviewer_user_id:
             safe_notify_review_assigned(
                 database=self.db,
@@ -2788,12 +2917,12 @@ class QuestionWorkflowService:
     def get_review_draft(self, question_id: str, current_user: CurrentUser) -> dict | None:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
-        draft = self.db.question_review_drafts.find_one(
-            {
-                "question_id": question["_id"],
-                "reviewer_user_id": current_user.id,
-            }
-        )
+        if settings.question_store == "postgres":
+            draft = self.questions.get_review_draft(question["_id"], current_user.id)
+        else:
+            draft = self.db.question_review_drafts.find_one(
+                {"question_id": question["_id"], "reviewer_user_id": current_user.id}
+            )
         if not draft:
             return None
         draft["is_stale"] = draft.get("question_version_id") != version["_id"]
@@ -2809,6 +2938,12 @@ class QuestionWorkflowService:
         self._ensure_read_access(question, version, current_user)
         if question["current_version"] != payload.expected_version:
             raise RuntimeError("VERSION_CONFLICT")
+        if settings.question_store == "postgres":
+            return json_safe(self.questions.save_review_draft(
+                question["_id"], current_user.id,
+                expected_version=payload.expected_version,
+                decision=payload.decision, draft=payload.draft,
+            ))
         now = utc_now()
         draft = self.db.question_review_drafts.find_one_and_update(
             {
@@ -2838,6 +2973,8 @@ class QuestionWorkflowService:
     def delete_review_draft(self, question_id: str, current_user: CurrentUser) -> bool:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
+        if settings.question_store == "postgres":
+            return self.questions.delete_review_draft(question["_id"], current_user.id)
         result = self.db.question_review_drafts.delete_one(
             {
                 "question_id": question["_id"],
@@ -2982,16 +3119,19 @@ class QuestionWorkflowService:
             }
         # Người duyệt là người quyết định: chốt kết quả khi AI còn đang chạy thì
         # dừng lượt đánh giá đó thay vì bắt người duyệt chờ.
-        interrupted_job_ids = [
-            job["_id"]
-            for job in self.db.evaluation_jobs.find(
-                {
-                    "question_id": question["_id"],
-                    "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
-                },
-                {"_id": 1},
-            )
-        ]
+        if settings.question_store == "postgres":
+            interrupted_job_ids = self.questions.active_evaluation_job_ids(question["_id"])
+        else:
+            interrupted_job_ids = [
+                job["_id"]
+                for job in self.db.evaluation_jobs.find(
+                    {
+                        "question_id": question["_id"],
+                        "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
+                    },
+                    {"_id": 1},
+                )
+            ]
         if interrupted_job_ids or question.get("evaluation_status") in EVALUATION_ACTIVE_STATUSES:
             question_fields["evaluation_status"] = "NOT_STARTED"
             review["interrupted_evaluation_job_ids"] = interrupted_job_ids
@@ -3027,48 +3167,56 @@ class QuestionWorkflowService:
             },
             created_at=now,
         )
-        with mongo_transaction() as session:
-            if interrupted_job_ids:
-                self.db.evaluation_jobs.update_many(
-                    {
-                        "_id": {"$in": interrupted_job_ids},
-                        "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
-                    },
-                    {
-                        "$set": {
-                            "status": "CANCELLED",
-                            "error": {
-                                "message": "Người duyệt đã chốt kết quả nên dừng AI đánh giá",
-                                "stage": "REVIEWER_DECIDED",
-                                "at": now,
+        if settings.question_store == "postgres":
+            self.questions.record_review(
+                review, question_fields,
+                expected_version_id=version["_id"],
+                expected_latest_review_id=question.get("latest_review_id"),
+                actor_role=current_user.role, audit_action=audit_action,
+            )
+        else:
+            with mongo_transaction() as session:
+                if interrupted_job_ids:
+                    self.db.evaluation_jobs.update_many(
+                        {
+                            "_id": {"$in": interrupted_job_ids},
+                            "status": {"$in": list(EVALUATION_ACTIVE_STATUSES)},
+                        },
+                        {
+                            "$set": {
+                                "status": "CANCELLED",
+                                "error": {
+                                    "message": "Người duyệt đã chốt kết quả nên dừng AI đánh giá",
+                                    "stage": "REVIEWER_DECIDED",
+                                    "at": now,
+                                },
+                                "finished_at": now,
+                                "expires_at": now + timedelta(days=settings.job_retention_days),
+                                "updated_at": now,
                             },
-                            "finished_at": now,
-                            "expires_at": now + timedelta(days=settings.job_retention_days),
-                            "updated_at": now,
+                            "$unset": {
+                                "locked_by": "",
+                                "lease_expires_at": "",
+                                "heartbeat_at": "",
+                                "next_attempt_at": "",
+                            },
                         },
-                        "$unset": {
-                            "locked_by": "",
-                            "lease_expires_at": "",
-                            "heartbeat_at": "",
-                            "next_attempt_at": "",
-                        },
+                        session=session,
+                    )
+                self.db.question_reviews.insert_one(review, session=session)
+                result = self.db.questions.update_one(
+                    {
+                        "_id": question["_id"],
+                        "current_version_id": version["_id"],
+                        "lifecycle_status": "ACTIVE",
+                        "latest_review_id": question.get("latest_review_id"),
                     },
+                    {"$set": question_fields},
                     session=session,
                 )
-            self.db.question_reviews.insert_one(review, session=session)
-            result = self.db.questions.update_one(
-                {
-                    "_id": question["_id"],
-                    "current_version_id": version["_id"],
-                    "lifecycle_status": "ACTIVE",
-                    "latest_review_id": question.get("latest_review_id"),
-                },
-                {"$set": question_fields},
-                session=session,
-            )
-            if not result.matched_count:
-                raise RuntimeError("VERSION_CONFLICT")
-            self.db.audit_logs.insert_one(audit, session=session)
+                if not result.matched_count:
+                    raise RuntimeError("VERSION_CONFLICT")
+                self.db.audit_logs.insert_one(audit, session=session)
         if not request_secondary:
             safe_notify_review_decision(
                 database=self.db,
@@ -3128,6 +3276,8 @@ class QuestionWorkflowService:
     def list_comments(self, question_id: str, current_user: CurrentUser) -> dict:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
+        if settings.question_store == "postgres":
+            return {"items": [json_safe(item) for item in self.questions.list_comments(question["_id"])]}
         comments = list(
             self.db.question_comments.find({"question_id": question["_id"], "deleted_at": None})
             .sort("created_at", 1)
@@ -3163,15 +3313,14 @@ class QuestionWorkflowService:
             "created_at": now,
             "updated_at": now,
         }
-        self.db.question_comments.insert_one(comment)
-        self._comment_audit(
-            "QUESTION_COMMENT_ADDED",
-            question,
-            version,
-            current_user,
-            {"comment_id": comment["_id"], "mentions": json_safe(mention_ids)},
-            now,
-        )
+        if settings.question_store == "postgres":
+            self.questions.add_comment(comment, actor_role=current_user.role)
+        else:
+            self.db.question_comments.insert_one(comment)
+            self._comment_audit(
+                "QUESTION_COMMENT_ADDED", question, version, current_user,
+                {"comment_id": comment["_id"], "mentions": json_safe(mention_ids)}, now,
+            )
         NotificationService(self.db).create_many(
             [
                 {
@@ -3207,6 +3356,11 @@ class QuestionWorkflowService:
     ) -> dict:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
+        if settings.question_store == "postgres":
+            return json_safe(self.questions.change_comment(
+                question["_id"], comment_id, actor_user_id=current_user.id,
+                actor_role=current_user.role, body=payload.body.strip(),
+            ))
         query = {
             "_id": object_id(comment_id, "comment_id"),
             "question_id": question["_id"],
@@ -3233,6 +3387,12 @@ class QuestionWorkflowService:
     ) -> bool:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
+        if settings.question_store == "postgres":
+            self.questions.change_comment(
+                question["_id"], comment_id, actor_user_id=current_user.id,
+                actor_role=current_user.role, delete=True,
+            )
+            return True
         query = {
             "_id": object_id(comment_id, "comment_id"),
             "question_id": question["_id"],
@@ -3284,7 +3444,9 @@ class QuestionWorkflowService:
                 # The approval being re-opened becomes the primary review.
                 primary_review_id = question.get("latest_review_id")
                 primary_review = (
-                    self.db.question_reviews.find_one({"_id": primary_review_id})
+                    (self.questions.find_review(primary_review_id)
+                     if settings.question_store == "postgres"
+                     else self.db.question_reviews.find_one({"_id": primary_review_id}))
                     if primary_review_id
                     else None
                 ) or {}
@@ -3343,28 +3505,33 @@ class QuestionWorkflowService:
                     "last_released_at": None,
                     "release_reason": payload.reason or None,
                 }
-        updated = self.db.questions.find_one_and_update(
-            {
-                "_id": question["_id"],
-                "current_version_id": version["_id"],
-                "lifecycle_status": "ACTIVE",
-                "review_status": review_status,
-            },
-            {"$set": fields},
-            return_document=ReturnDocument.AFTER,
-        )
+        if settings.question_store == "postgres":
+            updated, version = self.questions.set_secondary_review(
+                question_id, expected_version_id=version["_id"],
+                expected_review_status=review_status, fields=fields,
+                actor_user_id=current_user.id, actor_role=current_user.role,
+                reason=payload.reason,
+            )
+        else:
+            updated = self.db.questions.find_one_and_update(
+                {
+                    "_id": question["_id"],
+                    "current_version_id": version["_id"],
+                    "lifecycle_status": "ACTIVE",
+                    "review_status": review_status,
+                },
+                {"$set": fields},
+                return_document=ReturnDocument.AFTER,
+            )
         if not updated:
             raise RuntimeError("VERSION_CONFLICT")
-        self._assignment_audit(
-            action="QUESTION_SECONDARY_REVIEW_SET",
-            question=updated,
-            version=version,
-            current_user=current_user,
-            before=question.get("secondary_review") or {},
-            after=secondary,
-            metadata={"reason": payload.reason},
-            path="secondary_review",
-        )
+        if settings.question_store != "postgres":
+            self._assignment_audit(
+                action="QUESTION_SECONDARY_REVIEW_SET", question=updated,
+                version=version, current_user=current_user,
+                before=question.get("secondary_review") or {}, after=secondary,
+                metadata={"reason": payload.reason}, path="secondary_review",
+            )
         if reviewer and (fields.get("review_assignment") or {}).get("status") == "ASSIGNED":
             safe_notify_review_assigned(
                 database=self.db,
@@ -4232,14 +4399,9 @@ async def _wait_for_evaluation_job_superseded(
     stop_event: asyncio.Event,
 ) -> bool:
     """Return True as soon as this worker's evaluation job is no longer active."""
-    job_oid = object_id(job_id, "evaluation_job_id")
     poll_seconds = max(0.1, min(float(settings.job_worker_poll_seconds), 1.0))
     while not stop_event.is_set():
-        job = await asyncio.to_thread(
-            service.db.evaluation_jobs.find_one,
-            {"_id": job_oid},
-            {"status": 1, "locked_by": 1},
-        )
+        job = await asyncio.to_thread(service.evaluation_job_state, job_id)
         if not job:
             return True
         status = job.get("status")
@@ -4286,9 +4448,7 @@ async def process_evaluation_job_background(job_id: str, worker_id: str) -> None
                     await processing_task
                 except asyncio.CancelledError:
                     stopped = await asyncio.to_thread(
-                        service.db.evaluation_jobs.find_one,
-                        {"_id": object_id(job_id, "evaluation_job_id")},
-                        {"status": 1, "error.stage": 1},
+                        service.evaluation_job_state, job_id,
                     ) or {}
                     logger.info(
                         "Evaluation job %s stopped early: status=%s reason=%s",

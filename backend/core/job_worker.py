@@ -26,6 +26,9 @@ async def maintain_lease(heartbeat, stop_event: asyncio.Event) -> None:
 
 
 def get_next_queued_evaluation_job_id() -> str | None:
+    if settings.question_store == "postgres":
+        from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+        return PostgresEvaluationJobs().next_queued_id()
     now = datetime.now(timezone.utc)
     doc = get_database().evaluation_jobs.find_one(
         {

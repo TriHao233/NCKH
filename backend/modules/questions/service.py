@@ -1267,6 +1267,11 @@ class QuestionService:
 
 def get_question_service() -> QuestionService:
     database = get_database()
+    if settings.question_store == "postgres":
+        from modules.questions.postgres_repository import PostgresQuestionRepository
+        return QuestionService(
+            PostgresQuestionRepository(), MongoQuestionReferenceRepository(database),
+        )
     return QuestionService(
         MongoQuestionRepository(database),
         MongoQuestionReferenceRepository(database),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 
 from bson import ObjectId
 from psycopg.types.json import Jsonb
@@ -281,15 +282,24 @@ class PostgresQuestionRepository:
             interrupted = review.get("interrupted_evaluation_job_ids") or []
             if interrupted:
                 now = review["reviewed_at"]
+                error = {"message": "Người duyệt đã chốt kết quả nên dừng AI đánh giá",
+                         "stage": "REVIEWER_DECIDED", "at": now.isoformat()}
+                expires_at = now + timedelta(days=settings.job_retention_days)
                 conn.execute(
                     """UPDATE evaluation_jobs SET status='CANCELLED',
                        error=%s, lease_owner=NULL, lease_expires_at=NULL,
-                       next_attempt_at=NULL, updated_at=%s
+                       next_attempt_at=NULL, updated_at=%s,
+                       payload=(payload - 'locked_by' - 'worker_id'
+                                - 'lease_expires_at' - 'heartbeat_at' - 'next_attempt_at')
+                               || %s
                        WHERE question_id=%s AND id=ANY(%s)
                          AND status IN ('QUEUED','PROCESSING')""",
-                    (Jsonb({"message": "Người duyệt đã chốt kết quả nên dừng AI đánh giá",
-                            "stage": "REVIEWER_DECIDED", "at": now.isoformat()}),
-                     now, str(question["_id"]), [str(item) for item in interrupted]),
+                    (Jsonb(error), now,
+                     Jsonb({"status": "CANCELLED", "error": error,
+                            "finished_at": now.isoformat(),
+                            "expires_at": expires_at.isoformat(),
+                            "updated_at": now.isoformat()}),
+                     str(question["_id"]), [str(item) for item in interrupted]),
                 )
             for table, row in projected_rows("question_reviews", review):
                 upsert(conn, table, row)
