@@ -24,11 +24,12 @@ from core.config import settings
 
 VECTOR_COLLECTIONS = {
     "chunk_sets", "document_chunks", "vector_collections",
-    "chunk_embeddings", "pipeline_lineage_events",
+    "chunk_embeddings",
 }
 SOURCE_ORDER = (
     "users", "subjects", "keywords", "dictionaries", "ai_models", "prompt_templates",
     "evaluation_policies", "documents", "document_jobs", "document_pages",
+    "pipeline_lineage_events",
     "generation_jobs", "generation_runs", "questions", "question_versions",
     "evaluation_jobs", "question_evaluations", "question_reviews",
     "question_review_drafts", "question_comments", "exams", "exam_variants",
@@ -41,7 +42,8 @@ JSON_COLUMNS = {
     "question_data", "classification", "clos", "sources", "request", "changes",
     "model_snapshot", "prompt_snapshot", "retrieval_snapshot", "result",
     "metrics", "policy_snapshot", "source_snapshot", "error", "draft",
-    "snapshot", "before_state", "after_state", "metadata", "response_payload",
+    "snapshot", "from_snapshot", "to_snapshot", "validation",
+    "before_state", "after_state", "metadata", "response_payload",
     "request_payload", "last_health_check", "source_location",
 }
 
@@ -247,6 +249,21 @@ def projected_rows(name: str, item: dict):
             created_at=created, updated_at=updated,
         )
         return
+    if name == "pipeline_lineage_events":
+        yield "document_lineage_events", dict(
+            operation_id=item.get("operation_id") or row_id,
+            document_id=oid(item["document_id"]),
+            event_type=item.get("event_type") or "UNKNOWN",
+            actor=str(item.get("actor") or "SYSTEM"),
+            reason=str(item.get("reason") or ""),
+            from_snapshot=data.get("from_snapshot") or {},
+            to_snapshot=data.get("to_snapshot") or {},
+            validation=data.get("validation") or {},
+            rollback_available=bool(item.get("rollback_available", False)),
+            promotion_operation_id=item.get("promotion_operation_id"),
+            status=item.get("status"), payload=data, created_at=created,
+        )
+        return
     if name == "generation_jobs":
         yield "generation_jobs", dict(
             id=row_id, requested_by_user_id=oid(item.get("requested_by_user_id")),
@@ -428,7 +445,8 @@ def upsert(connection, table: str, row: dict) -> None:
     key_columns = (
         ("provider", "slot_index") if table == "llm_slots" else
         ("exam_id", "position") if table == "exam_questions" else
-        ("document_id", "subject_id") if table == "document_subjects" else ("id",)
+        ("document_id", "subject_id") if table == "document_subjects" else
+        ("operation_id",) if table == "document_lineage_events" else ("id",)
     )
     assignments = [column for column in columns if column not in key_columns]
     statement = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}").format(

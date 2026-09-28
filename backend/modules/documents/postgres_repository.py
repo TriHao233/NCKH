@@ -11,7 +11,8 @@ from psycopg.types.json import Jsonb
 from core.config import settings
 from core.database import get_database
 from core.postgres import postgres_connection
-from db.copy_business_data import projected_rows, upsert
+from db.copy_business_data import normalized, projected_rows, upsert
+from core.postgres_audit import write_postgres_audit_event
 from modules.documents.repository import (
     MongoDocumentRepository, compact_raw_extraction, json_safe, object_id, utc_now,
 )
@@ -30,6 +31,12 @@ def _restore(value, key: str = ""):
         except ValueError:
             pass
     return value
+
+
+def _lineage_snapshot(value: dict) -> dict:
+    return {key: value.get(key) for key in (
+        "ocr_job_id", "chunk_set_id", "vector_collection_id",
+    )}
 
 
 class PostgresDocumentRepository:
@@ -557,6 +564,128 @@ class PostgresDocumentRepository:
                     document["status"] = "READY"
             self._save(conn, document)
             return True
+
+    def promote_lineage(self, document_id: str | ObjectId, target: dict, *,
+                        operation_id: str, validation: dict,
+                        expected_current: dict, expected_version: int,
+                        actor: str, reason: str) -> dict:
+        key = str(object_id(document_id, "document_id"))
+        after = _lineage_snapshot(target)
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (key,),
+            ).fetchone()
+            if not row:
+                raise LookupError("document missing or archived")
+            document = self._load(conn, row)
+            before = _lineage_snapshot(document.get("current_processing") or {})
+            if (before != _lineage_snapshot(expected_current)
+                    or document["current_version"] != expected_version):
+                raise RuntimeError("active lineage changed concurrently")
+            if _lineage_snapshot(document.get("pending_processing") or {}) != after:
+                raise RuntimeError("active lineage changed concurrently")
+            document["current_processing"] = dict(after)
+            document["pending_processing"] = {}
+            document["status"] = "READY"
+            document.setdefault("pipeline_summary", {}).update(
+                ocr_status="COMPLETED", chunk_status="COMPLETED", index_status="COMPLETED",
+            )
+            document["updated_at"] = utc_now()
+            self._save(conn, document)
+            event_payload = normalized({
+                "operation_id": operation_id, "event_type": "PROMOTE",
+                "document_id": document["_id"], "actor": actor, "reason": reason,
+                "from_snapshot": before, "to_snapshot": after,
+                "validation": validation, "rollback_available": True,
+                "created_at": document["updated_at"],
+            })
+            conn.execute(
+                """INSERT INTO document_lineage_events
+                   (operation_id, document_id, event_type, actor, reason,
+                    from_snapshot, to_snapshot, validation, rollback_available,
+                    payload, created_at)
+                   VALUES (%s,%s,'PROMOTE',%s,%s,%s,%s,%s,true,%s,%s)""",
+                (operation_id, key, actor, reason,
+                 Jsonb(normalized(before)), Jsonb(normalized(after)),
+                 Jsonb(normalized(validation)), Jsonb(event_payload),
+                 document["updated_at"]),
+            )
+            write_postgres_audit_event(
+                conn, action="document.lineage_promote", entity_type="document",
+                entity_id=key, before=normalized(before), after=normalized(after),
+                metadata={"operation_id": operation_id, "actor": actor, "reason": reason},
+            )
+        return {"operation_id": operation_id, "from_snapshot": before,
+                "to_snapshot": after}
+
+    def promotion_event(self, operation_id: str) -> dict | None:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM document_lineage_events
+                   WHERE operation_id=%s AND event_type='PROMOTE' AND rollback_available""",
+                (operation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {**row, "from_snapshot": _restore(row["from_snapshot"]),
+                "to_snapshot": _restore(row["to_snapshot"])}
+
+    def rollback_lineage(self, operation_id: str, *, rollback_id: str,
+                         actor: str, reason: str) -> dict:
+        with postgres_connection() as conn:
+            event = conn.execute(
+                """SELECT * FROM document_lineage_events
+                   WHERE operation_id=%s AND event_type='PROMOTE'
+                     AND rollback_available FOR UPDATE""",
+                (operation_id,),
+            ).fetchone()
+            if not event:
+                raise LookupError("promotion is missing or no longer rollbackable")
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (event["document_id"],),
+            ).fetchone()
+            if not row:
+                raise LookupError("document missing or archived")
+            document = self._load(conn, row)
+            before = _restore(event["from_snapshot"])
+            after = _restore(event["to_snapshot"])
+            if _lineage_snapshot(document.get("current_processing") or {}) != _lineage_snapshot(after):
+                raise RuntimeError("rollback target is not the active lineage")
+            document["current_processing"] = dict(before)
+            document["updated_at"] = utc_now()
+            self._save(conn, document)
+            conn.execute(
+                "UPDATE document_lineage_events SET rollback_available=false WHERE operation_id=%s",
+                (operation_id,),
+            )
+            event_payload = normalized({
+                "operation_id": rollback_id, "event_type": "ROLLBACK",
+                "document_id": document["_id"], "actor": actor, "reason": reason,
+                "from_snapshot": after, "to_snapshot": before,
+                "promotion_operation_id": operation_id,
+                "created_at": document["updated_at"],
+            })
+            conn.execute(
+                """INSERT INTO document_lineage_events
+                   (operation_id, document_id, event_type, actor, reason,
+                    from_snapshot, to_snapshot, promotion_operation_id,
+                    payload, created_at)
+                   VALUES (%s,%s,'ROLLBACK',%s,%s,%s,%s,%s,%s,%s)""",
+                (rollback_id, event["document_id"], actor, reason,
+                 Jsonb(normalized(after)), Jsonb(normalized(before)), operation_id,
+                 Jsonb(event_payload), document["updated_at"]),
+            )
+            write_postgres_audit_event(
+                conn, action="document.lineage_rollback", entity_type="document",
+                entity_id=event["document_id"], before=normalized(after),
+                after=normalized(before),
+                metadata={"operation_id": rollback_id,
+                          "promotion_operation_id": operation_id,
+                          "actor": actor, "reason": reason},
+            )
+        return {"operation_id": rollback_id, "restored_snapshot": before}
 
     def save_pages(self, document_id: str, ocr_job_id: str, pages: list[dict]) -> int:
         document_key = str(object_id(document_id, "document_id"))

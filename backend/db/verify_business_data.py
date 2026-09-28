@@ -17,7 +17,8 @@ from db.copy_business_data import SOURCE_ORDER, fingerprint, projected_rows
 
 CHILD_TABLES = {
     "subject_chapters", "learning_outcomes", "ai_model_versions",
-    "document_artifacts", "document_subjects", "exam_questions", "legacy_dictionaries",
+    "document_artifacts", "document_subjects", "document_lineage_events",
+    "exam_questions", "legacy_dictionaries",
 }
 CRITICAL_FIELDS = {
     "users": ("firebase_uid", "email", "role", "is_active"),
@@ -30,6 +31,8 @@ CRITICAL_FIELDS = {
         "document_id", "artifact_type", "storage_provider", "storage_key",
         "checksum_sha256", "mime_type", "size_bytes", "version",
     ),
+    "document_lineage_events": ("document_id", "event_type", "rollback_available",
+                                "promotion_operation_id", "status"),
     "audit_logs": ("actor_user_id", "actor_type", "actor_role", "action",
                    "entity_type", "entity_id", "before_hash", "after_hash"),
     "moodle_targets": ("site_key", "site_name", "mode", "secret_ref", "is_active"),
@@ -47,6 +50,7 @@ DOCUMENT_CONTENT_FIELDS = {
     "document_jobs": ("payload",),
     "document_pages": ("payload", "raw_text", "clean_text"),
     "document_artifacts": ("payload",),
+    "document_lineage_events": ("payload", "from_snapshot", "to_snapshot", "validation"),
     "audit_logs": ("payload", "before_state", "after_state", "changes", "metadata"),
 }
 
@@ -58,6 +62,8 @@ def row_key(table: str, row: dict):
         return (row["exam_id"], row["position"])
     if table == "document_subjects":
         return (row["document_id"], row["subject_id"])
+    if table == "document_lineage_events":
+        return row["operation_id"]
     return row["id"]
 
 
@@ -121,7 +127,7 @@ def verify(mongo_db, postgres_connection) -> list[str]:
         for document in mongo_db[name].find():
             for table, row in projected_rows(name, document):
                 expected.setdefault(table, {})[row_key(table, row)] = row
-    tables = (set(SOURCE_ORDER) - {"dictionaries"}) | CHILD_TABLES
+    tables = (set(SOURCE_ORDER) - {"dictionaries", "pipeline_lineage_events"}) | CHILD_TABLES
     errors = []
     targets: dict[str, dict] = {}
     for table in sorted(tables):
