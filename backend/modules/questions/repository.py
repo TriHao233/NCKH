@@ -11,6 +11,7 @@ from pymongo.database import Database
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import mongo_transaction
+from modules.catalog.postgres_subject_repository import subject_record
 
 
 def utc_now() -> datetime:
@@ -300,7 +301,7 @@ class MongoQuestionReferenceRepository:
         return [number for start, end, number in spans if start < match_end and end > match_start]
 
     def find_subject(self, subject_id: ObjectId) -> dict | None:
-        return self.db.subjects.find_one({"_id": subject_id, "is_active": True})
+        return subject_record(self.db, subject_id, active_only=True)
 
 
 class MongoQuestionRepository:

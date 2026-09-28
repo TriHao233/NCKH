@@ -41,6 +41,7 @@ from modules.generation.llm.model_registry import (
 from modules.generation.prompt_builder import PromptBuilder
 from modules.questions.repository import json_safe, object_id
 from modules.catalog.postgres_ai_repository import PostgresAiRepository
+from modules.catalog.postgres_subject_repository import PostgresSubjectRepository, SubjectCodeConflict
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +110,7 @@ ADMIN_CATALOG_PERMISSION = "admin.catalog"
 SUBJECT_OWNER_PERMISSION = "catalog.subjects.manage_own"
 
 
-class CatalogConflictError(ValueError):
-    """Raised when catalog data conflicts with an existing unique value."""
+CatalogConflictError = SubjectCodeConflict
 
 
 def _is_catalog_admin(viewer: Any) -> bool:
@@ -165,6 +165,7 @@ class CatalogService:
     def __init__(self, database):
         self.db = database
         self.ai_repo = PostgresAiRepository() if settings.ai_config_store == "postgres" else None
+        self.subject_repo = PostgresSubjectRepository() if settings.catalog_store == "postgres" else None
 
     def _audit(
         self, action: str, entity_type: str, record: dict, viewer: Any,
@@ -275,7 +276,9 @@ class CatalogService:
         }
 
     def _subject_or_404(self, subject_id: str | ObjectId) -> dict:
-        subject = self.db.subjects.find_one({"_id": object_id(subject_id, "subject_id")})
+        identifier = object_id(subject_id, "subject_id")
+        subject = (self.subject_repo.find_by_id(identifier) if self.subject_repo else
+                   self.db.subjects.find_one({"_id": identifier}))
         if not subject:
             raise LookupError("Không tìm thấy học phần")
         return subject
@@ -286,6 +289,8 @@ class CatalogService:
             raise PermissionError("Bạn chỉ có thể chỉnh sửa học phần do mình tạo")
 
     def _find_subject_by_code(self, subject_code: str) -> dict | None:
+        if self.subject_repo:
+            return self.subject_repo.find_by_code(subject_code)
         normalized = subject_code.strip().lower()
         for subject in self.db.subjects.find():
             if str(subject.get("subject_code", "")).strip().lower() == normalized:
@@ -323,7 +328,8 @@ class CatalogService:
         return normalized
 
     def list_subjects(self, viewer: Any = None) -> list[dict]:
-        records = self.db.subjects.find().sort("subject_code", 1)
+        records = (self.subject_repo.list() if self.subject_repo else
+                   self.db.subjects.find().sort("subject_code", 1))
         return [
             _subject_response(record, self._usage_counts(record), viewer)
             for record in records
@@ -346,14 +352,15 @@ class CatalogService:
             "owner_id": getattr(viewer, "id", None),
             "owner_email": getattr(viewer, "email", "") or "",
         }
-        try:
-            self.db.subjects.insert_one(record)
-        except DuplicateKeyError as exc:
-            # The pre-check gives a friendly case-insensitive error; the unique
-            # index remains the final guard for concurrent requests.
-            raise CatalogConflictError("Mã môn học đã tồn tại") from exc
-        self._audit("catalog.subject_create", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
-                    label=record["subject_code"])
+        if self.subject_repo:
+            record = self.subject_repo.create(record, viewer)
+        else:
+            try:
+                self.db.subjects.insert_one(record)
+            except DuplicateKeyError as exc:
+                raise CatalogConflictError("Mã môn học đã tồn tại") from exc
+            self._audit("catalog.subject_create", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
+                        label=record["subject_code"])
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def deactivate_subject(self, subject_id: str, viewer: Any = None) -> dict:
@@ -361,13 +368,17 @@ class CatalogService:
         subject = self._subject_or_404(subject_id)
         self._ensure_can_manage(subject, viewer)
         previous = _audit_snapshot(subject, SUBJECT_AUDIT_FIELDS)
-        record = self.db.subjects.find_one_and_update(
-            {"_id": subject["_id"]},
-            {"$set": {"is_active": False, "updated_at": utc_now()}},
-            return_document=ReturnDocument.AFTER,
-        )
-        self._audit("catalog.subject_deactivate", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
-                    before=previous, label=record["subject_code"])
+        if self.subject_repo:
+            record = self.subject_repo.update(subject["_id"], {"is_active": False}, viewer,
+                                              deactivate=True)
+        else:
+            record = self.db.subjects.find_one_and_update(
+                {"_id": subject["_id"]},
+                {"$set": {"is_active": False, "updated_at": utc_now()}},
+                return_document=ReturnDocument.AFTER,
+            )
+            self._audit("catalog.subject_deactivate", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
+                        before=previous, label=record["subject_code"])
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_subject(
@@ -400,14 +411,17 @@ class CatalogService:
                     )
         if not fields:
             return _subject_response(subject, self._usage_counts(subject), viewer)
-        fields["updated_at"] = utc_now()
-        record = self.db.subjects.find_one_and_update(
-            {"_id": subject["_id"]},
-            {"$set": fields},
-            return_document=ReturnDocument.AFTER,
-        )
-        self._audit("catalog.subject_update", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
-                    before=previous, label=record["subject_code"])
+        if self.subject_repo:
+            record = self.subject_repo.update(subject["_id"], fields, viewer)
+        else:
+            fields["updated_at"] = utc_now()
+            record = self.db.subjects.find_one_and_update(
+                {"_id": subject["_id"]},
+                {"$set": fields},
+                return_document=ReturnDocument.AFTER,
+            )
+            self._audit("catalog.subject_update", "subject", record, viewer, SUBJECT_AUDIT_FIELDS,
+                        before=previous, label=record["subject_code"])
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def add_chapter(
@@ -434,13 +448,17 @@ class CatalogService:
             "created_at": now,
             "updated_at": now,
         }
-        record = self.db.subjects.find_one_and_update(
-            {"_id": subject["_id"]},
-            {"$push": {"chapters": chapter}, "$set": {"updated_at": now}},
-            return_document=ReturnDocument.AFTER,
-        )
-        self._audit("catalog.chapter_create", "chapter", chapter, viewer, CHAPTER_AUDIT_FIELDS,
-                    label=chapter["chapter_code"], metadata={"subject_id": str(subject["_id"])})
+        if self.subject_repo:
+            record = self.subject_repo.save_child(subject["_id"], "chapter", chapter, viewer,
+                                                  create=True)
+        else:
+            record = self.db.subjects.find_one_and_update(
+                {"_id": subject["_id"]},
+                {"$push": {"chapters": chapter}, "$set": {"updated_at": now}},
+                return_document=ReturnDocument.AFTER,
+            )
+            self._audit("catalog.chapter_create", "chapter", chapter, viewer, CHAPTER_AUDIT_FIELDS,
+                        label=chapter["chapter_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_chapter(
@@ -468,23 +486,29 @@ class CatalogService:
         if not fields:
             return _subject_response(subject, self._usage_counts(subject), viewer)
         now = utc_now()
-        update_fields = {
-            f"chapters.$.{key}": value
-            for key, value in fields.items()
-        }
-        update_fields["chapters.$.updated_at"] = now
-        update_fields["updated_at"] = now
-        record = self.db.subjects.find_one_and_update(
-            {"_id": subject["_id"], "chapters._id": chapter_oid},
-            {"$set": update_fields},
-            return_document=ReturnDocument.AFTER,
-        )
+        if self.subject_repo:
+            chapter = {"_id": chapter_oid, **fields, "updated_at": now}
+            record = self.subject_repo.save_child(subject["_id"], "chapter", chapter, viewer,
+                                                  create=False)
+        else:
+            update_fields = {
+                f"chapters.$.{key}": value
+                for key, value in fields.items()
+            }
+            update_fields["chapters.$.updated_at"] = now
+            update_fields["updated_at"] = now
+            record = self.db.subjects.find_one_and_update(
+                {"_id": subject["_id"], "chapters._id": chapter_oid},
+                {"$set": update_fields},
+                return_document=ReturnDocument.AFTER,
+            )
         if not record:
             raise LookupError("Không tìm thấy chương")
         updated_chapter = _child(record, "chapters", chapter_oid)
-        self._audit("catalog.chapter_update", "chapter", updated_chapter, viewer, CHAPTER_AUDIT_FIELDS,
-                    before=previous,
-                    label=updated_chapter["chapter_code"], metadata={"subject_id": str(subject["_id"])})
+        if not self.subject_repo:
+            self._audit("catalog.chapter_update", "chapter", updated_chapter, viewer, CHAPTER_AUDIT_FIELDS,
+                        before=previous,
+                        label=updated_chapter["chapter_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def add_learning_outcome(
@@ -511,13 +535,17 @@ class CatalogService:
             "created_at": now,
             "updated_at": now,
         }
-        record = self.db.subjects.find_one_and_update(
-            {"_id": subject["_id"]},
-            {"$push": {"learning_outcomes": outcome}, "$set": {"updated_at": now}},
-            return_document=ReturnDocument.AFTER,
-        )
-        self._audit("catalog.clo_create", "clo", outcome, viewer, CLO_AUDIT_FIELDS,
-                    label=outcome["clo_code"], metadata={"subject_id": str(subject["_id"])})
+        if self.subject_repo:
+            record = self.subject_repo.save_child(subject["_id"], "clo", outcome, viewer,
+                                                  create=True)
+        else:
+            record = self.db.subjects.find_one_and_update(
+                {"_id": subject["_id"]},
+                {"$push": {"learning_outcomes": outcome}, "$set": {"updated_at": now}},
+                return_document=ReturnDocument.AFTER,
+            )
+            self._audit("catalog.clo_create", "clo", outcome, viewer, CLO_AUDIT_FIELDS,
+                        label=outcome["clo_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def update_learning_outcome(
@@ -548,23 +576,29 @@ class CatalogService:
         if not fields:
             return _subject_response(subject, self._usage_counts(subject), viewer)
         now = utc_now()
-        update_fields = {
-            f"learning_outcomes.$.{key}": value
-            for key, value in fields.items()
-        }
-        update_fields["learning_outcomes.$.updated_at"] = now
-        update_fields["updated_at"] = now
-        record = self.db.subjects.find_one_and_update(
-            {"_id": subject["_id"], "learning_outcomes._id": clo_oid},
-            {"$set": update_fields},
-            return_document=ReturnDocument.AFTER,
-        )
+        if self.subject_repo:
+            outcome = {"_id": clo_oid, **fields, "updated_at": now}
+            record = self.subject_repo.save_child(subject["_id"], "clo", outcome, viewer,
+                                                  create=False)
+        else:
+            update_fields = {
+                f"learning_outcomes.$.{key}": value
+                for key, value in fields.items()
+            }
+            update_fields["learning_outcomes.$.updated_at"] = now
+            update_fields["updated_at"] = now
+            record = self.db.subjects.find_one_and_update(
+                {"_id": subject["_id"], "learning_outcomes._id": clo_oid},
+                {"$set": update_fields},
+                return_document=ReturnDocument.AFTER,
+            )
         if not record:
             raise LookupError("Không tìm thấy CLO")
         updated_clo = _child(record, "learning_outcomes", clo_oid)
-        self._audit("catalog.clo_update", "clo", updated_clo, viewer, CLO_AUDIT_FIELDS,
-                    before=previous,
-                    label=updated_clo["clo_code"], metadata={"subject_id": str(subject["_id"])})
+        if not self.subject_repo:
+            self._audit("catalog.clo_update", "clo", updated_clo, viewer, CLO_AUDIT_FIELDS,
+                        before=previous,
+                        label=updated_clo["clo_code"], metadata={"subject_id": str(subject["_id"])})
         return _subject_response(record, self._usage_counts(record), viewer)
 
     def list_ai_models(self) -> list[dict]:

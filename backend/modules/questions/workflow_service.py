@@ -17,6 +17,7 @@ from core.config import settings
 from core.database import get_database, mongo_transaction
 from core.dependencies import CurrentUser, effective_permissions, has_permission
 from modules.admin.moodle_service import MoodleTargetService
+from modules.catalog.postgres_subject_repository import subject_records
 from modules.generation.llm.factory import get_llm_execution_snapshot, get_llm_service
 from modules.generation.llm.model_registry import EVALUATION_CAPABILITY, resolve_model_snapshot
 from modules.generation.prompt_builder import PromptBuilder
@@ -2698,10 +2699,7 @@ class QuestionWorkflowService:
         top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
         labels = {
             record["_id"]: record
-            for record in self.db.subjects.find(
-                {"_id": {"$in": [subject_id for subject_id, _count in top]}},
-                {"subject_code": 1, "subject_name": 1},
-            )
+            for record in subject_records(self.db, ids=[subject_id for subject_id, _count in top])
         } if top else {}
         return json_safe(
             {
@@ -3983,19 +3981,14 @@ class QuestionWorkflowService:
             for subject_id in subject_counts
             if subject_id != "unknown" and ObjectId.is_valid(subject_id)
         ]
-        subject_records = list(
-            self.db.subjects.find(
-                {"_id": {"$in": subject_oids}},
-                {"subject_code": 1, "subject_name": 1},
-            )
-        ) if subject_oids else []
+        subject_rows = subject_records(self.db, ids=subject_oids) if subject_oids else []
         subject_labels = {
             str(record["_id"]): (
                 record.get("subject_code")
                 or record.get("subject_name")
                 or str(record["_id"])
             )
-            for record in subject_records
+            for record in subject_rows
         }
         subjects = [
             {

@@ -8,6 +8,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from modules.catalog.postgres_subject_repository import subject_record, subject_records
 
 ACTIVE_DOCUMENT_JOB_STATUSES = {"QUEUED", "PROCESSING"}
 RETRYABLE_DOCUMENT_JOB_STATUSES = {"FAILED", "ERROR", "STALE"}
@@ -217,9 +218,7 @@ class MongoDocumentRepository:
             if chapter_id is not None:
                 raise ValueError("Chương phải thuộc một học phần")
             return
-        subject = self.db.subjects.find_one(
-            {"_id": subject_id, "is_active": True},
-        )
+        subject = subject_record(self.db, subject_id, active_only=True)
         if not subject:
             raise ValueError("Học phần không tồn tại hoặc đã ngừng hoạt động")
         if chapter_id is None:
@@ -235,10 +234,7 @@ class MongoDocumentRepository:
     def validate_subject_ids(self, subject_ids: list[ObjectId]) -> None:
         if not subject_ids:
             return
-        existing = self.db.subjects.count_documents({
-            "_id": {"$in": subject_ids},
-            "is_active": True,
-        })
+        existing = len(subject_records(self.db, ids=subject_ids, active_only=True))
         if existing != len(subject_ids):
             raise ValueError("Một hoặc nhiều học phần không tồn tại hoặc đã ngừng hoạt động")
 

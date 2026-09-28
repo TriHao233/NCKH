@@ -11,6 +11,7 @@ from pymongo.errors import DuplicateKeyError
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
+from modules.catalog.postgres_subject_repository import subject_record
 from modules.documents.repository import object_id
 from modules.questions.schemas import QuestionDifficulty
 
@@ -26,7 +27,7 @@ def get_document_learning_outcomes(document_id: str) -> list[dict]:
         return []
     if not document or not document.get("subject_id"):
         return []
-    subject = db.subjects.find_one({"_id": document["subject_id"], "is_active": {"$ne": False}})
+    subject = subject_record(db, document["subject_id"], active_only=True)
     if not subject:
         return []
     return [

@@ -69,6 +69,7 @@ class Settings(BaseModel):
     postgres_pool_max_size: int = int(os.getenv("POSTGRES_POOL_MAX_SIZE", "10"))
     user_store: str = os.getenv("USER_STORE", "mongo").strip().lower()
     ai_config_store: str = os.getenv("AI_CONFIG_STORE", "mongo").strip().lower()
+    catalog_store: str = os.getenv("CATALOG_STORE", "mongo").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",

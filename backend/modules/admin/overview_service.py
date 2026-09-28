@@ -9,6 +9,7 @@ from pymongo.database import Database
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.jobs_service import ACTIVE_STATUSES, RETRYABLE_STATUSES, AdminJobService, json_safe
 from modules.admin.moodle_service import MoodleTargetService
+from modules.catalog.postgres_subject_repository import subject_records
 
 
 def utc_now() -> datetime:
@@ -214,7 +215,7 @@ class AdminOverviewService:
 
         subjects_map = {
             str(s['_id']): s.get('subject_name') or s.get('subject_code')
-            for s in self.db.subjects.find({}, {'subject_name': 1, 'subject_code': 1})
+            for s in subject_records(self.db)
         }
         from core.config import settings
         if settings.ai_config_store == "postgres":

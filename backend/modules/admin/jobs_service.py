@@ -12,6 +12,7 @@ from core.audit import record_audit_event
 from core.config import settings
 from core.dependencies import CurrentUser
 from modules.admin.job_metrics import collect_job_metrics
+from modules.catalog.postgres_subject_repository import subject_records
 from modules.documents.repository import MongoDocumentRepository, RETRYABLE_DOCUMENT_JOB_TYPES
 from modules.documents.service import DocumentService
 from modules.generation.mongodb import create_generation_job, get_generation_job
@@ -228,7 +229,7 @@ class AdminJobService:
         if subject_ids:
             subjects_map = {
                 str(s["_id"]): s.get("subject_name") or s.get("subject_code") or str(s["_id"])
-                for s in self.db.subjects.find({"_id": {"$in": list(subject_ids)}}, {"subject_name": 1, "subject_code": 1})
+                for s in subject_records(self.db, ids=list(subject_ids))
             }
             for job in jobs:
                 entity = job.get('entity', {})
