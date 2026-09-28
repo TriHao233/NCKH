@@ -1,0 +1,516 @@
+"""PostgreSQL document metadata repository; not routed until OCR/RAG cutover."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from bson import ObjectId
+from psycopg import sql
+from psycopg.types.json import Jsonb
+
+from core.config import settings
+from core.database import get_database
+from core.postgres import postgres_connection
+from db.copy_business_data import projected_rows, upsert
+from modules.documents.repository import (
+    MongoDocumentRepository, compact_raw_extraction, json_safe, object_id, utc_now,
+)
+
+
+def _restore(value, key: str = ""):
+    if isinstance(value, dict):
+        return {name: _restore(item, name) for name, item in value.items()}
+    if isinstance(value, list):
+        return [_restore(item, key[:-1] if key.endswith("s") else key) for item in value]
+    if isinstance(value, str) and (key == "_id" or key.endswith("_id")):
+        return ObjectId(value) if ObjectId.is_valid(value) else value
+    if isinstance(value, str) and key.endswith("_at"):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return value
+
+
+class PostgresDocumentRepository:
+    def __init__(self):
+        if settings.user_store != "postgres" or settings.catalog_store != "postgres":
+            raise RuntimeError("DOCUMENT_STORE=postgres requires USER_STORE and CATALOG_STORE=postgres")
+        self.validator = MongoDocumentRepository(get_database())
+
+    @staticmethod
+    def _load(conn, row: dict | None) -> dict | None:
+        if row is None:
+            return None
+        record = _restore(row["payload"] or {})
+        record.update({
+            "_id": ObjectId(row["id"]), "title": row["title"],
+            "original_filename": row["original_filename"],
+            "subject_id": ObjectId(row["subject_id"]) if row["subject_id"] else None,
+            "uploaded_by_user_id": (ObjectId(row["uploaded_by_user_id"])
+                                    if row["uploaded_by_user_id"] else None),
+            "status": row["status"], "current_version": row["current_version"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+        })
+        subjects = conn.execute(
+            "SELECT subject_id FROM document_subjects WHERE document_id=%s ORDER BY position_no",
+            (row["id"],),
+        ).fetchall()
+        record["subject_ids"] = [ObjectId(item["subject_id"]) for item in subjects]
+        artifacts = conn.execute(
+            "SELECT * FROM document_artifacts WHERE document_id=%s ORDER BY created_at, id",
+            (row["id"],),
+        ).fetchall()
+        record["artifacts"] = []
+        for artifact in artifacts:
+            item = _restore(artifact["payload"] or {})
+            item.update({
+                "_id": ObjectId(artifact["id"]), "type": artifact["artifact_type"],
+                "document_version": artifact["version"],
+                "storage": {
+                    **(item.get("storage") or {}),
+                    "provider": artifact["storage_provider"],
+                    "uri": artifact["storage_key"],
+                },
+                "sha256": artifact["checksum_sha256"],
+                "mime_type": artifact["mime_type"], "size_bytes": artifact["size_bytes"],
+                "created_at": artifact["created_at"],
+            })
+            record["artifacts"].append(item)
+        current = record.setdefault("current_processing", {})
+        current["chunk_set_id"] = (ObjectId(row["active_chunk_set_id"])
+                                   if row["active_chunk_set_id"] else None)
+        return record
+
+    @staticmethod
+    def _save(conn, record: dict) -> None:
+        document_id = str(record["_id"])
+        conn.execute("DELETE FROM document_subjects WHERE document_id=%s", (document_id,))
+        for table, row in projected_rows("documents", record):
+            upsert(conn, table, row)
+
+    def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
+        record = self.validator.build_record(data, uploaded_by_user_id)
+        with postgres_connection() as conn:
+            self._save(conn, record)
+        return record
+
+    def find_by_id(self, document_id: str | ObjectId) -> dict | None:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED'",
+                (str(object_id(document_id, "document_id")),),
+            ).fetchone()
+            return self._load(conn, row)
+
+    def list(self, page: int, page_size: int, status: str | None,
+             search: str | None, *, subject_id: ObjectId | None = None,
+             uploaded_by_user_id: ObjectId | None = None,
+             visible_to_user_id: ObjectId | None = None) -> tuple[list[dict], int]:
+        filters = [sql.SQL("d.status <> 'ARCHIVED'")]
+        params = []
+        if status:
+            filters.append(sql.SQL("d.status=%s"))
+            params.append(status)
+        if subject_id:
+            filters.append(sql.SQL("EXISTS (SELECT 1 FROM document_subjects s "
+                                   "WHERE s.document_id=d.id AND s.subject_id=%s)"))
+            params.append(str(subject_id))
+        if uploaded_by_user_id:
+            filters.append(sql.SQL("d.uploaded_by_user_id=%s"))
+            params.append(str(uploaded_by_user_id))
+        if visible_to_user_id:
+            filters.append(sql.SQL("(d.uploaded_by_user_id=%s OR "
+                                   "d.payload->'shared_with_user_ids' ? %s OR "
+                                   "d.payload->>'shared_scope'='SUBJECT')"))
+            params.extend((str(visible_to_user_id), str(visible_to_user_id)))
+        if search:
+            filters.append(sql.SQL("(d.title ILIKE %s OR d.original_filename ILIKE %s)"))
+            pattern = f"%{search}%"
+            params.extend((pattern, pattern))
+        where = sql.SQL(" AND ").join(filters)
+        with postgres_connection() as conn:
+            total = conn.execute(
+                sql.SQL("SELECT count(*) AS n FROM documents d WHERE {}").format(where),
+                params,
+            ).fetchone()["n"]
+            rows = conn.execute(
+                sql.SQL("SELECT d.* FROM documents d WHERE {} "
+                        "ORDER BY d.created_at DESC, d.id DESC LIMIT %s OFFSET %s").format(where),
+                [*params, page_size, (page - 1) * page_size],
+            ).fetchall()
+            return [self._load(conn, row) for row in rows], total
+
+    def update(self, document_id: str | ObjectId, fields: dict) -> dict | None:
+        key = str(object_id(document_id, "document_id"))
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (key,),
+            ).fetchone()
+            if not row:
+                return None
+            current = self._load(conn, row)
+            normalized = dict(fields)
+            if "subject_ids" in normalized:
+                normalized["subject_ids"] = list(dict.fromkeys(
+                    object_id(value, "subject_id") for value in normalized.get("subject_ids") or []
+                ))
+                self.validator.validate_subject_ids(normalized["subject_ids"])
+                normalized["subject_id"] = (normalized["subject_ids"][0]
+                                            if normalized["subject_ids"] else None)
+                if current.get("chapter_id") and normalized["subject_id"] != current.get("subject_id"):
+                    normalized["chapter_id"] = None
+            if "subject_id" in normalized:
+                normalized["subject_id"] = (object_id(normalized["subject_id"], "subject_id")
+                                            if normalized["subject_id"] else None)
+                if "subject_ids" not in normalized:
+                    normalized["subject_ids"] = ([normalized["subject_id"]]
+                                                 if normalized["subject_id"] else [])
+            if "chapter_id" in normalized and normalized["chapter_id"]:
+                normalized["chapter_id"] = object_id(normalized["chapter_id"], "chapter_id")
+            if normalized.get("uploaded_by_user_id"):
+                normalized["uploaded_by_user_id"] = object_id(
+                    normalized["uploaded_by_user_id"], "owner_user_id",
+                )
+            if "shared_with_user_ids" in normalized:
+                normalized["shared_with_user_ids"] = [
+                    object_id(value, "shared_with_user_id")
+                    for value in normalized["shared_with_user_ids"] or []
+                ]
+            self.validator.validate_subject_chapter(
+                normalized.get("subject_id", current.get("subject_id")),
+                normalized.get("chapter_id", current.get("chapter_id")),
+            )
+            current.update(normalized)
+            current["updated_at"] = utc_now()
+            self._save(conn, current)
+            return current
+
+    def archive(self, document_id: str | ObjectId) -> bool:
+        key = str(object_id(document_id, "document_id"))
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (key,),
+            ).fetchone()
+            if not row:
+                return False
+            record = self._load(conn, row)
+            record.update(status="ARCHIVED", archived_at=utc_now(), updated_at=utc_now())
+            self._save(conn, record)
+            return True
+
+    @staticmethod
+    def _job(row: dict | None) -> dict | None:
+        if row is None:
+            return None
+        record = _restore(row["payload"] or {})
+        record.update({
+            "_id": ObjectId(row["id"]),
+            "document_id": ObjectId(row["document_id"]),
+            "job_type": row["job_type"], "status": row["status"],
+            "attempt_no": row["attempt_no"],
+            "lease_owner": row["lease_owner"],
+            "lease_expires_at": row["lease_expires_at"],
+        })
+        return record
+
+    @staticmethod
+    def _page(row: dict | None) -> dict | None:
+        if row is None:
+            return None
+        record = _restore(row["payload"] or {})
+        record.update({
+            "_id": ObjectId(row["id"]),
+            "document_id": ObjectId(row["document_id"]),
+            "ocr_job_id": ObjectId(row["ocr_job_id"]) if row["ocr_job_id"] else None,
+            "document_version": row["version"],
+            "unit_number": row["unit_number"], "page_number": row["page_number"],
+            "source_location": row["source_location"],
+            "raw_text": row["raw_text"], "cleaned_text": row["clean_text"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+        })
+        return record
+
+    def list_jobs(self, document_id: str | ObjectId, *, limit: int = 20) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM document_jobs WHERE document_id=%s "
+                "ORDER BY created_at DESC, id DESC LIMIT %s",
+                (str(object_id(document_id, "document_id")), limit),
+            ).fetchall()
+        return [self._job(row) for row in rows]
+
+    def find_job(self, job_id: str | ObjectId) -> dict | None:
+        with postgres_connection() as conn:
+            row = conn.execute("SELECT * FROM document_jobs WHERE id=%s",
+                               (str(object_id(job_id, "job_id")),)).fetchone()
+            return self._job(row)
+
+    def list_pages(self, document_id: str | ObjectId, *, document_version: int | None = None,
+                   limit: int = 100) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM document_pages WHERE document_id=%s "
+                + ("AND version=%s " if document_version is not None else "")
+                + "ORDER BY unit_number NULLS LAST, page_number NULLS LAST, id LIMIT %s",
+                ((str(object_id(document_id, "document_id")), document_version, limit)
+                 if document_version is not None else
+                 (str(object_id(document_id, "document_id")), limit)),
+            ).fetchall()
+        return [self._page(row) for row in rows]
+
+    def update_page(self, document_id: str | ObjectId, page_id: str | ObjectId, *,
+                    document_version: int, cleaned_text: str) -> dict | None:
+        document_key = str(object_id(document_id, "document_id"))
+        with postgres_connection() as conn:
+            document_row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (document_key,),
+            ).fetchone()
+            if not document_row:
+                return None
+            row = conn.execute(
+                """SELECT * FROM document_pages
+                   WHERE id=%s AND document_id=%s AND version=%s FOR UPDATE""",
+                (str(object_id(page_id, "page_id")), document_key, document_version),
+            ).fetchone()
+            if not row:
+                return None
+            page = self._page(row)
+            page["cleaned_text"] = cleaned_text
+            page["updated_at"] = utc_now()
+            for table, projection in projected_rows("document_pages", page):
+                upsert(conn, table, projection)
+            document = self._load(conn, document_row)
+            document["updated_at"] = page["updated_at"]
+            self._save(conn, document)
+            return page
+
+    def attach_original_artifact(self, document_id: str | ObjectId, *, uri: str,
+                                 size_bytes: int, sha256: str,
+                                 artifact_type: str = "ORIGINAL_PDF",
+                                 mime_type: str = "application/pdf") -> None:
+        self._attach_artifact(
+            document_id, uri=uri, size_bytes=size_bytes, sha256=sha256,
+            artifact_type=artifact_type, mime_type=mime_type,
+            document_version=1, job_id=None,
+        )
+
+    def attach_processing_artifact(self, document_id: str | ObjectId, *,
+                                   job_id: str | ObjectId, uri: str, size_bytes: int,
+                                   sha256: str, artifact_type: str, mime_type: str) -> None:
+        job = self.find_job(job_id)
+        if not job or job["document_id"] != object_id(document_id, "document_id"):
+            raise ValueError("Processing artifact không thuộc tài liệu/job")
+        self._attach_artifact(
+            document_id, uri=uri, size_bytes=size_bytes, sha256=sha256,
+            artifact_type=artifact_type, mime_type=mime_type,
+            document_version=job["document_version"], job_id=job["_id"],
+        )
+
+    def _attach_artifact(self, document_id: str | ObjectId, *, uri: str,
+                         size_bytes: int, sha256: str, artifact_type: str,
+                         mime_type: str, document_version: int,
+                         job_id: ObjectId | None) -> None:
+        key = str(object_id(document_id, "document_id"))
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (key,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Không tìm thấy tài liệu")
+            record = self._load(conn, row)
+            now = utc_now()
+            artifact = {
+                "_id": ObjectId(), "type": artifact_type,
+                "document_version": document_version,
+                "storage": {"provider": "LOCAL", "uri": uri, "gridfs_file_id": None},
+                "mime_type": mime_type, "size_bytes": size_bytes, "sha256": sha256,
+                "is_current": True, "created_at": now,
+            }
+            if job_id:
+                artifact["job_id"] = job_id
+            record.setdefault("artifacts", []).append(artifact)
+            record["updated_at"] = now
+            self._save(conn, record)
+
+    def create_job(self, document_id: str | ObjectId, job_type: str,
+                   config: dict | None = None) -> dict:
+        key = str(object_id(document_id, "document_id"))
+        normalized_type = job_type.upper()
+        with postgres_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (key,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Không tìm thấy tài liệu")
+            document = self._load(conn, row)
+            latest = conn.execute(
+                """SELECT attempt_no FROM document_jobs
+                   WHERE document_id=%s AND job_type=%s
+                     AND (payload->>'document_version')::integer=%s
+                   ORDER BY attempt_no DESC LIMIT 1""",
+                (key, normalized_type, document["current_version"]),
+            ).fetchone()
+            now = utc_now()
+            current = document.get("current_processing") or {}
+            active_pointer = (current.get("ocr_job_id") if normalized_type == "OCR"
+                              else current.get("chunk_set_id") if normalized_type == "CHUNK"
+                              else None)
+            record = {
+                "_id": ObjectId(), "schema_version": document["schema_version"],
+                "document_id": document["_id"],
+                "document_version": document["current_version"],
+                "job_type": normalized_type,
+                "attempt_no": latest["attempt_no"] + 1 if latest else 1,
+                "status": "QUEUED", "config": config or {}, "progress": 0,
+                "stats": None, "error": None, "queued_at": now,
+                "started_at": None, "finished_at": None,
+                "preserves_active_pipeline": bool(active_pointer),
+                "previous_document_state": {
+                    "status": document.get("status"),
+                    "pipeline_status": (document.get("pipeline_summary") or {}).get(
+                        normalized_type.lower() + "_status"
+                    ),
+                },
+            }
+            for table, projection in projected_rows("document_jobs", record):
+                upsert(conn, table, projection)
+            attempts = document.setdefault("pipeline_attempts", {})
+            attempts[normalized_type.lower()] = {"status": "QUEUED", "job_id": record["_id"]}
+            document["latest_error"] = None
+            document["updated_at"] = now
+            if not active_pointer:
+                document["status"] = "PROCESSING"
+                document.setdefault("pipeline_summary", {})[normalized_type.lower() + "_status"] = "QUEUED"
+            self._save(conn, document)
+            return record
+
+    def update_job(self, job_id: str | ObjectId, status: str, *,
+                   progress: int | None = None, stats: dict | None = None,
+                   error_message: str | None = None) -> dict | None:
+        job_key = str(object_id(job_id, "job_id"))
+        with postgres_connection() as conn:
+            identity = conn.execute(
+                "SELECT document_id FROM document_jobs WHERE id=%s", (job_key,),
+            ).fetchone()
+            if not identity:
+                return None
+            document_row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s FOR UPDATE",
+                (identity["document_id"],),
+            ).fetchone()
+            job_row = conn.execute(
+                "SELECT * FROM document_jobs WHERE id=%s FOR UPDATE", (job_key,),
+            ).fetchone()
+            if not job_row:
+                return None
+            job = self._job(job_row)
+            normalized = status.upper()
+            if job["status"] == "CANCELLED" and normalized != "CANCELLED":
+                return job
+            now = utc_now()
+            job["status"] = normalized
+            job["updated_at"] = now
+            if progress is not None:
+                job["progress"] = max(0, min(100, progress))
+            if stats is not None:
+                job["stats"] = stats
+            if error_message is not None:
+                job["error"] = {"message": error_message, "at": now}
+            if normalized == "PROCESSING" and not job.get("started_at"):
+                job["started_at"] = now
+            if normalized in {"COMPLETED", "FAILED", "CANCELLED"}:
+                job["finished_at"] = now
+                if normalized == "COMPLETED":
+                    job["progress"] = 100
+            for table, projection in projected_rows("document_jobs", job):
+                upsert(conn, table, projection)
+            if document_row and document_row["status"] != "ARCHIVED":
+                document = self._load(conn, document_row)
+                kind = job["job_type"].lower()
+                attempt = document.setdefault("pipeline_attempts", {}).setdefault(kind, {})
+                attempt.update(status=normalized, job_id=job["_id"])
+                summary = document.setdefault("pipeline_summary", {})
+                preserves_active = bool(job.get("preserves_active_pipeline"))
+                if not preserves_active:
+                    summary[kind + "_status"] = normalized
+                if normalized in {"FAILED", "CANCELLED"}:
+                    message = error_message or ("Job đã bị hủy" if normalized == "CANCELLED" else None)
+                    if preserves_active:
+                        previous = job.get("previous_document_state") or {}
+                        document["status"] = previous.get("status") or "READY"
+                        if previous.get("pipeline_status"):
+                            summary[kind + "_status"] = previous["pipeline_status"]
+                    else:
+                        document["status"] = "FAILED"
+                    document["latest_error"] = {
+                        "job_id": job["_id"], "job_type": job["job_type"],
+                        "message": message, "at": now,
+                    }
+                if normalized == "COMPLETED" and job["job_type"] == "OCR":
+                    pointer = ("pending_processing" if document.get("current_processing", {}).get("chunk_set_id")
+                               else "current_processing")
+                    document.setdefault(pointer, {})["ocr_job_id"] = job["_id"]
+                document["updated_at"] = now
+                self._save(conn, document)
+            if normalized == "CANCELLED" and job["job_type"] == "CHUNK":
+                conn.execute(
+                    """INSERT INTO outbox_events
+                       (id, event_key, event_type, aggregate_type, aggregate_id, payload)
+                       VALUES (%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (event_key) DO NOTHING""",
+                    (str(ObjectId()), f"document.chunk_cancel:{job_key}",
+                     "document.chunk_cancel", "document", identity["document_id"],
+                     Jsonb({"job_id": job_key, "document_id": identity["document_id"],
+                            "error_message": error_message})),
+                )
+            return job
+
+    def save_pages(self, document_id: str, ocr_job_id: str, pages: list[dict]) -> int:
+        document_key = str(object_id(document_id, "document_id"))
+        job_key = str(object_id(ocr_job_id, "job_id"))
+        with postgres_connection() as conn:
+            document_row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (document_key,),
+            ).fetchone()
+            if not document_row:
+                raise ValueError("Không tìm thấy tài liệu")
+            job_row = conn.execute("SELECT * FROM document_jobs WHERE id=%s FOR UPDATE",
+                                   (job_key,)).fetchone()
+            if not job_row or job_row["document_id"] != document_key or job_row["job_type"] != "OCR":
+                raise ValueError("OCR job không thuộc tài liệu")
+            job = self._job(job_row)
+            now = utc_now()
+            conn.execute("DELETE FROM document_pages WHERE document_id=%s AND ocr_job_id=%s",
+                         (document_key, job_key))
+            for index, page in enumerate(pages, start=1):
+                record = {
+                    "_id": ObjectId(), "document_id": ObjectId(document_key),
+                    "document_version": job["document_version"],
+                    "ocr_job_id": ObjectId(job_key),
+                    "unit_number": int(page.get("unit_number") or index),
+                    "page_number": (int(page["page_number"])
+                                    if page.get("page_number") is not None else None),
+                    "source_location": json_safe(page.get("source_location") or {}),
+                    "raw_text": page.get("original_text") or page.get("text", ""),
+                    "cleaned_text": page.get("text", ""),
+                    "content_blocks": json_safe(page.get("content_blocks") or []),
+                    "assets": json_safe(page.get("assets") or []),
+                    "raw_extraction": compact_raw_extraction(page.get("raw_extraction")),
+                    "quality": json_safe(page.get("quality") or {}),
+                    "formula_blocks": json_safe(page.get("formula_blocks", [])),
+                    "created_at": now,
+                }
+                for table, projection in projected_rows("document_pages", record):
+                    upsert(conn, table, projection)
+            document = self._load(conn, document_row)
+            document["page_count"] = len(pages)
+            document["updated_at"] = now
+            self._save(conn, document)
+            return len(pages)

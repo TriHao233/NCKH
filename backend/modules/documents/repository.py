@@ -239,12 +239,18 @@ class MongoDocumentRepository:
             raise ValueError("Một hoặc nhiều học phần không tồn tại hoặc đã ngừng hoạt động")
 
     def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
+        record = self.build_record(data, uploaded_by_user_id)
+        self.collection.insert_one(record)
+        return record
+
+    def build_record(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
+        """Build and validate document metadata without writing a database."""
         now = utc_now()
         document_id = ObjectId()
         subject_id = object_id(data["subject_id"], "subject_id") if data.get("subject_id") else self.default_subject_id()
         subject_ids = list(dict.fromkeys(
-            [object_id(value, "subject_id") for value in data.get("subject_ids") or []]
-            + ([subject_id] if subject_id else [])
+            ([subject_id] if subject_id else [])
+            + [object_id(value, "subject_id") for value in data.get("subject_ids") or []]
         ))
         if not subject_id and subject_ids:
             subject_id = subject_ids[0]
@@ -298,7 +304,6 @@ class MongoDocumentRepository:
             "updated_at": now,
             "archived_at": None,
         }
-        self.collection.insert_one(record)
         return record
 
     def find_by_id(self, document_id: str | ObjectId) -> dict | None:

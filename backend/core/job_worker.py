@@ -54,6 +54,9 @@ async def process_available_jobs_once(worker_id: str | None = None) -> bool:
 
     worker_id = worker_id or get_worker_id()
     found_work = False
+    if settings.user_store == "postgres":
+        from core.outbox import process_available_outbox_once
+        found_work = await asyncio.to_thread(process_available_outbox_once, worker_id)
     generation_job_id = await asyncio.to_thread(get_next_queued_generation_job_id)
     evaluation_job_id = await asyncio.to_thread(get_next_queued_evaluation_job_id)
     tasks = []
@@ -101,6 +104,12 @@ async def run_job_worker(stop_event: asyncio.Event) -> None:
 
     try:
         while not stop_event.is_set():
+            if settings.user_store == "postgres":
+                from core.outbox import process_available_outbox_once
+                try:
+                    await asyncio.to_thread(process_available_outbox_once, worker_id)
+                except Exception:
+                    logger.exception("PostgreSQL outbox worker iteration failed")
             for provider_group, (job_id, task) in list(generation_tasks.items()):
                 if not task.done():
                     from modules.generation.mongodb import get_generation_job
