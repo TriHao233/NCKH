@@ -49,6 +49,8 @@ python -m db.verify_business_data
 
 `POSTGRES_DSN` và `MONGO_URI` phải trỏ đúng môi trường kiểm thử. `copy_business_data` mặc định chỉ đếm và không ghi; `--apply` sao chép một chiều từ MongoDB. Chạy `verify_business_data` **trước khi cho phép ghi mới vào PostgreSQL**: sau khi đổi nguồn chuẩn, việc so toàn bộ PostgreSQL với MongoDB cũ sẽ báo chênh lệch đúng với thực tế. `--resume` chỉ dùng cho shadow copy chưa có ghi mới vì upsert có thể ghi đè dữ liệu PostgreSQL.
 
+Đối soát tài liệu so ID, trạng thái, học phần, thứ tự trang, metadata artifact và hash nội dung của document/job/page/artifact. Nó kiểm tra `active_chunk_set_id` ở PostgreSQL trỏ đến chunk set `COMPLETED` đúng tài liệu ở MongoDB; OCR job nguồn, chunk và embedding cũng phải nối đúng ID. Báo cáo chỉ in số lỗi, không in nội dung tài liệu. Đây là kiểm tra metadata giữa hai database; chưa xác minh vector thực tế trong ChromaDB hoặc checksum file trên storage.
+
 Sau khi đối chiếu dữ liệu và chạy kiểm thử tích hợp, bật các cờ cần thử trong cả API và worker:
 
 ```dotenv
