@@ -60,6 +60,51 @@ def _version(row: dict | None) -> dict | None:
 
 
 class PostgresQuestionRepository:
+    def record_evaluation(self, evaluation: dict, *,
+                          expected_version_id: ObjectId,
+                          evaluation_status: str,
+                          quality_summary: dict,
+                          require_active_job: bool = False) -> tuple[dict, dict]:
+        with postgres_connection() as conn:
+            pair = self._pair(conn, evaluation["question_id"], lock=True)
+            if not pair or pair[1]["_id"] != expected_version_id:
+                raise RuntimeError("VERSION_CONFLICT")
+            question, version = pair
+            job_id = evaluation.get("evaluation_job_id")
+            if require_active_job:
+                if not job_id:
+                    raise ValueError("Evaluation job bắt buộc")
+                job = conn.execute(
+                    """SELECT id FROM evaluation_jobs WHERE id=%s
+                       AND question_id=%s AND question_version_id=%s
+                       AND status='PROCESSING' FOR UPDATE""",
+                    (str(job_id), str(question["_id"]), str(version["_id"])),
+                ).fetchone()
+                if not job:
+                    from modules.questions.workflow_service import EvaluationInterruptedError
+                    raise EvaluationInterruptedError("Tác vụ AI đánh giá đã bị dừng")
+            for table, row in projected_rows("question_evaluations", evaluation):
+                upsert(conn, table, row)
+            before = question.get("quality_summary") or {}
+            question.update(evaluation_status=evaluation_status,
+                            quality_summary=quality_summary,
+                            updated_at=evaluation["created_at"])
+            self._save_question(conn, question)
+            write_postgres_audit_event(
+                conn, action="QUESTION_EVALUATED", entity_type="question",
+                entity_id=question["_id"],
+                actor_user_id=evaluation.get("requested_by_user_id"),
+                before={"quality_summary": before},
+                after={"quality_summary": {
+                    "latest_evaluation_id": evaluation["_id"],
+                    "overall_score": evaluation["scores"]["overall"],
+                    "color": evaluation["color"],
+                }},
+                metadata={"evaluation_id": str(evaluation["_id"]),
+                          "question_version_id": str(version["_id"])},
+            )
+            return question, version
+
     def __init__(self):
         if settings.user_store != "postgres" or settings.catalog_store != "postgres":
             raise RuntimeError("QUESTION_STORE=postgres requires USER_STORE and CATALOG_STORE=postgres")

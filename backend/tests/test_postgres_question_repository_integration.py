@@ -87,6 +87,41 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
         assert [item["version"] for item in repository.list_versions(question_id)] == [2, 1]
         assert repository.list_versions(question_id)[1]["content"] == "Câu hỏi một"
 
+        scoring_job_id, evaluation_id = ObjectId(), ObjectId()
+        with postgres_connection() as conn:
+            for table, row in projected_rows("evaluation_jobs", {
+                "_id": scoring_job_id, "question_id": question_id,
+                "question_version_id": next_pair[1]["_id"],
+                "requested_by_user_id": user["_id"],
+                "status": "PROCESSING", "evaluator_model_code": "gemini",
+                "created_at": now, "updated_at": now,
+            }):
+                upsert(conn, table, row)
+        evaluation = {
+            "_id": evaluation_id, "question_id": question_id,
+            "question_version_id": next_pair[1]["_id"],
+            "evaluation_job_id": scoring_job_id,
+            "requested_by_user_id": user["_id"],
+            "evaluator_model": {"model_code": "gemini"},
+            "policy": {"version": 1},
+            "scores": {"overall": 0.9}, "color": "GREEN",
+            "passed": True, "created_at": now,
+        }
+        evaluated, _ = repository.record_evaluation(
+            evaluation, expected_version_id=next_pair[1]["_id"],
+            evaluation_status="PASSED",
+            quality_summary={"latest_evaluation_id": evaluation_id,
+                             "overall_score": 0.9, "color": "GREEN"},
+            require_active_job=True,
+        )
+        assert evaluated["evaluation_status"] == "PASSED"
+        assert repository.find_pair(question_id)[0]["quality_summary"]["color"] == "GREEN"
+        with postgres_connection() as conn:
+            assert conn.execute("SELECT count(*) AS n FROM question_evaluations WHERE question_id=%s",
+                                (str(question_id),)).fetchone()["n"] == 1
+            conn.execute("UPDATE evaluation_jobs SET status='COMPLETED' WHERE id=%s",
+                         (str(scoring_job_id),))
+
         submitted = repository.update_review_status(
             question_id, {"DRAFT"}, "PENDING",
             review_submission={"submitted_by_user_id": user["_id"]},
@@ -119,7 +154,7 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
             assert conn.execute(
                 "SELECT count(*) AS n FROM audit_logs WHERE entity_id=%s",
                 (str(question_id),),
-            ).fetchone()["n"] == 2
+            ).fetchone()["n"] == 3
         draft = repository.save_review_draft(
             question_id, reviewer["_id"], expected_version=2,
             decision="APPROVED", draft={"overall_note": "Đạt"},
@@ -270,6 +305,8 @@ def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypa
             conn.execute("DELETE FROM question_review_drafts WHERE question_id=%s",
                          (str(question_id),))
             conn.execute("DELETE FROM question_reviews WHERE question_id=%s",
+                         (str(question_id),))
+            conn.execute("DELETE FROM question_evaluations WHERE question_id=%s",
                          (str(question_id),))
             conn.execute("DELETE FROM evaluation_jobs WHERE question_id=%s",
                          (str(question_id),))

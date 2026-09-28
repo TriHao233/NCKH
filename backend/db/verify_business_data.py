@@ -44,6 +44,8 @@ CRITICAL_FIELDS = {
         "approved_version_id", "review_status", "lifecycle_status",
     ),
     "question_versions": ("question_id", "version", "content_hash"),
+    "evaluation_jobs": ("question_id", "question_version_id", "status",
+                        "evaluator_model_code", "attempt_no"),
     "ai_model_versions": ("model_id", "version", "config_hash"),
     "prompt_templates": ("template_key", "version", "content_hash", "is_active"),
     "evaluation_policies": ("policy_name", "version", "weights_hash", "is_active"),
@@ -56,6 +58,8 @@ DOCUMENT_CONTENT_FIELDS = {
     "document_lineage_events": ("payload", "from_snapshot", "to_snapshot", "validation"),
     "audit_logs": ("payload", "before_state", "after_state", "changes", "metadata"),
     "review_settings": ("payload",),
+    "evaluation_jobs": ("payload", "model_snapshot", "policy_snapshot",
+                        "source_snapshot", "result", "error"),
 }
 
 

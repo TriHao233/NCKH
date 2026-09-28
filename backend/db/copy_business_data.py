@@ -332,7 +332,7 @@ def projected_rows(name: str, item: dict):
             attempt_no=item.get("attempt_no", 0), lease_owner=item.get("worker_id"),
             lease_expires_at=item.get("lease_expires_at"),
             next_attempt_at=item.get("next_attempt_at"), error=data.get("error"),
-            created_at=created, updated_at=updated,
+            payload=data, created_at=created, updated_at=updated,
         )
         return
     if name == "question_evaluations":
