@@ -6,6 +6,7 @@ from typing import Any
 
 from pymongo.database import Database
 
+from core.config import settings
 from modules.admin.audit_service import AdminAuditService
 from modules.admin.jobs_service import ACTIVE_STATUSES, RETRYABLE_STATUSES, AdminJobService, json_safe
 from modules.admin.moodle_service import MoodleTargetService
@@ -299,8 +300,8 @@ class AdminOverviewService:
                     "breakdown": self._job_breakdown(job_page["items"]),
                 },
                 "moodle": {
-                    "targets": self._count("moodle_targets", {}),
-                    "active_targets": self._count("moodle_targets", {"is_active": True}),
+                    "targets": self._moodle_target_count(),
+                    "active_targets": self._moodle_target_count(active_only=True),
                     "publications": moodle_summary,
                 },
                 "model_performance": model_report["rows"],
@@ -313,6 +314,12 @@ class AdminOverviewService:
 
     def _count(self, collection_name: str, query: dict) -> int:
         return getattr(self.db, collection_name).count_documents(query)
+
+    def _moodle_target_count(self, *, active_only: bool = False) -> int:
+        if settings.moodle_target_store == "postgres":
+            from modules.admin.postgres_moodle_target_repository import PostgresMoodleTargetRepository
+            return PostgresMoodleTargetRepository().count(active_only=active_only)
+        return self._count("moodle_targets", {"is_active": True} if active_only else {})
 
     def _question_count(self, query: dict) -> int:
         return self._count(

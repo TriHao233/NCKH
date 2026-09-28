@@ -674,12 +674,13 @@ def _ensure_indexes() -> None:
             ),
         ]
     )
-    rag_db.moodle_targets.create_indexes(
-        [
-            IndexModel([("site_key", ASCENDING)], unique=True, name="uq_moodle_target_site_key"),
-            IndexModel([("is_active", ASCENDING), ("mode", ASCENDING)], name="ix_moodle_targets_active_mode"),
-        ]
-    )
+    if settings.moodle_target_store != "postgres":
+        rag_db.moodle_targets.create_indexes(
+            [
+                IndexModel([("site_key", ASCENDING)], unique=True, name="uq_moodle_target_site_key"),
+                IndexModel([("is_active", ASCENDING), ("mode", ASCENDING)], name="ix_moodle_targets_active_mode"),
+            ]
+        )
     rag_db.moodle_publications.create_indexes(
         [
             IndexModel([("idempotency_key", ASCENDING)], unique=True, name="uq_publication_idempotency"),
@@ -721,28 +722,29 @@ def _seed_reference_data() -> None:
         },
         upsert=True,
     )
-    db.moodle_targets.update_one(
-        {"site_key": "demo-moodle"},
-        {
-            "$setOnInsert": {
-                "schema_version": SCHEMA_VERSION,
-                "site_name": "Demo Moodle",
-                "mode": "MOCK",
-                "base_url": "",
-                "token_env_var": "",
-                "default_course_id": "ctdl-demo",
-                "default_category_id": "qbank-demo",
-                "allowed_roles": ["Admin", "Reviewer"],
-                "is_active": True,
-                "last_check": None,
-                "created_by_user_id": None,
-                "updated_by_user_id": None,
-                "created_at": now,
-                "updated_at": now,
-            }
-        },
-        upsert=True,
-    )
+    if settings.moodle_target_store != "postgres":
+        db.moodle_targets.update_one(
+            {"site_key": "demo-moodle"},
+            {
+                "$setOnInsert": {
+                    "schema_version": SCHEMA_VERSION,
+                    "site_name": "Demo Moodle",
+                    "mode": "MOCK",
+                    "base_url": "",
+                    "token_env_var": "",
+                    "default_course_id": "ctdl-demo",
+                    "default_category_id": "qbank-demo",
+                    "allowed_roles": ["Admin", "Reviewer"],
+                    "is_active": True,
+                    "last_check": None,
+                    "created_by_user_id": None,
+                    "updated_by_user_id": None,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            },
+            upsert=True,
+        )
     for model in (
         {
             "model_code": "qwen3-8b",
@@ -891,7 +893,11 @@ def bootstrap_database() -> None:
     if settings.auth_db_name == settings.rag_db_name:
         raise ValueError("AUTH_DB_NAME và RAG_DB_NAME phải là hai database khác nhau")
     _ensure_collections(get_auth_db(), AUTH_COLLECTIONS)
-    _ensure_collections(get_rag_db(), RAG_COLLECTIONS)
+    _ensure_collections(
+        get_rag_db(),
+        tuple(name for name in RAG_COLLECTIONS
+              if name != "moodle_targets" or settings.moodle_target_store != "postgres"),
+    )
     _ensure_indexes()
     _seed_reference_data()
     now = datetime.now(timezone.utc)

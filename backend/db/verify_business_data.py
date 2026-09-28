@@ -24,6 +24,7 @@ CRITICAL_FIELDS = {
     "subjects": ("subject_code", "subject_name", "is_active"),
     "documents": ("status", "current_version", "active_chunk_set_id"),
     "document_pages": ("document_id", "version", "unit_number", "page_number", "source_location"),
+    "moodle_targets": ("site_key", "site_name", "mode", "secret_ref", "is_active"),
     "questions": (
         "question_code", "current_version", "current_version_id",
         "approved_version_id", "review_status", "lifecycle_status",

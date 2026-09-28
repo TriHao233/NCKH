@@ -12,8 +12,10 @@ from pymongo import ReturnDocument
 
 from core.audit import record_audit_event
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.dependencies import CurrentUser
 from modules.admin.moodle_schemas import MoodleTargetPayload
+from modules.admin.postgres_moodle_target_repository import PostgresMoodleTargetRepository
 from modules.questions.repository import json_safe
 from modules.questions.workflow_schemas import MoodlePublicationRequest
 
@@ -112,8 +114,16 @@ def _safe_publication_item(record: dict) -> dict:
 class MoodleTargetService:
     def __init__(self, database):
         self.db = database
+        self.target_repository = (
+            PostgresMoodleTargetRepository() if settings.moodle_target_store == "postgres" else None
+        )
 
     def list_targets(self, *, include_inactive: bool = True) -> dict:
+        if self.target_repository:
+            return {"items": [
+                _target_public(item)
+                for item in self.target_repository.list(include_inactive=include_inactive)
+            ]}
         query = {} if include_inactive else {"is_active": True}
         targets = [
             _target_public(item)
@@ -122,6 +132,8 @@ class MoodleTargetService:
         return {"items": targets}
 
     def find_target(self, identifier: str | ObjectId, *, active_only: bool = False) -> dict | None:
+        if self.target_repository:
+            return self.target_repository.find(identifier, active_only=active_only)
         query: dict = {"site_key": str(identifier)}
         try:
             oid = object_id(identifier)
@@ -133,6 +145,11 @@ class MoodleTargetService:
         return self.db.moodle_targets.find_one(query)
 
     def save_target(self, payload: MoodleTargetPayload, current_user: CurrentUser) -> dict:
+        if self.target_repository:
+            record = self.target_repository.save(payload.model_dump(), current_user.id)
+            self._audit(current_user, "admin.moodle_target_save", payload.site_key,
+                        after=_target_public(record))
+            return _target_public(record)
         now = utc_now()
         data = payload.model_dump()
         record = self.db.moodle_targets.find_one_and_update(
@@ -158,6 +175,13 @@ class MoodleTargetService:
         return _target_public(record)
 
     def deactivate_target(self, identifier: str, current_user: CurrentUser) -> dict:
+        if self.target_repository:
+            record = self.target_repository.deactivate(identifier, current_user.id)
+            if not record:
+                raise LookupError("Không tìm thấy Moodle target")
+            self._audit(current_user, "admin.moodle_target_deactivate", record["site_key"],
+                        after=_target_public(record))
+            return _target_public(record)
         now = utc_now()
         target = self.find_target(identifier)
         if not target:
@@ -176,11 +200,14 @@ class MoodleTargetService:
             raise LookupError("Không tìm thấy Moodle target")
         started = time.perf_counter()
         check = self._run_check(target, started)
-        record = self.db.moodle_targets.find_one_and_update(
-            {"_id": target["_id"]},
-            {"$set": {"last_check": check, "updated_by_user_id": current_user.id, "updated_at": utc_now()}},
-            return_document=ReturnDocument.AFTER,
-        )
+        if self.target_repository:
+            record = self.target_repository.update_check(target["_id"], check, current_user.id)
+        else:
+            record = self.db.moodle_targets.find_one_and_update(
+                {"_id": target["_id"]},
+                {"$set": {"last_check": check, "updated_by_user_id": current_user.id, "updated_at": utc_now()}},
+                return_document=ReturnDocument.AFTER,
+            )
         self._audit(current_user, "admin.moodle_target_check", target["site_key"], metadata=check)
         return {"target": _target_public(record), "check": json_safe(check)}
 
