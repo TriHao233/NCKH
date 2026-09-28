@@ -14,6 +14,7 @@ from core.postgres import postgres_connection
 from db.copy_business_data import projected_rows, upsert
 from modules.documents import postgres_repository
 from modules.documents.postgres_repository import PostgresDocumentRepository
+from modules.documents.store import get_document_repository
 from modules.users.postgres_repository import PostgresUserRepository
 
 
@@ -92,6 +93,13 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
         assert page["raw_text"] == "Original"
         assert page["cleaned_text"] == "Clean"
         assert page["source_location"] == {"page": 1}
+        monkeypatch.setattr(settings, "document_store", "postgres")
+        assert isinstance(get_document_repository(), PostgresDocumentRepository)
+        from modules.ocr.mongodb import get_document_status
+        from modules.rag.mongodb import get_document_record, iter_document_pages
+        assert get_document_status(str(job["_id"]))["document"]["id"] == str(document_id)
+        assert get_document_record(str(document_id))["_id"] == document_id
+        assert list(iter_document_pages(str(document_id), job["_id"]))[0]["text"] == "Clean"
         changed = repository.update_page(
             document_id, page["_id"], document_version=1, cleaned_text="Edited",
         )
@@ -174,3 +182,97 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
             conn.execute("DELETE FROM subjects WHERE id=ANY(%s)",
                          ([str(primary), str(secondary)],))
             conn.execute("DELETE FROM users WHERE id=%s", (str(owner["_id"]),))
+
+
+def test_chunk_completion_promotes_postgres_document_after_vector_write(monkeypatch):
+    from contextlib import contextmanager
+    from modules.rag import mongodb as rag_store
+
+    monkeypatch.setattr(settings, "user_store", "postgres")
+    monkeypatch.setattr(settings, "catalog_store", "postgres")
+    monkeypatch.setattr(settings, "document_store", "postgres")
+    monkeypatch.setattr(postgres_repository, "get_database",
+                        lambda: SimpleNamespace(documents=object()))
+    suffix = uuid4().hex[:12]
+    user = PostgresUserRepository().create({
+        "firebase_uid": f"chunk-{suffix}", "email": f"chunk-{suffix}@example.test",
+        "display_name": "Teacher", "role": "Teacher",
+    })
+    subject_id = ObjectId()
+    now = datetime.now(timezone.utc)
+    subject = {"_id": subject_id, "subject_code": f"C-{suffix}",
+               "subject_name": "Chunk", "created_at": now, "updated_at": now}
+    with postgres_connection() as conn:
+        for table, row in projected_rows("subjects", subject):
+            upsert(conn, table, row)
+    document_id = None
+    try:
+        repository = PostgresDocumentRepository()
+        document = repository.create({
+            "title": "Chunk source", "original_filename": "chunk.txt",
+            "subject_id": str(subject_id),
+        }, user["_id"])
+        document_id = document["_id"]
+        ocr_job = repository.create_job(document_id, "OCR")
+        repository.update_job(ocr_job["_id"], "COMPLETED")
+        chunk_job = repository.create_job(document_id, "CHUNK")
+        repository.update_job(chunk_job["_id"], "PROCESSING")
+        chunk_set_id, vector_id = ObjectId(), ObjectId()
+
+        class FakeSets:
+            available = False
+            updated = None
+
+            def find_one(self, *_args, **_kwargs):
+                return {"source_ocr_job_id": ocr_job["_id"]} if self.available else None
+
+            def update_one(self, query, update, **_kwargs):
+                self.updated = (query, update)
+
+        class FakeEmbeddings:
+            updated = None
+
+            def update_many(self, query, update, **_kwargs):
+                self.updated = (query, update)
+
+        vector_db = SimpleNamespace(chunk_sets=FakeSets(), chunk_embeddings=FakeEmbeddings())
+        monkeypatch.setattr(rag_store, "get_database", lambda: vector_db)
+
+        @contextmanager
+        def no_mongo_transaction():
+            yield None
+
+        monkeypatch.setattr(rag_store, "mongo_transaction", no_mongo_transaction)
+        arguments = dict(total_chunks=2, total_characters=30,
+                         stats={"total_chunks": 2}, dry_run=False)
+        with pytest.raises(ValueError, match="chunk set"):
+            rag_store.complete_chunk_set(
+                str(document_id), str(chunk_job["_id"]), str(chunk_set_id),
+                str(vector_id), **arguments,
+            )
+        assert repository.find_by_id(document_id)["current_processing"]["chunk_set_id"] is None
+        vector_db.chunk_sets.available = True
+        rag_store.complete_chunk_set(
+            str(document_id), str(chunk_job["_id"]), str(chunk_set_id),
+            str(vector_id), **arguments,
+        )
+        ready = repository.find_by_id(document_id)
+        assert ready["status"] == "READY"
+        assert ready["current_processing"]["chunk_set_id"] == chunk_set_id
+        assert ready["current_processing"]["vector_collection_id"] == vector_id
+        assert repository.find_job(chunk_job["_id"])["status"] == "COMPLETED"
+        assert vector_db.chunk_sets.updated[1]["$set"]["status"] == "COMPLETED"
+        assert vector_db.chunk_embeddings.updated is not None
+        rag_store.complete_chunk_set(
+            str(document_id), str(chunk_job["_id"]), str(chunk_set_id),
+            str(vector_id), **arguments,
+        )
+        assert repository.find_by_id(document_id)["pending_processing"] == {}
+    finally:
+        with postgres_connection() as conn:
+            if document_id:
+                conn.execute("DELETE FROM document_jobs WHERE document_id=%s",
+                             (str(document_id),))
+                conn.execute("DELETE FROM documents WHERE id=%s", (str(document_id),))
+            conn.execute("DELETE FROM subjects WHERE id=%s", (str(subject_id),))
+            conn.execute("DELETE FROM users WHERE id=%s", (str(user["_id"]),))

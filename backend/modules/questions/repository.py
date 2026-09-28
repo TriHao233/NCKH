@@ -12,6 +12,7 @@ from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import mongo_transaction
 from modules.catalog.postgres_subject_repository import subject_record
+from modules.documents.store import get_document_repository
 
 
 def utc_now() -> datetime:
@@ -222,13 +223,18 @@ class MongoQuestionReferenceRepository:
         return self.db.document_chunks.find_one({"_id": chunk_id})
 
     def find_document(self, document_id: ObjectId) -> dict | None:
-        return self.db.documents.find_one(
-            {
-                "_id": document_id,
-                "schema_version": SCHEMA_VERSION,
-                "archived_at": None,
-            }
-        )
+        return get_document_repository(self.db).find_by_id(document_id)
+
+    def _document_pages(self, document_id: ObjectId,
+                        ocr_job_id: ObjectId | None) -> list[dict]:
+        if settings.document_store == "mongo":
+            query = {"document_id": document_id}
+            if ocr_job_id is not None:
+                query["ocr_job_id"] = ocr_job_id
+            return list(self.db.document_pages.find(query).sort("page_number", 1))
+        repository = get_document_repository(self.db)
+        return (repository.list_pages_for_job(document_id, ocr_job_id)
+                if ocr_job_id is not None else repository.list_pages_for_document(document_id))
 
     def document_contains_text(
         self,
@@ -239,13 +245,7 @@ class MongoQuestionReferenceRepository:
         normalized_text = " ".join(str(text or "").split()).casefold()
         if not normalized_text:
             return False
-        query: dict = {"document_id": document_id}
-        if ocr_job_id is not None:
-            query["ocr_job_id"] = ocr_job_id
-        pages = self.db.document_pages.find(
-            query,
-            {"cleaned_text": 1, "raw_text": 1, "page_number": 1},
-        ).sort("page_number", 1)
+        pages = self._document_pages(document_id, ocr_job_id)
         document_text = " ".join(
             " ".join(str(page.get("cleaned_text") or page.get("raw_text") or "").split())
             for page in pages
@@ -260,13 +260,9 @@ class MongoQuestionReferenceRepository:
     ) -> list[dict]:
         if not page_numbers:
             return []
-        query: dict = {
-            "document_id": document_id,
-            "page_number": {"$in": sorted(set(page_numbers))},
-        }
-        if ocr_job_id is not None:
-            query["ocr_job_id"] = ocr_job_id
-        return list(self.db.document_pages.find(query).sort("page_number", 1))
+        selected = set(page_numbers)
+        return [page for page in self._document_pages(document_id, ocr_job_id)
+                if page.get("page_number") in selected]
 
     def find_excerpt_pages(
         self,
@@ -277,10 +273,7 @@ class MongoQuestionReferenceRepository:
         excerpt = " ".join(str(text or "").split()).casefold()
         if not excerpt:
             return []
-        pages = self.db.document_pages.find(
-            {"document_id": document_id, "ocr_job_id": ocr_job_id},
-            {"page_number": 1, "cleaned_text": 1, "raw_text": 1},
-        ).sort("page_number", 1)
+        pages = self._document_pages(document_id, ocr_job_id)
         parts: list[str] = []
         spans: list[tuple[int, int, int]] = []
         offset = 0
@@ -293,7 +286,7 @@ class MongoQuestionReferenceRepository:
             start = offset
             offset += len(content)
             parts.append(content)
-            spans.append((start, offset, int(page["page_number"])))
+            spans.append((start, offset, int(page.get("page_number") or page.get("unit_number") or 0)))
         match_start = " ".join(parts).find(excerpt)
         if match_start < 0:
             return []

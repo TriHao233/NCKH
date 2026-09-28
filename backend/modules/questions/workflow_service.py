@@ -241,14 +241,8 @@ class QuestionWorkflowService:
             return True
         document_id = version.get("document_id")
         if document_id:
-            document = self.db.documents.find_one(
-                {
-                    "_id": document_id,
-                    "schema_version": SCHEMA_VERSION,
-                    "archived_at": None,
-                },
-                {"uploaded_by_user_id": 1},
-            )
+            from modules.documents.store import get_document_repository
+            document = get_document_repository(self.db).find_by_id(document_id)
             if document and document.get("uploaded_by_user_id") == user_id:
                 return True
         return False

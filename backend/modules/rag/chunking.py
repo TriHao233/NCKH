@@ -18,7 +18,8 @@ from core.config import settings
 from core.database import get_database
 from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.ingest.quality import validate_chunks
-from modules.documents.repository import MongoDocumentRepository, object_id
+from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.documents.service import DocumentService, get_document_service
 from modules.dictionary.dictionary import run_dictionary_auto_learning
 from modules.dictionary.service import get_active_keywords
@@ -322,7 +323,7 @@ def process_document_reindex_background(
     index_job_id: str,
     collection_name: str,
 ) -> None:
-    repository = MongoDocumentRepository(get_database())
+    repository = get_document_repository()
     try:
         document = repository.find_by_id(document_id)
         if not document:
@@ -388,17 +389,18 @@ def process_document_reindex_background(
                 "embedding_metrics": embedding_metrics,
             },
         )
-        get_database().documents.update_one(
-            {"_id": document["_id"], "archived_at": None},
-            {
-                "$set": {
-                    "current_processing.vector_collection_id": vector["_id"],
-                    "pipeline_summary.index_status": "COMPLETED",
-                    "status": "READY",
-                    "updated_at": now,
-                }
-            },
-        )
+        latest = repository.find_by_id(document_id)
+        if not latest:
+            raise RuntimeError("DOCUMENT_ARCHIVED")
+        processing = dict(latest.get("current_processing") or {})
+        processing["vector_collection_id"] = vector["_id"]
+        summary = dict(latest.get("pipeline_summary") or {})
+        summary["index_status"] = "COMPLETED"
+        repository.update(document_id, {
+            "current_processing": processing,
+            "pipeline_summary": summary,
+            "status": "READY",
+        })
     except Exception as exc:
         logger.exception("Re-index job %s failed", index_job_id)
         repository.update_job(index_job_id, "FAILED", error_message=str(exc))
@@ -410,7 +412,7 @@ def queue_document_reindex(
     collection_name: str | None = None,
 ) -> dict:
     resolved_collection = collection_name or settings.chromadb_collection_name
-    repository = MongoDocumentRepository(get_database())
+    repository = get_document_repository()
     job = repository.create_job(
         document_id,
         "INDEX",

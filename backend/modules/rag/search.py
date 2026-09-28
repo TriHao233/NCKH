@@ -8,6 +8,7 @@ from bson import ObjectId
 from core.config import settings
 from core.database import get_rag_db
 from core.gpu_coordination import current_gpu_operation_label
+from modules.documents.store import get_document_repository
 from modules.rag.chromadb_engine import embedding_config_matches, embedding_model_names_match, get_collection, model_scoped_collection_name
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,7 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
         raise ValueError("document_id không hợp lệ") from exc
 
     db = get_rag_db()
-    document = db.documents.find_one(
-        {"_id": document_oid, "schema_version": 2, "archived_at": None}
-    )
+    document = get_document_repository(db).find_by_id(document_oid)
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
 

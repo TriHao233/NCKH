@@ -368,9 +368,7 @@ def test_replacement_ocr_completion_preserves_active_pipeline_summary(monkeypatc
     }
     repository = MagicMock()
     repository.find_by_id.return_value = document
-    database = SimpleNamespace(documents=MagicMock())
     monkeypatch.setattr(ocr_mongodb, "_repository", lambda: repository)
-    monkeypatch.setattr(ocr_mongodb, "get_database", lambda: database)
 
     ocr_mongodb.update_document_status(
         str(document_id),
@@ -380,7 +378,7 @@ def test_replacement_ocr_completion_preserves_active_pipeline_summary(monkeypatc
     )
 
     repository.update_job.assert_called_once()
-    database.documents.update_one.assert_not_called()
+    repository.update.assert_not_called()
 
 
 def test_first_ocr_completion_still_marks_chunk_and_index_as_not_started(monkeypatch):
@@ -393,9 +391,7 @@ def test_first_ocr_completion_still_marks_chunk_and_index_as_not_started(monkeyp
     }
     repository = MagicMock()
     repository.find_by_id.return_value = document
-    database = SimpleNamespace(documents=MagicMock())
     monkeypatch.setattr(ocr_mongodb, "_repository", lambda: repository)
-    monkeypatch.setattr(ocr_mongodb, "get_database", lambda: database)
 
     ocr_mongodb.update_document_status(
         str(document_id),
@@ -403,11 +399,14 @@ def test_first_ocr_completion_still_marks_chunk_and_index_as_not_started(monkeyp
         status="completed",
     )
 
-    update = database.documents.update_one.call_args.args[1]["$set"]
+    update = repository.update.call_args.args[1]
     assert update == {
         "status": "PROCESSING",
-        "pipeline_summary.chunk_status": "NOT_STARTED",
-        "pipeline_summary.index_status": "NOT_STARTED",
+        "pipeline_summary": {
+            "ocr_status": "COMPLETED",
+            "chunk_status": "NOT_STARTED",
+            "index_status": "NOT_STARTED",
+        },
     }
 
 

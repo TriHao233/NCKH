@@ -13,6 +13,7 @@ from core.config import settings
 from core.database import get_database
 from modules.catalog.postgres_subject_repository import subject_record
 from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.questions.schemas import QuestionDifficulty
 
 def utc_now():
@@ -22,7 +23,7 @@ def utc_now():
 def get_document_learning_outcomes(document_id: str) -> list[dict]:
     db = get_database()
     try:
-        document = db.documents.find_one({"_id": object_id(document_id, "document_id")})
+        document = get_document_repository(db).find_by_id(object_id(document_id, "document_id"))
     except ValueError:
         return []
     if not document or not document.get("subject_id"):
@@ -118,7 +119,7 @@ def create_generation_run(
     provider = model_snapshot.get("provider") or model_snapshot.get("model_code") or ""
     if provider and not model_snapshot.get("source"):
         model_snapshot = _model_snapshot(db, provider, model_snapshot)
-    document = db.documents.find_one({"_id": document_oid, "archived_at": None})
+    document = get_document_repository(db).find_by_id(document_oid)
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
     chunk_set_oid = object_id(chunk_set_id, "chunk_set_id")

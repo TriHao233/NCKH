@@ -261,6 +261,26 @@ class PostgresDocumentRepository:
             ).fetchall()
         return [self._page(row) for row in rows]
 
+    def list_pages_for_job(self, document_id: str | ObjectId,
+                           ocr_job_id: str | ObjectId) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM document_pages WHERE document_id=%s AND ocr_job_id=%s
+                   ORDER BY unit_number NULLS LAST, page_number NULLS LAST, id""",
+                (str(object_id(document_id, "document_id")),
+                 str(object_id(ocr_job_id, "job_id"))),
+            ).fetchall()
+        return [self._page(row) for row in rows]
+
+    def list_pages_for_document(self, document_id: str | ObjectId) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM document_pages WHERE document_id=%s
+                   ORDER BY unit_number NULLS LAST, page_number NULLS LAST, id""",
+                (str(object_id(document_id, "document_id")),),
+            ).fetchall()
+        return [self._page(row) for row in rows]
+
     def update_page(self, document_id: str | ObjectId, page_id: str | ObjectId, *,
                     document_version: int, cleaned_text: str) -> dict | None:
         document_key = str(object_id(document_id, "document_id"))
@@ -470,6 +490,73 @@ class PostgresDocumentRepository:
                             "error_message": error_message})),
                 )
             return job
+
+    def finish_chunk_job(self, document_id: str | ObjectId, job_id: str | ObjectId,
+                         chunk_set_id: str | ObjectId, source_ocr_job_id: str | ObjectId | None,
+                         vector_collection_id: str | ObjectId | None, *,
+                         total_chunks: int, stats: dict, dry_run: bool) -> bool:
+        """Promote the PostgreSQL pointer only after vector writes completed."""
+        document_key = str(object_id(document_id, "document_id"))
+        job_key = str(object_id(job_id, "job_id"))
+        with postgres_connection() as conn:
+            document_row = conn.execute(
+                "SELECT * FROM documents WHERE id=%s AND status<>'ARCHIVED' FOR UPDATE",
+                (document_key,),
+            ).fetchone()
+            if not document_row:
+                raise RuntimeError("DOCUMENT_ARCHIVED")
+            job_row = conn.execute(
+                "SELECT * FROM document_jobs WHERE id=%s FOR UPDATE", (job_key,),
+            ).fetchone()
+            if (not job_row or job_row["document_id"] != document_key
+                    or job_row["job_type"] != "CHUNK"):
+                raise ValueError("CHUNK job không thuộc tài liệu")
+            if job_row["status"] == "CANCELLED":
+                return False
+            document = self._load(conn, document_row)
+            target_set = object_id(chunk_set_id, "chunk_set_id")
+            if (job_row["status"] == "COMPLETED" and
+                    target_set in {
+                        (document.get("current_processing") or {}).get("chunk_set_id"),
+                        (document.get("pending_processing") or {}).get("chunk_set_id"),
+                    }):
+                return True
+            job = self._job(job_row)
+            now = utc_now()
+            job.update(status="COMPLETED", progress=100, stats=stats,
+                       finished_at=now, updated_at=now)
+            for table, projection in projected_rows("document_jobs", job):
+                upsert(conn, table, projection)
+            document["updated_at"] = now
+            if not dry_run:
+                source_id = (object_id(source_ocr_job_id, "ocr_job_id")
+                             if source_ocr_job_id else None)
+                set_id = target_set
+                vector_id = (object_id(vector_collection_id, "vector_collection_id")
+                             if vector_collection_id else None)
+                if (document.get("current_processing") or {}).get("chunk_set_id"):
+                    document["pending_processing"] = {
+                        "ocr_job_id": source_id, "chunk_set_id": set_id,
+                        "vector_collection_id": vector_id,
+                        "validation_status": "AWAITING_VALIDATION",
+                        "completed_at": now,
+                    }
+                    document.setdefault("pipeline_attempts", {})["chunk"] = {
+                        "status": "COMPLETED", "job_id": object_id(job_id, "job_id"),
+                    }
+                    document["status"] = "READY"
+                else:
+                    document["current_processing"] = {
+                        "ocr_job_id": source_id, "chunk_set_id": set_id,
+                        "vector_collection_id": vector_id,
+                    }
+                    summary = document.setdefault("pipeline_summary", {})
+                    summary.update(chunk_status="COMPLETED", total_chunks=total_chunks,
+                                   index_status="COMPLETED")
+                    document["pending_processing"] = {}
+                    document["status"] = "READY"
+            self._save(conn, document)
+            return True
 
     def save_pages(self, document_id: str, ocr_job_id: str, pages: list[dict]) -> int:
         document_key = str(object_id(document_id, "document_id"))

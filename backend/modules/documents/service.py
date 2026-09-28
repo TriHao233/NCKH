@@ -4,12 +4,10 @@ from fastapi import BackgroundTasks
 
 from core.audit import record_audit_event
 from core.config import resolve_path, settings
-from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
 from modules.documents.repository import (
     ACTIVE_DOCUMENT_JOB_STATUSES,
     DocumentRepository,
-    MongoDocumentRepository,
     RETRYABLE_DOCUMENT_JOB_STATUSES,
     RETRYABLE_DOCUMENT_JOB_TYPES,
     object_id,
@@ -17,6 +15,7 @@ from modules.documents.repository import (
     serialize_document_job,
     serialize_document_page,
 )
+from modules.documents.store import get_document_repository
 from modules.documents.schemas import (
     DocumentCreateRequest,
     DocumentPageUpdateRequest,
@@ -351,4 +350,4 @@ class DocumentService:
 
 
 def get_document_service() -> DocumentService:
-    return DocumentService(MongoDocumentRepository(get_database()))
+    return DocumentService(get_document_repository())
