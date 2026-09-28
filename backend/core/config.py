@@ -232,6 +232,13 @@ class Settings(BaseModel):
     artifact_cold_retention_days: int = int(os.getenv("ARTIFACT_COLD_RETENTION_DAYS", "365"))
     artifact_cold_dir: str = os.getenv("ARTIFACT_COLD_DIR", "./data/artifact_archive")
     artifact_blob_dir: str = os.getenv("ARTIFACT_BLOB_DIR", "./data/artifact_blobs")
+    # New uploads, OCR artifacts and avatars go to this provider; existing
+    # artifacts are always read from the provider recorded with them.
+    storage_provider: str = os.getenv("STORAGE_PROVIDER", "local").strip().lower()
+    s3_bucket: str = os.getenv("S3_BUCKET", "").strip()
+    s3_prefix: str = os.getenv("S3_PREFIX", "").strip().strip("/")
+    s3_endpoint_url: str = os.getenv("S3_ENDPOINT_URL", "").strip()
+    s3_region: str = os.getenv("S3_REGION", "").strip()
 
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
     prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()

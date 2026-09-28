@@ -37,10 +37,12 @@ def attach_original_artifact(
     sha256: str,
     artifact_type: str = "ORIGINAL_PDF",
     mime_type: str = "application/pdf",
+    provider: str = "LOCAL",
 ) -> None:
     _repository().attach_original_artifact(
         document_id,
         uri=uri,
+        provider=provider,
         size_bytes=size_bytes,
         sha256=sha256,
         artifact_type=artifact_type,
@@ -57,11 +59,13 @@ def attach_processing_artifact(
     sha256: str,
     artifact_type: str,
     mime_type: str,
+    provider: str = "LOCAL",
 ) -> None:
     _repository().attach_processing_artifact(
         document_id,
         job_id=job_id,
         uri=uri,
+        provider=provider,
         size_bytes=size_bytes,
         sha256=sha256,
         artifact_type=artifact_type,

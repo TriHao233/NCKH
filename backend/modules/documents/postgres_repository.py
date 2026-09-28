@@ -400,16 +400,18 @@ class PostgresDocumentRepository:
     def attach_original_artifact(self, document_id: str | ObjectId, *, uri: str,
                                  size_bytes: int, sha256: str,
                                  artifact_type: str = "ORIGINAL_PDF",
-                                 mime_type: str = "application/pdf") -> None:
+                                 mime_type: str = "application/pdf",
+                                 provider: str = "LOCAL") -> None:
         self._attach_artifact(
             document_id, uri=uri, size_bytes=size_bytes, sha256=sha256,
             artifact_type=artifact_type, mime_type=mime_type,
-            document_version=1, job_id=None,
+            document_version=1, job_id=None, provider=provider,
         )
 
     def attach_processing_artifact(self, document_id: str | ObjectId, *,
                                    job_id: str | ObjectId, uri: str, size_bytes: int,
-                                   sha256: str, artifact_type: str, mime_type: str) -> None:
+                                   sha256: str, artifact_type: str, mime_type: str,
+                                   provider: str = "LOCAL") -> None:
         job = self.find_job(job_id)
         if not job or job["document_id"] != object_id(document_id, "document_id"):
             raise ValueError("Processing artifact không thuộc tài liệu/job")
@@ -417,12 +419,13 @@ class PostgresDocumentRepository:
             document_id, uri=uri, size_bytes=size_bytes, sha256=sha256,
             artifact_type=artifact_type, mime_type=mime_type,
             document_version=job["document_version"], job_id=job["_id"],
+            provider=provider,
         )
 
     def _attach_artifact(self, document_id: str | ObjectId, *, uri: str,
                          size_bytes: int, sha256: str, artifact_type: str,
                          mime_type: str, document_version: int,
-                         job_id: ObjectId | None) -> None:
+                         job_id: ObjectId | None, provider: str = "LOCAL") -> None:
         key = str(object_id(document_id, "document_id"))
         with postgres_connection() as conn:
             row = conn.execute(
@@ -436,7 +439,7 @@ class PostgresDocumentRepository:
             artifact = {
                 "_id": ObjectId(), "type": artifact_type,
                 "document_version": document_version,
-                "storage": {"provider": "LOCAL", "uri": uri, "gridfs_file_id": None},
+                "storage": {"provider": provider, "uri": uri, "gridfs_file_id": None},
                 "mime_type": mime_type, "size_bytes": size_bytes, "sha256": sha256,
                 "is_current": True, "created_at": now,
             }

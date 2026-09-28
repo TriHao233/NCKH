@@ -184,6 +184,7 @@ class DocumentRepository(Protocol):
         sha256: str,
         artifact_type: str,
         mime_type: str,
+        provider: str = "LOCAL",
     ) -> None: ...
 
     def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict: ...
@@ -508,6 +509,7 @@ class MongoDocumentRepository:
         sha256: str,
         artifact_type: str = "ORIGINAL_PDF",
         mime_type: str = "application/pdf",
+        provider: str = "LOCAL",
     ) -> None:
         now = utc_now()
         self.collection.update_one(
@@ -519,7 +521,7 @@ class MongoDocumentRepository:
                         "type": artifact_type,
                         "document_version": 1,
                         "storage": {
-                            "provider": "LOCAL",
+                            "provider": provider,
                             "uri": uri,
                             "gridfs_file_id": None,
                         },
@@ -544,6 +546,7 @@ class MongoDocumentRepository:
         sha256: str,
         artifact_type: str,
         mime_type: str,
+        provider: str = "LOCAL",
     ) -> None:
         document = self.find_by_id(document_id)
         job = self.find_job(job_id)
@@ -559,7 +562,7 @@ class MongoDocumentRepository:
                         "type": artifact_type,
                         "document_version": job["document_version"],
                         "job_id": job["_id"],
-                        "storage": {"provider": "LOCAL", "uri": uri, "gridfs_file_id": None},
+                        "storage": {"provider": provider, "uri": uri, "gridfs_file_id": None},
                         "mime_type": mime_type,
                         "size_bytes": size_bytes,
                         "sha256": sha256,

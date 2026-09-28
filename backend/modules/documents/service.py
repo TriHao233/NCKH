@@ -254,11 +254,12 @@ class DocumentService:
             process_ocr_background,
             document_id=str(document["_id"]),
             job_id=str(new_job["_id"]),
-            upload_path=str(Path(upload_path)),
+            upload_path=str(upload_path),
             output_path=str(output_path),
             document_title=document.get("title") or document.get("original_filename") or "Document",
             source_file_name=document.get("original_filename") or Path(upload_path).name,
             mime_type=artifact.get("mime_type"),
+            source_provider=(artifact.get("storage") or {}).get("provider") or "LOCAL",
         )
         return {"job": serialize_document_job(new_job)}
 

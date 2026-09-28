@@ -58,7 +58,7 @@ def _current_original_pdf_artifact(document: dict | None) -> dict | None:
     ]
     for artifact in candidates:
         storage = artifact.get("storage") or {}
-        if storage.get("provider") == "LOCAL" and storage.get("uri"):
+        if storage.get("provider") in {"LOCAL", "S3"} and storage.get("uri"):
             return artifact
     return None
 
@@ -957,11 +957,12 @@ class QuestionService:
         uri = storage.get("uri")
         if not uri:
             return None
-        path = Path(uri)
-        if not path.is_absolute():
-            path = resolve_path(path)
+        provider = storage.get("provider") or "LOCAL"
+        if provider == "LOCAL" and not Path(uri).is_absolute():
+            uri = str(resolve_path(uri))
         return {
-            "path": path,
+            "provider": provider,
+            "uri": uri,
             "filename": (document or {}).get("original_filename") or "source.pdf",
             "mime_type": artifact.get("mime_type") or "application/pdf",
         }

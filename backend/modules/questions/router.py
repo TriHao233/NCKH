@@ -1,8 +1,9 @@
 import logging
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from core.config import settings
 from core.dependencies import (
@@ -20,6 +21,7 @@ from modules.questions.schemas import (
     QuestionVersionResponse,
     QuestionUpdateRequest,
 )
+from modules.documents.storage import storage_for_provider
 from modules.questions.service import QuestionService, get_question_service
 from modules.notifications.service import (
     NotificationService,
@@ -34,6 +36,14 @@ from modules.questions.workflow_service import (
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Questions"])
 logger = logging.getLogger(__name__)
+
+
+def _content_disposition(filename: str) -> str:
+    # Same rule as FileResponse: RFC 5987 encoding for non-ASCII names.
+    quoted = quote(filename)
+    if quoted != filename:
+        return f"attachment; filename*=utf-8''{quoted}"
+    return f'attachment; filename="{filename}"'
 
 
 def _collect_notifications(workflow_service: QuestionWorkflowService, build) -> list[dict] | None:
@@ -230,13 +240,20 @@ def get_question_source_pdf(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not artifact:
         raise HTTPException(status_code=404, detail="Không tìm thấy PDF nguồn")
-    path = artifact["path"]
-    if not path.exists() or not path.is_file():
+    storage = storage_for_provider(artifact["provider"])
+    if not storage.exists(artifact["uri"]):
         raise HTTPException(status_code=404, detail="File PDF nguồn không còn tồn tại")
-    return FileResponse(
-        path,
+    if artifact["provider"] == "LOCAL":
+        return FileResponse(
+            artifact["uri"],
+            media_type=artifact["mime_type"],
+            filename=artifact["filename"],
+        )
+    # Object storage is streamed through the API so access checks and CORS stay here.
+    return StreamingResponse(
+        storage.iter_bytes(artifact["uri"]),
         media_type=artifact["mime_type"],
-        filename=artifact["filename"],
+        headers={"Content-Disposition": _content_disposition(artifact["filename"])},
     )
 
 
