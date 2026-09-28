@@ -21,7 +21,7 @@ from modules.documents.ingest.quality import validate_chunks
 from modules.documents.repository import MongoDocumentRepository, object_id
 from modules.documents.service import DocumentService, get_document_service
 from modules.dictionary.dictionary import run_dictionary_auto_learning
-from modules.dictionary.mongodb import get_active_keywords
+from modules.dictionary.service import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import (
     embedding_config_hash,

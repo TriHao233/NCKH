@@ -9,6 +9,7 @@ Tài liệu này ghi **trạng thái mã nguồn hiện tại** của quá trìn
 | Tài khoản, quyền, hồ sơ, phiên demo | PostgreSQL: `users`, `user_sessions` với `USER_STORE=postgres` | MongoDB |
 | Model AI, phiên bản model, prompt, policy đánh giá | PostgreSQL: `ai_models`, `ai_model_versions`, `prompt_templates`, `evaluation_policies` với `AI_CONFIG_STORE=postgres` | MongoDB |
 | Học phần, chương, CLO | PostgreSQL: `subjects`, `subject_chapters`, `learning_outcomes` với `CATALOG_STORE=postgres` | MongoDB |
+| Từ điển từ khóa dùng khi chunking | PostgreSQL: `legacy_dictionaries`, `keywords` với `DICTIONARY_STORE=postgres` | MongoDB |
 | Thông báo và trạng thái đã đọc | PostgreSQL: `notifications` với `NOTIFICATION_STORE=postgres` | MongoDB |
 | Tài liệu, trang OCR, câu hỏi/phiên bản, duyệt/đánh giá, đề thi, job, Moodle, phần lớn audit | Chưa chuyển luồng đọc/ghi; schema và công cụ sao chép PostgreSQL đã có | MongoDB |
 | Chunk, chunk set, embedding metadata, vector collection và lineage của index | Giữ MongoDB | MongoDB |
@@ -20,9 +21,11 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 ## Thay đổi đã triển khai
 
 - `db/migrations/0001` đến `0004` tạo schema nghiệp vụ và metadata AI; `0005_catalog_casefold.sql` thêm ràng buộc mã học phần, chương, CLO không trùng khi khác chữ hoa/thường hoặc có khoảng trắng đầu/cuối.
+- `0006_dictionary_keyword_uniqueness.sql` ngăn từ khóa trùng trong cùng từ điển, kể cả khác chữ hoa/thường hoặc khác trạng thái CORE/LEARNED/PENDING.
 - `modules/catalog/postgres_subject_repository.py` xử lý học phần, chương, CLO trong PostgreSQL. Ghi dữ liệu và audit tương ứng cùng transaction; cập nhật chương/CLO khóa học phần và ghép thay đổi với bản mới nhất để tránh ghi đè trường khác.
 - Các đường đọc học phần của tài liệu, sinh câu hỏi, thống kê reviewer và trang quản trị dùng nguồn được chọn bởi `CATALOG_STORE`.
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.
+- `modules/dictionary/postgres_repository.py` lưu từ điển và các từ khóa CORE/LEARNED/PENDING trong PostgreSQL; bước chunking và tác vụ AI học từ khóa chọn cùng một nguồn qua `DICTIONARY_STORE`.
 - Repository PostgreSQL cho tài khoản/phiên và cấu hình AI đã có từ giai đoạn trước.
 
 ## Cấu hình và chạy thử
@@ -46,6 +49,7 @@ USER_STORE=postgres
 AI_CONFIG_STORE=postgres
 CATALOG_STORE=postgres
 NOTIFICATION_STORE=postgres
+DICTIONARY_STORE=postgres
 ```
 
 `CATALOG_STORE` và `NOTIFICATION_STORE` yêu cầu `USER_STORE=postgres` để khóa ngoại owner/recipient hợp lệ. Có thể bật từng nhóm sau khi dữ liệu nhóm đó đã được sao chép và kiểm tra. Không bật các cờ trên production khi câu hỏi, tài liệu, job và các luồng liên quan còn dùng MongoDB. Khởi động lại API/worker sau khi đổi cờ; không chuyển cờ trong lúc có ghi đồng thời ở hai nguồn.

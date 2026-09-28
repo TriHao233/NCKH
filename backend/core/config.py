@@ -71,6 +71,7 @@ class Settings(BaseModel):
     ai_config_store: str = os.getenv("AI_CONFIG_STORE", "mongo").strip().lower()
     catalog_store: str = os.getenv("CATALOG_STORE", "mongo").strip().lower()
     notification_store: str = os.getenv("NOTIFICATION_STORE", "mongo").strip().lower()
+    dictionary_store: str = os.getenv("DICTIONARY_STORE", "mongo").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",
