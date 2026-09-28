@@ -30,10 +30,12 @@ def write_postgres_audit_event(
     actor_user_id=None, actor_role: str | None = None,
     before: dict | None = None, after: dict | None = None,
     metadata: dict | None = None,
+    service_name: str | None = None,
 ) -> None:
     event = build_audit_event(
         action=action, entity_type=entity_type, entity_id=entity_id,
         actor_user_id=actor_user_id, actor_role=actor_role,
+        service_name=service_name,
         before=_json(before or {}), after=_json(after or {}),
         metadata=_json(metadata or {}),
     )

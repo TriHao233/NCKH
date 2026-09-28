@@ -278,6 +278,36 @@ class NotificationService:
             entity=self._question_entity(question, version),
         )
 
+    def _question_with_latest_review(self, question_id) -> tuple[dict, dict, dict | None] | None:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            repository = PostgresQuestionRepository()
+            pair = repository.find_pair(question_id)
+            if not pair:
+                return None
+            return (*pair, repository.latest_review(pair[0]))
+        question = self.db.questions.find_one(
+            {
+                "_id": object_id(question_id, "question_id"),
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+            }
+        )
+        if not question:
+            return None
+        version = self.db.question_versions.find_one({"_id": question["current_version_id"]})
+        if not version:
+            return None
+        review = None
+        if question.get("latest_review_id"):
+            review = self.db.question_reviews.find_one({"_id": question["latest_review_id"]})
+        if not review:
+            review = self.db.question_reviews.find_one(
+                {"question_id": question["_id"]},
+                sort=[("reviewed_at", -1)],
+            )
+        return question, version, review
+
     def notify_question_resubmitted(
         self,
         *,
@@ -290,26 +320,10 @@ class NotificationService:
         # Decide from the latest review decision instead.
         if previous_review_status == "PENDING":
             return []
-        question = self.db.questions.find_one(
-            {
-                "_id": object_id(question_id, "question_id"),
-                "schema_version": SCHEMA_VERSION,
-                "lifecycle_status": "ACTIVE",
-            }
-        )
-        if not question:
+        found = self._question_with_latest_review(question_id)
+        if not found:
             return []
-        version = self.db.question_versions.find_one({"_id": question["current_version_id"]})
-        if not version:
-            return []
-        review = None
-        if question.get("latest_review_id"):
-            review = self.db.question_reviews.find_one({"_id": question["latest_review_id"]})
-        if not review:
-            review = self.db.question_reviews.find_one(
-                {"question_id": question["_id"]},
-                sort=[("reviewed_at", -1)],
-            )
+        question, version, review = found
         decision = review.get("decision") if review else None
         if decision not in RESUBMITTABLE_DECISIONS:
             return []

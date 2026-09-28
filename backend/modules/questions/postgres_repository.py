@@ -60,6 +60,52 @@ def _version(row: dict | None) -> dict | None:
     return record
 
 
+def _review(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    record = restore(row["payload"] or {})
+    record.update({
+        "_id": ObjectId(row["id"]),
+        "question_id": ObjectId(row["question_id"]),
+        "question_version_id": ObjectId(row["question_version_id"]),
+        "reviewer_user_id": (ObjectId(row["reviewer_user_id"])
+                             if row["reviewer_user_id"] else None),
+        "decision": row["decision"], "reviewed_at": row["reviewed_at"],
+    })
+    return record
+
+
+def _evaluation(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    record = restore(row["result"] or {})
+    record.update({
+        "_id": ObjectId(row["id"]),
+        "question_id": ObjectId(row["question_id"]),
+        "question_version_id": ObjectId(row["question_version_id"]),
+        "evaluation_job_id": (ObjectId(row["evaluation_job_id"])
+                              if row["evaluation_job_id"] else None),
+        "created_at": row["created_at"],
+    })
+    return record
+
+
+def _publication(row: dict | None) -> dict | None:
+    if row is None:
+        return None
+    record = restore(row["payload"] or {})
+    record.update({
+        "_id": ObjectId(row["id"]),
+        "question_id": ObjectId(row["question_id"]),
+        "question_version_id": ObjectId(row["question_version_id"]),
+        "publisher_user_id": (ObjectId(row["publisher_user_id"])
+                              if row["publisher_user_id"] else None),
+        "idempotency_key": row["idempotency_key"], "status": row["status"],
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+    })
+    return record
+
+
 class PostgresQuestionRepository:
     def record_evaluation(self, evaluation: dict, *,
                           expected_version_id: ObjectId,
@@ -304,6 +350,7 @@ class PostgresQuestionRepository:
             for table, row in projected_rows("question_reviews", review):
                 upsert(conn, table, row)
             previous_status = question["review_status"]
+            previous_assignment = deepcopy(question.get("review_assignment") or {})
             question.update(question_fields)
             self._save_question(conn, question)
             conn.execute(
@@ -318,7 +365,10 @@ class PostgresQuestionRepository:
                 after={"review_status": question["review_status"]},
                 metadata={
                     "review_id": str(review["_id"]),
+                    "correlation_id": str(review["_id"]),
                     "question_version_id": str(version["_id"]),
+                    # Dashboard tính thời gian duyệt từ claimed_at/assigned_at.
+                    "review_assignment": previous_assignment,
                     "review_form": review.get("review_form") or {},
                     "secondary_review": question.get("secondary_review") or {},
                     "interrupted_evaluation_job_ids": [str(item) for item in interrupted],
@@ -333,18 +383,246 @@ class PostgresQuestionRepository:
                 "SELECT * FROM question_reviews WHERE id=%s",
                 (str(object_id(review_id, "review_id")),),
             ).fetchone()
-        if not row:
-            return None
-        record = restore(row["payload"] or {})
-        record.update({
-            "_id": ObjectId(row["id"]),
-            "question_id": ObjectId(row["question_id"]),
-            "question_version_id": ObjectId(row["question_version_id"]),
-            "reviewer_user_id": (ObjectId(row["reviewer_user_id"])
-                                 if row["reviewer_user_id"] else None),
-            "decision": row["decision"], "reviewed_at": row["reviewed_at"],
-        })
-        return record
+        return _review(row)
+
+    def latest_review(self, question: dict) -> dict | None:
+        with postgres_connection() as conn:
+            row = None
+            if question.get("latest_review_id"):
+                row = conn.execute("SELECT * FROM question_reviews WHERE id=%s",
+                                   (str(question["latest_review_id"]),)).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM question_reviews WHERE question_id=%s "
+                    "ORDER BY reviewed_at DESC, id DESC LIMIT 1", (str(question["_id"]),),
+                ).fetchone()
+        return _review(row)
+
+    # ---- Reviewer queue, dashboard and history reads -------------------
+
+    def release_reviewer_assignments(self, reviewer_user_id: ObjectId, *, reason: str,
+                                     actor_user_id: ObjectId | None,
+                                     actor_role: str | None, now) -> int:
+        """Trả mọi câu hỏi Reviewer đang giữ về hàng đợi chung trong một transaction."""
+        empty = {
+            "status": "UNASSIGNED", "reviewer_user_id": None,
+            "assigned_by_user_id": None, "assigned_at": None, "claimed_at": None,
+            "lock_expires_at": None, "last_released_at": now, "release_reason": reason,
+        }
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM questions
+                   WHERE lifecycle_status='ACTIVE' AND review_status='PENDING'
+                     AND assignment->>'status' IN ('ASSIGNED','IN_REVIEW')
+                     AND assignment->>'reviewer_user_id'=%s
+                   ORDER BY id FOR UPDATE""",
+                (str(reviewer_user_id),),
+            ).fetchall()
+            for row in rows:
+                question = _question(row)
+                previous = question.get("review_assignment") or {}
+                question.update(review_assignment=dict(empty), updated_at=now)
+                self._save_question(conn, question)
+                write_postgres_audit_event(
+                    conn, action="QUESTION_REVIEW_RELEASED", entity_type="question",
+                    entity_id=question["_id"], actor_user_id=actor_user_id,
+                    actor_role=actor_role,
+                    service_name=None if actor_user_id else "user_management",
+                    before={"review_assignment": previous},
+                    after={"review_assignment": empty},
+                    metadata={"reason": reason, "reviewer_user_id": str(reviewer_user_id),
+                              "question_version_id": str(question["current_version_id"])},
+                )
+        return len(rows)
+
+    def open_review_pairs(self, now, *, question_ids: list[ObjectId] | None = None,
+                          limit: int = 50) -> list[tuple[dict, dict]]:
+        """Câu hỏi PENDING chưa ai giữ hoặc đã quá hạn khóa, cũ nhất trước."""
+        clauses = ["""q.lifecycle_status='ACTIVE' AND q.review_status='PENDING'
+            AND (q.assignment->>'status' IS NULL OR q.assignment->>'status'='UNASSIGNED'
+                 OR (q.assignment->>'lock_expires_at')::timestamptz <= %s)"""]
+        params: list = [now]
+        if question_ids is not None:
+            clauses.append("q.id=ANY(%s)")
+            params.append([str(item) for item in question_ids])
+        return self._pairs(
+            "WHERE " + " AND ".join(clauses)
+            + " ORDER BY (q.payload->'review_submission'->>'submitted_at')::timestamptz"
+              " NULLS FIRST, q.id LIMIT %s",
+            [*params, limit],
+        )
+
+    def held_reviews(self, *, active_at=None) -> list[dict]:
+        """Assignment đang giữ (ASSIGNED/IN_REVIEW); `active_at` lọc khóa còn hạn."""
+        query = """SELECT * FROM questions
+                   WHERE lifecycle_status='ACTIVE' AND review_status='PENDING'
+                     AND assignment->>'status' IN ('ASSIGNED','IN_REVIEW')"""
+        params: list = []
+        if active_at is not None:
+            query += " AND (assignment->>'lock_expires_at')::timestamptz > %s"
+            params.append(active_at)
+        with postgres_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [_question(row) for row in rows]
+
+    def review_workload(self, now, *, reviewer_user_id: ObjectId, sla_cutoff) -> dict:
+        with postgres_connection() as conn:
+            row = conn.execute(
+                """SELECT count(*) AS pending,
+                     count(*) FILTER (WHERE assignment->>'status' IS NULL
+                                       OR assignment->>'status'='UNASSIGNED') AS unassigned,
+                     count(*) FILTER (WHERE assignment->>'status'='ASSIGNED') AS assigned,
+                     count(*) FILTER (WHERE assignment->>'status'='IN_REVIEW') AS in_review,
+                     count(*) FILTER (WHERE assignment->>'status'='IN_REVIEW'
+                       AND (assignment->>'lock_expires_at')::timestamptz <= %s) AS lock_expired,
+                     count(*) FILTER (WHERE assignment->>'status' IN ('ASSIGNED','IN_REVIEW')
+                       AND assignment->>'reviewer_user_id'=%s) AS mine,
+                     count(*) FILTER (WHERE
+                       (payload->'review_submission'->>'submitted_at')::timestamptz <= %s
+                     ) AS sla_breached
+                   FROM questions
+                   WHERE lifecycle_status='ACTIVE' AND review_status='PENDING'""",
+                (now, str(reviewer_user_id), sla_cutoff),
+            ).fetchone()
+        return dict(row)
+
+    def reviews_since(self, since, *, reviewer_user_id: ObjectId | None = None) -> list[dict]:
+        query = "SELECT * FROM question_reviews WHERE reviewed_at >= %s"
+        params: list = [since]
+        if reviewer_user_id is not None:
+            query += " AND reviewer_user_id=%s"
+            params.append(str(reviewer_user_id))
+        with postgres_connection() as conn:
+            rows = conn.execute(query + " ORDER BY reviewed_at DESC, id DESC",
+                                params).fetchall()
+        return [_review(row) for row in rows]
+
+    def version_subjects(self, version_ids: list[ObjectId]) -> dict[ObjectId, dict]:
+        if not version_ids:
+            return {}
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, classification->'subject' AS subject FROM question_versions "
+                "WHERE id=ANY(%s)", ([str(item) for item in version_ids],),
+            ).fetchall()
+        return {ObjectId(row["id"]): restore(row["subject"] or {}, "subject")
+                for row in rows}
+
+    def latest_evaluations(self, version_ids: list[ObjectId]) -> dict[ObjectId, dict]:
+        if not version_ids:
+            return {}
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT ON (question_version_id) *
+                   FROM question_evaluations WHERE question_version_id=ANY(%s)
+                   ORDER BY question_version_id, created_at DESC, id DESC""",
+                ([str(item) for item in version_ids],),
+            ).fetchall()
+        return {ObjectId(row["question_version_id"]): _evaluation(row) for row in rows}
+
+    def review_decision_audits(self, since, *, actor_user_id: ObjectId | None = None
+                               ) -> list[dict]:
+        query = """SELECT payload, created_at FROM audit_logs
+                   WHERE entity_type='question' AND created_at >= %s
+                     AND action IN ('QUESTION_APPROVED','QUESTION_REJECTED',
+                                    'QUESTION_NEEDS_REVISION')"""
+        params: list = [since]
+        if actor_user_id is not None:
+            query += " AND actor_user_id=%s"
+            params.append(str(actor_user_id))
+        with postgres_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [{**restore(row["payload"] or {}), "created_at": row["created_at"]}
+                for row in rows]
+
+    def history(self, question_id: ObjectId, kind: str) -> list[dict]:
+        key = str(object_id(question_id, "question_id"))
+        with postgres_connection() as conn:
+            if kind == "evaluations":
+                rows = conn.execute(
+                    "SELECT * FROM question_evaluations WHERE question_id=%s "
+                    "ORDER BY created_at DESC, id DESC", (key,),
+                ).fetchall()
+                return [_evaluation(row) for row in rows]
+            if kind == "publications":
+                rows = conn.execute(
+                    "SELECT * FROM moodle_publications WHERE question_id=%s "
+                    "ORDER BY created_at DESC, id DESC", (key,),
+                ).fetchall()
+                return [_publication(row) for row in rows]
+            rows = conn.execute(
+                "SELECT * FROM question_reviews WHERE question_id=%s "
+                "ORDER BY reviewed_at DESC, id DESC", (key,),
+            ).fetchall()
+        return [_review(row) for row in rows]
+
+    def sla_breach_candidates(self, cutoff, limit: int) -> list[dict]:
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM questions
+                   WHERE lifecycle_status='ACTIVE' AND review_status='PENDING'
+                     AND (payload->'review_submission'->>'submitted_at')::timestamptz <= %s
+                     AND (payload->'review_sla'->>'reminded_submission_at') IS DISTINCT FROM
+                         payload->'review_submission'->>'submitted_at'
+                   ORDER BY (payload->'review_submission'->>'submitted_at')::timestamptz, id
+                   LIMIT %s""",
+                (cutoff, limit),
+            ).fetchall()
+        return [_question(row) for row in rows]
+
+    def mark_sla_reminded(self, question_id: ObjectId, submitted_at, now) -> bool:
+        """Chỉ nhắc một lần cho mỗi lượt gửi duyệt, kể cả khi nhiều worker cùng chạy."""
+        with postgres_connection() as conn:
+            pair = self._pair(conn, question_id, lock=True)
+            if not pair or pair[0]["review_status"] != "PENDING":
+                return False
+            question = pair[0]
+            if (question.get("review_sla") or {}).get("reminded_submission_at") == submitted_at:
+                return False
+            question["review_sla"] = {"reminded_submission_at": submitted_at, "reminded_at": now}
+            self._save_question(conn, question)
+            return True
+
+    def record_moodle_publication(self, publication: dict, *,
+                                  expected_version_id: ObjectId) -> dict:
+        """Ghi publication theo idempotency key và đánh dấu PUBLISHED cùng transaction."""
+        with postgres_connection() as conn:
+            pair = self._pair(conn, publication["question_id"], lock=True)
+            if (not pair or pair[1]["_id"] != expected_version_id
+                    or pair[0]["review_status"] != "APPROVED"):
+                raise RuntimeError("VERSION_CONFLICT")
+            question, _version = pair
+            row = conn.execute(
+                "SELECT * FROM moodle_publications WHERE idempotency_key=%s FOR UPDATE",
+                (publication["idempotency_key"],),
+            ).fetchone()
+            existing = _publication(row)
+            if existing and existing.get("status") != "FAILED":
+                saved = existing
+            else:
+                saved = dict(publication)
+                if existing:
+                    saved.update(_id=existing["_id"],
+                                 created_at=existing.get("created_at") or publication["created_at"],
+                                 attempt_no=int(existing.get("attempt_no") or 1) + 1)
+                for table, projected in projected_rows("moodle_publications", saved):
+                    upsert(conn, table, projected)
+            if saved.get("status") == "PUBLISHED" and question["publication_status"] != "PUBLISHED":
+                question.update(publication_status="PUBLISHED",
+                                updated_at=publication["updated_at"])
+                self._save_question(conn, question)
+            return saved
+
+    def _pairs(self, suffix: str, params: list) -> list[tuple[dict, dict]]:
+        with postgres_connection() as conn:
+            rows = conn.execute("SELECT q.* FROM questions q " + suffix, params).fetchall()
+            version_ids = [row["current_version_id"] for row in rows]
+            version_rows = conn.execute(
+                "SELECT * FROM question_versions WHERE id=ANY(%s)", (version_ids,),
+            ).fetchall() if version_ids else []
+        versions = {row["id"]: _version(row) for row in version_rows}
+        return [(_question(row), versions[row["current_version_id"]]) for row in rows]
+
 
     def set_secondary_review(self, question_id: str | ObjectId, *,
                              expected_version_id: ObjectId,

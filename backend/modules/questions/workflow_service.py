@@ -2546,6 +2546,12 @@ class QuestionWorkflowService:
     ) -> int:
         """Return every pending question held by a reviewer to the shared queue."""
         now = utc_now()
+        if settings.question_store == "postgres":
+            return self.questions.release_reviewer_assignments(
+                reviewer_user_id, reason=reason,
+                actor_user_id=current_user.id if current_user else None,
+                actor_role=current_user.role if current_user else None, now=now,
+            )
         held = list(
             self.db.questions.find(
                 {
@@ -2682,24 +2688,47 @@ class QuestionWorkflowService:
         current load. Reviewers without review_subject_ids take any subject.
         """
         now = utc_now()
-        query: dict = {
-            "schema_version": SCHEMA_VERSION,
-            "lifecycle_status": "ACTIVE",
-            "review_status": "PENDING",
-            "$or": [
-                {"review_assignment": {"$exists": False}},
-                {"review_assignment.status": {"$exists": False}},
-                {"review_assignment.status": "UNASSIGNED"},
-                {"review_assignment.lock_expires_at": {"$lte": now}},
-            ],
-        }
-        if payload.question_ids:
-            query["_id"] = {"$in": [object_id(item, "question_id") for item in payload.question_ids]}
-        questions = list(
-            self.db.questions.find(query)
-            .sort("review_submission.submitted_at", 1)
-            .limit(payload.limit)
+        question_ids = (
+            [object_id(item, "question_id") for item in payload.question_ids]
+            if payload.question_ids
+            else None
         )
+        if settings.question_store == "postgres":
+            open_pairs = self.questions.open_review_pairs(
+                now, question_ids=question_ids, limit=payload.limit,
+            )
+            questions = [question for question, _version in open_pairs]
+            version_authors = {
+                version["_id"]: version.get("created_by_user_id")
+                for _question, version in open_pairs
+            }
+        else:
+            query: dict = {
+                "schema_version": SCHEMA_VERSION,
+                "lifecycle_status": "ACTIVE",
+                "review_status": "PENDING",
+                "$or": [
+                    {"review_assignment": {"$exists": False}},
+                    {"review_assignment.status": {"$exists": False}},
+                    {"review_assignment.status": "UNASSIGNED"},
+                    {"review_assignment.lock_expires_at": {"$lte": now}},
+                ],
+            }
+            if question_ids is not None:
+                query["_id"] = {"$in": question_ids}
+            questions = list(
+                self.db.questions.find(query)
+                .sort("review_submission.submitted_at", 1)
+                .limit(payload.limit)
+            )
+            version_ids = [question["current_version_id"] for question in questions]
+            version_authors = {
+                version["_id"]: version.get("created_by_user_id")
+                for version in self.db.question_versions.find(
+                    {"_id": {"$in": version_ids}},
+                    {"created_by_user_id": 1},
+                )
+            } if version_ids else {}
 
         reviewers = [
             reviewer
@@ -2713,28 +2742,23 @@ class QuestionWorkflowService:
             for subject_id in reviewer.get("review_subject_ids") or []
         }
         loads = {reviewer["_id"]: 0 for reviewer in reviewers}
-        for held in self.db.questions.find(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "lifecycle_status": "ACTIVE",
-                "review_status": "PENDING",
-                "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
-                "review_assignment.lock_expires_at": {"$gt": now},
-            },
-            {"review_assignment.reviewer_user_id": 1},
-        ):
+        if settings.question_store == "postgres":
+            held_questions = self.questions.held_reviews(active_at=now)
+        else:
+            held_questions = self.db.questions.find(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "lifecycle_status": "ACTIVE",
+                    "review_status": "PENDING",
+                    "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+                    "review_assignment.lock_expires_at": {"$gt": now},
+                },
+                {"review_assignment.reviewer_user_id": 1},
+            )
+        for held in held_questions:
             reviewer_id = (held.get("review_assignment") or {}).get("reviewer_user_id")
             if reviewer_id in loads:
                 loads[reviewer_id] += 1
-
-        version_ids = [question["current_version_id"] for question in questions]
-        version_authors = {
-            version["_id"]: version.get("created_by_user_id")
-            for version in self.db.question_versions.find(
-                {"_id": {"$in": version_ids}},
-                {"created_by_user_id": 1},
-            )
-        } if version_ids else {}
 
         assigned: list[dict] = []
         skipped: list[dict] = []
@@ -2794,28 +2818,57 @@ class QuestionWorkflowService:
             )
         return json_safe({"assigned": assigned, "skipped": skipped})
 
+    def _reviews_since(self, since, reviewer_user_id=None) -> list[dict]:
+        if settings.question_store == "postgres":
+            return self.questions.reviews_since(since, reviewer_user_id=reviewer_user_id)
+        match: dict = {"reviewed_at": {"$gte": since}}
+        if reviewer_user_id is not None:
+            match["reviewer_user_id"] = reviewer_user_id
+        return list(
+            self.db.question_reviews.find(
+                match,
+                {
+                    "question_version_id": 1,
+                    "reviewer_user_id": 1,
+                    "decision": 1,
+                    "override.applied": 1,
+                    "revision_issues": 1,
+                    "review_form.criterion_assessments": 1,
+                    "review_form.checklist": 1,
+                    "bulk": 1,
+                    "reviewed_at": 1,
+                },
+            ).sort("reviewed_at", -1)
+        )
+
+    def _version_subjects(self, version_ids: list) -> dict:
+        """Map version_id -> classification.subject cho các version đã duyệt."""
+        if not version_ids:
+            return {}
+        if settings.question_store == "postgres":
+            return self.questions.version_subjects(version_ids)
+        return {
+            version["_id"]: (version.get("classification") or {}).get("subject") or {}
+            for version in self.db.question_versions.find(
+                {"_id": {"$in": version_ids}},
+                {"classification.subject": 1},
+            )
+        }
+
     def suggest_review_subjects(self, reviewer_user_id: str, limit: int = 5) -> dict:
         """Subjects a reviewer has actually reviewed recently, most frequent first."""
         reviewer_oid = object_id(reviewer_user_id, "reviewer_user_id")
         since = utc_now() - timedelta(days=SUBJECT_SUGGESTION_WINDOW_DAYS)
         version_ids = [
             review.get("question_version_id")
-            for review in self.db.question_reviews.find(
-                {"reviewer_user_id": reviewer_oid, "reviewed_at": {"$gte": since}},
-                {"question_version_id": 1},
-            )
+            for review in self._reviews_since(since, reviewer_oid)
             if review.get("question_version_id")
         ]
         counts: dict = {}
-        if version_ids:
-            for version in self.db.question_versions.find(
-                {"_id": {"$in": version_ids}},
-                {"classification.subject": 1},
-            ):
-                subject = (version.get("classification") or {}).get("subject") or {}
-                subject_id = subject.get("id") if isinstance(subject, dict) else None
-                if subject_id:
-                    counts[subject_id] = counts.get(subject_id, 0) + 1
+        for subject in self._version_subjects(version_ids).values():
+            subject_id = subject.get("id") if isinstance(subject, dict) else None
+            if subject_id:
+                counts[subject_id] = counts.get(subject_id, 0) + 1
         top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
         labels = {
             record["_id"]: record
@@ -3241,7 +3294,7 @@ class QuestionWorkflowService:
                     reviewer_user_id=question_fields["review_assignment"]["reviewer_user_id"],
                     actor_user_id=current_user.id,
                 )
-        if hasattr(self.db, "question_review_drafts"):
+        if settings.question_store != "postgres" and hasattr(self.db, "question_review_drafts"):
             self.db.question_review_drafts.delete_one(
                 {
                     "question_id": question["_id"],
@@ -3846,6 +3899,10 @@ class QuestionWorkflowService:
             "updated_at": now,
             "published_at": now,
         }
+        if settings.question_store == "postgres":
+            return json_safe(self.questions.record_moodle_publication(
+                publication, expected_version_id=version["_id"],
+            ))
         with mongo_transaction() as session:
             existing = self.db.moodle_publications.find_one(
                 {"idempotency_key": idempotency_key},
@@ -3903,6 +3960,8 @@ class QuestionWorkflowService:
     ) -> list[dict]:
         question, version = self._pair(question_id)
         self._ensure_read_access(question, version, current_user)
+        if settings.question_store == "postgres":
+            return [json_safe(item) for item in self.questions.history(question["_id"], kind)]
         if kind == "evaluations":
             cursor = self.db.question_evaluations.find(
                 {"question_id": question["_id"]}
@@ -3917,23 +3976,8 @@ class QuestionWorkflowService:
             ).sort("reviewed_at", -1)
         return [json_safe(item) for item in cursor]
 
-    def review_dashboard(self, current_user: CurrentUser) -> dict:
-        now = utc_now()
-        since_7d = now - timedelta(days=7)
-        since_30d = now - timedelta(days=30)
-        is_admin = current_user.role == "Admin"
-        pending_base = {
-            "schema_version": SCHEMA_VERSION,
-            "lifecycle_status": "ACTIVE",
-            "review_status": "PENDING",
-        }
-
-        def pending_count(extra: dict | None = None) -> int:
-            if not extra:
-                return self.db.questions.count_documents(pending_base)
-            return self.db.questions.count_documents({"$and": [pending_base, extra]})
-
-        workload = {
+    def _mongo_review_workload(self, pending_count, now, current_user: CurrentUser) -> dict:
+        return {
             "pending": pending_count(),
             "unassigned": pending_count(
                 {
@@ -3963,25 +4007,33 @@ class QuestionWorkflowService:
             "sla_hours": settings.review_sla_hours,
         }
 
-        review_match: dict = {"reviewed_at": {"$gte": since_30d}}
-        if not is_admin:
-            review_match["reviewer_user_id"] = current_user.id
-        reviews = list(
-            self.db.question_reviews.find(
-                review_match,
-                {
-                    "question_version_id": 1,
-                    "reviewer_user_id": 1,
-                    "decision": 1,
-                    "override.applied": 1,
-                    "revision_issues": 1,
-                    "review_form.criterion_assessments": 1,
-                    "review_form.checklist": 1,
-                    "bulk": 1,
-                    "reviewed_at": 1,
-                },
-            ).sort("reviewed_at", -1)
-        )
+    def review_dashboard(self, current_user: CurrentUser) -> dict:
+        now = utc_now()
+        since_7d = now - timedelta(days=7)
+        since_30d = now - timedelta(days=30)
+        is_admin = current_user.role == "Admin"
+        pending_base = {
+            "schema_version": SCHEMA_VERSION,
+            "lifecycle_status": "ACTIVE",
+            "review_status": "PENDING",
+        }
+
+        def pending_count(extra: dict | None = None) -> int:
+            if not extra:
+                return self.db.questions.count_documents(pending_base)
+            return self.db.questions.count_documents({"$and": [pending_base, extra]})
+
+        if settings.question_store == "postgres":
+            workload = {
+                **self.questions.review_workload(
+                    now, reviewer_user_id=current_user.id, sla_cutoff=self._sla_cutoff(now),
+                ),
+                "sla_hours": settings.review_sla_hours,
+            }
+        else:
+            workload = self._mongo_review_workload(pending_count, now, current_user)
+
+        reviews = self._reviews_since(since_30d, None if is_admin else current_user.id)
         decision_counts = {"APPROVED": 0, "NEEDS_REVISION": 0, "REJECTED": 0}
         override_count = 0
         bulk_count = 0
@@ -4033,7 +4085,9 @@ class QuestionWorkflowService:
             if review.get("question_version_id")
         ]
         evaluation_map: dict[ObjectId, dict] = {}
-        if version_ids and hasattr(self.db, "question_evaluations"):
+        if version_ids and settings.question_store == "postgres":
+            evaluation_map = self.questions.latest_evaluations(version_ids)
+        elif version_ids and hasattr(self.db, "question_evaluations"):
             evaluations = list(
                 self.db.question_evaluations.find(
                     {"question_version_id": {"$in": version_ids}},
@@ -4105,10 +4159,17 @@ class QuestionWorkflowService:
         if not is_admin:
             audit_match["actor.user_id"] = current_user.id
         durations: list[float] = []
-        for audit in self.db.audit_logs.find(
-            audit_match,
-            {"metadata.review_assignment": 1, "created_at": 1, "actor.user_id": 1},
-        ):
+        decision_audits = (
+            self.questions.review_decision_audits(
+                since_30d, actor_user_id=None if is_admin else current_user.id,
+            )
+            if settings.question_store == "postgres"
+            else self.db.audit_logs.find(
+                audit_match,
+                {"metadata.review_assignment": 1, "created_at": 1, "actor.user_id": 1},
+            )
+        )
+        for audit in decision_audits:
             assignment = ((audit.get("metadata") or {}).get("review_assignment") or {})
             start = _as_aware_utc(assignment.get("claimed_at") or assignment.get("assigned_at"))
             end = _as_aware_utc(audit.get("created_at"))
@@ -4125,17 +4186,10 @@ class QuestionWorkflowService:
             else None
         )
 
-        versions = list(
-            self.db.question_versions.find(
-                {"_id": {"$in": version_ids}},
-                {"classification.subject": 1},
-            )
-        ) if version_ids else []
         version_subjects: dict[ObjectId, str] = {}
-        for version in versions:
-            subject = ((version.get("classification") or {}).get("subject") or {})
+        for version_id, subject in self._version_subjects(version_ids).items():
             subject_id = subject.get("id") if isinstance(subject, dict) else None
-            version_subjects[version["_id"]] = str(subject_id) if subject_id else "unknown"
+            version_subjects[version_id] = str(subject_id) if subject_id else "unknown"
         subject_counts: dict[str, int] = {}
         for review in reviews:
             key = version_subjects.get(review.get("question_version_id"))
@@ -4220,15 +4274,20 @@ class QuestionWorkflowService:
         """Per-reviewer workload and quality signals for the Admin dashboard."""
         sla_cutoff = _as_aware_utc(self._sla_cutoff(now))
         holding: dict = {}
-        for question in self.db.questions.find(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "lifecycle_status": "ACTIVE",
-                "review_status": "PENDING",
-                "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
-            },
-            {"review_assignment": 1, "review_submission.submitted_at": 1},
-        ):
+        held_questions = (
+            self.questions.held_reviews()
+            if settings.question_store == "postgres"
+            else self.db.questions.find(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "lifecycle_status": "ACTIVE",
+                    "review_status": "PENDING",
+                    "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+                },
+                {"review_assignment": 1, "review_submission.submitted_at": 1},
+            )
+        )
+        for question in held_questions:
             reviewer_id = (question.get("review_assignment") or {}).get("reviewer_user_id")
             if reviewer_id is None:
                 continue
@@ -4308,6 +4367,24 @@ class QuestionWorkflowService:
         rows.sort(key=lambda row: (-len(row["flags"]), -row["holding"], -row["reviews_30d"], row["display_name"]))
         return rows
 
+    def _mark_mongo_sla_reminded(self, question: dict, submitted_at, now) -> bool:
+        marked = self.db.questions.update_one(
+            {
+                "_id": question["_id"],
+                "review_status": "PENDING",
+                "review_sla.reminded_submission_at": {"$ne": submitted_at},
+            },
+            {
+                "$set": {
+                    "review_sla": {
+                        "reminded_submission_at": submitted_at,
+                        "reminded_at": now,
+                    }
+                }
+            },
+        )
+        return bool(marked.matched_count)
+
     def send_review_sla_reminders(self, now=None) -> int:
         """Notify once per submission when a pending question breaches the review SLA.
 
@@ -4315,7 +4392,10 @@ class QuestionWorkflowService:
         """
         now = now or utc_now()
         cutoff = self._sla_cutoff(now)
-        candidates = list(
+        postgres = settings.question_store == "postgres"
+        candidates = self.questions.sla_breach_candidates(
+            cutoff, SLA_REMINDER_BATCH_SIZE,
+        ) if postgres else list(
             self.db.questions.find(
                 {
                     "schema_version": SCHEMA_VERSION,
@@ -4339,22 +4419,10 @@ class QuestionWorkflowService:
             submitted_at = (question.get("review_submission") or {}).get("submitted_at")
             if (question.get("review_sla") or {}).get("reminded_submission_at") == submitted_at:
                 continue
-            marked = self.db.questions.update_one(
-                {
-                    "_id": question["_id"],
-                    "review_status": "PENDING",
-                    "review_sla.reminded_submission_at": {"$ne": submitted_at},
-                },
-                {
-                    "$set": {
-                        "review_sla": {
-                            "reminded_submission_at": submitted_at,
-                            "reminded_at": now,
-                        }
-                    }
-                },
-            )
-            if not marked.matched_count:
+            if postgres:
+                if not self.questions.mark_sla_reminded(question["_id"], submitted_at, now):
+                    continue
+            elif not self._mark_mongo_sla_reminded(question, submitted_at, now):
                 continue
             assignment = question.get("review_assignment") or {}
             if assignment.get("status") in {"ASSIGNED", "IN_REVIEW"} and assignment.get("reviewer_user_id"):

@@ -440,13 +440,14 @@ def projected_rows(name: str, item: dict):
         yield "moodle_publications", dict(
             id=row_id, question_id=oid(item["question_id"]),
             question_version_id=oid(item["question_version_id"]),
-            target_id=oid(item.get("target_id") or target.get("_id")),
+            target_id=oid(item.get("target_id") or target.get("target_id")
+                          or target.get("_id")),
             publisher_user_id=oid(item.get("publisher_user_id")),
             idempotency_key=item.get("idempotency_key") or row_id,
             status=item["status"], request_payload=data.get("request_payload") or {},
             response_payload=data.get("response_payload"),
             external_ref_id=item.get("moodle_question_ref_id"),
-            created_at=created, updated_at=updated,
+            payload=data, created_at=created, updated_at=updated,
         )
         return
     raise ValueError(f"No PostgreSQL projection for MongoDB collection {name}")

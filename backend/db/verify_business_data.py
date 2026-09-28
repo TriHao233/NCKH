@@ -60,6 +60,7 @@ DOCUMENT_CONTENT_FIELDS = {
     "review_settings": ("payload",),
     "evaluation_jobs": ("payload", "model_snapshot", "policy_snapshot",
                         "source_snapshot", "result", "error"),
+    "moodle_publications": ("payload", "request_payload", "response_payload"),
 }
 
 
