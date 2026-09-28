@@ -8,7 +8,9 @@ from bson import ObjectId
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from core.database import get_database
 from core.postgres import postgres_connection
+from modules.users.repository import MongoUserRepository
 
 JSON_FIELDS = {"permissions", "profile", "generation_presets", "task_calendar"}
 UPDATE_FIELDS = JSON_FIELDS | {"email", "display_name", "role", "is_active"}
@@ -65,12 +67,9 @@ def _user(row: dict | None) -> dict | None:
     return result
 
 
-def _business_record(row: dict) -> dict:
-    data = dict(row["payload"])
-    data["_id"] = ObjectId(row["id"])
-    data["created_at"] = row["created_at"]
-    data["updated_at"] = row["updated_at"]
-    return data
+def _active_business_repository() -> MongoUserRepository:
+    # Documents and questions still write to MongoDB during the staged cutover.
+    return MongoUserRepository(get_database())
 
 
 class PostgresUserRepository:
@@ -193,42 +192,13 @@ class PostgresUserRepository:
             conn.execute("DELETE FROM users WHERE id = %s", (_id(user_id),))
 
     def get_stats(self, user_id: str | ObjectId) -> dict:
-        uid = _id(user_id)
-        with postgres_connection() as conn:
-            row = conn.execute(
-                """SELECT
-                   (SELECT count(*) FROM documents WHERE uploaded_by_user_id = %s AND status <> 'ARCHIVED') AS documents_count,
-                   (SELECT count(*) FROM questions WHERE created_by_user_id = %s AND lifecycle_status <> 'ARCHIVED') AS questions_count,
-                   (SELECT count(*) FROM questions WHERE created_by_user_id = %s AND review_status = 'PENDING') AS pending_questions_count""",
-                (uid, uid, uid),
-            ).fetchone()
-        return dict(row)
+        return _active_business_repository().get_stats(user_id)
 
     def get_calendar_documents(self, user_id: str | ObjectId) -> list[dict]:
-        with postgres_connection() as conn:
-            rows = conn.execute(
-                "SELECT id, payload, created_at, updated_at FROM documents "
-                "WHERE uploaded_by_user_id = %s AND status <> 'ARCHIVED'",
-                (_id(user_id),),
-            ).fetchall()
-        return [_business_record(row) for row in rows]
+        return _active_business_repository().get_calendar_documents(user_id)
 
     def get_calendar_questions(self, user_id: str | ObjectId) -> list[dict]:
-        with postgres_connection() as conn:
-            rows = conn.execute(
-                "SELECT id, payload, created_at, updated_at FROM questions "
-                "WHERE created_by_user_id = %s AND lifecycle_status <> 'ARCHIVED'",
-                (_id(user_id),),
-            ).fetchall()
-        return [_business_record(row) for row in rows]
+        return _active_business_repository().get_calendar_questions(user_id)
 
     def get_document_ids_with_questions(self, document_ids: list[ObjectId]) -> set[str]:
-        if not document_ids:
-            return set()
-        with postgres_connection() as conn:
-            rows = conn.execute(
-                """SELECT DISTINCT payload ->> 'document_id' AS document_id FROM questions
-                   WHERE payload ->> 'document_id' = ANY(%s) AND lifecycle_status <> 'ARCHIVED'""",
-                ([str(item) for item in document_ids],),
-            ).fetchall()
-        return {row["document_id"] for row in rows if row["document_id"]}
+        return _active_business_repository().get_document_ids_with_questions(document_ids)

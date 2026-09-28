@@ -28,6 +28,7 @@ ID nghiệp vụ tiếp tục là chuỗi ObjectId 24 ký tự để giữ API v
 - `modules/notifications/postgres_repository.py` xử lý hộp thông báo, phân trang, số chưa đọc và đánh dấu đã đọc. Mọi truy vấn đều giới hạn theo `recipient_user_id`; bản ghi Mongo cũ có `is_read=true` nhưng thiếu `read_at` vẫn được coi là đã đọc.
 - `modules/dictionary/postgres_repository.py` lưu từ điển và các từ khóa CORE/LEARNED/PENDING trong PostgreSQL; bước chunking và tác vụ AI học từ khóa chọn cùng một nguồn qua `DICTIONARY_STORE`.
 - Repository PostgreSQL cho tài khoản/phiên và cấu hình AI đã có từ giai đoạn trước.
+- Khi `USER_STORE=postgres`, thống kê và lịch cá nhân vẫn đọc tài liệu/câu hỏi từ MongoDB vì đây còn là nguồn ghi chính của hai nhóm đó; không dùng các bảng PostgreSQL shadow copy có thể đã cũ.
 
 ## Cấu hình và chạy thử
 
