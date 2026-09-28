@@ -6,6 +6,8 @@
 
 Tài liệu này tóm tắt lại toàn bộ đề tài từ bản Thuyết minh, dùng làm ngữ cảnh tham chiếu nhanh khi phát triển (vibe code) — không cần mở lại file PDF gốc.
 
+Trạng thái chuyển dữ liệu nghiệp vụ sang PostgreSQL và cách chạy migration: [backend/db/README.md](backend/db/README.md).
+
 ---
 
 ## 1. Bài toán & lý do làm

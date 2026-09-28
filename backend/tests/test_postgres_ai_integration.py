@@ -75,12 +75,14 @@ def test_versioned_ai_configuration_and_activation():
 
         policy = repo.save_policy(EvaluationPolicyPayload(
             policy_name=policy_name, weights={"faithfulness": 1.0},
-            thresholds={"pass_min": 0.5}, is_active=False,
+            thresholds={"yellow_min": 0.3, "pass_min": 0.5, "green_min": 0.7},
+            is_active=False,
         ))
         assert policy["version"] == 1
         assert repo.save_policy(EvaluationPolicyPayload(
             policy_name=policy_name, weights={"faithfulness": 0.8},
-            thresholds={"pass_min": 0.6}, is_active=False,
+            thresholds={"yellow_min": 0.3, "pass_min": 0.6, "green_min": 0.8},
+            is_active=False,
         ))["version"] == 2
         with postgres_connection() as conn:
             audit_count = conn.execute(

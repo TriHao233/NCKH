@@ -9,7 +9,9 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database
+from modules.notifications.postgres_repository import PostgresNotificationRepository
 from modules.questions.repository import json_safe, object_id
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ def _serialize(record: dict) -> dict:
 class NotificationService:
     def __init__(self, database: Database):
         self.db = database
+        self.repo = PostgresNotificationRepository() if settings.notification_store == "postgres" else None
 
     def create(
         self,
@@ -72,7 +75,10 @@ class NotificationService:
             "read_at": None,
             "created_at": now,
         }
-        self.db.notifications.insert_one(record)
+        if self.repo:
+            record = self.repo.create(record)
+        else:
+            self.db.notifications.insert_one(record)
         return _serialize(record)
 
     def create_many(self, notifications: list[dict[str, Any]]) -> list[dict]:
@@ -90,6 +96,14 @@ class NotificationService:
         return created
 
     def list(self, current_user, page: int, page_size: int, unread_only: bool = False) -> dict:
+        if self.repo:
+            items, total = self.repo.list(current_user.id, page, page_size, unread_only=unread_only)
+            return {
+                "items": [_serialize(item) for item in items],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
         query: dict = {"recipient_user_id": current_user.id}
         if unread_only:
             query["is_read"] = False
@@ -108,12 +122,18 @@ class NotificationService:
         }
 
     def unread_count(self, current_user) -> int:
+        if self.repo:
+            return self.repo.unread_count(current_user.id)
         return self.db.notifications.count_documents(
             {"recipient_user_id": current_user.id, "is_read": False}
         )
 
     def mark_read(self, notification_id: str, current_user) -> dict | None:
         now = utc_now()
+        if self.repo:
+            record = self.repo.mark_read(object_id(notification_id, "notification_id"),
+                                         current_user.id, now)
+            return _serialize(record) if record else None
         record = self.db.notifications.find_one_and_update(
             {
                 "_id": object_id(notification_id, "notification_id"),
@@ -126,6 +146,8 @@ class NotificationService:
 
     def mark_all_read(self, current_user) -> int:
         now = utc_now()
+        if self.repo:
+            return self.repo.mark_all_read(current_user.id, now)
         result = self.db.notifications.update_many(
             {"recipient_user_id": current_user.id, "is_read": False},
             {"$set": {"is_read": True, "read_at": now}},
