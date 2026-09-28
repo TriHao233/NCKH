@@ -212,7 +212,7 @@ Thiết kế dữ liệu chi tiết xem tại [`docs/DATABASE_DESIGN_V2.md`](doc
 
 ## 12. Refactor cơ sở dữ liệu: PostgreSQL + MongoDB
 
-> **Tóm tắt nhanh:** Code đã hỗ trợ chạy dữ liệu nghiệp vụ trên PostgreSQL, nhưng **mặc định vẫn dùng MongoDB như trước**. Nếu bạn chỉ chạy và phát triển tính năng bình thường thì không phải đổi gì. Hãy đọc phần [Quy tắc khi viết code](#quy-tắc-khi-viết-code-mới) trước khi thêm dữ liệu hoặc collection mới.
+> **Tóm tắt nhanh:** Dữ liệu nghiệp vụ giờ **mặc định lưu ở PostgreSQL**, không cần bật cờ nào. MongoDB chỉ còn giữ chunk/vector cho RAG. **Sau khi pull code này, mỗi người phải làm một lần bước [Chuẩn bị PostgreSQL trên máy mình](#chuẩn-bị-postgresql-trên-máy-mình)** (tạo bảng + chép dữ liệu cũ từ MongoDB), nếu không backend sẽ không khởi động. Hãy đọc phần [Quy tắc khi viết code](#quy-tắc-khi-viết-code-mới) trước khi thêm dữ liệu hoặc collection mới.
 
 ### Vì sao đổi?
 
@@ -238,7 +238,7 @@ ID vẫn là chuỗi ObjectId 24 ký tự như cũ, nên API và frontend **khô
 
 ### Công tắc bật/tắt (cờ trong `backend/.env`)
 
-Mỗi nhóm dữ liệu có một cờ riêng, giá trị `mongo` (mặc định) hoặc `postgres`. Đổi cờ xong phải khởi động lại **cả backend lẫn worker**.
+Mỗi nhóm dữ liệu có một cờ riêng, giá trị `postgres` (**mặc định**) hoặc `mongo`. Giá trị `mongo` chỉ dùng để **quay lui** khi có sự cố, không dùng cho công việc thường ngày. Đổi cờ xong phải khởi động lại **cả backend lẫn worker**.
 
 | Cờ | Nhóm dữ liệu | Cần bật thêm |
 |---|---|---|
@@ -259,9 +259,9 @@ Mỗi nhóm dữ liệu có một cờ riêng, giá trị `mongo` (mặc định
 
 Thiếu cờ phụ thuộc thì backend báo lỗi ghi rõ cờ còn thiếu ngay khi tính năng đó được dùng tới. ⚠️ **Trên môi trường thật, bật tất cả cờ cùng một lúc theo runbook**, không bật lẻ từng cờ: các nhóm đọc dữ liệu của nhau, bật lệch sẽ thấy thiếu dữ liệu.
 
-### Chạy thử với PostgreSQL trên máy mình
+### Chuẩn bị PostgreSQL trên máy mình
 
-`docker compose up -d` đã có sẵn PostgreSQL 17 (`nckh-postgres`, cổng `127.0.0.1:5432`). Kiểm tra `backend/.env` có dòng `POSTGRES_DSN` như trong `backend/.env.example`, rồi từ thư mục `backend`:
+Làm **một lần** sau khi pull. `docker compose up -d` đã có sẵn PostgreSQL 17 (`nckh-postgres`, cổng `127.0.0.1:5432`). Thêm dòng `POSTGRES_DSN` như trong `backend/.env.example` vào `backend/.env` (thiếu dòng này backend báo `POSTGRES_DSN is required`), rồi từ thư mục `backend`:
 
 ```powershell
 # 1. Tạo bảng (chạy lại được, chỉ áp phần còn thiếu)
@@ -273,7 +273,13 @@ python -m db.copy_business_data --apply
 python -m db.verify_business_data
 ```
 
-Sau đó đặt các cờ ở trên thành `postgres` trong `backend/.env` rồi khởi động lại backend và worker. Muốn quay lại thì đặt các cờ về `mongo`. Lưu ý: dữ liệu bạn tạo trong lúc chạy PostgreSQL sẽ không có bên MongoDB.
+Không cần đặt cờ nào. Nếu `backend/.env` cũ của bạn còn dòng `*_STORE=mongo` thì xóa đi. Khởi động lại backend và worker. Muốn quay lui thì đặt cả 13 cờ về `mongo`. Lưu ý: dữ liệu tạo trong lúc chạy PostgreSQL sẽ không có bên MongoDB.
+
+Nếu máy bạn đã có database `nckh` từ lần thử trước (bảng cũ, thiếu migration), cách sạch nhất là tạo lại rồi làm lại 3 bước trên:
+
+```powershell
+docker exec nckh-postgres psql -U nckh -d postgres -c "DROP DATABASE nckh" -c "CREATE DATABASE nckh OWNER nckh"
+```
 
 ### Chạy test
 
@@ -290,6 +296,8 @@ python -m pytest tests/test_schema_v2.py tests/test_s3_artifact_storage.py
 ```
 
 Test S3 dùng thư viện `moto` để giả lập, không cần tài khoản cloud.
+
+Unit test thường vẫn chạy nhánh MongoDB với dữ liệu giả trong bộ nhớ: `backend/tests/conftest.py` đặt mọi cờ về `mongo` cho từng test; test PostgreSQL tự bật cờ nó cần.
 
 ### Quy tắc khi viết code mới
 

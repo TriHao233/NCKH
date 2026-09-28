@@ -33,7 +33,8 @@ Ngưỡng chấp nhận (điền sau diễn tập):
 
 - [ ] Diễn tập (mục 2) đạt tất cả ngưỡng.
 - [ ] Đã chạy thử `copy_business_data` + `verify_business_data` trên bản sao dữ liệu thật và xử lý hết dữ liệu mồ côi (xem 6.3, 6.4). Lần thử trên dữ liệu dev ngày 28/09/2026 phát hiện 12 audit và 2 thông báo trỏ tới tài khoản đã xóa (đã có quy tắc xử lý) cùng 7 embedding trỏ tới chunk không còn tồn tại (đã dọn ngày 28/09/2026 sau khi sao lưu vào `backend/data/backups/`; vector tương ứng không còn trong ChromaDB). Sau khi dọn, `verify_business_data` trên dữ liệu dev đạt toàn bộ.
-- [ ] Môi trường thật đang chạy **toàn bộ cờ `*_STORE=mongo`** (mặc định). Nếu có nhóm nào đã ghi vào PostgreSQL trên môi trường thật, **dừng lại**: dữ liệu nhóm đó chỉ có ở PostgreSQL và cách chép sạch trong runbook này sẽ làm mất nó; cần kế hoạch riêng cho nhóm đó.
+- [ ] ⚠️ **Từ commit đổi mặc định sang PostgreSQL**, code mới mặc định mọi cờ `*_STORE=postgres`. Môi trường chưa cutover mà deploy code này **phải đặt rõ cả 13 cờ `*_STORE=mongo` trong env** cho tới cutover, nếu không backend sẽ chạy trên PostgreSQL rỗng. Tới bước bật PostgreSQL chỉ cần xóa các dòng đó (hoặc đặt `postgres`).
+- [ ] Môi trường thật đang chạy **toàn bộ cờ `*_STORE=mongo`**. Nếu có nhóm nào đã ghi vào PostgreSQL trên môi trường thật, **dừng lại**: dữ liệu nhóm đó chỉ có ở PostgreSQL và cách chép sạch trong runbook này sẽ làm mất nó; cần kế hoạch riêng cho nhóm đó.
 - [ ] Commit deploy chứa migration mới nhất (hiện tới `0017`) và đã chạy xong test: `RUN_POSTGRES_INTEGRATION=1` cho `tests/test_postgres_*.py`, cùng `tests/test_schema_v2.py`.
 - [ ] MongoDB chạy replica set (`REQUIRE_MONGO_TRANSACTIONS=true` như compose).
 - [ ] Ổ đĩa đủ cho: backup Mongo, `pg_dump`, bản sao `backend/data`.
