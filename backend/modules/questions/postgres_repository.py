@@ -60,6 +60,11 @@ def _version(row: dict | None) -> dict | None:
     return record
 
 
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so a search term is matched literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _review(row: dict | None) -> dict | None:
     if row is None:
         return None
@@ -633,7 +638,7 @@ class PostgresQuestionRepository:
             clauses.append("payload->'target'->>'moodle_site_id'=%s")
             params.append(site_key)
         if search:
-            pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            pattern = "%" + _escape_like(search) + "%"
             clauses.append("""(external_ref_id ILIKE %s
                 OR request_payload->>'question_code' ILIKE %s
                 OR payload->'error'->>'message' ILIKE %s)""")
@@ -986,7 +991,7 @@ class PostgresQuestionRepository:
         elif source_presence == "MISSING_SOURCE":
             add("jsonb_array_length(v.sources)=0")
         if search:
-            pattern = f"%{search}%"
+            pattern = "%" + _escape_like(search) + "%"
             add("(q.question_code ILIKE %s OR v.content ILIKE %s)", pattern, pattern)
 
         base_where = " AND ".join(clauses)
@@ -999,23 +1004,27 @@ class PostgresQuestionRepository:
             status_clause = " AND q.review_status=%s"
             status_params = [review_status]
         source = " FROM questions q JOIN question_versions v ON v.id=q.current_version_id WHERE "
+        submitted = "(q.payload->'review_submission'->>'submitted_at')::timestamptz"
+        sla_hours = int(max(1, settings.review_sla_hours))
         order = {
-            "oldest": "q.created_at, q.id",
-            "newest": "q.created_at DESC, q.id DESC",
+            # Cùng thứ tự với bản Mongo: theo thời điểm gửi duyệt, giá trị thiếu
+            # đứng đầu khi tăng dần và cuối khi giảm dần.
+            "oldest": f"{submitted} NULLS FIRST, q.id",
+            "newest": f"{submitted} DESC NULLS LAST, q.id DESC",
             "updated": "q.updated_at DESC, q.id DESC",
-            "ai_lowest": "(q.payload->'quality_summary'->>'overall_score')::numeric NULLS LAST, q.id",
-            "priority": """CASE
+            "ai_lowest": ("(q.payload->'quality_summary'->>'overall_score')::numeric NULLS FIRST, "
+                          f"{submitted} NULLS FIRST, q.id"),
+            "priority": f"""CASE
                 WHEN q.assignment->>'status'='IN_REVIEW'
                      AND (q.assignment->>'lock_expires_at')::timestamptz <= now() THEN 0
                 WHEN q.review_status='PENDING' AND
-                     (q.payload->'review_submission'->>'submitted_at')::timestamptz <=
-                     now() - interval '24 hours' THEN 1
+                     {submitted} <= now() - interval '{sla_hours} hours' THEN 1
                 WHEN q.payload->'secondary_review'->>'status'='AWAITING_SECONDARY' THEN 2
                 WHEN q.payload->'quality_summary'->>'color'='RED'
                      AND q.evaluation_status IN ('PASSED','FAILED') THEN 3
                 WHEN q.evaluation_status IN ('NOT_STARTED','ERROR','STALE') THEN 4
                 ELSE 5 END,
-                (q.payload->'review_submission'->>'submitted_at')::timestamptz NULLS LAST,
+                {submitted} NULLS FIRST,
                 q.id""",
         }.get(sort_by)
         if order is None:
