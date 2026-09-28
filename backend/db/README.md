@@ -1,5 +1,7 @@
 # Refactor cơ sở dữ liệu: PostgreSQL nghiệp vụ, MongoDB vector
 
+> **Trạng thái mới nhất nằm ở [mục 12 của README chính](../../README.md#12-refactor-cơ-sở-dữ-liệu-postgresql--mongodb).** Từ tháng 09/2026, tài liệu/OCR, câu hỏi, duyệt/đánh giá, generation/evaluation job, đề thi, Moodle publication, audit và thống kê đều đã có đường đọc/ghi PostgreSQL sau cờ tương ứng. Bảng "Phân chia dữ liệu" và danh sách "Các việc còn lại" bên dưới ghi lại giai đoạn trước đó; phần lệnh migrate/copy/verify vẫn dùng được. Quy trình chuyển hẳn: [`docs/CUTOVER_RUNBOOK.md`](../../docs/CUTOVER_RUNBOOK.md).
+
 Tài liệu này ghi **trạng thái mã nguồn hiện tại** của quá trình chuyển đổi. Các cờ lưu trữ mặc định vẫn là `mongo`; chưa có cutover toàn ứng dụng.
 
 ## Phân chia dữ liệu

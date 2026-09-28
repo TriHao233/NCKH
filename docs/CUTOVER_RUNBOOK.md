@@ -239,14 +239,16 @@ STORAGE_PROVIDER=local
 CHROMA_MODE=local
 ```
 
-Phụ thuộc được kiểm tra khi khởi tạo; thiếu cờ nào thì ứng dụng báo lỗi rõ:
+Phụ thuộc được kiểm tra khi repository được dùng tới; thiếu cờ nào thì ứng dụng báo lỗi ghi rõ cờ đó:
 
 | Cờ | Cần thêm |
 |---|---|
+| `DOCUMENT_STORE` | `USER_STORE`, `CATALOG_STORE` |
 | `QUESTION_STORE` | `USER_STORE`, `CATALOG_STORE` |
 | `GENERATION_STORE` | `USER_STORE`, `DOCUMENT_STORE` |
 | `EXAM_STORE` | `QUESTION_STORE`, `CATALOG_STORE` |
 | `NOTIFICATION_STORE` | `USER_STORE` |
+| `CATALOG_STORE`, `REVIEW_POLICY_STORE`, `MOODLE_TARGET_STORE` | `USER_STORE` |
 | Moodle target thật cho publication | `MOODLE_TARGET_STORE` |
 | Thông báo cùng transaction | `QUESTION_STORE` + `NOTIFICATION_STORE` |
 
