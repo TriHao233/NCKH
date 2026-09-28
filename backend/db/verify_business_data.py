@@ -23,6 +23,7 @@ CRITICAL_FIELDS = {
     "users": ("firebase_uid", "email", "role", "is_active"),
     "subjects": ("subject_code", "subject_name", "is_active"),
     "documents": ("status", "current_version", "active_chunk_set_id"),
+    "document_pages": ("document_id", "version", "unit_number", "page_number", "source_location"),
     "questions": (
         "question_code", "current_version", "current_version_id",
         "approved_version_id", "review_status", "lifecycle_status",

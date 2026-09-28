@@ -42,7 +42,7 @@ JSON_COLUMNS = {
     "model_snapshot", "prompt_snapshot", "retrieval_snapshot", "result",
     "metrics", "policy_snapshot", "source_snapshot", "error", "draft",
     "snapshot", "before_state", "after_state", "metadata", "response_payload",
-    "request_payload", "last_health_check",
+    "request_payload", "last_health_check", "source_location",
 }
 
 
@@ -231,7 +231,9 @@ def projected_rows(name: str, item: dict):
     if name == "document_pages":
         yield "document_pages", dict(
             id=row_id, document_id=oid(item["document_id"]),
-            ocr_job_id=oid(item.get("ocr_job_id")), page_number=item["page_number"],
+            ocr_job_id=oid(item.get("ocr_job_id")), page_number=item.get("page_number"),
+            unit_number=item.get("unit_number") or item.get("page_number"),
+            source_location=data.get("source_location") or {},
             raw_text=item.get("raw_text"), clean_text=item.get("cleaned_text") or item.get("clean_text"),
             version=item.get("document_version", 1), payload=data,
             created_at=created, updated_at=updated,
