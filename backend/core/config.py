@@ -149,6 +149,9 @@ class Settings(BaseModel):
     generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
     evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
     evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "900"))
+    # Budget for the retry attempt after a truncated or malformed evaluation JSON;
+    # Vietnamese output with per-option checks often needs more than the first pass.
+    evaluation_retry_num_predict: int = int(os.getenv("EVALUATION_RETRY_NUM_PREDICT", "1400"))
     ollama_generate_url: str = _env_first(
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",

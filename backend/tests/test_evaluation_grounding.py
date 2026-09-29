@@ -1,4 +1,6 @@
+import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from modules.questions.workflow_schemas import EvaluationScores
@@ -142,3 +144,168 @@ class EvaluationGroundingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+POLICY = {
+    "version": 1,
+    "weights": {
+        "faithfulness": 0.35,
+        "contextual_relevancy": 0.20,
+        "answer_relevancy": 0.15,
+        "bloom_alignment": 0.15,
+        "clo_alignment": 0.15,
+    },
+    "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+}
+QUEUE_EXCERPT = "Hàng đợi hoạt động theo nguyên tắc vào trước ra trước, còn gọi là FIFO."
+
+
+def _source():
+    return {
+        "chunk_id": "64b64b64b64b64b64b64b64b",
+        "content_hash": "hash-1",
+        "label": "S1",
+        "excerpt": QUEUE_EXCERPT,
+    }
+
+
+def _version(assessment_type="DIEN_KHUYET", **question_data):
+    return {
+        "content": "Hàng đợi hoạt động theo nguyên tắc _____.",
+        "classification": {"assessment_type": assessment_type, "bloom": {"level": 1}},
+        "clos": [{"code": "CLO1", "description": "Nêu nguyên tắc hoạt động của hàng đợi."}],
+        "question_data": {"correct_answer": "LIFO", **question_data},
+        "sources": [
+            {
+                "chunk_id": _source()["chunk_id"],
+                "citation_order": 1,
+                "context_excerpt": QUEUE_EXCERPT,
+            }
+        ],
+    }
+
+
+def _raw(action, severity, readiness, *, score=0.5, answer_entailment="CONTRADICTED", **evidence):
+    return json.dumps(
+        {
+            "scores": {
+                "faithfulness": score,
+                "contextual_relevancy": score,
+                "answer_relevancy": score,
+                "bloom_alignment": score,
+                "clo_alignment": score,
+            },
+            "feedback": {"summary": "Nhận xét", "missing": [], "action": action, "severity": severity},
+            "evidence": {
+                "reasoning": "Đối chiếu với nguồn S1.",
+                "moodle_readiness": readiness,
+                "citations": [
+                    {
+                        "claim": "Câu hỏi nói về hàng đợi",
+                        "claim_type": "QUESTION",
+                        "chunk_id": _source()["chunk_id"],
+                        "exact_quote": "Hàng đợi hoạt động theo nguyên tắc vào trước ra trước",
+                        "entailment": "SUPPORTED",
+                    },
+                    {
+                        "claim": "Đáp án LIFO",
+                        "claim_type": "ANSWER",
+                        "chunk_id": _source()["chunk_id"],
+                        "exact_quote": "vào trước ra trước, còn gọi là FIFO",
+                        "entailment": answer_entailment,
+                    },
+                ],
+                **evidence,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+class EvaluationFinalizeTests(unittest.TestCase):
+    def setUp(self):
+        self.service = QuestionWorkflowService(None)
+
+    def finalize(self, raw, version=None, llm=None):
+        return self.service._finalize_llm_evaluation(
+            raw, [_source()], version or _version(), POLICY, llm=llm
+        )
+
+    def test_contradicted_answer_is_saved_as_reject_instead_of_failing(self):
+        # The model flags the answer as contradicted but still calls the item
+        # Moodle READY. Grounding forces REJECT; this used to raise
+        # "REJECT nhưng Moodle READY" and the evaluation job dead-lettered.
+        scores, feedback, evidence = self.finalize(_raw("NEEDS_REVISION", "MEDIUM", "READY"))
+
+        self.assertEqual(feedback["action"], "REJECT")
+        self.assertEqual(feedback["severity"], "HIGH")
+        self.assertEqual(evidence["moodle_readiness"], "NEEDS_FIX")
+        self.assertLessEqual(scores.faithfulness, 0.20)
+        self.assertTrue(evidence["decision_normalization"]["applied"])
+        self.assertTrue(evidence["consistency"]["validated"])
+        self.assertEqual(evidence["consistency"]["model_contradictions"], [])
+
+    def test_answer_guardrail_does_not_soften_reject(self):
+        version = _version(
+            "TRAC_NGHIEM",
+            options={"A": "FIFO", "B": "LIFO", "C": "Ngẫu nhiên", "D": "Theo độ ưu tiên"},
+            correct_answer="B",
+        )
+        version["content"] = "Hàng đợi hoạt động theo nguyên tắc nào?"
+        raw = _raw(
+            "REJECT",
+            "HIGH",
+            "NEEDS_FIX",
+            score=0.3,
+            question_polarity="POSITIVE",
+            option_checks=[
+                {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "còn gọi là FIFO"},
+                {"key": "B", "verdict": "CONTRADICTED", "source_label": "S1", "supporting_excerpt": ""},
+                {"key": "C", "verdict": "NOT_IN_SOURCE", "source_label": "", "supporting_excerpt": ""},
+                {"key": "D", "verdict": "NOT_IN_SOURCE", "source_label": "", "supporting_excerpt": ""},
+            ],
+        )
+
+        _, feedback, evidence = self.finalize(raw, version)
+
+        self.assertTrue(evidence["answer_guardrail"]["applied"])
+        self.assertEqual(feedback["action"], "REJECT")
+
+    def test_self_contradictory_model_verdict_is_resolved_strictly_and_recorded(self):
+        raw = _raw("APPROVE", "LOW", "READY", score=0.5, answer_entailment="SUPPORTED")
+        version = _version(correct_answer="FIFO")
+
+        _, feedback, evidence = self.finalize(raw, version)
+
+        self.assertNotEqual(feedback["action"], "APPROVE")
+        self.assertIn(
+            "APPROVE nhưng tổng điểm dưới ngưỡng đạt",
+            evidence["consistency"]["model_contradictions"],
+        )
+
+    def test_consistent_approval_is_left_untouched(self):
+        raw = _raw("APPROVE", "LOW", "READY", score=0.9, answer_entailment="SUPPORTED")
+        version = _version(correct_answer="FIFO")
+
+        _, feedback, evidence = self.finalize(raw, version)
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertNotIn("decision_normalization", evidence)
+        self.assertEqual(evidence["consistency"]["model_contradictions"], [])
+        self.assertFalse(evidence["model_output"]["hit_output_limit"])
+
+    def test_truncated_output_reports_the_output_limit(self):
+        llm = SimpleNamespace(last_response_metadata={"done_reason": "length", "eval_count": 900})
+
+        with self.assertRaisesRegex(ValueError, "num_predict"):
+            self.finalize('{"scores": {"faithfulness": 0.8', llm=llm)
+
+    def test_output_metadata_reads_the_provider_that_answered(self):
+        primary = SimpleNamespace(last_response_metadata={"done_reason": "stop"})
+        fallback = SimpleNamespace(last_response_metadata={"done_reason": "length", "eval_count": 900})
+        llm = SimpleNamespace(last_used="fallback", primary=primary, fallback=fallback)
+
+        output = QuestionWorkflowService._llm_output_metadata(llm, "{}")
+
+        self.assertTrue(output["hit_output_limit"])
+        self.assertEqual(output["eval_count"], 900)
