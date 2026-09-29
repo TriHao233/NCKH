@@ -153,6 +153,12 @@ class Settings(BaseModel):
     evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "1400"))
     # Budget for the retry attempt after a truncated or malformed evaluation JSON.
     evaluation_retry_num_predict: int = int(os.getenv("EVALUATION_RETRY_NUM_PREDICT", "1800"))
+    # Reasoning models (deepseek-r1 with thinking on) spend 1.1k-1.8k tokens
+    # thinking before the JSON; 900 tokens left them with no answer at all.
+    evaluation_thinking_num_predict: int = int(os.getenv("EVALUATION_THINKING_NUM_PREDICT", "4096"))
+    # The evaluation prompt alone is ~3.2k-4k tokens, so a thinking budget needs
+    # a larger context window than the default 8192.
+    evaluation_thinking_num_ctx: int = int(os.getenv("EVALUATION_THINKING_NUM_CTX", "12288"))
     ollama_generate_url: str = _env_first(
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",

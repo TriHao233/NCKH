@@ -444,3 +444,33 @@ class EvaluationFinalizeTests(unittest.TestCase):
         self.assertFalse(names_only("Đáp án A sai, C mới đúng", options, {"A"}))
         self.assertFalse(names_only("FIFO là đáp án sai", options, {"A"}))
         self.assertFalse(names_only("Đáp án không đúng", options, {"A"}))
+
+
+class EvaluationOutputBudgetTests(unittest.TestCase):
+    def test_thinking_evaluator_gets_thinking_budget_and_context(self):
+        from core.config import settings
+        from modules.questions.workflow_service import _limit_evaluation_output, _prepare_evaluation_attempt
+
+        snapshot = _limit_evaluation_output({
+            "model_code": "deepseek",
+            "model_name": "deepseek-r1",
+            "runtime": "OLLAMA",
+            "parameters": {"num_predict": 900, "num_ctx": 8192},
+        })
+
+        self.assertEqual(snapshot["parameters"]["num_predict"], settings.evaluation_thinking_num_predict)
+        self.assertEqual(snapshot["parameters"]["num_ctx"], settings.evaluation_thinking_num_ctx)
+        _, _, retry = _prepare_evaluation_attempt("p", {}, snapshot, 2)
+        self.assertGreaterEqual(retry["parameters"]["num_predict"], settings.evaluation_thinking_num_predict)
+
+    def test_thinking_disabled_model_keeps_its_budget(self):
+        from modules.questions.workflow_service import _limit_evaluation_output
+
+        snapshot = _limit_evaluation_output({
+            "model_code": "deepseek",
+            "model_name": "deepseek-r1",
+            "runtime": "OLLAMA",
+            "parameters": {"num_predict": 900, "think": False},
+        })
+
+        self.assertEqual(snapshot["parameters"]["num_predict"], 900)

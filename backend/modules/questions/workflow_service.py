@@ -161,13 +161,29 @@ LEGACY_REVIEW_CRITERION_MAP = {
 }
 
 
+def _is_thinking_evaluator(snapshot: dict) -> bool:
+    parameters = snapshot.get("parameters") or {}
+    if parameters.get("think") is False:
+        return False
+    model_name = str(snapshot.get("model_name") or "").strip().lower()
+    return parameters.get("think") is True or model_name.startswith("deepseek-r1")
+
+
 def _limit_evaluation_output(snapshot: dict | None) -> dict | None:
     if not snapshot or str(snapshot.get("runtime") or "").upper() != "OLLAMA":
         return snapshot
+    parameters = dict(snapshot.get("parameters") or {})
+    if _is_thinking_evaluator(snapshot):
+        configured = int(parameters.get("num_predict") or 0)
+        parameters["num_predict"] = max(configured, settings.evaluation_thinking_num_predict)
+        parameters["num_ctx"] = max(
+            int(parameters.get("num_ctx") or 0),
+            settings.evaluation_thinking_num_ctx,
+        )
+        return {**snapshot, "parameters": parameters}
     model_code = str(snapshot.get("model_code") or "").strip().lower()
     if model_code != "qwen3-8b":
         return snapshot
-    parameters = dict(snapshot.get("parameters") or {})
     configured = int(parameters.get("num_predict") or settings.evaluation_num_predict)
     parameters["num_predict"] = min(configured, settings.evaluation_num_predict)
     return {**snapshot, "parameters": parameters}
