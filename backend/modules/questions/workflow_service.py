@@ -131,6 +131,18 @@ MOODLE_MOCK_MESSAGE = (
     "export GIFT/XML, chưa gửi dữ liệu sang Moodle thật."
 )
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
+MISSING_ANSWER_CITATION_CLAIM = "Đáp án đúng chưa có citation SUPPORTED từ nguồn dữ liệu"
+# Local models often fill unsupported_claims with a "nothing to report" sentence
+# instead of leaving the list empty; those must not block approval.
+PLACEHOLDER_CLAIM_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:không\s+có|không\s+phát\s+hiện)"
+    r"(?:\s+(?:nhận\s+định|vấn\s+đề|lỗi|nội\s+dung)\b[^.]*\bnào\b"
+    r"(?![^.]*\b(?:nhưng|tuy|trừ)\b)[^.]*)?"
+    r"|none|n/?a|không"
+    r")\s*\.?\s*$",
+    flags=re.IGNORECASE,
+)
 EVALUATION_RETRY_INSTRUCTION = """
 LẦN THỬ LẠI: Phản hồi trước không phải JSON hoàn chỉnh.
 - Chỉ trả về đúng một object JSON và phải đóng đủ mọi dấu ngoặc.
@@ -558,7 +570,11 @@ class QuestionWorkflowService:
                 }
             )
 
-        if not verified or not any(item.get("entailment") == "SUPPORTED" for item in verified):
+        # A verified CONTRADICTED quote is evidence too: for a wrong answer it is
+        # often the only citation, and grounding turns it into a REJECT.
+        if not verified or not any(
+            item.get("entailment") in {"SUPPORTED", "CONTRADICTED"} for item in verified
+        ):
             raise EvidenceGateError(
                 "Không xác minh được trích dẫn của AI trong các chunk vừa truy xuất",
                 code="EVIDENCE_VALIDATION_FAILED",
@@ -569,11 +585,13 @@ class QuestionWorkflowService:
             and str(item.get("claim_type") or "").upper() == "ANSWER"
             for item in verified
         )
-        unsupported_claims = list(evidence.get("unsupported_claims") or [])
+        unsupported_claims = [
+            claim
+            for claim in (evidence.get("unsupported_claims") or [])
+            if str(claim or "").strip() and not PLACEHOLDER_CLAIM_PATTERN.match(str(claim))
+        ]
         if not supported_answer:
-            unsupported_claims.append(
-                "Đáp án đúng chưa có citation SUPPORTED từ nguồn dữ liệu"
-            )
+            unsupported_claims.append(MISSING_ANSWER_CITATION_CLAIM)
         return {
             **evidence,
             "citations": verified,
@@ -597,6 +615,7 @@ class QuestionWorkflowService:
         citations = evidence.get("citations") or []
         contradicted = any(
             str(item.get("entailment") or "").upper() == "CONTRADICTED"
+            and item.get("scope") != "DISTRACTOR"
             for item in citations
             if isinstance(item, dict)
         )
@@ -1289,6 +1308,77 @@ class QuestionWorkflowService:
             "hit_output_limit": metadata.get("done_reason") == "length",
         }
 
+    @classmethod
+    def _option_checks_confirm_declared_answer(cls, evidence: dict, version: dict) -> bool:
+        """True when option_checks verify every declared answer key against a source."""
+        options = cls._question_options(version)
+        question_type = str(
+            (version.get("classification") or {}).get("assessment_type") or ""
+        ).strip().upper()
+        if question_type in NON_OPTION_ANSWER_TYPES or len(options) < 2:
+            return False
+        # In a negative question the declared answer is the unsupported option,
+        # so option support cannot stand in for answer support.
+        if cls._is_negative_selection_question(question_type, str(version.get("content") or "")):
+            return False
+        declared_keys = cls._declared_answer_keys(version, options)
+        if not declared_keys:
+            return False
+        checks = {
+            str(check.get("key") or "").strip().upper(): check
+            for check in (evidence.get("option_checks") or [])
+            if isinstance(check, dict)
+        }
+        source_by_label = {
+            str(source.get("label") or "").upper(): str(source.get("excerpt") or "")
+            for source in cls._compact_sources(version)
+        }
+        for key in declared_keys:
+            check = checks.get(key) or {}
+            label = str(check.get("source_label") or "").strip().upper()
+            excerpt = str(check.get("supporting_excerpt") or "").strip()
+            if (
+                check.get("verdict") != "SUPPORTED"
+                or label not in source_by_label
+                or not excerpt
+                or cls._overlap_score(excerpt, source_by_label[label]) < 0.5
+            ):
+                return False
+        return True
+
+    @classmethod
+    def _reconcile_answer_evidence(cls, evidence: dict, version: dict) -> dict:
+        """Use verified option_checks to interpret answer citations.
+
+        Models write citations such as "Đáp án C sai" marked CONTRADICTED, which
+        is evidence against a distractor, not against the declared answer. When
+        the declared answer is itself verified option by option, such ANSWER
+        citations are scoped to distractors and the verified option check also
+        counts as the answer citation.
+        """
+        if not cls._option_checks_confirm_declared_answer(evidence, version):
+            return evidence
+        citations = [
+            {**item, "scope": "DISTRACTOR"}
+            if isinstance(item, dict)
+            and str(item.get("entailment") or "").upper() == "CONTRADICTED"
+            and str(item.get("claim_type") or "").upper() == "ANSWER"
+            else item
+            for item in (evidence.get("citations") or [])
+        ]
+        validation = dict(evidence.get("citation_validation") or {})
+        unsupported = list(evidence.get("unsupported_claims") or [])
+        if not validation.get("answer_supported"):
+            validation["answer_supported"] = True
+            validation["answer_support_source"] = "OPTION_CHECKS"
+            unsupported = [claim for claim in unsupported if claim != MISSING_ANSWER_CITATION_CLAIM]
+        return {
+            **evidence,
+            "citations": citations,
+            "unsupported_claims": unsupported,
+            "citation_validation": validation,
+        }
+
     def _finalize_llm_evaluation(
         self,
         raw_response: str,
@@ -1309,6 +1399,7 @@ class QuestionWorkflowService:
                 ) from exc
             raise
         evidence = self._validate_model_evidence(evidence, source_chunks)
+        evidence = self._reconcile_answer_evidence(evidence, grounded_version)
         # Recorded before any override so the Admin page can tell how often the
         # model itself returns a self-contradictory verdict.
         model_contradictions = self._decision_contradictions(scores, feedback, evidence, policy)

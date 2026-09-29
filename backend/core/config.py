@@ -148,10 +148,11 @@ class Settings(BaseModel):
     )
     generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
     evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
-    evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "900"))
-    # Budget for the retry attempt after a truncated or malformed evaluation JSON;
-    # Vietnamese output with per-option checks often needs more than the first pass.
-    evaluation_retry_num_predict: int = int(os.getenv("EVALUATION_RETRY_NUM_PREDICT", "1400"))
+    # Qwen3-8B benchmark: evaluation JSON with per-option checks took 600-970
+    # output tokens, and 3 of 14 cases hit the old 900 limit on the first try.
+    evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "1400"))
+    # Budget for the retry attempt after a truncated or malformed evaluation JSON.
+    evaluation_retry_num_predict: int = int(os.getenv("EVALUATION_RETRY_NUM_PREDICT", "1800"))
     ollama_generate_url: str = _env_first(
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",

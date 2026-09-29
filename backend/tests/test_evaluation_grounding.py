@@ -309,3 +309,99 @@ class EvaluationFinalizeTests(unittest.TestCase):
 
         self.assertTrue(output["hit_output_limit"])
         self.assertEqual(output["eval_count"], 900)
+
+    def _mcq(self, correct="A"):
+        version = _version(
+            "NHIEU_LUA_CHON" if "," in correct else "TRAC_NGHIEM",
+            options={"A": "Vào trước ra trước", "B": "Vào sau ra trước", "C": "Ngẫu nhiên", "D": "Theo độ ưu tiên"},
+            correct_answer=correct,
+        )
+        version["content"] = "Hàng đợi hoạt động theo nguyên tắc nào?"
+        return version
+
+    @staticmethod
+    def _checks(supported):
+        return [
+            {
+                "key": key,
+                "verdict": "SUPPORTED" if key in supported else "CONTRADICTED",
+                "source_label": "S1",
+                "supporting_excerpt": "nguyên tắc vào trước ra trước" if key in supported else "",
+            }
+            for key in "ABCD"
+        ]
+
+    def test_contradicted_distractor_citation_does_not_reject_verified_answer(self):
+        raw = _raw(
+            "APPROVE", "LOW", "READY", score=0.9, answer_entailment="SUPPORTED",
+            question_polarity="POSITIVE", option_checks=self._checks({"A"}),
+        )
+        payload = json.loads(raw)
+        payload["evidence"]["citations"].append({
+            "claim": "Đáp án B sai",
+            "claim_type": "ANSWER",
+            "chunk_id": _source()["chunk_id"],
+            "exact_quote": "vào trước ra trước, còn gọi là FIFO",
+            "entailment": "CONTRADICTED",
+        })
+
+        scores, feedback, evidence = self.finalize(json.dumps(payload, ensure_ascii=False), self._mcq("A"))
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertGreater(scores.faithfulness, 0.2)
+        scoped = [c for c in evidence["citations"] if c.get("scope") == "DISTRACTOR"]
+        self.assertEqual(len(scoped), 1)
+
+    def test_contradicted_citation_still_rejects_when_answer_is_not_verified(self):
+        # Declared B, but option checks only confirm A: the contradiction is real.
+        raw = _raw(
+            "NEEDS_REVISION", "MEDIUM", "READY", question_polarity="POSITIVE",
+            option_checks=self._checks({"A"}),
+        )
+
+        _, feedback, evidence = self.finalize(raw, self._mcq("B"))
+
+        self.assertEqual(feedback["action"], "REJECT")
+        self.assertFalse(any(c.get("scope") for c in evidence["citations"]))
+
+    def test_verified_option_check_counts_as_answer_citation(self):
+        payload = json.loads(_raw(
+            "APPROVE", "LOW", "READY", score=0.9, answer_entailment="SUPPORTED",
+            question_polarity="POSITIVE", option_checks=self._checks({"A"}),
+        ))
+        # The model labels its only answer citation as EXPLANATION.
+        payload["evidence"]["citations"][1]["claim_type"] = "EXPLANATION"
+
+        _, feedback, evidence = self.finalize(json.dumps(payload, ensure_ascii=False), self._mcq("A"))
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertEqual(evidence["unsupported_claims"], [])
+        self.assertEqual(evidence["citation_validation"]["answer_support_source"], "OPTION_CHECKS")
+
+    def test_placeholder_unsupported_claim_is_ignored_but_real_claim_is_kept(self):
+        evidence = QuestionWorkflowService._validate_model_evidence(
+            {
+                "citations": json.loads(_raw("APPROVE", "LOW", "READY", answer_entailment="SUPPORTED"))[
+                    "evidence"
+                ]["citations"],
+                "unsupported_claims": [
+                    "Không có nhận định trọng yếu nào không được hỗ trợ từ nguồn.",
+                    "Không có nguồn hỗ trợ giải thích về độ phức tạp",
+                ],
+            },
+            [_source()],
+        )
+
+        self.assertEqual(
+            evidence["unsupported_claims"],
+            ["Không có nguồn hỗ trợ giải thích về độ phức tạp"],
+        )
+
+    def test_only_contradicted_citations_still_record_a_reject(self):
+        payload = json.loads(_raw("REJECT", "HIGH", "NEEDS_FIX", score=0.3))
+        payload["evidence"]["citations"] = payload["evidence"]["citations"][1:]
+
+        _, feedback, evidence = self.finalize(json.dumps(payload, ensure_ascii=False))
+
+        self.assertEqual(feedback["action"], "REJECT")
+        self.assertEqual(evidence["citation_validation"]["verified"], 1)

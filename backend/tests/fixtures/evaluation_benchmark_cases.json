@@ -1,0 +1,165 @@
+{
+  "sources": {
+    "queue": "Hàng đợi (queue) là cấu trúc dữ liệu hoạt động theo nguyên tắc vào trước ra trước (FIFO). Phần tử được thêm vào ở cuối hàng đợi (enqueue) và được lấy ra ở đầu hàng đợi (dequeue).",
+    "stack": "Ngăn xếp (stack) hoạt động theo nguyên tắc vào sau ra trước (LIFO). Hai thao tác cơ bản là push để thêm một phần tử vào đỉnh ngăn xếp và pop để lấy phần tử ở đỉnh ngăn xếp ra.",
+    "algorithm": "Một giải thuật có các đặc trưng: tính kết thúc, tính xác định, tính đúng đắn, tính phổ dụng và tính hiệu quả. Tính kết thúc nghĩa là giải thuật phải dừng sau một số hữu hạn bước.",
+    "bst": "Cây nhị phân tìm kiếm là cây nhị phân mà khóa của mỗi nút lớn hơn mọi khóa ở cây con trái và nhỏ hơn mọi khóa ở cây con phải. Duyệt cây nhị phân tìm kiếm theo thứ tự giữa (inorder) cho dãy khóa tăng dần.",
+    "binary_search": "Tìm kiếm nhị phân chỉ áp dụng trên dãy đã được sắp xếp. Ở mỗi bước, giải thuật so sánh khóa cần tìm với phần tử ở giữa dãy và loại bỏ một nửa dãy. Độ phức tạp trong trường hợp xấu nhất là O(log n).",
+    "linked_list": "Danh sách liên kết đơn gồm các nút, mỗi nút chứa dữ liệu và một con trỏ trỏ đến nút kế tiếp. Muốn truy cập phần tử thứ k phải duyệt tuần tự từ đầu danh sách."
+  },
+  "cases": [
+    {
+      "name": "mcq_queue_correct",
+      "expect": "PASS",
+      "source": "queue",
+      "type": "TRAC_NGHIEM",
+      "bloom": 1,
+      "question": "Hàng đợi (queue) hoạt động theo nguyên tắc nào?",
+      "options": {"A": "Vào trước ra trước (FIFO)", "B": "Vào sau ra trước (LIFO)", "C": "Phần tử nhỏ nhất ra trước", "D": "Lấy ngẫu nhiên một phần tử"},
+      "correct_answer": "A",
+      "explanation": "Nguồn nêu hàng đợi hoạt động theo nguyên tắc vào trước ra trước (FIFO)."
+    },
+    {
+      "name": "mcq_queue_wrong_answer",
+      "expect": "BLOCK",
+      "source": "queue",
+      "type": "TRAC_NGHIEM",
+      "bloom": 1,
+      "question": "Hàng đợi (queue) hoạt động theo nguyên tắc nào?",
+      "options": {"A": "Vào trước ra trước (FIFO)", "B": "Vào sau ra trước (LIFO)", "C": "Phần tử nhỏ nhất ra trước", "D": "Lấy ngẫu nhiên một phần tử"},
+      "correct_answer": "B",
+      "explanation": "Hàng đợi lấy phần tử được thêm vào sau cùng ra trước."
+    },
+    {
+      "name": "mcq_stack_pop_correct",
+      "expect": "PASS",
+      "source": "stack",
+      "type": "TRAC_NGHIEM",
+      "bloom": 1,
+      "question": "Thao tác nào dùng để lấy phần tử ở đỉnh ngăn xếp ra?",
+      "options": {"A": "push", "B": "pop", "C": "enqueue", "D": "dequeue"},
+      "correct_answer": "B",
+      "explanation": "Theo nguồn, pop lấy phần tử ở đỉnh ngăn xếp ra."
+    },
+    {
+      "name": "mcq_negative_algorithm_valid",
+      "expect": "PASS",
+      "source": "algorithm",
+      "type": "TRAC_NGHIEM",
+      "bloom": 2,
+      "question": "Đặc trưng nào sau đây KHÔNG phải là đặc trưng của giải thuật?",
+      "options": {"A": "Tính kết thúc", "B": "Tính xác định", "C": "Tính phổ dụng", "D": "Tính song song"},
+      "correct_answer": "D",
+      "explanation": "Nguồn liệt kê tính kết thúc, xác định, đúng đắn, phổ dụng và hiệu quả; tính song song không có trong danh sách."
+    },
+    {
+      "name": "mcq_negative_algorithm_invalid",
+      "expect": "BLOCK",
+      "source": "algorithm",
+      "type": "TRAC_NGHIEM",
+      "bloom": 2,
+      "question": "Đặc trưng nào sau đây KHÔNG phải là đặc trưng của giải thuật?",
+      "options": {"A": "Tính kết thúc", "B": "Tính xác định", "C": "Tính phổ dụng", "D": "Tính hiệu quả"},
+      "correct_answer": "D",
+      "explanation": "Tính hiệu quả không phải là đặc trưng của giải thuật."
+    },
+    {
+      "name": "mcq_bst_inorder_correct",
+      "expect": "PASS",
+      "source": "bst",
+      "type": "TRAC_NGHIEM",
+      "bloom": 2,
+      "question": "Duyệt cây nhị phân tìm kiếm theo thứ tự nào sẽ cho dãy khóa tăng dần?",
+      "options": {"A": "Thứ tự trước (preorder)", "B": "Thứ tự giữa (inorder)", "C": "Thứ tự sau (postorder)", "D": "Theo từng mức"},
+      "correct_answer": "B",
+      "explanation": "Nguồn nêu duyệt theo thứ tự giữa (inorder) cho dãy khóa tăng dần."
+    },
+    {
+      "name": "mcq_binary_search_wrong_complexity",
+      "expect": "BLOCK",
+      "source": "binary_search",
+      "type": "TRAC_NGHIEM",
+      "bloom": 1,
+      "question": "Độ phức tạp của tìm kiếm nhị phân trong trường hợp xấu nhất là bao nhiêu?",
+      "options": {"A": "O(1)", "B": "O(log n)", "C": "O(n)", "D": "O(n^2)"},
+      "correct_answer": "C",
+      "explanation": "Trường hợp xấu nhất phải xét hết n phần tử nên là O(n)."
+    },
+    {
+      "name": "mcq_linked_list_not_in_source",
+      "expect": "BLOCK",
+      "source": "linked_list",
+      "type": "TRAC_NGHIEM",
+      "bloom": 1,
+      "question": "Độ phức tạp của thao tác chèn một nút vào đầu danh sách liên kết đơn là bao nhiêu?",
+      "options": {"A": "O(1)", "B": "O(log n)", "C": "O(n)", "D": "O(n log n)"},
+      "correct_answer": "A",
+      "explanation": "Chỉ cần cập nhật con trỏ đầu danh sách."
+    },
+    {
+      "name": "true_false_binary_search_correct",
+      "expect": "PASS",
+      "source": "binary_search",
+      "type": "DUNG_SAI",
+      "bloom": 1,
+      "question": "Tìm kiếm nhị phân chỉ áp dụng được trên dãy đã được sắp xếp.",
+      "options": {"A": "Đúng", "B": "Sai"},
+      "correct_answer": "A",
+      "explanation": "Nguồn nêu tìm kiếm nhị phân chỉ áp dụng trên dãy đã được sắp xếp."
+    },
+    {
+      "name": "true_false_stack_wrong_answer",
+      "expect": "BLOCK",
+      "source": "stack",
+      "type": "DUNG_SAI",
+      "bloom": 1,
+      "question": "Ngăn xếp (stack) hoạt động theo nguyên tắc vào trước ra trước (FIFO).",
+      "options": {"A": "Đúng", "B": "Sai"},
+      "correct_answer": "A",
+      "explanation": "Ngăn xếp lấy phần tử vào trước ra trước."
+    },
+    {
+      "name": "fill_blank_queue_correct",
+      "expect": "PASS",
+      "source": "queue",
+      "type": "DIEN_KHUYET",
+      "bloom": 1,
+      "question": "Hàng đợi hoạt động theo nguyên tắc vào trước ra trước, viết tắt là _____.",
+      "correct_answer": "FIFO",
+      "explanation": "Nguồn ghi nguyên tắc vào trước ra trước (FIFO)."
+    },
+    {
+      "name": "fill_blank_stack_wrong_answer",
+      "expect": "BLOCK",
+      "source": "stack",
+      "type": "DIEN_KHUYET",
+      "bloom": 1,
+      "question": "Ngăn xếp hoạt động theo nguyên tắc vào sau ra trước, viết tắt là _____.",
+      "correct_answer": "FIFO",
+      "explanation": "Ngăn xếp dùng nguyên tắc FIFO."
+    },
+    {
+      "name": "multi_select_binary_search_correct",
+      "expect": "PASS",
+      "source": "binary_search",
+      "type": "NHIEU_LUA_CHON",
+      "bloom": 2,
+      "question": "Những phát biểu nào sau đây đúng về tìm kiếm nhị phân? (Chọn tất cả đáp án đúng)",
+      "options": {"A": "Chỉ áp dụng trên dãy đã được sắp xếp", "B": "Mỗi bước loại bỏ một nửa dãy", "C": "Độ phức tạp xấu nhất là O(n)", "D": "Phải duyệt tuần tự từ đầu dãy"},
+      "correct_answer": "A,B",
+      "explanation": "Nguồn nêu điều kiện dãy đã sắp xếp và việc loại bỏ một nửa dãy ở mỗi bước."
+    },
+    {
+      "name": "mcq_queue_missing_clo",
+      "expect": "BLOCK",
+      "source": "queue",
+      "type": "TRAC_NGHIEM",
+      "bloom": 1,
+      "no_clo": true,
+      "question": "Phần tử được lấy ra ở vị trí nào của hàng đợi?",
+      "options": {"A": "Ở đầu hàng đợi", "B": "Ở cuối hàng đợi", "C": "Ở giữa hàng đợi", "D": "Ở vị trí bất kỳ"},
+      "correct_answer": "A",
+      "explanation": "Nguồn nêu phần tử được lấy ra ở đầu hàng đợi (dequeue)."
+    }
+  ]
+}
