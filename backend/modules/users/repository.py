@@ -188,6 +188,20 @@ class MongoUserRepository:
     def delete_by_id(self, user_id: str | ObjectId) -> None:
         self.collection.delete_one({"_id": object_id(user_id)})
 
+    def get_stats(self, user_id: str | ObjectId) -> dict:
+        oid = object_id(user_id)
+        return {
+            "documents_count": self.db.documents.count_documents(
+                {"uploaded_by_user_id": oid, "status": {"$ne": "ARCHIVED"}}
+            ),
+            "questions_count": self.db.questions.count_documents(
+                {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
+            ),
+            "pending_questions_count": self.db.questions.count_documents(
+                {"created_by_user_id": oid, "review_status": "PENDING"}
+            ),
+        }
+
     def get_calendar_documents(self, user_id: str | ObjectId) -> list[dict]:
         oid = object_id(user_id)
         return list(
