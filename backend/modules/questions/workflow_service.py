@@ -131,6 +131,18 @@ MOODLE_MOCK_MESSAGE = (
     "export GIFT/XML, chưa gửi dữ liệu sang Moodle thật."
 )
 EVALUATION_SOURCE_EXCERPT_CHARS = 700
+MISSING_ANSWER_CITATION_CLAIM = "Đáp án đúng chưa có citation SUPPORTED từ nguồn dữ liệu"
+# Local models often fill unsupported_claims with a "nothing to report" sentence
+# instead of leaving the list empty; those must not block approval.
+PLACEHOLDER_CLAIM_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:không\s+có|không\s+phát\s+hiện)"
+    r"(?:\s+(?:nhận\s+định|vấn\s+đề|lỗi|nội\s+dung)\b[^.]*\bnào\b"
+    r"(?![^.]*\b(?:nhưng|tuy|trừ)\b)[^.]*)?"
+    r"|none|n/?a|không"
+    r")\s*\.?\s*$",
+    flags=re.IGNORECASE,
+)
 EVALUATION_RETRY_INSTRUCTION = """
 LẦN THỬ LẠI: Phản hồi trước không phải JSON hoàn chỉnh.
 - Chỉ trả về đúng một object JSON và phải đóng đủ mọi dấu ngoặc.
@@ -149,13 +161,29 @@ LEGACY_REVIEW_CRITERION_MAP = {
 }
 
 
+def _is_thinking_evaluator(snapshot: dict) -> bool:
+    parameters = snapshot.get("parameters") or {}
+    if parameters.get("think") is False:
+        return False
+    model_name = str(snapshot.get("model_name") or "").strip().lower()
+    return parameters.get("think") is True or model_name.startswith("deepseek-r1")
+
+
 def _limit_evaluation_output(snapshot: dict | None) -> dict | None:
     if not snapshot or str(snapshot.get("runtime") or "").upper() != "OLLAMA":
         return snapshot
+    parameters = dict(snapshot.get("parameters") or {})
+    if _is_thinking_evaluator(snapshot):
+        configured = int(parameters.get("num_predict") or 0)
+        parameters["num_predict"] = max(configured, settings.evaluation_thinking_num_predict)
+        parameters["num_ctx"] = max(
+            int(parameters.get("num_ctx") or 0),
+            settings.evaluation_thinking_num_ctx,
+        )
+        return {**snapshot, "parameters": parameters}
     model_code = str(snapshot.get("model_code") or "").strip().lower()
     if model_code != "qwen3-8b":
         return snapshot
-    parameters = dict(snapshot.get("parameters") or {})
     configured = int(parameters.get("num_predict") or settings.evaluation_num_predict)
     parameters["num_predict"] = min(configured, settings.evaluation_num_predict)
     return {**snapshot, "parameters": parameters}
@@ -184,7 +212,7 @@ def _prepare_evaluation_attempt(
     effective_model_snapshot = {**model_snapshot}
     parameters = dict(model_snapshot.get("parameters") or {})
     configured = int(parameters.get("num_predict") or 0)
-    parameters["num_predict"] = max(configured, settings.evaluation_num_predict)
+    parameters["num_predict"] = max(configured, settings.evaluation_retry_num_predict)
     effective_model_snapshot["parameters"] = parameters
     return retry_prompt, retry_prompt_snapshot, effective_model_snapshot
 
@@ -558,7 +586,11 @@ class QuestionWorkflowService:
                 }
             )
 
-        if not verified or not any(item.get("entailment") == "SUPPORTED" for item in verified):
+        # A verified CONTRADICTED quote is evidence too: for a wrong answer it is
+        # often the only citation, and grounding turns it into a REJECT.
+        if not verified or not any(
+            item.get("entailment") in {"SUPPORTED", "CONTRADICTED"} for item in verified
+        ):
             raise EvidenceGateError(
                 "Không xác minh được trích dẫn của AI trong các chunk vừa truy xuất",
                 code="EVIDENCE_VALIDATION_FAILED",
@@ -569,11 +601,13 @@ class QuestionWorkflowService:
             and str(item.get("claim_type") or "").upper() == "ANSWER"
             for item in verified
         )
-        unsupported_claims = list(evidence.get("unsupported_claims") or [])
+        unsupported_claims = [
+            claim
+            for claim in (evidence.get("unsupported_claims") or [])
+            if str(claim or "").strip() and not PLACEHOLDER_CLAIM_PATTERN.match(str(claim))
+        ]
         if not supported_answer:
-            unsupported_claims.append(
-                "Đáp án đúng chưa có citation SUPPORTED từ nguồn dữ liệu"
-            )
+            unsupported_claims.append(MISSING_ANSWER_CITATION_CLAIM)
         return {
             **evidence,
             "citations": verified,
@@ -597,6 +631,7 @@ class QuestionWorkflowService:
         citations = evidence.get("citations") or []
         contradicted = any(
             str(item.get("entailment") or "").upper() == "CONTRADICTED"
+            and item.get("scope") != "DISTRACTOR"
             for item in citations
             if isinstance(item, dict)
         )
@@ -1045,9 +1080,11 @@ class QuestionWorkflowService:
                 "answer_relevancy": min(scores.answer_relevancy, 0.30),
             }
         )
+        already_rejected = str(feedback.get("action") or "").strip().upper() == "REJECT"
         guarded_feedback = {
             **feedback,
-            "action": "NEEDS_REVISION",
+            # A guardrail only ever tightens the verdict; it must not soften a REJECT.
+            "action": "REJECT" if already_rejected else "NEEDS_REVISION",
             "severity": "HIGH",
             "summary": "Guardrail đáp án chặn tự động duyệt: " + guardrail["issues"][0],
             "missing": list(
@@ -1159,12 +1196,7 @@ class QuestionWorkflowService:
         )
 
     @staticmethod
-    def _validate_llm_evaluation_consistency(
-        scores: EvaluationScores,
-        feedback: dict,
-        evidence: dict,
-        policy: dict,
-    ) -> dict:
+    def _overall_and_pass_min(scores: EvaluationScores, policy: dict) -> tuple[float, float]:
         score_values = scores.model_dump()
         weights = policy.get("weights") or DEFAULT_WEIGHTS
         thresholds = policy.get("thresholds") or DEFAULT_THRESHOLDS
@@ -1173,6 +1205,17 @@ class QuestionWorkflowService:
             sum(score_values[key] * weights.get(key, DEFAULT_WEIGHTS[key]) for key in DEFAULT_WEIGHTS),
             4,
         )
+        return overall, pass_min
+
+    @classmethod
+    def _decision_contradictions(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        policy: dict,
+    ) -> list[str]:
+        overall, pass_min = cls._overall_and_pass_min(scores, policy)
         action = str(feedback.get("action") or "").strip().upper()
         severity = str(feedback.get("severity") or "").strip().upper()
         moodle_readiness = str(evidence.get("moodle_readiness") or "").strip().upper()
@@ -1187,6 +1230,66 @@ class QuestionWorkflowService:
             contradictions.append("REJECT nhưng mức độ lỗi chỉ là LOW")
         if action == "REJECT" and moodle_readiness == "READY":
             contradictions.append("REJECT nhưng kết quả lại ghi Moodle READY")
+        return contradictions
+
+    @classmethod
+    def _normalize_decision(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        policy: dict,
+    ) -> tuple[dict, dict]:
+        """Resolve action/severity/readiness conflicts toward the stricter side.
+
+        Grounding and guardrails may override the model's action (for example a
+        CONTRADICTED citation forces REJECT) without touching its other fields.
+        The saved result must still be internally consistent, and a conflict must
+        never be settled by approving the question.
+        """
+        contradictions = cls._decision_contradictions(scores, feedback, evidence, policy)
+        if not contradictions:
+            return feedback, evidence
+
+        feedback = dict(feedback)
+        evidence = dict(evidence)
+        action = str(feedback.get("action") or "").strip().upper()
+        before = {
+            "action": action,
+            "severity": str(feedback.get("severity") or "").strip().upper(),
+            "moodle_readiness": str(evidence.get("moodle_readiness") or "").strip().upper(),
+        }
+        if action == "APPROVE":
+            feedback["action"] = "NEEDS_REVISION"
+            if feedback.get("severity") == "LOW":
+                feedback["severity"] = "MEDIUM"
+        elif action == "REJECT":
+            if feedback.get("severity") == "LOW":
+                feedback["severity"] = "MEDIUM"
+            evidence["moodle_readiness"] = "NEEDS_FIX"
+        evidence["decision_normalization"] = {
+            "applied": True,
+            "contradictions": contradictions,
+            "before": before,
+            "after": {
+                "action": feedback.get("action"),
+                "severity": feedback.get("severity"),
+                "moodle_readiness": evidence.get("moodle_readiness"),
+            },
+        }
+        return feedback, evidence
+
+    @classmethod
+    def _validate_llm_evaluation_consistency(
+        cls,
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+        policy: dict,
+    ) -> dict:
+        score_values = scores.model_dump()
+        overall, pass_min = cls._overall_and_pass_min(scores, policy)
+        contradictions = cls._decision_contradictions(scores, feedback, evidence, policy)
         if contradictions:
             raise ValueError("AI evaluation tự mâu thuẫn: " + "; ".join(contradictions))
 
@@ -1202,6 +1305,160 @@ class QuestionWorkflowService:
                 for key, value in score_values.items()
                 if value < pass_min
             ],
+        }
+
+    @staticmethod
+    def _llm_output_metadata(llm, raw_response: str | None) -> dict:
+        provider = llm
+        if getattr(provider, "last_used", None) in {"primary", "fallback"}:
+            provider = provider.fallback if provider.last_used == "fallback" else provider.primary
+        metadata = getattr(provider, "last_response_metadata", None)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        return {
+            "chars": len(raw_response or ""),
+            **{
+                key: metadata[key]
+                for key in ("done_reason", "eval_count", "prompt_eval_count")
+                if metadata.get(key) is not None
+            },
+            "hit_output_limit": metadata.get("done_reason") == "length",
+        }
+
+    @classmethod
+    def _option_checks_confirm_declared_answer(cls, evidence: dict, version: dict) -> bool:
+        """True when option_checks verify every declared answer key against a source."""
+        options = cls._question_options(version)
+        question_type = str(
+            (version.get("classification") or {}).get("assessment_type") or ""
+        ).strip().upper()
+        if question_type in NON_OPTION_ANSWER_TYPES or len(options) < 2:
+            return False
+        # In a negative question the declared answer is the unsupported option,
+        # so option support cannot stand in for answer support.
+        if cls._is_negative_selection_question(question_type, str(version.get("content") or "")):
+            return False
+        declared_keys = cls._declared_answer_keys(version, options)
+        if not declared_keys:
+            return False
+        checks = {
+            str(check.get("key") or "").strip().upper(): check
+            for check in (evidence.get("option_checks") or [])
+            if isinstance(check, dict)
+        }
+        source_by_label = {
+            str(source.get("label") or "").upper(): str(source.get("excerpt") or "")
+            for source in cls._compact_sources(version)
+        }
+        for key in declared_keys:
+            check = checks.get(key) or {}
+            label = str(check.get("source_label") or "").strip().upper()
+            excerpt = str(check.get("supporting_excerpt") or "").strip()
+            if (
+                check.get("verdict") != "SUPPORTED"
+                or label not in source_by_label
+                or not excerpt
+                or cls._overlap_score(excerpt, source_by_label[label]) < 0.5
+            ):
+                return False
+        return True
+
+    @classmethod
+    def _claim_names_only_distractors(
+        cls,
+        claim,
+        options: dict[str, str],
+        declared_keys: set[str],
+    ) -> bool:
+        text = str(claim or "")
+        folded = cls._compact_text(text, 1000).casefold()
+        referenced = {
+            key
+            for key in options
+            if re.search(rf"(?<![\w]){re.escape(key)}(?![\w])", text)
+        }
+        referenced |= {
+            key
+            for key, value in options.items()
+            if len(value.strip()) >= 2
+            and cls._compact_text(value, 500).casefold() in folded
+        }
+        return bool(referenced) and not (referenced & declared_keys)
+
+    @classmethod
+    def _reconcile_answer_evidence(cls, evidence: dict, version: dict) -> dict:
+        """Use verified option_checks to interpret answer citations.
+
+        Models write citations such as "Đáp án C sai" marked CONTRADICTED, which
+        is evidence against a distractor, not against the declared answer. When
+        the declared answer is itself verified option by option, an ANSWER
+        citation whose claim names only non-declared options is scoped to
+        distractors, and the verified option check also counts as the answer
+        citation. A contradicted claim that names the declared answer, or names
+        no option at all, still counts against the answer.
+        """
+        if not cls._option_checks_confirm_declared_answer(evidence, version):
+            return evidence
+        options = cls._question_options(version)
+        declared_keys = cls._declared_answer_keys(version, options)
+        citations = [
+            {**item, "scope": "DISTRACTOR"}
+            if isinstance(item, dict)
+            and str(item.get("entailment") or "").upper() == "CONTRADICTED"
+            and str(item.get("claim_type") or "").upper() == "ANSWER"
+            and cls._claim_names_only_distractors(item.get("claim"), options, declared_keys)
+            else item
+            for item in (evidence.get("citations") or [])
+        ]
+        validation = dict(evidence.get("citation_validation") or {})
+        unsupported = list(evidence.get("unsupported_claims") or [])
+        if not validation.get("answer_supported"):
+            validation["answer_supported"] = True
+            validation["answer_support_source"] = "OPTION_CHECKS"
+            unsupported = [claim for claim in unsupported if claim != MISSING_ANSWER_CITATION_CLAIM]
+        return {
+            **evidence,
+            "citations": citations,
+            "unsupported_claims": unsupported,
+            "citation_validation": validation,
+        }
+
+    def _finalize_llm_evaluation(
+        self,
+        raw_response: str,
+        source_chunks: list[dict],
+        grounded_version: dict,
+        policy: dict,
+        *,
+        llm=None,
+    ) -> tuple[EvaluationScores, dict, dict]:
+        output = self._llm_output_metadata(llm, raw_response)
+        try:
+            scores, feedback, evidence = self._parse_llm_evaluation(raw_response)
+        except ValueError as exc:
+            if output["hit_output_limit"]:
+                raise ValueError(
+                    "AI evaluation bị cắt ngang do chạm giới hạn độ dài output "
+                    f"(num_predict): {exc}"
+                ) from exc
+            raise
+        evidence = self._validate_model_evidence(evidence, source_chunks)
+        evidence = self._reconcile_answer_evidence(evidence, grounded_version)
+        # Recorded before any override so the Admin page can tell how often the
+        # model itself returns a self-contradictory verdict.
+        model_contradictions = self._decision_contradictions(scores, feedback, evidence, policy)
+        scores, feedback = self._enforce_grounding_policy(scores, feedback, evidence)
+        scores, feedback, evidence = self._apply_evaluation_guardrails(
+            scores,
+            feedback,
+            evidence,
+            grounded_version,
+        )
+        feedback, evidence = self._normalize_decision(scores, feedback, evidence, policy)
+        consistency = self._validate_llm_evaluation_consistency(scores, feedback, evidence, policy)
+        return scores, feedback, {
+            **evidence,
+            "consistency": {**consistency, "model_contradictions": model_contradictions},
+            "model_output": output,
         }
 
     def _auto_scores(self, question: dict, version: dict) -> tuple[EvaluationScores, dict, dict]:
@@ -1233,6 +1490,10 @@ class QuestionWorkflowService:
                 "Đánh giá tự động bằng heuristic nội bộ phục vụ demo P0; "
                 "cần thay bằng local evaluator model ở bản production."
             ),
+            # Word overlap cannot verify that the answer is correct, so a
+            # heuristic result always hands the decision to a human reviewer.
+            "action": "NEEDS_REVISION",
+            "severity": "MEDIUM",
             "missing": [
                 label
                 for label, missing in (
@@ -1290,11 +1551,13 @@ class QuestionWorkflowService:
         action_requires_review = feedback_action in {"NEEDS_REVISION", "REJECT"}
         severe_issue = feedback_severity == "HIGH"
         grounding_blocks_pass = bool(unsupported_claims)
+        heuristic_only = str((payload.evidence or {}).get("mode") or "").startswith("heuristic")
         passed = (
             overall >= thresholds["pass_min"]
             and not action_requires_review
             and not severe_issue
             and not grounding_blocks_pass
+            and not heuristic_only
         )
         if feedback_action == "REJECT" or severe_issue:
             color = "RED"
@@ -1307,7 +1570,10 @@ class QuestionWorkflowService:
                 "feedback_action": feedback_action or None,
                 "feedback_severity": feedback_severity or None,
                 "unsupported_claim_count": len(unsupported_claims),
-                "blocked_pass": action_requires_review or severe_issue or grounding_blocks_pass,
+                "heuristic_only": heuristic_only,
+                "blocked_pass": (
+                    action_requires_review or severe_issue or grounding_blocks_pass or heuristic_only
+                ),
             },
         }
         now = utc_now()
@@ -1496,25 +1762,17 @@ class QuestionWorkflowService:
                 started = time.perf_counter()
                 raw_model_response = await llm.generate_text(prompt)
                 duration_ms = int((time.perf_counter() - started) * 1000)
-                scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
-                evidence = self._validate_model_evidence(evidence, source_chunks)
-                scores, feedback = self._enforce_grounding_policy(scores, feedback, evidence)
-                scores, feedback, evidence = self._apply_evaluation_guardrails(
-                    scores,
-                    feedback,
-                    evidence,
+                scores, feedback, evidence = self._finalize_llm_evaluation(
+                    raw_model_response,
+                    source_chunks,
                     grounded_version,
+                    policy_snapshot,
+                    llm=llm,
                 )
                 evidence = {
                     **evidence,
                     "mode": "local_llm",
                     "retrieval": retrieval_snapshot,
-                    "consistency": self._validate_llm_evaluation_consistency(
-                        scores,
-                        feedback,
-                        evidence,
-                        policy_snapshot,
-                    ),
                 }
             except Exception as exc:
                 if not payload.fallback_to_heuristic:
@@ -2205,24 +2463,13 @@ class QuestionWorkflowService:
             heuristic_fallback = False
             try:
                 raw_model_response = await llm.generate_text(prompt)
-                scores, feedback, evidence = self._parse_llm_evaluation(raw_model_response)
-                evidence = self._validate_model_evidence(evidence, source_chunks)
-                scores, feedback = self._enforce_grounding_policy(scores, feedback, evidence)
-                scores, feedback, evidence = self._apply_evaluation_guardrails(
-                    scores,
-                    feedback,
-                    evidence,
+                scores, feedback, evidence = self._finalize_llm_evaluation(
+                    raw_model_response,
+                    source_chunks,
                     grounded_version,
+                    policy_snapshot,
+                    llm=llm,
                 )
-                evidence = {
-                    **evidence,
-                    "consistency": self._validate_llm_evaluation_consistency(
-                        scores,
-                        feedback,
-                        evidence,
-                        policy_snapshot,
-                    ),
-                }
             except Exception as exc:
                 if not job.get("fallback_to_heuristic"):
                     raise

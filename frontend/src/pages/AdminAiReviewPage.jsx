@@ -589,6 +589,7 @@ function AdminAiReviewPage() {
                             <div>
                               <b>[{citation.chunk_id || `S${index + 1}`}]</b>
                               <em>{citation.verified ? 'Đã xác minh' : citation.entailment}</em>
+                              {citation.scope === 'DISTRACTOR' && <em>Về phương án nhiễu</em>}
                             </div>
                             {citation.claim && <p>{citation.claim}</p>}
                             <blockquote>{citation.exact_quote}</blockquote>
