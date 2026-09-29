@@ -1311,9 +1311,9 @@ class SchemaV2Tests(unittest.TestCase):
     def test_qwen_evaluation_snapshot_limits_output_without_changing_deepseek(self):
         qwen = question_workflow_module._limit_evaluation_output(
             {
-                "model_code": "qwen",
+                "model_code": "qwen3-8b",
                 "runtime": "OLLAMA",
-                "parameters": {"num_predict": 900, "num_ctx": 8192},
+                "parameters": {"num_predict": 32768, "num_ctx": 8192, "think": False},
             }
         )
         deepseek = question_workflow_module._limit_evaluation_output(
