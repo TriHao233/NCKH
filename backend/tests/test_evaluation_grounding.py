@@ -405,3 +405,42 @@ class EvaluationFinalizeTests(unittest.TestCase):
 
         self.assertEqual(feedback["action"], "REJECT")
         self.assertEqual(evidence["citation_validation"]["verified"], 1)
+
+    def _mistaken_support_for_declared(self, claim):
+        # Declared B is wrong, but the model wrongly marks B SUPPORTED with a
+        # quote that does come from the source.
+        checks = self._checks({"B"})
+        checks[1]["supporting_excerpt"] = "nguyên tắc vào trước ra trước"
+        payload = json.loads(_raw(
+            "NEEDS_REVISION", "MEDIUM", "READY", question_polarity="POSITIVE",
+            option_checks=checks,
+        ))
+        payload["evidence"]["citations"][1]["claim"] = claim
+        return json.dumps(payload, ensure_ascii=False)
+
+    def test_contradiction_naming_declared_answer_still_rejects(self):
+        _, feedback, evidence = self.finalize(
+            self._mistaken_support_for_declared("Đáp án B (Vào sau ra trước) là đúng"),
+            self._mcq("B"),
+        )
+
+        self.assertEqual(feedback["action"], "REJECT")
+        self.assertFalse(any(c.get("scope") for c in evidence["citations"]))
+
+    def test_contradiction_naming_no_option_still_rejects(self):
+        _, feedback, _ = self.finalize(
+            self._mistaken_support_for_declared("Đáp án khai báo không khớp nguồn"),
+            self._mcq("B"),
+        )
+
+        self.assertEqual(feedback["action"], "REJECT")
+
+    def test_claim_scope_detects_option_letters_and_text(self):
+        options = {"A": "FIFO", "B": "LIFO", "C": "O(n)", "D": "O(log n)"}
+        names_only = QuestionWorkflowService._claim_names_only_distractors
+
+        self.assertTrue(names_only("Đáp án C sai", options, {"A"}))
+        self.assertTrue(names_only("Phương án LIFO không đúng với hàng đợi", options, {"A"}))
+        self.assertFalse(names_only("Đáp án A sai, C mới đúng", options, {"A"}))
+        self.assertFalse(names_only("FIFO là đáp án sai", options, {"A"}))
+        self.assertFalse(names_only("Đáp án không đúng", options, {"A"}))

@@ -1347,22 +1347,49 @@ class QuestionWorkflowService:
         return True
 
     @classmethod
+    def _claim_names_only_distractors(
+        cls,
+        claim,
+        options: dict[str, str],
+        declared_keys: set[str],
+    ) -> bool:
+        text = str(claim or "")
+        folded = cls._compact_text(text, 1000).casefold()
+        referenced = {
+            key
+            for key in options
+            if re.search(rf"(?<![\w]){re.escape(key)}(?![\w])", text)
+        }
+        referenced |= {
+            key
+            for key, value in options.items()
+            if len(value.strip()) >= 2
+            and cls._compact_text(value, 500).casefold() in folded
+        }
+        return bool(referenced) and not (referenced & declared_keys)
+
+    @classmethod
     def _reconcile_answer_evidence(cls, evidence: dict, version: dict) -> dict:
         """Use verified option_checks to interpret answer citations.
 
         Models write citations such as "Đáp án C sai" marked CONTRADICTED, which
         is evidence against a distractor, not against the declared answer. When
-        the declared answer is itself verified option by option, such ANSWER
-        citations are scoped to distractors and the verified option check also
-        counts as the answer citation.
+        the declared answer is itself verified option by option, an ANSWER
+        citation whose claim names only non-declared options is scoped to
+        distractors, and the verified option check also counts as the answer
+        citation. A contradicted claim that names the declared answer, or names
+        no option at all, still counts against the answer.
         """
         if not cls._option_checks_confirm_declared_answer(evidence, version):
             return evidence
+        options = cls._question_options(version)
+        declared_keys = cls._declared_answer_keys(version, options)
         citations = [
             {**item, "scope": "DISTRACTOR"}
             if isinstance(item, dict)
             and str(item.get("entailment") or "").upper() == "CONTRADICTED"
             and str(item.get("claim_type") or "").upper() == "ANSWER"
+            and cls._claim_names_only_distractors(item.get("claim"), options, declared_keys)
             else item
             for item in (evidence.get("citations") or [])
         ]
