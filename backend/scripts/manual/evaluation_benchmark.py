@@ -196,6 +196,12 @@ async def main() -> None:
     parser.add_argument("--only", nargs="*", help="Chỉ chạy các case có tên này")
     parser.add_argument("--attempts", type=int, default=2, help="Số lần thử như worker (mặc định 2)")
     parser.add_argument("--out", type=Path, help="Ghi kết quả chi tiết ra file JSON")
+    parser.add_argument(
+        "--think",
+        choices=["on", "off"],
+        help="Ghi đè chế độ suy nghĩ của model Ollama (mặc định theo cấu hình model)",
+    )
+    parser.add_argument("--num-predict", type=int, help="Ghi đè số token output lần chấm đầu")
     args = parser.parse_args()
 
     data = json.loads(args.cases.read_text(encoding="utf-8"))
@@ -203,6 +209,13 @@ async def main() -> None:
     model_snapshot = _limit_evaluation_output(
         resolve_direct_model_snapshot(args.model, EVALUATION_CAPABILITY)
     )
+    parameters = dict(model_snapshot.get("parameters") or {})
+    if args.think:
+        parameters["think"] = args.think == "on"
+    if args.num_predict:
+        parameters["num_predict"] = args.num_predict
+    model_snapshot = {**model_snapshot, "parameters": parameters}
+    print(f"Model {model_snapshot['model_name']} parameters: {parameters}", flush=True)
     service = QuestionWorkflowService(None)
 
     results = []
