@@ -8,7 +8,8 @@ from bson import ObjectId
 from core.config import settings
 from core.database import get_rag_db
 from core.gpu_coordination import current_gpu_operation_label
-from modules.rag.chromadb_engine import embedding_config_hash, get_collection, model_scoped_collection_name
+from modules.documents.store import get_document_repository
+from modules.rag.chromadb_engine import embedding_config_matches, embedding_model_names_match, get_collection, model_scoped_collection_name
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,7 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
         raise ValueError("document_id không hợp lệ") from exc
 
     db = get_rag_db()
-    document = db.documents.find_one(
-        {"_id": document_oid, "schema_version": 2, "archived_at": None}
-    )
+    document = get_document_repository(db).find_by_id(document_oid)
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
 
@@ -49,14 +48,13 @@ def _active_vector_snapshot(document_id: str, collection_name: str) -> tuple[str
         raise ValueError(
             f"Tài liệu đang được index trong collection '{active_collection_name}'"
         )
-    indexed_model = (vector.get("embedding_model") or {}).get("model_name")
-    if indexed_model != settings.embedding_model_name:
+    indexed_model = vector.get("embedding_model") or {}
+    if not embedding_model_names_match(indexed_model.get("model_name"), settings.embedding_model_name):
         raise ValueError(
             "Embedding model hiện tại không khớp snapshot đã index: "
-            f"'{settings.embedding_model_name}' != '{indexed_model}'"
+            f"'{settings.embedding_model_name}' != '{indexed_model.get('model_name')}'"
         )
-    indexed_config_hash = vector.get("embedding_config_hash")
-    if indexed_config_hash and indexed_config_hash != embedding_config_hash():
+    if not embedding_config_matches(indexed_model, vector.get("embedding_config_hash")):
         raise ValueError("Cấu hình embedding hiện tại không khớp snapshot đã index")
     return str(chunk_set_id), str(vector_collection_id), str(active_collection_name)
 
@@ -456,11 +454,11 @@ def get_evaluation_evidence(
         raise ValueError("Không thể truy xuất nguồn vì nội dung đánh giá rỗng")
 
     resolved_collection = collection_name or settings.chromadb_collection_name
-    chunk_set_id, vector_collection_id = _active_vector_snapshot(
+    chunk_set_id, vector_collection_id, active_collection_name = _active_vector_snapshot(
         document_id,
         resolved_collection,
     )
-    collection = get_collection(resolved_collection)
+    collection = get_collection(active_collection_name)
     where_filter = {
         "$and": [
             {"document_id": document_id},
@@ -594,6 +592,6 @@ def get_evaluation_evidence(
         "document_id": document_id,
         "chunk_set_id": chunk_set_id,
         "vector_collection_id": vector_collection_id,
-        "collection_name": resolved_collection,
+        "collection_name": active_collection_name,
         "results": verified_results,
     }

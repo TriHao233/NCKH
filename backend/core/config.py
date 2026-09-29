@@ -64,6 +64,24 @@ class Settings(BaseModel):
     api_prefix: str = os.getenv("API_PREFIX", "/api/v1")
 
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    postgres_dsn: str = os.getenv("POSTGRES_DSN", "")
+    postgres_pool_min_size: int = int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1"))
+    postgres_pool_max_size: int = int(os.getenv("POSTGRES_POOL_MAX_SIZE", "10"))
+    # Business data lives in PostgreSQL. Setting a flag to "mongo" routes that
+    # group back to MongoDB; kept only as a rollback path during the transition.
+    user_store: str = os.getenv("USER_STORE", "postgres").strip().lower()
+    ai_config_store: str = os.getenv("AI_CONFIG_STORE", "postgres").strip().lower()
+    catalog_store: str = os.getenv("CATALOG_STORE", "postgres").strip().lower()
+    notification_store: str = os.getenv("NOTIFICATION_STORE", "postgres").strip().lower()
+    dictionary_store: str = os.getenv("DICTIONARY_STORE", "postgres").strip().lower()
+    moodle_target_store: str = os.getenv("MOODLE_TARGET_STORE", "postgres").strip().lower()
+    llm_slot_store: str = os.getenv("LLM_SLOT_STORE", "postgres").strip().lower()
+    document_store: str = os.getenv("DOCUMENT_STORE", "postgres").strip().lower()
+    audit_store: str = os.getenv("AUDIT_STORE", "postgres").strip().lower()
+    review_policy_store: str = os.getenv("REVIEW_POLICY_STORE", "postgres").strip().lower()
+    question_store: str = os.getenv("QUESTION_STORE", "postgres").strip().lower()
+    generation_store: str = os.getenv("GENERATION_STORE", "postgres").strip().lower()
+    exam_store: str = os.getenv("EXAM_STORE", "postgres").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",
@@ -93,6 +111,14 @@ class Settings(BaseModel):
     ollama_generation_batch_size: int = int(os.getenv("OLLAMA_GENERATION_BATCH_SIZE", "1"))
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
+    # Admin assignments reserve a question for the assigned reviewer much longer
+    # than an interactive review lock; after this window other reviewers may claim.
+    review_assignment_timeout_hours: int = int(os.getenv("REVIEW_ASSIGNMENT_TIMEOUT_HOURS", "72"))
+    # A pending question is late once it has waited this long since submission.
+    review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
+    review_sla_reminder_interval_seconds: float = float(
+        os.getenv("REVIEW_SLA_REMINDER_INTERVAL_SECONDS", "900")
+    )
     gpu_coordination_enabled: bool = _env_bool("GPU_COORDINATION_ENABLED", True)
     gpu_lock_path: str = os.getenv("GPU_LOCK_PATH", "./data/gpu-operation.lock")
     gpu_lock_timeout_seconds: float = float(os.getenv("GPU_LOCK_TIMEOUT_SECONDS", "1200"))
@@ -209,6 +235,11 @@ class Settings(BaseModel):
     )
 
     chromadb_path: str = os.getenv("CHROMADB_PATH", "./data/chroma_data")
+    chroma_mode: str = os.getenv("CHROMA_MODE", "local").strip().lower()
+    chroma_host: str = os.getenv("CHROMA_HOST", "localhost").strip()
+    chroma_port: int = int(os.getenv("CHROMA_PORT", "8000"))
+    chroma_ssl: bool = _env_bool("CHROMA_SSL", False)
+    chroma_auth_token: str = os.getenv("CHROMA_AUTH_TOKEN", "")
     output_dir: str = os.getenv("OUTPUT_DIR", "./data/outputs")
     metadata_dir: str = os.getenv("METADATA_DIR", "./data/metadata")
     chunk_output_dir: str = os.getenv("CHUNK_OUTPUT_DIR", "./data/chunk_outputs")
@@ -219,6 +250,13 @@ class Settings(BaseModel):
     artifact_cold_retention_days: int = int(os.getenv("ARTIFACT_COLD_RETENTION_DAYS", "365"))
     artifact_cold_dir: str = os.getenv("ARTIFACT_COLD_DIR", "./data/artifact_archive")
     artifact_blob_dir: str = os.getenv("ARTIFACT_BLOB_DIR", "./data/artifact_blobs")
+    # New uploads, OCR artifacts and avatars go to this provider; existing
+    # artifacts are always read from the provider recorded with them.
+    storage_provider: str = os.getenv("STORAGE_PROVIDER", "local").strip().lower()
+    s3_bucket: str = os.getenv("S3_BUCKET", "").strip()
+    s3_prefix: str = os.getenv("S3_PREFIX", "").strip().strip("/")
+    s3_endpoint_url: str = os.getenv("S3_ENDPOINT_URL", "").strip()
+    s3_region: str = os.getenv("S3_REGION", "").strip()
 
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
     prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()

@@ -7,6 +7,9 @@ from typing import Any
 from bson import ObjectId
 from pymongo.database import Database
 
+from core.config import settings
+from modules.users.store import users_by_ids
+
 
 def _json_safe(value):
     if isinstance(value, ObjectId):
@@ -76,6 +79,13 @@ class AdminAuditService:
         date_to: datetime | None = None,
         search: str | None = None,
     ) -> dict:
+        if settings.audit_store == "postgres":
+            from modules.admin.postgres_audit_service import PostgresAuditService
+            return PostgresAuditService().list(
+                page=page, page_size=page_size, actor_user_id=actor_user_id,
+                entity_type=entity_type, entity_id=entity_id, action=action,
+                date_from=date_from, date_to=date_to, search=search,
+            )
         clauses: list[dict] = []
         if actor_user_id:
             clauses.append(
@@ -122,6 +132,7 @@ class AdminAuditService:
                         {"action": regex},
                         {"actor_user_id": regex},
                         {"actor_role": regex},
+                        {"actor.role": regex},
                         {"entity_type": regex},
                         {"entity_id": regex},
                         {"actor.service_name": regex},
@@ -131,6 +142,7 @@ class AdminAuditService:
                         {"after.status": regex},
                         {"after.role": regex},
                         {"changes.field": regex},
+                        {"changes.path": regex},
                         {"metadata.reason": regex},
                         {"metadata.message": regex},
                         {"metadata.error": regex},
@@ -159,7 +171,7 @@ class AdminAuditService:
         if user_ids:
             users_map = {
                 str(u["_id"]): u.get("display_name") or str(u["_id"])
-                for u in self.db.users.find({"_id": {"$in": user_ids}}, {"display_name": 1})
+                for u in users_by_ids(self.db, user_ids)
             }
             for item in items:
                 actor = item.get("actor", {})

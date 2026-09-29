@@ -71,6 +71,17 @@ def _ensure_demo_firebase_user(email: str, display_name: str):
 
 
 def _ensure_demo_app_user(firebase_uid: str, demo_user: dict) -> dict:
+    if settings.user_store == "postgres":
+        repository = get_user_service().repository
+        user = repository.sync_identity({
+            "uid": firebase_uid,
+            "email": demo_user["email"],
+            "name": demo_user["display_name"],
+        })
+        return repository.update(user["_id"], {
+            "role": demo_user["role"],
+            "profile": {"school": "", "address": "", "avatar": ""},
+        })
     now = datetime.now(timezone.utc)
     return get_rag_db().users.find_one_and_update(
         {"firebase_uid": firebase_uid},

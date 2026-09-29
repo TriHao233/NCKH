@@ -1,13 +1,15 @@
 import logging
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from core.config import settings
 from core.dependencies import (
     CurrentUser,
-    require_teacher_or_admin,
+    require_bank_sharing,
+    require_question_author,
     require_teacher_reviewer_or_admin,
 )
 from modules.questions.schemas import (
@@ -19,15 +21,45 @@ from modules.questions.schemas import (
     QuestionVersionResponse,
     QuestionUpdateRequest,
 )
+from modules.documents.storage import storage_for_provider
 from modules.questions.service import QuestionService, get_question_service
-from modules.notifications.service import safe_notify_question_resubmitted
+from modules.notifications.service import (
+    NotificationService,
+    safe_notify_exam_owners_question_reopened,
+    safe_notify_question_resubmitted,
+)
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
     get_workflow_service,
+    notification_outbox,
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Questions"])
 logger = logging.getLogger(__name__)
+
+
+def _content_disposition(filename: str) -> str:
+    # Same rule as FileResponse: RFC 5987 encoding for non-ASCII names.
+    quoted = quote(filename)
+    if quoted != filename:
+        return f"attachment; filename*=utf-8''{quoted}"
+    return f'attachment; filename="{filename}"'
+
+
+def _collect_notifications(workflow_service: QuestionWorkflowService, build) -> list[dict] | None:
+    """Build notifications to store with the question change (PostgreSQL only).
+
+    Returns None when they must be sent after the change instead. A failure
+    while building never blocks the teacher's edit or submission.
+    """
+    outbox = notification_outbox()
+    if outbox is not None:
+        try:
+            build(NotificationService(workflow_service.db, sink=outbox))
+        except Exception as exc:
+            logger.warning("Failed to prepare question notifications: %s", exc)
+            outbox.clear()
+    return outbox
 
 
 @router.get("", response_model=QuestionListResponse)
@@ -52,6 +84,8 @@ def list_questions(
     creator_user_id: str | None = Query(None),
     waiting_hours_min: float | None = Query(None, ge=0),
     overdue_only: bool = Query(False),
+    sla_breached_only: bool = Query(False),
+    override_only: bool = Query(False),
     created_from: datetime | None = Query(None),
     created_to: datetime | None = Query(None),
     submitted_from: datetime | None = Query(None),
@@ -85,6 +119,8 @@ def list_questions(
             creator_user_id=creator_user_id,
             waiting_hours_min=waiting_hours_min,
             overdue_only=overdue_only,
+            sla_breached_only=sla_breached_only,
+            override_only=override_only,
             created_from=created_from,
             created_to=created_to,
             submitted_from=submitted_from,
@@ -102,7 +138,7 @@ def list_questions(
 @router.post("", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
 def create_question(
     payload: QuestionCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -142,7 +178,7 @@ def get_question(
 )
 def duplicate_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -204,13 +240,20 @@ def get_question_source_pdf(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not artifact:
         raise HTTPException(status_code=404, detail="Không tìm thấy PDF nguồn")
-    path = artifact["path"]
-    if not path.exists() or not path.is_file():
+    storage = storage_for_provider(artifact["provider"])
+    if not storage.exists(artifact["uri"]):
         raise HTTPException(status_code=404, detail="File PDF nguồn không còn tồn tại")
-    return FileResponse(
-        path,
+    if artifact["provider"] == "LOCAL":
+        return FileResponse(
+            artifact["uri"],
+            media_type=artifact["mime_type"],
+            filename=artifact["filename"],
+        )
+    # Object storage is streamed through the API so access checks and CORS stay here.
+    return StreamingResponse(
+        storage.iter_bytes(artifact["uri"]),
         media_type=artifact["mime_type"],
-        filename=artifact["filename"],
+        headers={"Content-Disposition": _content_disposition(artifact["filename"])},
     )
 
 
@@ -218,9 +261,19 @@ def get_question_source_pdf(
 def update_question(
     question_id: str,
     payload: QuestionUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
+    workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
+    outbox = _collect_notifications(
+        workflow_service,
+        lambda notifier: notifier.notify_exam_owners_question_reopened(
+            question_id=question_id,
+            question_code=(workflow_service.questions.find_pair(question_id) or [{}])[0]
+            .get("question_code") or "Câu hỏi",
+            actor_user_id=current_user.id,
+        ),
+    )
     try:
         question = service.update(
             question_id,
@@ -228,6 +281,7 @@ def update_question(
             current_user.id,
             actor_role=current_user.role,
             current_user=current_user,
+            notifications=outbox,
         )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
@@ -239,6 +293,15 @@ def update_question(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not question:
         raise HTTPException(status_code=404, detail="Không tìm thấy câu hỏi")
+    # The edit created a new version, so open exams pinned to the old one can
+    # no longer be finalized until it is reviewed and re-selected.
+    if outbox is None:
+        safe_notify_exam_owners_question_reopened(
+            database=workflow_service.db,
+            question_id=question_id,
+            question_code=question.get("question_code") or "Câu hỏi",
+            actor_user_id=current_user.id,
+        )
     return question
 
 
@@ -246,7 +309,7 @@ def update_question(
 def update_question_sharing(
     question_id: str,
     payload: QuestionSharingRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_bank_sharing),
     service: QuestionService = Depends(get_question_service),
 ):
     try:
@@ -263,14 +326,21 @@ def update_question_sharing(
 @router.post("/{question_id}/submit-review", response_model=QuestionResponse)
 def submit_question_for_review(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
     workflow_service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:
         previous_question = service.get(question_id, current_user)
         previous_review_status = previous_question.get("review_status") if previous_question else None
-        question = service.submit_for_review(question_id, current_user)
+        outbox = _collect_notifications(
+            workflow_service,
+            lambda notifier: notifier.notify_question_resubmitted(
+                question_id=question_id, previous_review_status=previous_review_status,
+                actor_user_id=current_user.id,
+            ),
+        )
+        question = service.submit_for_review(question_id, current_user, notifications=outbox)
         if question:
             if (
                 previous_review_status != "PENDING"
@@ -304,12 +374,13 @@ def submit_question_for_review(
                             question_id,
                         )
                 question = service.get(question_id, current_user)
-            safe_notify_question_resubmitted(
-                database=workflow_service.db,
-                question_id=question_id,
-                previous_review_status=previous_review_status,
-                actor_user_id=current_user.id,
-            )
+            if outbox is None:
+                safe_notify_question_resubmitted(
+                    database=workflow_service.db,
+                    question_id=question_id,
+                    previous_review_status=previous_review_status,
+                    actor_user_id=current_user.id,
+                )
     except RuntimeError as exc:
         if str(exc) == "VERSION_CONFLICT":
             raise HTTPException(status_code=409, detail="Câu hỏi đã được cập nhật bởi người khác") from exc
@@ -326,7 +397,7 @@ def submit_question_for_review(
 @router.delete("/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_question(
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_question_author),
     service: QuestionService = Depends(get_question_service),
 ):
     try:

@@ -41,6 +41,8 @@ class SubjectUpdatePayload(BaseModel):
     subject_name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
     is_active: bool | None = None
+    # Bắt buộc khi đổi mã học phần đang được dùng: bản lưu cũ của câu hỏi vẫn giữ mã cũ.
+    confirm_code_change: bool = False
 
 
 class ChapterUpdatePayload(BaseModel):
@@ -124,6 +126,11 @@ class AiModelActivationPayload(BaseModel):
     is_active: bool = True
 
 
+class AiModelVersionActivationPayload(BaseModel):
+    model_code: str = Field(..., min_length=1, max_length=80)
+    version: int = Field(..., ge=1)
+
+
 class AiModelHealthCheckPayload(BaseModel):
     model_code: str = Field(..., min_length=1, max_length=80)
     prompt: str = Field(
@@ -150,6 +157,8 @@ class PromptTemplateActivationPayload(BaseModel):
 
 
 class PromptTemplateTestPayload(BaseModel):
+    template_key: str | None = Field(None, min_length=1, max_length=120)
+    version: int | None = Field(None, ge=1)
     context: str = Field(
         "Stack uses LIFO, queue uses FIFO.",
         min_length=1,
@@ -167,6 +176,16 @@ class EvaluationPolicyPayload(BaseModel):
     thresholds: dict[str, float]
     create_new_version: bool = True
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_thresholds(self):
+        keys = ("yellow_min", "pass_min", "green_min")
+        values = [self.thresholds.get(key) for key in keys]
+        if any(value is None or not math.isfinite(value) or value < 0 or value > 1 for value in values):
+            raise ValueError("Ba ngưỡng đánh giá phải là số từ 0 đến 1")
+        if not (values[0] <= values[1] <= values[2]):
+            raise ValueError("Ngưỡng phải theo thứ tự: Cần xem lại ≤ Điểm đạt ≤ Đạt tốt")
+        return self
 
 
 class EvaluationPolicyActivationPayload(BaseModel):

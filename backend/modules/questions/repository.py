@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from bson import ObjectId
@@ -9,7 +9,10 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import mongo_transaction
+from modules.catalog.postgres_subject_repository import subject_record
+from modules.documents.store import get_document_repository
 
 
 def utc_now() -> datetime:
@@ -69,6 +72,9 @@ def serialize_question(question: dict, version: dict) -> dict:
             "subject": subject_snapshot,
         }
     submitted_by_user_id = review_submission.get("submitted_by_user_id")
+    if not submitted_by_user_id and question.get("review_status") != "DRAFT":
+        # Câu cũ không lưu người gửi duyệt: người tạo câu là người gửi.
+        submitted_by_user_id = question.get("created_by_user_id") or version.get("created_by_user_id")
     submitted_at = review_submission.get("submitted_at")
     return json_safe(
         {
@@ -83,6 +89,14 @@ def serialize_question(question: dict, version: dict) -> dict:
             "review_submission": review_submission,
             "submitted_by_user_id": submitted_by_user_id,
             "submitted_at": submitted_at,
+            # Người tạo câu và người tạo phiên bản hiện tại: không được tự duyệt (trừ Admin có lý do).
+            "author_user_ids": list(
+                dict.fromkeys(
+                    str(item)
+                    for item in (question.get("created_by_user_id"), version.get("created_by_user_id"))
+                    if item
+                )
+            ),
             "lifecycle_status": question["lifecycle_status"],
             "evaluation_status": question["evaluation_status"],
             "review_status": question["review_status"],
@@ -134,6 +148,7 @@ class QuestionRepository(Protocol):
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
+        override_only: bool = False,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         submitted_from: datetime | None = None,
@@ -190,6 +205,13 @@ class QuestionReferenceRepository(Protocol):
         page_numbers: list[int],
     ) -> list[dict]: ...
 
+    def find_excerpt_pages(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId,
+        text: str,
+    ) -> list[int]: ...
+
     def find_subject(self, subject_id: ObjectId) -> dict | None: ...
 
 
@@ -201,13 +223,18 @@ class MongoQuestionReferenceRepository:
         return self.db.document_chunks.find_one({"_id": chunk_id})
 
     def find_document(self, document_id: ObjectId) -> dict | None:
-        return self.db.documents.find_one(
-            {
-                "_id": document_id,
-                "schema_version": SCHEMA_VERSION,
-                "archived_at": None,
-            }
-        )
+        return get_document_repository(self.db).find_by_id(document_id)
+
+    def _document_pages(self, document_id: ObjectId,
+                        ocr_job_id: ObjectId | None) -> list[dict]:
+        if settings.document_store == "mongo":
+            query = {"document_id": document_id}
+            if ocr_job_id is not None:
+                query["ocr_job_id"] = ocr_job_id
+            return list(self.db.document_pages.find(query).sort("page_number", 1))
+        repository = get_document_repository(self.db)
+        return (repository.list_pages_for_job(document_id, ocr_job_id)
+                if ocr_job_id is not None else repository.list_pages_for_document(document_id))
 
     def document_contains_text(
         self,
@@ -218,13 +245,7 @@ class MongoQuestionReferenceRepository:
         normalized_text = " ".join(str(text or "").split()).casefold()
         if not normalized_text:
             return False
-        query: dict = {"document_id": document_id}
-        if ocr_job_id is not None:
-            query["ocr_job_id"] = ocr_job_id
-        pages = self.db.document_pages.find(
-            query,
-            {"cleaned_text": 1, "raw_text": 1, "page_number": 1},
-        ).sort("page_number", 1)
+        pages = self._document_pages(document_id, ocr_job_id)
         document_text = " ".join(
             " ".join(str(page.get("cleaned_text") or page.get("raw_text") or "").split())
             for page in pages
@@ -239,16 +260,41 @@ class MongoQuestionReferenceRepository:
     ) -> list[dict]:
         if not page_numbers:
             return []
-        query: dict = {
-            "document_id": document_id,
-            "page_number": {"$in": sorted(set(page_numbers))},
-        }
-        if ocr_job_id is not None:
-            query["ocr_job_id"] = ocr_job_id
-        return list(self.db.document_pages.find(query).sort("page_number", 1))
+        selected = set(page_numbers)
+        return [page for page in self._document_pages(document_id, ocr_job_id)
+                if page.get("page_number") in selected]
+
+    def find_excerpt_pages(
+        self,
+        document_id: ObjectId,
+        ocr_job_id: ObjectId,
+        text: str,
+    ) -> list[int]:
+        excerpt = " ".join(str(text or "").split()).casefold()
+        if not excerpt:
+            return []
+        pages = self._document_pages(document_id, ocr_job_id)
+        parts: list[str] = []
+        spans: list[tuple[int, int, int]] = []
+        offset = 0
+        for page in pages:
+            content = " ".join(str(page.get("cleaned_text") or page.get("raw_text") or "").split()).casefold()
+            if not content:
+                continue
+            if parts:
+                offset += 1
+            start = offset
+            offset += len(content)
+            parts.append(content)
+            spans.append((start, offset, int(page.get("page_number") or page.get("unit_number") or 0)))
+        match_start = " ".join(parts).find(excerpt)
+        if match_start < 0:
+            return []
+        match_end = match_start + len(excerpt)
+        return [number for start, end, number in spans if start < match_end and end > match_start]
 
     def find_subject(self, subject_id: ObjectId) -> dict | None:
-        return self.db.subjects.find_one({"_id": subject_id, "is_active": True})
+        return subject_record(self.db, subject_id, active_only=True)
 
 
 class MongoQuestionRepository:
@@ -296,6 +342,7 @@ class MongoQuestionRepository:
         approved_current_only: bool = False,
         waiting_since: datetime | None = None,
         overdue_at: datetime | None = None,
+        override_only: bool = False,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         submitted_from: datetime | None = None,
@@ -327,7 +374,11 @@ class MongoQuestionRepository:
                 if len(evaluation_statuses) > 1
                 else evaluation_statuses[0]
             )
-        if assignment_status:
+        if assignment_status == "UNASSIGNED":
+            # Questions never assigned have no review_assignment.status at all;
+            # {$in: [None, ...]} matches the missing field as well.
+            match["review_assignment.status"] = {"$in": ["UNASSIGNED", None]}
+        elif assignment_status:
             match["review_assignment.status"] = assignment_status
         if assigned_reviewer_user_id is not None:
             match["review_assignment.reviewer_user_id"] = assigned_reviewer_user_id
@@ -341,6 +392,13 @@ class MongoQuestionRepository:
             match["review_assignment.lock_expires_at"] = {"$lte": overdue_at}
         if secondary_status:
             match["secondary_review.status"] = secondary_status
+        if override_only:
+            # Questions whose latest decision was taken against the AI suggestion.
+            override_review_ids = [
+                review["_id"]
+                for review in self.db.question_reviews.find({"override.applied": True}, {"_id": 1})
+            ]
+            match["latest_review_id"] = {"$in": override_review_ids}
         if created_from is not None or created_to is not None:
             created_at_match: dict = {}
             if created_from is not None:
@@ -452,6 +510,8 @@ class MongoQuestionRepository:
             "updated": {"updated_at": -1, "_id": -1},
         }.get(sort_by)
         if sort_spec is None:
+            now = utc_now()
+            sla_cutoff = now - timedelta(hours=max(1, settings.review_sla_hours))
             pipeline.append(
                 {
                     "$addFields": {
@@ -462,16 +522,35 @@ class MongoQuestionRepository:
                                         "case": {
                                             "$and": [
                                                 {"$eq": ["$review_assignment.status", "IN_REVIEW"]},
-                                                {"$lte": ["$review_assignment.lock_expires_at", utc_now()]},
+                                                {"$lte": ["$review_assignment.lock_expires_at", now]},
                                             ]
                                         },
                                         "then": 0,
                                     },
-                                    {"case": {"$eq": ["$secondary_review.status", "AWAITING_SECONDARY"]}, "then": 1},
-                                    {"case": {"$eq": ["$quality_summary.color", "RED"]}, "then": 2},
-                                    {"case": {"$in": ["$evaluation_status", ["NOT_STARTED", "ERROR", "STALE"]]}, "then": 3},
+                                    # Câu đã chờ quá hạn duyệt (SLA) được đưa lên ngay sau câu mất khoá.
+                                    {
+                                        "case": {
+                                            "$and": [
+                                                {"$eq": ["$review_status", "PENDING"]},
+                                                {"$ne": [{"$ifNull": ["$review_submission.submitted_at", None]}, None]},
+                                                {"$lte": ["$review_submission.submitted_at", sla_cutoff]},
+                                            ]
+                                        },
+                                        "then": 1,
+                                    },
+                                    {"case": {"$eq": ["$secondary_review.status", "AWAITING_SECONDARY"]}, "then": 2},
+                                    {
+                                        "case": {
+                                            "$and": [
+                                                {"$eq": ["$quality_summary.color", "RED"]},
+                                                {"$in": ["$evaluation_status", ["PASSED", "FAILED"]]},
+                                            ]
+                                        },
+                                        "then": 3,
+                                    },
+                                    {"case": {"$in": ["$evaluation_status", ["NOT_STARTED", "ERROR", "STALE"]]}, "then": 4},
                                 ],
-                                "default": 4,
+                                "default": 5,
                             }
                         }
                     }

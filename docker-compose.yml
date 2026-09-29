@@ -22,57 +22,68 @@ services:
       DOCLING_OCR_LANGUAGES: vie
       DOCLING_TIMEOUT: "600"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
-      EASYOCR_GPU: ${EASYOCR_GPU:-true}
+      EASYOCR_GPU: ${EASYOCR_GPU:-false}
       EASYOCR_LANGUAGES: ${EASYOCR_LANGUAGES:-vi,en}
       EASYOCR_BATCH_SIZE: ${EASYOCR_BATCH_SIZE:-2}
       EASYOCR_MODEL_STORAGE_DIRECTORY: /app/data/easyocr_models
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU CHẠY BẰNG GPU (NVIDIA)
-    # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
     depends_on:
       docling:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   mongodb:
-    image: mongo:latest
+    image: mongo:7.0
     container_name: nckh-mongodb
     ports:
-      - "27017:27017"
+      - "${MONGO_HOST_PORT:-27018}:27017"
     volumes:
       - mongodb_data:/data/db
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--quiet"]
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
-      interval: 5s
+      interval: 5m
+      start_interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
     logging: &service-logging
       driver: local
       options:
         max-size: "10m"
         max-file: "3"
+
+  postgres:
+    image: postgres:17
+    container_name: nckh-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nckh}
+      POSTGRES_USER: ${POSTGRES_USER:-nckh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nckh_local_dev_only}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nckh} -d ${POSTGRES_DB:-nckh}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *service-logging
 
   worker:
     image: nckh-backend:docling
@@ -93,26 +104,20 @@ services:
       DOCLING_OCR_LANGUAGES: vie
       DOCLING_TIMEOUT: "600"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     depends_on:
       docling:
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
     logging: *service-logging
@@ -170,4 +175,5 @@ services:
 volumes:
   docling_cache:
   mongodb_data:
+  postgres_data:
   huggingface_cache:

@@ -6,6 +6,8 @@
 
 Tài liệu này tóm tắt lại toàn bộ đề tài từ bản Thuyết minh, dùng làm ngữ cảnh tham chiếu nhanh khi phát triển (vibe code) — không cần mở lại file PDF gốc.
 
+Đang chuyển dữ liệu nghiệp vụ từ MongoDB sang PostgreSQL: đọc [mục 12](#12-refactor-cơ-sở-dữ-liệu-postgresql--mongodb) để biết đã thay đổi gì và cần lưu ý gì khi code.
+
 ---
 
 ## 1. Bài toán & lý do làm
@@ -70,7 +72,8 @@ NCKH/
   - OCR: `EasyOCR` + `pypdfium2` (GPU, xử lý chọn lọc các trang PDF scan tiếng Việt, không cần Poppler).
   - Vector DB: `chromadb` + `sentence-transformers` (embedding & retrieval cho RAG).
   - LLM: `google-genai` hiện dùng để thử nghiệm (mục tiêu cuối là LLM local qua PyTorch CUDA — `torch`/`torchvision`/`torchaudio` đã có trong requirements).
-  - Lưu trữ tài liệu/metadata: MongoDB (`pymongo`).
+  - Lưu trữ dữ liệu: PostgreSQL (`psycopg`) cho dữ liệu nghiệp vụ, MongoDB (`pymongo`) cho chunk/vector RAG — đang trong giai đoạn chuyển đổi, xem [mục 12](#12-refactor-cơ-sở-dữ-liệu-postgresql--mongodb).
+  - File (tài liệu gốc, artifact OCR, avatar): thư mục local hoặc object storage tương thích S3 (`boto3`).
   - Prompt được tổ chức theo **thang đo BLOOM** và theo **loại câu hỏi** (`prompts/bloom/`, `prompts/question_type/`).
 
 ## 5. Flow hoạt động dự kiến (end-to-end)
@@ -205,19 +208,141 @@ Các CRUD endpoint:
 - `/api/v1/questions`
 - `/api/v1/questions/{question_id}/versions`
 
-Thiết kế dữ liệu chi tiết xem tại [`DATABASE_DESIGN_V2.md`](DATABASE_DESIGN_V2.md).
-# Chạy Docker
+Thiết kế dữ liệu chi tiết xem tại [`docs/DATABASE_DESIGN_V2.md`](docs/DATABASE_DESIGN_V2.md).
 
-Trên PowerShell, chạy lệnh sau để build và khởi động dự án với đầu ra gọn:
+## 12. Refactor cơ sở dữ liệu: PostgreSQL + MongoDB
+
+> **Tóm tắt nhanh:** Dữ liệu nghiệp vụ giờ **mặc định lưu ở PostgreSQL**, không cần bật cờ nào. MongoDB chỉ còn giữ chunk/vector cho RAG. **Sau khi pull code này, mỗi người phải làm một lần bước [Chuẩn bị PostgreSQL trên máy mình](#chuẩn-bị-postgresql-trên-máy-mình)** (tạo bảng + chép dữ liệu cũ từ MongoDB), nếu không backend sẽ không khởi động. Hãy đọc phần [Quy tắc khi viết code](#quy-tắc-khi-viết-code-mới) trước khi thêm dữ liệu hoặc collection mới.
+
+### Vì sao đổi?
+
+- **Nhiều thao tác phải thành công cùng lúc.** Ví dụ khi Reviewer duyệt câu hỏi: lưu quyết định, đổi trạng thái câu hỏi, dừng job AI, ghi audit và gửi thông báo. PostgreSQL gói tất cả vào một transaction: hoặc xong hết, hoặc không có gì thay đổi.
+- **Ràng buộc dữ liệu chặt hơn.** Khóa ngoại chặn việc xóa môn học/tài liệu đang được câu hỏi dùng, hoặc câu hỏi trỏ tới người dùng không tồn tại.
+- **Lọc và thống kê dễ hơn.** Hàng đợi Reviewer, dashboard, trang Admin là các truy vấn có điều kiện và đếm — thế mạnh của SQL.
+- **Chuẩn bị lên cloud.** Chạy nhiều backend/worker cùng lúc; file lưu trên object storage thay vì ổ đĩa một máy.
+
+### Dữ liệu nằm ở đâu sau khi đổi
+
+| Loại dữ liệu | Nơi lưu |
+|---|---|
+| Người dùng, quyền, học phần/chương/CLO, từ điển, cấu hình AI | PostgreSQL |
+| Tài liệu, trang OCR, job OCR/chunk/index | PostgreSQL |
+| Câu hỏi và các phiên bản, đánh giá AI, duyệt, bình luận, draft | PostgreSQL |
+| Job sinh câu hỏi, job đánh giá, đề thi và mã đề | PostgreSQL |
+| Thông báo, audit, cấu hình và lịch sử xuất Moodle | PostgreSQL |
+| Chunk, chunk set, metadata embedding (dùng cho RAG) | **Vẫn ở MongoDB** |
+| Vector tìm kiếm | **Vẫn ở ChromaDB** |
+| File gốc, artifact OCR, avatar | Thư mục local, hoặc S3/MinIO/R2/GCS khi bật `STORAGE_PROVIDER=s3` |
+
+ID vẫn là chuỗi ObjectId 24 ký tự như cũ, nên API và frontend **không đổi**.
+
+### Công tắc bật/tắt (cờ trong `backend/.env`)
+
+Mỗi nhóm dữ liệu có một cờ riêng, giá trị `postgres` (**mặc định**) hoặc `mongo`. Giá trị `mongo` chỉ dùng để **quay lui** khi có sự cố, không dùng cho công việc thường ngày. Đổi cờ xong phải khởi động lại **cả backend lẫn worker**.
+
+| Cờ | Nhóm dữ liệu | Cần bật thêm |
+|---|---|---|
+| `USER_STORE` | Người dùng, phiên đăng nhập | — |
+| `CATALOG_STORE` | Học phần, chương, CLO | `USER_STORE` |
+| `DICTIONARY_STORE` | Từ điển từ khóa | — |
+| `AI_CONFIG_STORE` | Model, prompt, policy đánh giá | — |
+| `DOCUMENT_STORE` | Tài liệu, OCR, job tài liệu | `USER_STORE`, `CATALOG_STORE` |
+| `QUESTION_STORE` | Câu hỏi, duyệt, đánh giá, publication Moodle | `USER_STORE`, `CATALOG_STORE` |
+| `GENERATION_STORE` | Job/lịch sử sinh câu hỏi | `USER_STORE`, `DOCUMENT_STORE` |
+| `EXAM_STORE` | Đề thi, mã đề | `QUESTION_STORE`, `CATALOG_STORE` |
+| `NOTIFICATION_STORE` | Thông báo | `USER_STORE` |
+| `AUDIT_STORE` | Nhật ký audit | — |
+| `REVIEW_POLICY_STORE` | Chính sách duyệt 2 vòng | `USER_STORE` |
+| `MOODLE_TARGET_STORE` | Cấu hình Moodle target | `USER_STORE` |
+| `LLM_SLOT_STORE` | Giới hạn số lời gọi model đồng thời | — |
+| `STORAGE_PROVIDER` | Nơi lưu **file mới**: `local` hoặc `s3` | `S3_BUCKET`, v.v. |
+
+Thiếu cờ phụ thuộc thì backend báo lỗi ghi rõ cờ còn thiếu ngay khi tính năng đó được dùng tới. ⚠️ **Trên môi trường thật, bật tất cả cờ cùng một lúc theo runbook**, không bật lẻ từng cờ: các nhóm đọc dữ liệu của nhau, bật lệch sẽ thấy thiếu dữ liệu.
+
+### Chuẩn bị PostgreSQL trên máy mình
+
+Làm **một lần** sau khi pull. `docker compose up -d` đã có sẵn PostgreSQL 17 (`nckh-postgres`, cổng `127.0.0.1:5432`). Thêm dòng `POSTGRES_DSN` như trong `backend/.env.example` vào `backend/.env` (thiếu dòng này backend báo `POSTGRES_DSN is required`), rồi từ thư mục `backend`:
 
 ```powershell
-.\start-docker.ps1
+# 1. Tạo bảng (chạy lại được, chỉ áp phần còn thiếu)
+python -m db.migrate --apply
+# 2. Xem sẽ chép bao nhiêu bản ghi từ MongoDB (không ghi gì)
+python -m db.copy_business_data
+# 3. Chép thật vào PostgreSQL, rồi đối soát hai bên
+python -m db.copy_business_data --apply
+python -m db.verify_business_data
 ```
 
-Sau khi thành công, mở `http://localhost`.
+Không cần đặt cờ nào. Nếu `backend/.env` cũ của bạn còn dòng `*_STORE=mongo` thì xóa đi. Khởi động lại backend và worker. Muốn quay lui thì đặt cả 13 cờ về `mongo`. Lưu ý: dữ liệu tạo trong lúc chạy PostgreSQL sẽ không có bên MongoDB.
+
+Nếu máy bạn đã có database `nckh` từ lần thử trước (bảng cũ, thiếu migration), cách sạch nhất là tạo lại rồi làm lại 3 bước trên:
+
+```powershell
+docker exec nckh-postgres psql -U nckh -d postgres -c "DROP DATABASE nckh" -c "CREATE DATABASE nckh OWNER nckh"
+```
+
+### Chạy test
+
+Test PostgreSQL chỉ chạy khi được bật rõ ràng, và phải trỏ tới **một database riêng để test** (test tự tạo rồi xóa dữ liệu của nó):
+
+```powershell
+cd backend
+$env:PYTHONUTF8 = "1"   # Windows: tránh lỗi mã hóa khi đọc .env
+$env:RUN_POSTGRES_INTEGRATION = "1"
+$env:POSTGRES_DSN = "postgresql://nckh:nckh_local_dev_only@127.0.0.1:5432/nckh_test"
+python -m db.migrate --apply
+python -m pytest tests/test_postgres_*.py
+python -m pytest tests/test_schema_v2.py tests/test_s3_artifact_storage.py
+```
+
+Test S3 dùng thư viện `moto` để giả lập, không cần tài khoản cloud.
+
+Unit test thường vẫn chạy nhánh MongoDB với dữ liệu giả trong bộ nhớ: `backend/tests/conftest.py` đặt mọi cờ về `mongo` cho từng test; test PostgreSQL tự bật cờ nó cần.
+
+### Quy tắc khi viết code mới
+
+1. **Không đọc/ghi thẳng `db.<collection>` cho dữ liệu nghiệp vụ.** Đi qua repository của module, và rẽ nhánh theo cờ giống code xung quanh (ví dụ `PostgresQuestionRepository` bên cạnh `MongoQuestionRepository`). Nếu chỉ viết cho Mongo, tính năng đó sẽ **mất dữ liệu** sau khi chuyển sang PostgreSQL.
+2. **Đổi cấu trúc bảng = thêm file migration mới** trong `backend/db/migrations/` (đánh số tiếp theo, hiện tới `0017`). **Không sửa file migration cũ:** mỗi file có checksum, sửa là `python -m db.migrate` báo lỗi và backend ở chế độ PostgreSQL từ chối khởi động.
+3. **Thêm collection Mongo nghiệp vụ mới** thì phải khai báo cờ sở hữu trong `POSTGRES_OWNERS` (`backend/core/bootstrap.py`). Test sẽ báo lỗi nếu quên.
+4. **Dữ liệu chunk/vector cho RAG vẫn ở MongoDB/ChromaDB**, không chuyển sang PostgreSQL.
+5. **Lưu file qua `artifact_storage(...)`** trong `modules/documents/storage.py`, không tự ghi đường dẫn. Khi đọc, dùng `storage_for_provider(provider)` theo `provider` đã lưu cùng file (file có thể ở local hoặc S3).
+6. **Thông báo gắn với một thao tác trên câu hỏi** thì ghi trong cùng transaction với thao tác đó; xem cách làm với `notification_outbox()` trong `modules/questions/workflow_service.py`.
+7. **Không lưu secret** (token Moodle, key Gemini, AWS key) vào database hay log. S3 lấy credential từ biến môi trường AWS chuẩn.
+
+### Tiến độ
+
+| Việc | Trạng thái |
+|---|---|
+| Chuyển code của mọi nhóm dữ liệu nghiệp vụ sang PostgreSQL (có cờ bật/tắt) | ✅ Xong |
+| Thông báo ghi cùng transaction với thao tác duyệt câu hỏi | ✅ Xong |
+| Lưu file trên object storage S3 + công cụ chuyển file có kiểm tra checksum | ✅ Xong (mới thử với `moto`, chưa thử bucket thật) |
+| Bootstrap không tạo lại collection nghiệp vụ trong MongoDB | ✅ Xong |
+| Runbook chuyển hẳn sang PostgreSQL | ✅ Xong — [`docs/CUTOVER_RUNBOOK.md`](docs/CUTOVER_RUNBOOK.md) |
+| Diễn tập chuyển đổi trên bản sao dữ liệu | ⏳ Chưa làm |
+| Chuyển hẳn môi trường thật (cutover) | ⏳ Chưa làm — hệ thống sẽ dừng một khoảng ngắn, sẽ báo lịch trước |
+| Dọn collection nghiệp vụ cũ trong MongoDB | ⏳ Sau cutover và hết thời gian cho phép rollback |
+
+Chi tiết kỹ thuật (schema, công cụ chép/đối soát): [`backend/db/README.md`](backend/db/README.md). Quy trình chuyển đổi từng bước: [`docs/CUTOVER_RUNBOOK.md`](docs/CUTOVER_RUNBOOK.md).
+
+# Chạy Docker
+
+Trên PowerShell, chạy lệnh sau để build và khởi động backend, worker, MongoDB, PostgreSQL và frontend dev:
+
+```powershell
+docker compose up -d --build
+```
+
+Sau khi thành công, mở `http://localhost:5177`. Backend chạy tại `http://localhost:8000`.
+MongoDB được publish tại cổng `27018` trên máy host; có thể đổi bằng `MONGO_HOST_PORT`.
 
 Chỉ khởi động lại container, không build image:
 
 ```powershell
-.\start-docker.ps1 -NoBuild
+docker compose up -d
+```
+
+Máy có NVIDIA GPU và NVIDIA Container Toolkit có thể chạy với cấu hình GPU:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.gpu.yml up -d --build
 ```

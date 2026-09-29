@@ -1,8 +1,6 @@
 import asyncio
-import hashlib
 import logging
 import os
-import shutil
 import time
 from pathlib import Path
 
@@ -15,9 +13,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.concurrency import run_in_threadpool
 
 from core.config import resolve_path, settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.service import DocumentService, get_document_service
-from modules.documents.retention import deduplicate_artifact_file
+from modules.documents.storage import artifact_storage, storage_for_provider
 from modules.documents.ingest.base import UnsupportedDocumentError
 from modules.ocr.mongodb import (
     attach_original_artifact,
@@ -88,6 +86,7 @@ async def process_ocr_background(
     document_title: str,
     source_file_name: str | None = None,
     mime_type: str | None = None,
+    source_provider: str = "LOCAL",
 ):
     try:
         async with gpu_semaphore:
@@ -96,16 +95,19 @@ async def process_ocr_background(
             update_document_status(document_id, job_id, status="processing")
             started_at = time.time()
             started_perf = time.perf_counter()
-            result = await run_in_threadpool(
-                run_ocr_pipeline,
-                pdf_path=upload_path,
-                output_path=output_path,
-                document_title=document_title,
-                document_id=document_id,
-                source_file_name=source_file_name or Path(upload_path).name,
-                source_uri=upload_path,
-                mime_type=mime_type,
-            )
+            # OCR libraries need a real file; object storage is copied locally
+            # for the duration of the pipeline only.
+            with storage_for_provider(source_provider).local_copy(upload_path) as local_source:
+                result = await run_in_threadpool(
+                    run_ocr_pipeline,
+                    pdf_path=str(local_source),
+                    output_path=output_path,
+                    document_title=document_title,
+                    document_id=document_id,
+                    source_file_name=source_file_name or Path(upload_path).name,
+                    source_uri=upload_path,
+                    mime_type=mime_type,
+                )
             if _ocr_job_cancelled(job_id):
                 return
             stats = result["stats"]
@@ -121,8 +123,9 @@ async def process_ocr_background(
             ):
                 if not artifact_path:
                     continue
-                artifact = Path(artifact_path)
-                blob = deduplicate_artifact_file(artifact, resolve_path(settings.artifact_blob_dir))
+                blob = artifact_storage("artifact_blobs").save_content_addressed(
+                    Path(artifact_path), content_type=artifact_mime,
+                )
                 attach_processing_artifact(
                     document_id,
                     job_id,
@@ -131,6 +134,7 @@ async def process_ocr_background(
                     sha256=blob["sha256"],
                     artifact_type=artifact_type,
                     mime_type=artifact_mime,
+                    provider=blob["provider"],
                 )
             timings_ms = stats.setdefault("timings_ms", {})
             timings_ms["mongo_page_persist"] = round((time.perf_counter() - persist_started) * 1000, 2)
@@ -279,31 +283,33 @@ async def queue_document_upload(
         raise HTTPException(status_code=400, detail="Dung lượng tối đa 50 MB")
 
     title = Path(safe_filename).stem.replace("_", " ")
-    document_id = create_document_record(
-        filename=safe_filename,
-        title=title,
-        uploaded_by_user_id=current_user.id,
-        subject_id=subject_id,
-        chapter_id=chapter_id,
-    )
+    try:
+        document_id = create_document_record(
+            filename=safe_filename,
+            title=title,
+            uploaded_by_user_id=current_user.id,
+            subject_id=subject_id,
+            chapter_id=chapter_id,
+        )
+    except ValueError as exc:
+        file.file.close()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = create_ocr_job(document_id, config={"source_format": upload_type["source_format"]})
     upload_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
     output_path = _OUTPUT_DIR / f"{document_id}_{job_id}_result.md"
 
     try:
-        with upload_path.open("wb") as destination:
-            shutil.copyfileobj(file.file, destination)
-        digest = hashlib.sha256()
-        with upload_path.open("rb") as source:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(block)
+        saved = artifact_storage("uploads").save_stream(
+            upload_path.name, file.file, content_type=upload_type["mime_type"],
+        )
         attach_original_artifact(
             document_id,
-            uri=str(upload_path),
-            size_bytes=file_size,
-            sha256=digest.hexdigest(),
+            uri=saved["uri"],
+            size_bytes=saved["size_bytes"],
+            sha256=saved["sha256"],
             artifact_type=upload_type["artifact_type"],
             mime_type=upload_type["mime_type"],
+            provider=saved["provider"],
         )
     except Exception as exc:
         update_document_status(
@@ -320,11 +326,12 @@ async def queue_document_upload(
         process_ocr_background,
         document_id=document_id,
         job_id=job_id,
-        upload_path=str(upload_path),
+        upload_path=saved["uri"],
         output_path=str(output_path),
         document_title=title,
         source_file_name=safe_filename,
         mime_type=upload_type["mime_type"],
+        source_provider=saved["provider"],
     )
     return {
         "message": "File đã được tiếp nhận và đang xử lý nền",
@@ -357,7 +364,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
     subject_id: str | None = Form(None),
     chapter_id: str | None = Form(None),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
 ):
     return await queue_pdf_ocr_upload(
         background_tasks,
@@ -371,7 +378,7 @@ async def upload_pdf(
 @router.get("/status/{job_id}", summary="Get OCR job status")
 def check_job_status(
     job_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     document_service: DocumentService = Depends(get_document_service),
 ):
     try:

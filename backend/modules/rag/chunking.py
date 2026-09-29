@@ -16,15 +16,18 @@ from pymongo import ReturnDocument
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_document_manager
 from modules.documents.ingest.quality import validate_chunks
-from modules.documents.repository import MongoDocumentRepository, object_id
+from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.documents.service import DocumentService, get_document_service
 from modules.dictionary.dictionary import run_dictionary_auto_learning
-from modules.dictionary.mongodb import get_active_keywords
+from modules.dictionary.service import get_active_keywords
 from modules.rag.chunking_export import export_chunks_to_file
 from modules.rag.chromadb_engine import (
+    chroma_persist_uri,
     embedding_config_hash,
+    embedding_config_matches,
     embedding_config_snapshot,
     embedding_token_lengths,
     embedding_token_offsets,
@@ -79,7 +82,7 @@ DEFINITION_PATTERN = re.compile(r"\b(định nghĩa|khái niệm|là gì)\b", re
 async def chunk_document(
     req: DocumentChunkRequest,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_document_manager),
     document_service: DocumentService = Depends(get_document_service),
 ):
     doc = get_document_record(req.document_id)
@@ -200,7 +203,7 @@ def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, st
         {"provider": "CHROMA", "collection_name": resolved_collection, "is_active": True},
         sort=[("created_at", -1)],
     )
-    if record and record.get("embedding_config_hash") != current_config_hash:
+    if record and not embedding_config_matches(record.get("embedding_model") or {}, record.get("embedding_config_hash")):
         raise ValueError("Vector collection name collision for a different embedding configuration")
     if record:
         return record, resolved_collection
@@ -210,7 +213,7 @@ def _vector_collection_for_current_model(collection_name: str) -> tuple[dict, st
             "$setOnInsert": {
                 "_id": ObjectId(),
                 "schema_version": SCHEMA_VERSION,
-                "persist_uri": settings.chromadb_path,
+                "persist_uri": chroma_persist_uri(),
                 "embedding_model": {"provider": "SENTENCE_TRANSFORMERS", **embedding_config_snapshot()},
                 "embedding_config_hash": current_config_hash,
                 "distance_metric": "COSINE",
@@ -320,7 +323,7 @@ def process_document_reindex_background(
     index_job_id: str,
     collection_name: str,
 ) -> None:
-    repository = MongoDocumentRepository(get_database())
+    repository = get_document_repository()
     try:
         document = repository.find_by_id(document_id)
         if not document:
@@ -386,17 +389,18 @@ def process_document_reindex_background(
                 "embedding_metrics": embedding_metrics,
             },
         )
-        get_database().documents.update_one(
-            {"_id": document["_id"], "archived_at": None},
-            {
-                "$set": {
-                    "current_processing.vector_collection_id": vector["_id"],
-                    "pipeline_summary.index_status": "COMPLETED",
-                    "status": "READY",
-                    "updated_at": now,
-                }
-            },
-        )
+        latest = repository.find_by_id(document_id)
+        if not latest:
+            raise RuntimeError("DOCUMENT_ARCHIVED")
+        processing = dict(latest.get("current_processing") or {})
+        processing["vector_collection_id"] = vector["_id"]
+        summary = dict(latest.get("pipeline_summary") or {})
+        summary["index_status"] = "COMPLETED"
+        repository.update(document_id, {
+            "current_processing": processing,
+            "pipeline_summary": summary,
+            "status": "READY",
+        })
     except Exception as exc:
         logger.exception("Re-index job %s failed", index_job_id)
         repository.update_job(index_job_id, "FAILED", error_message=str(exc))
@@ -408,7 +412,7 @@ def queue_document_reindex(
     collection_name: str | None = None,
 ) -> dict:
     resolved_collection = collection_name or settings.chromadb_collection_name
-    repository = MongoDocumentRepository(get_database())
+    repository = get_document_repository()
     job = repository.create_job(
         document_id,
         "INDEX",

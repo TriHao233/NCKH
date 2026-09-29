@@ -38,8 +38,16 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
     )
     results = {
         "generation_failed": _recover_generation_jobs(db, cutoff, now, message),
-        "evaluation_stale": _recover_evaluation_jobs(db, cutoff, now, message),
-        "document_failed": _recover_document_jobs(db, cutoff, now, message),
+        "evaluation_stale": (
+            _recover_postgres_evaluation_jobs(cutoff, message)
+            if settings.question_store == "postgres"
+            else _recover_evaluation_jobs(db, cutoff, now, message)
+        ),
+        "document_failed": (
+            _recover_postgres_document_jobs(cutoff, message)
+            if settings.document_store == "postgres"
+            else _recover_document_jobs(db, cutoff, now, message)
+        ),
     }
     total = sum(results.values())
     if total:
@@ -47,7 +55,20 @@ def recover_stale_jobs(timeout_minutes: int | None = None) -> dict:
     return results
 
 
+def _recover_postgres_document_jobs(cutoff: datetime, message: str) -> int:
+    from modules.documents.postgres_repository import PostgresDocumentRepository
+    return PostgresDocumentRepository().recover_stale_jobs(cutoff, message)
+
+
+def _recover_postgres_evaluation_jobs(cutoff: datetime, message: str) -> int:
+    from modules.questions.postgres_evaluation_jobs import PostgresEvaluationJobs
+    return PostgresEvaluationJobs().recover_stale(cutoff, message)
+
+
 def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) -> int:
+    if settings.generation_store == "postgres":
+        from modules.generation.postgres_store import PostgresGenerationStore
+        return PostgresGenerationStore().fail_active(message, updated_before=cutoff)
     result = db.generation_jobs.update_many(
         {
             "status": {"$in": ["queued", "processing"]},
@@ -66,6 +87,12 @@ def _recover_generation_jobs(db, cutoff: datetime, now: datetime, message: str) 
 
 def cancel_unfinished_generation_jobs_on_worker_start() -> int:
     """Never resume generation left by a previous worker process."""
+    if settings.generation_store == "postgres":
+        from modules.generation.postgres_store import PostgresGenerationStore
+        changed = PostgresGenerationStore().fail_active("Job đã bị dừng khi worker khởi động lại")
+        if changed:
+            logger.warning("Cancelled %s unfinished generation jobs from previous worker", changed)
+        return changed
     now = utc_now()
     result = get_database().generation_jobs.update_many(
         {"status": {"$in": ["queued", "processing"]}},

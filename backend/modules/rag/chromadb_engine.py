@@ -30,6 +30,14 @@ _model_load_ms = 0.0
 _resolved_precision = ""
 
 
+def _huggingface_model_name() -> str:
+    # Keep the stored embedding snapshot stable for existing Chroma collections.
+    # Hugging Face requires the repository namespace when the local cache is empty.
+    if settings.embedding_model_name == "all-MiniLM-L6-v2":
+        return "sentence-transformers/all-MiniLM-L6-v2"
+    return settings.embedding_model_name
+
+
 class STEmbeddingFunction(EmbeddingFunction):
     def __init__(self, model: SentenceTransformer | None = None):
         self._model = model
@@ -69,6 +77,26 @@ def embedding_config_hash() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def embedding_model_names_match(left: str | None, right: str | None) -> bool:
+    def canonical(name):
+        name = str(name or "").strip().rstrip("/")
+        return name.removeprefix("sentence-transformers/")
+
+    return bool(left and right) and canonical(left) == canonical(right)
+
+
+def embedding_config_matches(indexed_model: dict, indexed_hash: str | None) -> bool:
+    if not embedding_model_names_match(indexed_model.get("model_name"), settings.embedding_model_name):
+        return False
+    if not indexed_hash or indexed_hash == embedding_config_hash():
+        return True
+    current = embedding_config_snapshot()
+    return all(
+        key in indexed_model and indexed_model[key] == current[key]
+        for key in ("model_revision", "precision", "normalize_embeddings")
+    )
+
+
 def model_scoped_collection_name(collection_name: str) -> str:
     suffix = embedding_config_hash()[:8]
     if collection_name.endswith(f"_{suffix}"):
@@ -87,7 +115,7 @@ def _get_embedding_model() -> SentenceTransformer:
             model_kwargs = {}
             if settings.embedding_model_revision:
                 model_kwargs["revision"] = settings.embedding_model_revision
-            _embedding_model = SentenceTransformer(settings.embedding_model_name, **model_kwargs)
+            _embedding_model = SentenceTransformer(_huggingface_model_name(), **model_kwargs)
             target_precision = _target_precision()
             if target_precision == "fp16":
                 _embedding_model.half()
@@ -114,7 +142,7 @@ def _get_embedding_tokenizer():
             kwargs = {"use_fast": True}
             if settings.embedding_model_revision:
                 kwargs["revision"] = settings.embedding_model_revision
-            _embedding_tokenizer = AutoTokenizer.from_pretrained(settings.embedding_model_name, **kwargs)
+            _embedding_tokenizer = AutoTokenizer.from_pretrained(_huggingface_model_name(), **kwargs)
     return _embedding_tokenizer
 
 
@@ -279,11 +307,33 @@ def get_chroma_client() -> chromadb.ClientAPI:
         return _chroma_client
     with _client_lock:
         if _chroma_client is None:
-            chroma_path = str(resolve_path(settings.chromadb_path))
             client_settings = chromadb.config.Settings(anonymized_telemetry=False)
-            _chroma_client = chromadb.PersistentClient(path=chroma_path, settings=client_settings)
-            logger.info("ChromaDB initialized at %s", chroma_path)
+            if settings.chroma_mode == "local":
+                chroma_path = str(resolve_path(settings.chromadb_path))
+                _chroma_client = chromadb.PersistentClient(path=chroma_path, settings=client_settings)
+                logger.info("ChromaDB initialized at %s", chroma_path)
+            elif settings.chroma_mode == "http":
+                if not settings.chroma_host or not 1 <= settings.chroma_port <= 65535:
+                    raise ValueError("CHROMA_HOST and CHROMA_PORT must identify a Chroma server")
+                headers = ({"Authorization": f"Bearer {settings.chroma_auth_token}"}
+                           if settings.chroma_auth_token else None)
+                _chroma_client = chromadb.HttpClient(
+                    host=settings.chroma_host, port=settings.chroma_port,
+                    ssl=settings.chroma_ssl, headers=headers, settings=client_settings,
+                )
+                logger.info("ChromaDB initialized at %s", chroma_persist_uri())
+            else:
+                raise ValueError("CHROMA_MODE must be local or http")
     return _chroma_client
+
+
+def chroma_persist_uri() -> str:
+    if settings.chroma_mode == "http":
+        scheme = "https" if settings.chroma_ssl else "http"
+        return f"{scheme}://{settings.chroma_host}:{settings.chroma_port}"
+    if settings.chroma_mode == "local":
+        return str(resolve_path(settings.chromadb_path))
+    raise ValueError("CHROMA_MODE must be local or http")
 
 
 def get_collection(collection_name: str | None = None):

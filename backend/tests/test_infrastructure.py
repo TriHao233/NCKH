@@ -18,7 +18,7 @@ from modules.generation.llm.base import LLMProvider
 from modules.generation.llm.factory import get_llm_execution_snapshot
 from modules.generation.llm.fallback import FallbackProvider
 from modules.questions import workflow_service as workflow_service_module
-from modules.rag.chromadb_engine import model_scoped_collection_name
+from modules.rag.chromadb_engine import embedding_config_matches, embedding_model_names_match, model_scoped_collection_name
 
 
 class MongoTransactionTests(unittest.TestCase):
@@ -45,6 +45,23 @@ class ChromaCollectionNamingTests(unittest.TestCase):
         with patch("modules.rag.chromadb_engine.embedding_config_hash", return_value="abcdef123456"):
             self.assertEqual(model_scoped_collection_name("chunks"), "chunks_abcdef12")
             self.assertEqual(model_scoped_collection_name("chunks_abcdef12"), "chunks_abcdef12")
+
+    def test_embedding_model_aliases_preserve_snapshot_checks(self):
+        self.assertTrue(embedding_model_names_match("all-MiniLM-L6-v2", "sentence-transformers/all-MiniLM-L6-v2"))
+        self.assertFalse(embedding_model_names_match("all-MiniLM-L6-v2", "BAAI/bge-m3"))
+        indexed = {
+            "model_name": "all-MiniLM-L6-v2",
+            "model_revision": None,
+            "precision": "fp32",
+            "normalize_embeddings": True,
+        }
+        with (
+            patch("modules.rag.chromadb_engine.settings.embedding_model_name", "sentence-transformers/all-MiniLM-L6-v2"),
+            patch("modules.rag.chromadb_engine.embedding_config_hash", return_value="new-hash"),
+            patch("modules.rag.chromadb_engine.embedding_config_snapshot", return_value={**indexed, "model_name": "sentence-transformers/all-MiniLM-L6-v2"}),
+        ):
+            self.assertTrue(embedding_config_matches(indexed, "old-hash"))
+            self.assertFalse(embedding_config_matches({**indexed, "precision": "fp16"}, "old-hash"))
 
 
 class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -142,6 +159,9 @@ class JobWorkerTests(unittest.IsolatedAsyncioTestCase):
 
             def heartbeat_evaluation_job(self, *_args):
                 return True
+
+            def evaluation_job_state(self, *_args):
+                return self.db.evaluation_jobs.find_one()
 
             async def process_evaluation_job(self, *_args):
                 process_started.set()
