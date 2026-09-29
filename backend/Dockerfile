@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Copy file requirements và cài đặt dependencies Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 10 -r requirements.txt
 RUN python -m playwright install --with-deps chromium
 
 RUN apt-get update \

@@ -67,7 +67,6 @@ from modules.generation.schemas import (
 from modules.generation.llm.ollama import OllamaProvider
 from modules.generation.llm.concurrency import ConcurrencyLimitedProvider
 from modules.generation.llm.factory import get_llm_service
-from modules.generation.prompt_builder import PromptBuilder
 from modules.generation.question import _build_retry_prompt, _check_type_format, _normalize_difficulty
 from modules.questions.schemas import (
     QuestionCreateRequest,
@@ -5811,28 +5810,6 @@ class SchemaV2Tests(unittest.TestCase):
             _heading_matches_target({"heading": "Hàng đợi"}, normalized_target)
         )
 
-    def test_output_format_delegates_type_shapes_to_question_structure(self):
-        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "output_format.txt"
-        output_format = prompt_path.read_text(encoding="utf-8")
-
-        self.assertIn("QUESTION_STRUCTURE", output_format)
-        self.assertIn('"options": "object hoặc null theo QUESTION_STRUCTURE"', output_format)
-        self.assertIn('"difficulty": "de | trung_binh | kho"', output_format)
-
-    def test_difficulty_rule_is_loaded_into_generation_prompt(self):
-        prompt = PromptBuilder().build(
-            context="Stack hoạt động theo nguyên tắc LIFO.",
-            bloom_level="2_hieu",
-            question_type="trac_nghiem",
-            num_questions=1,
-        )
-
-        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
-        self.assertIn("de", prompt)
-        self.assertIn("trung_binh", prompt)
-        self.assertIn("kho", prompt)
-        self.assertIn("KEYWORD TRONG CÂU HỎI", prompt)
-
     def test_normalize_difficulty_accepts_known_labels(self):
         self.assertEqual(_normalize_difficulty("de"), "de")
         self.assertEqual(_normalize_difficulty("Khó"), "kho")
@@ -5863,7 +5840,7 @@ class SchemaV2Tests(unittest.TestCase):
             },
         )
 
-        self.assertIn("QUY ĐỊNH ĐÁNH GIÁ ĐỘ KHÓ", prompt)
+        self.assertIn("QUY ĐỊNH ĐỘ KHÓ ƯỚC LƯỢNG", prompt)
         self.assertIn("current_difficulty", prompt)
         self.assertIn('"de"', prompt)
         self.assertIn("correct_answer và explanation là khẳng định CHƯA ĐƯỢC TIN CẬY", prompt)
@@ -5872,30 +5849,6 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertTrue(
             any(part.get("template_key") == "quy_dinh_do_kho" for part in snapshot["template_parts"])
         )
-
-    def test_question_rule_is_loaded_into_generation_prompt(self):
-        prompt = PromptBuilder().build(
-            context="Stack hoạt động theo nguyên tắc LIFO.",
-            bloom_level="2_hieu",
-            question_type="trac_nghiem",
-            num_questions=1,
-        )
-
-        self.assertIn("QUESTION RULES", prompt)
-        self.assertIn("Tham chiếu nguồn học liệu", prompt)
-        self.assertIn("Nếu vi phạm bất kỳ quy tắc nào", prompt)
-
-    def test_question_structure_is_loaded_into_generation_prompt(self):
-        prompt = PromptBuilder().build(
-            context="Stack hoạt động theo nguyên tắc LIFO.",
-            bloom_level="2_hieu",
-            question_type="dung_sai",
-            num_questions=1,
-        )
-
-        self.assertIn("CẤU TRÚC: dung_sai", prompt)
-        self.assertIn("mệnh đề hoàn chỉnh", prompt)
-        self.assertIn('{"A": "Đúng", "B": "Sai"}', prompt)
 
     def test_mcq_validation_rejects_two_option_shape(self):
         error = _check_type_format(

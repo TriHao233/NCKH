@@ -166,7 +166,23 @@ class Settings(BaseModel):
         os.getenv("LEXICAL_FALLBACK_DISTANCE_THRESHOLD", "0.55")
     )
 
-    # EasyOCR + PDFium (selective OCR for scanned pages)
+    # Existing deployments stay on EasyOCR until the Docling Compose overlay is used.
+    pdf_ocr_engine: str = os.getenv("PDF_OCR_ENGINE", "easyocr").strip().lower()
+    docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001").rstrip("/")
+    docling_timeout: int = int(os.getenv("DOCLING_TIMEOUT", "600"))
+    docling_poll_seconds: float = float(os.getenv("DOCLING_POLL_SECONDS", "0.5"))
+    docling_ocr_preset: str = os.getenv("DOCLING_OCR_PRESET", "tesseract").strip().lower()
+    docling_ocr_backend: str = os.getenv("DOCLING_OCR_BACKEND", "onnxruntime").strip().lower()
+    docling_ocr_languages: list[str] = [
+        language.strip() for language in os.getenv("DOCLING_OCR_LANGUAGES", "vie").split(",")
+        if language.strip()
+    ]
+    docling_images_scale: float = float(os.getenv("DOCLING_IMAGES_SCALE", "2.0"))
+    docling_table_mode: str = os.getenv("DOCLING_TABLE_MODE", "accurate").strip().lower()
+    docling_do_table_structure: bool = _env_bool("DOCLING_DO_TABLE_STRUCTURE", True)
+    docling_include_images: bool = _env_bool("DOCLING_INCLUDE_IMAGES", True)
+
+    # EasyOCR + PDFium retained for the existing setup and comparison tests.
     easyocr_languages: list[str] = [
         language.strip()
         for language in os.getenv("EASYOCR_LANGUAGES", "vi,en").split(",")

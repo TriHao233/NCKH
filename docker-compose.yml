@@ -1,6 +1,6 @@
 services:
   backend:
-    image: nckh-backend:dev
+    image: nckh-backend:docling
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -16,6 +16,11 @@ services:
       - huggingface_cache:/root/.cache/huggingface
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
     environment:
+      PDF_OCR_ENGINE: docling
+      DOCLING_URL: http://docling:5001
+      DOCLING_OCR_PRESET: tesseract
+      DOCLING_OCR_LANGUAGES: vie
+      DOCLING_TIMEOUT: "600"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
@@ -42,6 +47,8 @@ services:
               capabilities: [gpu]
 
     depends_on:
+      docling:
+        condition: service_healthy
       mongodb:
         condition: service_healthy
     restart: unless-stopped
@@ -68,7 +75,7 @@ services:
         max-file: "3"
 
   worker:
-    image: nckh-backend:dev
+    image: nckh-backend:docling
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -80,6 +87,11 @@ services:
       - huggingface_cache:/root/.cache/huggingface
     command: ["python", "-m", "workers.run"]
     environment:
+      PDF_OCR_ENGINE: docling
+      DOCLING_URL: http://docling:5001
+      DOCLING_OCR_PRESET: tesseract
+      DOCLING_OCR_LANGUAGES: vie
+      DOCLING_TIMEOUT: "600"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
@@ -98,8 +110,44 @@ services:
               count: 1
               capabilities: [gpu]
     depends_on:
+      docling:
+        condition: service_healthy
       mongodb:
         condition: service_healthy
+    restart: unless-stopped
+    logging: *service-logging
+
+  docling:
+    image: nckh-docling-vie:dev-pinned
+    build:
+      context: ./backend
+      dockerfile: Docling.Dockerfile
+    container_name: nckh-docling
+    ports:
+      - "127.0.0.1:5001:5001"
+    environment:
+      DOCLING_DEVICE: cpu
+      DOCLING_NUM_THREADS: "4"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      HF_HOME: /var/cache/docling/huggingface
+      XDG_CACHE_HOME: /var/cache/docling
+      TMPDIR: /var/cache/docling/tmp
+      DOCLING_SERVE_SCRATCH_PATH: /var/cache/docling/scratch
+      DOCLING_SERVE_OCR_BATCH_SIZE: "4"
+      DOCLING_SERVE_LAYOUT_BATCH_SIZE: "4"
+      DOCLING_SERVE_TABLE_BATCH_SIZE: "4"
+      DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS: "0.1"
+      DOCLING_SERVE_OPTIONS_CACHE_SIZE: "1"
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG: "false"
+    volumes:
+      - docling_cache:/var/cache/docling
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      start_period: 90s
+      retries: 20
     restart: unless-stopped
     logging: *service-logging
 
@@ -120,5 +168,6 @@ services:
     logging: *service-logging
 
 volumes:
+  docling_cache:
   mongodb_data:
   huggingface_cache:
