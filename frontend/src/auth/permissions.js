@@ -58,6 +58,11 @@ export const PERMISSION_LABELS = Object.freeze({
 export function assignablePermissions(list) {
   return [...new Set((list || []).filter((item) => ASSIGNABLE_PERMISSIONS.includes(item)))];
 }
+export function hasEffectivePermission(user, permission) {
+  if (!user) return false;
+  if (user.role === 'Admin') return true;
+  return (Array.isArray(user.permissions) ? user.permissions : ROLE_DEFAULT_PERMISSIONS[user.role] || []).includes(permission);
+}
 
 export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/sinh-cau-hoi": Object.freeze(["questions.generate"]),

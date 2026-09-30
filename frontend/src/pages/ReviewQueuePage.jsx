@@ -42,6 +42,7 @@ import {
   metadataGuardrailInsights,
   mergeAiSuggestionsIntoDraft,
 } from '../utils/reviewAiSuggestions';
+import { hasEffectivePermission } from '../auth/permissions';
 import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
 import { shouldRenewLock, renewIntervalMs } from '../utils/reviewLock';
 import '../css/ReviewQueuePage.css';
@@ -644,7 +645,7 @@ function ReviewQueuePage() {
       setTotal(result.total || 0);
       return items;
     } catch (err) {
-      setError(err.message || 'Không tải được hàng đợi kiểm duyệt');
+      setError(err.status === 403 ? 'Tài khoản của bạn hiện không có quyền kiểm duyệt. Liên hệ quản trị viên.' : err.message || 'Không tải được hàng đợi kiểm duyệt');
       setQuestions([]);
       setTotal(0);
       return [];
@@ -708,7 +709,7 @@ function ReviewQueuePage() {
     try {
       setDashboard(await getReviewDashboard());
     } catch (err) {
-      setDashboardError(err.message || 'Không tải được tổng quan người duyệt');
+      setDashboardError(err.status === 403 ? 'Tài khoản của bạn hiện không có quyền kiểm duyệt. Liên hệ quản trị viên.' : err.message || 'Không tải được tổng quan người duyệt');
       setDashboard(null);
     } finally {
       setDashboardLoading(false);
@@ -2393,7 +2394,7 @@ function ReviewQueuePage() {
                       ))}
                       {publications.length === 0 && <p>Chưa có lần xuất bản.</p>}
                       <div className="history-moodle-actions">
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>
+                        {hasEffectivePermission(user, 'questions.export_moodle') && <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>}
                         <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải tệp GIFT</button>
                         <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải tệp XML</button>
                       </div>
