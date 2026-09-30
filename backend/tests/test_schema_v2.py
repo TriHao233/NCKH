@@ -8,10 +8,12 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
 from bson import ObjectId
 from docx import Document
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from main import app
@@ -4161,17 +4163,26 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual("/demo-login" in route_paths, settings.demo_mode)
 
     def test_review_dashboard_route_precedes_question_id_route(self):
-        question_route_paths = [
-            route.path
-            for route in app.routes
-            if getattr(route, "path", "").startswith(f"{settings.api_prefix}/questions")
-            and "GET" in getattr(route, "methods", set())
-        ]
+        from modules.questions.workflow_service import get_workflow_service
 
-        self.assertLess(
-            question_route_paths.index(f"{settings.api_prefix}/questions/review-dashboard"),
-            question_route_paths.index(f"{settings.api_prefix}/questions/{{question_id}}"),
-        )
+        # Exercise dispatch: recent FastAPI versions include routers lazily,
+        # so inspecting app.routes does not expose their individual paths.
+        current_user = _current_user("Reviewer")
+        service = Mock(spec=QuestionWorkflowService)
+        service.review_dashboard.return_value = {"scope": "current_reviewer"}
+        previous_overrides = app.dependency_overrides.copy()
+        app.dependency_overrides[require_reviewer_or_admin] = lambda: current_user
+        app.dependency_overrides[get_workflow_service] = lambda: service
+        client = TestClient(app)
+        try:
+            response = client.get(f"{settings.api_prefix}/questions/review-dashboard")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"scope": "current_reviewer"})
+            service.review_dashboard.assert_called_once_with(current_user)
+        finally:
+            client.close()
+            app.dependency_overrides.clear()
+            app.dependency_overrides.update(previous_overrides)
 
     def test_demo_login_does_not_reenable_disabled_firebase_user(self):
         class FakeFirebaseUser:
