@@ -31,11 +31,33 @@ export const ROLE_DEFAULT_PERMISSIONS = Object.freeze({
   ]),
   Reviewer: Object.freeze([
     "reviews.manage",
-    "questions.read_review_queue",
-    "questions.comment",
     "questions.export_moodle",
   ]),
 });
+
+// Keep in sync with backend/core/dependencies.py.
+export const TEACHER_ASSIGNABLE_PERMISSIONS = Object.freeze([
+  'questions.generate', 'questions.manage_own', 'documents.manage_own', 'exams.manage_own',
+  'catalog.subjects.manage_own', 'questions.share_bank', 'questions.use_shared_bank',
+]);
+export const REVIEW_ASSIGNABLE_PERMISSIONS = Object.freeze(['reviews.manage', 'questions.export_moodle']);
+export const ASSIGNABLE_PERMISSIONS = Object.freeze([
+  ...TEACHER_ASSIGNABLE_PERMISSIONS, ...REVIEW_ASSIGNABLE_PERMISSIONS,
+]);
+export const PERMISSION_LABELS = Object.freeze({
+  'documents.manage_own': 'Quản lý tài liệu của mình',
+  'questions.generate': 'Sinh câu hỏi bằng AI',
+  'questions.manage_own': 'Soạn và quản lý câu hỏi của mình',
+  'questions.share_bank': 'Chia sẻ câu hỏi và tài liệu',
+  'questions.use_shared_bank': 'Dùng câu hỏi, tài liệu được chia sẻ',
+  'exams.manage_own': 'Làm đề thi',
+  'catalog.subjects.manage_own': 'Tạo và sửa học phần của mình',
+  'reviews.manage': 'Kiểm duyệt câu hỏi',
+  'questions.export_moodle': 'Đưa câu đã duyệt lên Moodle',
+});
+export function assignablePermissions(list) {
+  return [...new Set((list || []).filter((item) => ASSIGNABLE_PERMISSIONS.includes(item)))];
+}
 
 export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/sinh-cau-hoi": Object.freeze(["questions.generate"]),

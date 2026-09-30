@@ -17,7 +17,7 @@ import {
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
-import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
+import { ROLE_DEFAULT_PERMISSIONS, TEACHER_ASSIGNABLE_PERMISSIONS, REVIEW_ASSIGNABLE_PERMISSIONS, PERMISSION_LABELS, assignablePermissions } from '../auth/permissions';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
 import '../css/AdminJobsPage.css';
 import '../css/UsersAdminPage.css';
@@ -37,26 +37,14 @@ const ROLE_COLOR = {
   Reviewer: '#087f5b',
 };
 
-const PERMISSION_OPTIONS = [
-  { value: 'questions.generate', label: 'Sinh câu hỏi' },
-  { value: 'questions.manage_own', label: 'Quản lý câu hỏi cá nhân' },
-  { value: 'questions.manage_all', label: 'Quản lý mọi câu hỏi' },
-  { value: 'questions.share_bank', label: 'Chia sẻ ngân hàng câu hỏi' },
-  { value: 'questions.use_shared_bank', label: 'Dùng ngân hàng được chia sẻ' },
-  { value: 'questions.read_review_queue', label: 'Xem hàng đợi kiểm duyệt' },
-  { value: 'questions.comment', label: 'Bình luận câu hỏi' },
-  { value: 'questions.export_moodle', label: 'Xuất câu hỏi ra Moodle' },
-  { value: 'reviews.manage', label: 'Kiểm duyệt câu hỏi' },
-  { value: 'documents.manage_own', label: 'Quản lý tài liệu cá nhân' },
-  { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
-  { value: 'exams.manage_own', label: 'Làm đề thi' },
-  { value: 'admin.overview', label: 'Tổng quan Admin' },
-  { value: 'admin.users', label: 'Quản lý người dùng' },
-  { value: 'admin.catalog', label: 'Quản lý danh mục' },
-  { value: 'admin.audit', label: 'Xem audit log' },
-  { value: 'admin.jobs', label: 'Quản lý job' },
-  { value: 'admin.moodle', label: 'Quản lý Moodle' },
-];
+function PermissionFields({ role, permissions, onToggle }) {
+  if (role === 'Admin') return <p className="field-hint">Quản trị viên luôn có toàn bộ quyền.</p>;
+  return [['Giảng viên', TEACHER_ASSIGNABLE_PERMISSIONS], ['Kiểm duyệt', REVIEW_ASSIGNABLE_PERMISSIONS]].map(([label, keys]) => (
+    <fieldset key={label} className="field-group"><legend>{label}</legend><div className="permission-grid">
+      {keys.map((key) => <label className="field-checkbox" key={key}><input type="checkbox" checked={permissions.includes(key)} onChange={() => onToggle(key)} />{PERMISSION_LABELS[key]}</label>)}
+    </div></fieldset>
+  ));
+}
 
 const emptyCreateForm = {
   email: '',
@@ -67,7 +55,7 @@ const emptyCreateForm = {
 };
 
 function permissionsForRole(role) {
-  return [...(ROLE_DEFAULT_PERMISSIONS[role] || [])];
+  return role === 'Admin' ? [] : assignablePermissions(ROLE_DEFAULT_PERMISSIONS[role]);
 }
 
 function togglePermission(list, permission) {
@@ -107,8 +95,8 @@ function parseImportRows(text) {
         email,
         display_name: displayName || email,
         role: ROLE_LABEL[role] ? role : 'Teacher',
-        permissions: permissions
-          ? permissions.split('|').map((item) => item.trim()).filter(Boolean)
+        permissions: role === 'Admin' ? [] : permissions
+          ? assignablePermissions(permissions.split('|').map((item) => item.trim()).filter(Boolean))
           : permissionsForRole(ROLE_LABEL[role] ? role : 'Teacher'),
       };
     });
@@ -264,7 +252,7 @@ function UsersAdminPage() {
         ...createForm,
         email,
         display_name: displayName,
-        permissions: createForm.permissions || [],
+        permissions: createForm.role === 'Admin' ? [] : assignablePermissions(createForm.permissions),
       };
       if (createMode === 'invite') {
         const result = await inviteUser({
@@ -292,7 +280,7 @@ function UsersAdminPage() {
     setEditDisplayName(user.display_name || '');
     setEditRole(user.role);
     setEditActive(user.is_active);
-    setEditPermissions(user.permissions || permissionsForRole(user.role));
+    setEditPermissions(assignablePermissions(user.permissions || permissionsForRole(user.role)));
   };
 
   const closeEdit = () => {
@@ -309,7 +297,7 @@ function UsersAdminPage() {
         display_name: editDisplayName,
         role: editRole,
         is_active: editActive,
-        permissions: editPermissions,
+        permissions: editRole === 'Admin' ? [] : assignablePermissions(editPermissions),
       });
       setEditing(null);
       await refreshAll();
@@ -611,24 +599,7 @@ function UsersAdminPage() {
               </select>
             </div>
 
-            <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
-              <div className="permission-grid">
-                {PERMISSION_OPTIONS.map((permission) => (
-                  <label className="field-checkbox" key={permission.value}>
-                    <input
-                      type="checkbox"
-                      checked={(createForm.permissions || []).includes(permission.value)}
-                      onChange={() => setCreateForm({
-                        ...createForm,
-                        permissions: togglePermission(createForm.permissions, permission.value),
-                      })}
-                    />
-                    {permission.label}
-                  </label>
-                ))}
-              </div>
-            </div>
+            <PermissionFields role={createForm.role} permissions={createForm.permissions || []} onToggle={(key) => setCreateForm({ ...createForm, permissions: togglePermission(createForm.permissions, key) })} />
 
             {inviteResult?.reset_link && (
               <div className="users-result-box">
@@ -675,6 +646,7 @@ function UsersAdminPage() {
                 </p>
               )}
             </div>
+            {importText.split(/\r?\n/).some((line) => (line.split(',')[3] || '').split('|').some((key) => key.trim() && !assignablePermissions([key.trim()]).length)) && <p className="field-hint field-hint--warn">Quyền không hợp lệ hoặc chỉ dành cho Admin sẽ bị bỏ khỏi CSV trước khi gửi.</p>}
             {importResult && (
               <div className="users-result-box">
                 <b>{importResult.created} tạo thành công, {importResult.failed} lỗi</b>
@@ -752,21 +724,8 @@ function UsersAdminPage() {
               </select>
             </div>
 
-            <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
-              <div className="permission-grid">
-                {PERMISSION_OPTIONS.map((permission) => (
-                  <label className="field-checkbox" key={permission.value}>
-                    <input
-                      type="checkbox"
-                      checked={(editPermissions || []).includes(permission.value)}
-                      onChange={() => setEditPermissions((current) => togglePermission(current, permission.value))}
-                    />
-                    {permission.label}
-                  </label>
-                ))}
-              </div>
-            </div>
+            <PermissionFields role={editRole} permissions={editPermissions} onToggle={(key) => setEditPermissions((current) => togglePermission(current, key))} />
+            <p className="field-hint">Thay đổi quyền có hiệu lực trên giao diện sau khi người dùng đăng nhập lại.</p>
 
             <div className="field-group field-group--checkbox">
               <label className="field-checkbox">
