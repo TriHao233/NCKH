@@ -1,6 +1,7 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+  renewQuestionReview, getReviewPolicy,
   assignQuestionReview,
   autoEvaluateQuestion,
   claimQuestionReview,
@@ -42,6 +43,7 @@ import {
   mergeAiSuggestionsIntoDraft,
 } from '../utils/reviewAiSuggestions';
 import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
+import { shouldRenewLock, renewIntervalMs } from '../utils/reviewLock';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -557,6 +559,52 @@ function ReviewQueuePage() {
   const [workspaceView, setWorkspaceView] = useState('queue');
   const [detailView, setDetailView] = useState('question');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [reviewPolicy, setReviewPolicy] = useState(null);
+  const lastActivityAt = useRef(Date.now());
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const lockTimeout = reviewPolicy?.lock_timeout_minutes || 30;
+  const lockLostMessage = 'Bạn không còn giữ câu này — người khác đã nhận. Bản nháp đánh giá vẫn được lưu.';
+  const applyRenewedQuestion = (fresh) => {
+    setSelected((current) => current?.id === fresh.id ? fresh : current);
+    setQuestions((current) => current.map((item) => item.id === fresh.id ? fresh : item));
+  };
+  const renewExpiredReview = async (question) => {
+    if (assignmentOf(question).status === 'IN_REVIEW' && isAssignmentMine(question, user) && isReviewLockExpired(assignmentOf(question))) {
+      try { const fresh = await renewQuestionReview(question.id); applyRenewedQuestion(fresh); }
+      catch (err) { throw new Error([400, 403, 409].includes(err.status) ? lockLostMessage : err.message); }
+    }
+  };
+  useEffect(() => {
+    let active = true;
+    getReviewPolicy().then((policy) => {
+      if (!active) return;
+      setReviewPolicy(policy);
+    }).catch(() => { if (active) setError('Không tải được chính sách kiểm duyệt.'); });
+    const activity = () => { lastActivityAt.current = Date.now(); };
+    ['keydown', 'pointerdown', 'input'].forEach((name) => window.addEventListener(name, activity));
+    return () => { active = false; ['keydown', 'pointerdown', 'input'].forEach((name) => window.removeEventListener(name, activity)); };
+  }, []);
+  useEffect(() => {
+    if (!selected?.id || selected.review_status !== 'PENDING' || selected.review_assignment?.status !== 'IN_REVIEW'
+      || String(selected.review_assignment?.reviewer_user_id) !== String(user?.id)) return;
+    let stopped = false; let running = false;
+    const renew = async () => {
+      const question = selectedRef.current;
+      if (stopped || running || !shouldRenewLock({ question, userId: user?.id, now: Date.now(), lastActivityAt: lastActivityAt.current,
+        timeoutMinutes: lockTimeout, visible: document.visibilityState === 'visible' })) return;
+      running = true;
+      try { const fresh = await renewQuestionReview(question.id); if (!stopped) applyRenewedQuestion(fresh); }
+      catch (err) {
+        if (!stopped && [400, 403, 409].includes(err.status)) { stopped = true; window.clearInterval(interval); setError(lockLostMessage); }
+        else if (!stopped) setError(err.message || 'Không gia hạn được câu. Vui lòng thử lại.');
+      } finally { running = false; }
+    };
+    const interval = window.setInterval(renew, renewIntervalMs(lockTimeout));
+    document.addEventListener('visibilitychange', renew);
+    return () => { stopped = true; window.clearInterval(interval); document.removeEventListener('visibilitychange', renew); };
+  }, [selected?.id, selected?.review_status, selected?.review_assignment?.status, selected?.review_assignment?.reviewer_user_id, user?.id, lockTimeout]);
+
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -927,11 +975,11 @@ function ReviewQueuePage() {
     return (
       assignment.status === 'IN_REVIEW'
       && isAssignmentMine(question, user)
-      && !isReviewLockExpired(assignment)
     );
   };
 
-  const openReviewForm = (question, decision, { aiEvaluation = null } = {}) => {
+  const openReviewForm = async (question, decision, { aiEvaluation = null } = {}) => {
+    try { await renewExpiredReview(question); } catch (err) { setError(err.message); return; }
     if (!canReviewQuestion(question)) {
       alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
@@ -1059,8 +1107,9 @@ function ReviewQueuePage() {
   const claimReview = async (question) => {
     setBusyId(question.id);
     try {
-      await claimQuestionReview(question.id);
-      await refreshAfterAction(question);
+      if (assignmentOf(question).status === 'IN_REVIEW' && isAssignmentMine(question, user)) {
+        const fresh = await renewQuestionReview(question.id); applyRenewedQuestion(fresh);
+      } else { await claimQuestionReview(question.id); await refreshAfterAction(question); }
     } catch (err) {
       alert('Nhận câu kiểm duyệt thất bại: ' + err.message);
     } finally {
@@ -1252,6 +1301,7 @@ function ReviewQueuePage() {
     setBusyId(selected.id);
     setReviewFormError('');
     try {
+      await renewExpiredReview(selected);
       await reviewQuestion(selected.id, payload);
       await deleteQuestionReviewDraft(selected.id).catch(() => null);
       localStorage.removeItem(reviewDraftKey(selected.id, reviewDraft.decision));
