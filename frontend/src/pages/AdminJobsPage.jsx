@@ -19,6 +19,8 @@ import {
   timestampedCsvFilename,
   timestampedXlsxFilename,
 } from '../utils/csvExport';
+import { useLocation } from 'react-router-dom';
+import { STATUS_OPTIONS, parseJobFilters } from '../utils/adminJobFilters';
 import '../css/AdminJobsPage.css';
 
 const PAGE_SIZE = 25;
@@ -59,22 +61,6 @@ const STATUS_LABEL = {
   CANCELLED: 'Đã hủy',
 };
 
-const STATUS_OPTIONS = [
-  { value: 'all', label: 'Tất cả trạng thái' },
-  { value: 'active', label: 'Đang chờ / đang xử lý' },
-  { value: 'retryable', label: 'Cần xử lý / có thể chạy lại' },
-  { value: 'queued', label: 'Sinh câu hỏi: đang chờ' },
-  { value: 'processing', label: 'Sinh câu hỏi: đang xử lý' },
-  { value: 'failed', label: 'Sinh câu hỏi: thất bại' },
-  { value: 'QUEUED', label: 'Tác vụ: đang chờ' },
-  { value: 'PROCESSING', label: 'Tác vụ: đang xử lý' },
-  { value: 'FAILED', label: 'Tác vụ: thất bại' },
-  { value: 'ERROR', label: 'Tác vụ: lỗi' },
-  { value: 'STALE', label: 'Tác vụ: cần chạy lại' },
-  { value: 'BLOCKED', label: 'Tác vụ: thiếu bằng chứng' },
-  { value: 'COMPLETED', label: 'Tác vụ: hoàn tất' },
-  { value: 'CANCELLED', label: 'Tác vụ: đã hủy' },
-];
 
 function jobKey(job) {
   return `${job.kind}:${job.id}`;
@@ -144,23 +130,31 @@ const JOB_EXPORT_COLUMNS = [
 ];
 
 function AdminJobsPage() {
+  const location = useLocation();
+  const initialFilters = parseJobFilters(location.search);
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState({ total: 0, active: 0, failed: 0, long_running: 0 });
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [kindFilter, setKindFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [staleOnly, setStaleOnly] = useState(false);
+  const [kindFilter, setKindFilter] = useState(initialFilters.kind);
+  const [statusFilter, setStatusFilter] = useState(initialFilters.status);
+  const [staleOnly, setStaleOnly] = useState(initialFilters.staleOnly);
   const [userIdFilter, setUserIdFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchInput, setSearchInput] = useState(initialFilters.search);
+  const [searchTerm, setSearchTerm] = useState(initialFilters.search);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionKey, setActionKey] = useState('');
   const [exportKey, setExportKey] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
+
+  useEffect(() => {
+    const filters = parseJobFilters(location.search);
+    setKindFilter(filters.kind); setStatusFilter(filters.status); setStaleOnly(filters.staleOnly);
+    setSearchInput(filters.search); setSearchTerm(filters.search); setPage(1);
+  }, [location.search]);
 
   useEffect(() => {
     const handle = setTimeout(() => {

@@ -211,7 +211,7 @@ class AdminOverviewService:
                 "label": "Tài liệu lỗi",
                 "count": failed_documents,
                 "severity": "danger" if failed_documents else "neutral",
-                "path": "/quan-ly?tab=documents&status=FAILED",
+                "path": "/quan-ly-job?kind=document&status=retryable",
             },
         ]
 

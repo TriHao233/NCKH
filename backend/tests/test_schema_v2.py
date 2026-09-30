@@ -6608,6 +6608,7 @@ class SchemaV2Tests(unittest.TestCase):
         attention = {item["key"]: item for item in overview["attention"]}
         self.assertEqual(attention["retryable_jobs"]["severity"], "danger")
         self.assertEqual(attention["failed_documents"]["count"], 1)
+        self.assertEqual(attention["failed_documents"]["path"], "/quan-ly-job?kind=document&status=retryable")
 
     def test_job_recovery_marks_only_stale_active_jobs(self):
         now = datetime.now(timezone.utc)
