@@ -1310,9 +1310,9 @@ class SchemaV2Tests(unittest.TestCase):
     def test_qwen_evaluation_snapshot_limits_output_without_changing_deepseek(self):
         qwen = question_workflow_module._limit_evaluation_output(
             {
-                "model_code": "qwen",
+                "model_code": "qwen3-8b",
                 "runtime": "OLLAMA",
-                "parameters": {"num_predict": 900, "num_ctx": 8192},
+                "parameters": {"num_predict": 32768, "num_ctx": 8192, "think": False},
             }
         )
         deepseek = question_workflow_module._limit_evaluation_output(
@@ -1350,7 +1350,14 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertTrue(retry_snapshot["retry_instruction_applied"])
         self.assertEqual(retry_snapshot["retry_attempt"], 2)
         self.assertNotEqual(retry_snapshot["rendered_prompt_hash"], "initial")
-        self.assertEqual(retry_model["parameters"]["num_predict"], settings.evaluation_num_predict)
+        self.assertEqual(
+            retry_model["parameters"]["num_predict"],
+            settings.evaluation_retry_num_predict,
+        )
+        self.assertGreater(
+            settings.evaluation_retry_num_predict,
+            settings.evaluation_num_predict,
+        )
         self.assertEqual(retry_model["parameters"]["num_ctx"], 8192)
         self.assertEqual(model_snapshot["parameters"]["num_predict"], 720)
 
@@ -2909,6 +2916,86 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(evaluation["color"], "RED")
         self.assertTrue(evaluation["evidence"]["decision_guardrail"]["blocked_pass"])
         self.assertEqual(db.questions.find_one({"_id": question_id})["evaluation_status"], "FAILED")
+
+    def test_heuristic_evaluation_is_never_recorded_as_passed(self):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-HEURISTIC",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PROCESSING",
+            "review_status": "PENDING",
+            "quality_summary": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        version = {
+            "_id": version_id,
+            "question_id": question_id,
+            "version": 1,
+            "content_hash": "heuristic-hash",
+            "generation_run_id": None,
+        }
+        db = FakeCatalogDatabase(questions=[question], question_versions=[version])
+        db.question_evaluations = InMemoryCollection([])
+        db.audit_logs = InMemoryCollection([])
+        original_transaction = question_workflow_module.mongo_transaction
+        try:
+            question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+            evaluation = QuestionWorkflowService(db).evaluate(
+                str(question_id),
+                EvaluationCreateRequest(
+                    expected_version=1,
+                    scores=EvaluationScores(
+                        faithfulness=0.95,
+                        contextual_relevancy=0.95,
+                        answer_relevancy=0.95,
+                        bloom_alignment=0.95,
+                        clo_alignment=0.95,
+                    ),
+                    # Even a stale heuristic payload without an action must not pass.
+                    feedback={"summary": "Heuristic"},
+                    evidence={"mode": "heuristic_fallback"},
+                    model_snapshot={"model_code": "test", "model_name": "Test"},
+                    policy_snapshot={
+                        "version": 1,
+                        "weights": {
+                            "faithfulness": 0.35,
+                            "contextual_relevancy": 0.20,
+                            "answer_relevancy": 0.15,
+                            "bloom_alignment": 0.15,
+                            "clo_alignment": 0.15,
+                        },
+                        "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+                    },
+                ),
+                ObjectId(),
+            )
+        finally:
+            question_workflow_module.mongo_transaction = original_transaction
+
+        self.assertFalse(evaluation["passed"])
+        self.assertTrue(evaluation["evidence"]["decision_guardrail"]["heuristic_only"])
+        self.assertEqual(db.questions.find_one({"_id": question_id})["evaluation_status"], "FAILED")
+
+    def test_heuristic_scores_always_ask_for_human_review(self):
+        version = {
+            "content": "Hàng đợi hoạt động theo nguyên tắc _____.",
+            "classification": {"assessment_type": "DIEN_KHUYET", "bloom": {"level": 1}},
+            "question_data": {"correct_answer": "FIFO", "explanation": "Hàng đợi là FIFO."},
+            "clos": [{"code": "CLO1", "description": "Nêu nguyên tắc của hàng đợi."}],
+            "sources": [{"citation_order": 1, "context_excerpt": "Hàng đợi theo nguyên tắc FIFO."}],
+        }
+
+        _, feedback, _ = QuestionWorkflowService(None)._auto_scores({}, version)
+
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(feedback["severity"], "MEDIUM")
 
     def test_ai_parser_normalizes_root_decision_and_known_score_typo(self):
         raw = json.dumps(

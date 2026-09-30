@@ -167,6 +167,18 @@ const OPTION_VERDICT_LABEL = {
   AMBIGUOUS: 'Chưa đủ rõ',
 };
 
+const CITATION_ENTAILMENT_LABEL = {
+  SUPPORTED: 'Nguồn xác nhận',
+  CONTRADICTED: 'Nguồn bác bỏ',
+  NOT_FOUND: 'Không tìm thấy trong nguồn',
+};
+
+const citationEntailmentLabel = (citation) => (
+  citation.scope === 'DISTRACTOR'
+    ? 'Nguồn bác bỏ phương án nhiễu'
+    : CITATION_ENTAILMENT_LABEL[citation.entailment] || citation.entailment || CITATION_ENTAILMENT_LABEL.SUPPORTED
+);
+
 const USER_ROLE_LABEL = {
   Admin: 'Quản trị viên',
   Teacher: 'Giảng viên',
@@ -2131,6 +2143,12 @@ function ReviewQueuePage() {
                       </span>
                     )}
                     {latestEvidence.fallback_reason && <span>Lý do dùng đánh giá dự phòng: {latestEvidence.fallback_reason}</span>}
+                    {latestEvidence.decision_normalization?.applied && (
+                      <span>
+                        Hệ thống đã siết lại kết luận AI do tự mâu thuẫn:{' '}
+                        {(latestEvidence.decision_normalization.contradictions || []).join('; ')}
+                      </span>
+                    )}
                     {retrievalEvidence.status && (
                       <div className="retrieval-summary">
                         <b>Truy xuất nguồn: {retrievalEvidence.status === 'SUFFICIENT' ? 'Đủ bằng chứng' : 'Chưa đủ bằng chứng'}</b>
@@ -2145,7 +2163,7 @@ function ReviewQueuePage() {
                           <article key={`${citation.chunk_id || 'citation'}-${index}`}>
                             <div>
                               <b>[{citation.chunk_id || `S${index + 1}`}]</b>
-                              <span>{citation.entailment || 'SUPPORTED'}</span>
+                              <span>{citationEntailmentLabel(citation)}</span>
                               {citation.verified && <em>Đã xác minh</em>}
                             </div>
                             {citation.claim && <p>{citation.claim}</p>}

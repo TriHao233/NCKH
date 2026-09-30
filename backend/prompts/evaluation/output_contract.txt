@@ -57,7 +57,9 @@ RÀNG BUỘC BẮT BUỘC:
 - citations không được rỗng.
 - Không được tự tạo chunk_id hoặc exact_quote.
 - Mỗi exact_quote phải xuất hiện nguyên văn trong excerpt của đúng chunk_id.
-- Phải có ít nhất một citation claim_type = ANSWER và entailment = SUPPORTED.
+- Phải có ít nhất một citation claim_type = ANSWER và entailment = SUPPORTED; claim của citation ANSWER là đáp án đã khai báo, không phải phương án nhiễu.
+- entailment đánh giá đúng nhận định trong claim: nguồn xác nhận claim thì SUPPORTED, nguồn bác bỏ claim thì CONTRADICTED. Việc phương án nhiễu sai chỉ ghi trong option_checks, không tạo citation CONTRADICTED cho phương án nhiễu.
+- unsupported_claims và missing để mảng rỗng [] khi không có vấn đề; không ghi câu kiểu "Không có vấn đề nào".
 - Với câu có options, option_checks phải có đủ từng phương án và phương án SUPPORTED phải trỏ đúng source_label.
 - Chỉ APPROVE khi không có unsupported_claims trọng yếu và có ít nhất một citation SUPPORTED cho đáp án/giải thích.
 

@@ -21,3 +21,5 @@ QUY TẮC KẾT LUẬN
 - NEEDS_REVISION: câu hỏi dùng được nhưng cần sửa nội dung, đáp án, giải thích, Bloom/CLO, nguồn hoặc cấu trúc trước khi dùng chính thức.
 - REJECT: sai kiến thức, thiếu căn cứ nghiêm trọng, đáp án mơ hồ/không kiểm tra được, hoặc phải viết lại gần như toàn bộ.
 - Không chọn REJECT chỉ vì câu hỏi chưa hoàn hảo; ưu tiên NEEDS_REVISION cho lỗi có thể sửa nhanh.
+- Không chọn NEEDS_REVISION chỉ vì góp ý nhỏ: độ khó ước lượng, cách diễn đạt, hoặc gợi ý Bloom/CLO khi bloom_alignment và clo_alignment vẫn từ 0.65 trở lên. Ghi các góp ý này vào risks, để missing rỗng, và vẫn APPROVE với severity LOW.
+- Chỉ chọn NEEDS_REVISION khi nêu được một lỗi cụ thể cần sửa trong missing, hoặc có tiêu chí dưới 0.65.
