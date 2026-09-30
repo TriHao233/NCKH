@@ -1245,16 +1245,49 @@
 
 .generate-page .draft-pagination {
   justify-content: center;
+  gap: 8px;
   margin-top: var(--gen-space-sm);
 }
 
-.generate-page .draft-pagination-page {
-  width: 34px;
-  min-height: 34px;
-  padding: 0;
+.generate-page .draft-pagination-btn {
+  min-width: 84px;
+  height: 40px;
+  padding: 0 14px;
+  flex-shrink: 0;
 }
 
-.generate-page .draft-pagination-page--active {
+.generate-page .draft-pagination-pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.generate-page .draft-pagination-page {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.generate-page .draft-pagination-btn:hover:not(:disabled),
+.generate-page .draft-pagination-page:hover:not(:disabled) {
+  background: var(--gen-accent-wash, var(--gen-paper));
+  transform: none;
+}
+
+.generate-page .draft-pagination-btn:disabled {
+  color: var(--gen-muted);
+  border-color: var(--gen-rule);
+  background: var(--gen-paper);
+}
+
+.generate-page .draft-pagination-page--active,
+.generate-page .draft-pagination-page--active:hover:not(:disabled) {
   border-color: var(--gen-accent);
   background: var(--gen-accent);
   color: var(--gen-accent-ink);
