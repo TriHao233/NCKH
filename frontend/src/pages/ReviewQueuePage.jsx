@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  renewQuestionReview, getReviewPolicy, autoAssignReviews,
+  renewQuestionReview, getReviewPolicy, updateReviewPolicy, autoAssignReviews,
   assignQuestionReview,
   autoEvaluateQuestion,
   claimQuestionReview,
@@ -45,6 +45,7 @@ import {
 import { hasEffectivePermission } from '../auth/permissions';
 import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
 import { shouldRenewLock, renewIntervalMs } from '../utils/reviewLock';
+import { scoreToPercent, percentToScore } from '../utils/reviewPolicy';
 import { assignmentReasonLabel } from '../utils/reviewAssignment';
 import '../css/ReviewQueuePage.css';
 
@@ -563,6 +564,9 @@ function ReviewQueuePage() {
   const [detailView, setDetailView] = useState('question');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [reviewPolicy, setReviewPolicy] = useState(null);
+  const [policyDraft, setPolicyDraft] = useState(null);
+  const [policyError, setPolicyError] = useState('');
+  const [policyBusy, setPolicyBusy] = useState(false);
   const [autoDraft, setAutoDraft] = useState(null);
   const [autoResult, setAutoResult] = useState(null);
   const [autoError, setAutoError] = useState('');
@@ -586,8 +590,8 @@ function ReviewQueuePage() {
     let active = true;
     getReviewPolicy().then((policy) => {
       if (!active) return;
-      setReviewPolicy(policy);
-    }).catch(() => { if (active) setError('Không tải được chính sách kiểm duyệt.'); });
+      setReviewPolicy(policy); setPolicyDraft({ ...policy, scorePercent: scoreToPercent(policy.secondary_below_score) });
+    }).catch(() => { if (active) setPolicyError('Không tải được chính sách kiểm duyệt.'); });
     const activity = () => { lastActivityAt.current = Date.now(); };
     ['keydown', 'pointerdown', 'input'].forEach((name) => window.addEventListener(name, activity));
     return () => { active = false; ['keydown', 'pointerdown', 'input'].forEach((name) => window.removeEventListener(name, activity)); };
@@ -1376,6 +1380,14 @@ function ReviewQueuePage() {
     }
   };
 
+  const savePolicy = async (event) => {
+    event.preventDefault(); setPolicyError(''); setPolicyBusy(true);
+    try {
+      const policy = await updateReviewPolicy({ secondary_on_override: Boolean(policyDraft.secondary_on_override),
+        secondary_below_score: percentToScore(policyDraft.scorePercent), secondary_subject_ids: policyDraft.secondary_subject_ids || [] });
+      setReviewPolicy(policy); setPolicyDraft({ ...policy, scorePercent: scoreToPercent(policy.secondary_below_score) });
+    } catch (err) { setPolicyError(err.message || 'Không lưu được chính sách.'); } finally { setPolicyBusy(false); }
+  };
   const runAutoAssignment = async (event) => {
     event.preventDefault(); setAutoBusy(true); setAutoError(''); setAutoResult(null);
     try {
@@ -1599,6 +1611,22 @@ function ReviewQueuePage() {
         </button>
       </nav>
 
+      {workspaceView === 'performance' && (
+        <section className="review-policy-panel">
+          <h2>Chính sách duyệt lần 2</h2>
+          {policyError && <p className="review-form-error">{policyError}</p>}
+          {reviewPolicy && <p>Thời gian giữ câu: {reviewPolicy.lock_timeout_minutes} phút · Hạn nhận câu được giao: {reviewPolicy.assignment_timeout_hours} giờ</p>}
+          {policyDraft && <form onSubmit={savePolicy}>
+            <fieldset disabled={user?.role !== 'Admin' || policyBusy}>
+              <label><input type="checkbox" checked={Boolean(policyDraft.secondary_on_override)} onChange={(event) => setPolicyDraft({ ...policyDraft, secondary_on_override: event.target.checked })} />Bắt duyệt lần 2 khi người duyệt vẫn duyệt dù AI đề xuất xem lại</label>
+              <label className="review-form-field"><span>Bắt duyệt lần 2 khi điểm AI dưới (%) — để trống = tắt</span><input type="number" min="0" max="100" step="any" value={policyDraft.scorePercent} onChange={(event) => setPolicyDraft({ ...policyDraft, scorePercent: event.target.value })} /></label>
+              <label className="review-form-field"><span>Luôn duyệt lần 2 với các học phần</span><select multiple value={policyDraft.secondary_subject_ids || []} onChange={(event) => setPolicyDraft({ ...policyDraft, secondary_subject_ids: [...event.target.selectedOptions].map((option) => option.value) })}>{catalogSubjects.map((subject) => <option key={refId(subject)} value={refId(subject)}>{subjectOptionLabel(subject)}</option>)}</select></label>
+              {user?.role === 'Admin' && <button type="submit" className="btn btn--primary">{policyBusy ? 'Đang lưu...' : 'Lưu chính sách'}</button>}
+            </fieldset>
+          </form>}
+          {reviewPolicy && <p>Cập nhật lần cuối: {formatDate(reviewPolicy.updated_at)}</p>}
+        </section>
+      )}
       {autoDraft && <div className="review-modal-backdrop"><form className="review-modal" onSubmit={runAutoAssignment}>
         <div className="review-modal__head"><h2>Tự chia việc kiểm duyệt</h2></div><div className="review-form-section">
           <label className="review-form-field"><span>Phạm vi</span><select value={autoDraft.scope} onChange={(event) => setAutoDraft({ ...autoDraft, scope: event.target.value })}><option value="all">Mọi câu đang mở</option><option value="visible">Chỉ các câu đang hiển thị</option></select></label>
