@@ -725,3 +725,8 @@
     width: min(260px, calc(100vw - 24px));
   }
 }
+
+/* The expanded Admin menu wraps within the available header width. */
+.nav-section--admin { flex: 1 1 auto; min-width: 0; }
+.nav-section--admin .nav-section-links { flex-wrap: wrap; gap: 4px 16px; }
+.nav-section--admin .nav-link { padding-block: 7px; }
