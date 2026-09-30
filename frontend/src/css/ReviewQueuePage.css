@@ -2061,3 +2061,5 @@
   .review-criterion-row > input,
   .review-criterion-row > select { grid-column: auto; }
 }
+.review-modal .review-form-section > label:not(.review-form-field) { display: flex; align-items: center; gap: 10px; margin-block: 12px; }
+.review-modal .review-form-field select { padding: 10px 12px; border: 1px solid #d4e5f7; border-radius: 8px; font: inherit; }

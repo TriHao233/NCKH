@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  renewQuestionReview, getReviewPolicy,
+  renewQuestionReview, getReviewPolicy, autoAssignReviews,
   assignQuestionReview,
   autoEvaluateQuestion,
   claimQuestionReview,
@@ -45,6 +45,7 @@ import {
 import { hasEffectivePermission } from '../auth/permissions';
 import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
 import { shouldRenewLock, renewIntervalMs } from '../utils/reviewLock';
+import { assignmentReasonLabel } from '../utils/reviewAssignment';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -562,6 +563,10 @@ function ReviewQueuePage() {
   const [detailView, setDetailView] = useState('question');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [reviewPolicy, setReviewPolicy] = useState(null);
+  const [autoDraft, setAutoDraft] = useState(null);
+  const [autoResult, setAutoResult] = useState(null);
+  const [autoError, setAutoError] = useState('');
+  const [autoBusy, setAutoBusy] = useState(false);
   const lastActivityAt = useRef(Date.now());
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -1371,6 +1376,17 @@ function ReviewQueuePage() {
     }
   };
 
+  const runAutoAssignment = async (event) => {
+    event.preventDefault(); setAutoBusy(true); setAutoError(''); setAutoResult(null);
+    try {
+      const ids = questions.filter((item) => item.review_status === 'PENDING').map((item) => item.id);
+      if (autoDraft.scope === 'visible' && !ids.length) throw new Error('Không có câu chờ duyệt đang hiển thị.');
+      const result = await autoAssignReviews({ question_ids: autoDraft.scope === 'visible' ? ids : [], limit: 100,
+        max_load_per_reviewer: Number(autoDraft.maxLoad), subject_mode: autoDraft.strict ? 'strict' : 'prefer', include_admins: autoDraft.includeAdmins });
+      setAutoResult(result); await Promise.all([fetchQuestions(), fetchDashboard()]);
+    } catch (err) { setAutoError(err.message || 'Không chia được việc.'); } finally { setAutoBusy(false); }
+  };
+
   const dashboardWorkload = dashboard?.workload || {};
   const dashboardPerformance = dashboard?.performance || {};
   const dashboardDecisions = dashboard?.decisions || {};
@@ -1546,6 +1562,7 @@ function ReviewQueuePage() {
         </div>
         {workspaceView !== 'performance' && (
           <div className="review-actions">
+            {user?.role === 'Admin' && <button type="button" className="btn btn--outline" onClick={() => { setAutoDraft({ scope: 'all', maxLoad: 20, strict: false, includeAdmins: false }); setAutoResult(null); setAutoError(''); }}>Tự chia việc</button>}
             {evaluationModels.length > 0 && (
               <label className="review-model-picker">
                 <span>AI hỗ trợ đánh giá</span>
@@ -1581,6 +1598,17 @@ function ReviewQueuePage() {
           Thống kê và so sánh với AI
         </button>
       </nav>
+
+      {autoDraft && <div className="review-modal-backdrop"><form className="review-modal" onSubmit={runAutoAssignment}>
+        <div className="review-modal__head"><h2>Tự chia việc kiểm duyệt</h2></div><div className="review-form-section">
+          <label className="review-form-field"><span>Phạm vi</span><select value={autoDraft.scope} onChange={(event) => setAutoDraft({ ...autoDraft, scope: event.target.value })}><option value="all">Mọi câu đang mở</option><option value="visible">Chỉ các câu đang hiển thị</option></select></label>
+          <label className="review-form-field"><span>Tối đa mỗi người</span><input type="number" required min="1" max="500" value={autoDraft.maxLoad} onChange={(event) => setAutoDraft({ ...autoDraft, maxLoad: event.target.value })} /></label>
+          <label><input type="checkbox" checked={autoDraft.strict} onChange={(event) => setAutoDraft({ ...autoDraft, strict: event.target.checked })} />Chỉ giao cho người phụ trách học phần</label>
+          <label><input type="checkbox" checked={autoDraft.includeAdmins} onChange={(event) => setAutoDraft({ ...autoDraft, includeAdmins: event.target.checked })} />Tính cả Quản trị viên</label>
+          {autoError && <p className="review-form-error">{autoError}</p>}
+          {autoResult && <><h3>Đã giao {autoResult.assigned?.length || 0} câu</h3><table><tbody>{(autoResult.assigned || []).map((item) => <tr key={item.question_id}><td>{item.question_code}</td><td>{item.reviewer_name}</td></tr>)}</tbody></table><h3>Bỏ qua {autoResult.skipped?.length || 0} câu</h3><table><tbody>{(autoResult.skipped || []).map((item) => <tr key={item.question_id}><td>{item.question_code}</td><td>{assignmentReasonLabel(item.reason)}</td></tr>)}</tbody></table></>}
+        </div><div className="review-modal__foot"><button type="button" disabled={autoBusy} onClick={() => setAutoDraft(null)}>Đóng</button><button type="submit" disabled={autoBusy}>{autoBusy ? 'Đang chia...' : 'Chia việc'}</button></div>
+      </form></div>}
 
       <section className="review-dashboard" aria-label="Tổng quan công việc kiểm duyệt" hidden={workspaceView !== 'performance'}>
         <div className="review-dashboard__group">
