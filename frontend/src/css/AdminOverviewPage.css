@@ -349,6 +349,14 @@
   overflow-wrap: anywhere;
 }
 
+.overview-document-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 16px; }
+.overview-document-filters label { display: grid; gap: 6px; flex: 1 1 180px; color: #5c6f89; font-size: 0.82rem; }
+.overview-document-filters input, .overview-document-filters select { padding: 10px 12px; border: 1px solid #d4e5f7; border-radius: 8px; font: inherit; min-width: 0; }
+.overview-document-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+.overview-document-pagination span { margin-right: auto; font-size: 0.82rem; color: #5c6f89; }
+.overview-document-pagination button { padding: 8px 12px; background: #fff; border: 1px solid #d4e5f7; border-radius: 8px; color: #003a75; cursor: pointer; }
+.overview-document-pagination button:disabled { opacity: 0.5; cursor: default; }
+
 .overview-empty {
   color: #5c6f89;
   font-size: 0.86rem;

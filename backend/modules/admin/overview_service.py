@@ -12,6 +12,7 @@ from modules.admin.jobs_service import ACTIVE_STATUSES, RETRYABLE_STATUSES, Admi
 from modules.admin.moodle_service import MoodleTargetService
 from modules.catalog.postgres_subject_repository import subject_records
 from modules.users.store import users_by_ids
+from modules.documents.store import get_document_repository
 
 
 def utc_now() -> datetime:
@@ -170,6 +171,32 @@ def _duration_ms(record: dict, *, duration_path: str, start_key: str = "started_
 class AdminOverviewService:
     def __init__(self, database: Database):
         self.db = database
+
+    def list_documents(self, page: int, page_size: int, status: str | None, search: str | None) -> dict:
+        records, total = get_document_repository(self.db).list(page, page_size, status, search)
+        owner_ids = list({row["uploaded_by_user_id"] for row in records if row.get("uploaded_by_user_id")})
+        owners = {str(row["_id"]): row for row in users_by_ids(self.db, owner_ids)}
+        subject_ids = list({subject_id for row in records for subject_id in
+                            (row.get("subject_ids") or ([row["subject_id"]] if row.get("subject_id") else []))})
+        subjects = {str(row["_id"]): row for row in subject_records(self.db, ids=subject_ids)} if subject_ids else {}
+        items = []
+        for row in records:
+            owner_id = row.get("uploaded_by_user_id")
+            owner = owners.get(str(owner_id), {})
+            item_subjects = row.get("subject_ids") or ([row["subject_id"]] if row.get("subject_id") else [])
+            error = row.get("latest_error") or {}
+            items.append({
+                "id": row["_id"], "title": row.get("title"),
+                "original_filename": row.get("original_filename"), "status": row.get("status"),
+                "page_count": row.get("page_count"), "current_version": row.get("current_version"),
+                "owner": {"id": owner_id, "display_name": owner.get("display_name"), "email": owner.get("email")},
+                "subjects": [{"id": item, "name": subjects.get(str(item), {}).get("subject_name"),
+                              "code": subjects.get(str(item), {}).get("subject_code")} for item in item_subjects],
+                "pipeline_summary": row.get("pipeline_summary") or {},
+                "error_message": error.get("message") or error.get("detail"),
+                "created_at": row.get("created_at"), "updated_at": row.get("updated_at"),
+            })
+        return json_safe({"items": items, "total": total, "page": page, "page_size": page_size})
 
     def overview(self) -> dict:
         job_service = AdminJobService(self.db)
