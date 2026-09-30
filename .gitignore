@@ -67,3 +67,11 @@ prompts/
 # Kết quả sinh tự động (acceptance, Playwright)
 /artifacts/
 /frontend/test-results/
+
+# Generated outputs (existing tracked files stay tracked)
+/output/
+.pytest_cache/
+.ruff_cache/
+.deepeval/
+/frontend/playwright-report/
+/frontend/coverage/
