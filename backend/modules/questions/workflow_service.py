@@ -26,6 +26,7 @@ from modules.notifications.service import (
     safe_notify_review_assigned,
     safe_notify_review_decision,
     safe_notify_secondary_review_pending,
+    safe_notify_secondary_review_available,
 )
 from modules.questions.repository import MongoQuestionRepository, json_safe, object_id, serialize_question, utc_now
 from modules.rag.search import get_evaluation_evidence
@@ -78,6 +79,19 @@ REVIEWER_PERMISSION_FIELDS = {"role": 1, "permission_grants": 1, "permission_rev
 
 def _user_can_review(user: dict) -> bool:
     return bool(user.get("is_active", True)) and "reviews.manage" in effective_permissions(user)
+
+
+def secondary_review_recipients(users: list[dict], *, question: dict, version: dict, primary_reviewer_user_id) -> list:
+    """Prefer subject specialists, excluding all authors and the primary reviewer."""
+    excluded = {str(primary_reviewer_user_id), str(question.get("created_by_user_id")), str(version.get("created_by_user_id"))}
+    excluded.update(str(item) for item in question.get("author_user_ids") or [])
+    eligible = [user for user in users if str(user["_id"]) not in excluded and _user_can_review(user)]
+    reviewers = [user for user in eligible if user.get("role") != "Admin"]
+    subject = (version.get("classification") or {}).get("subject") or {}
+    subject_id = str(question.get("subject_id") or (subject.get("id") if isinstance(subject, dict) else subject) or "")
+    specialists = [user for user in reviewers if subject_id in {str(item) for item in user.get("review_subject_ids") or []}]
+    recipients = specialists or reviewers or [user for user in eligible if user.get("role") == "Admin"]
+    return list(dict.fromkeys(user["_id"] for user in sorted(recipients, key=lambda item: str(item["_id"]))))[:20]
 
 
 POLICY_AUDIT_KEYS = ("secondary_on_override", "secondary_below_score", "secondary_subject_ids")
@@ -3485,6 +3499,11 @@ class QuestionWorkflowService:
             },
             created_at=now,
         )
+        secondary_recipients = secondary_review_recipients(
+            review_candidate_users(self.db), question=question, version=version,
+            primary_reviewer_user_id=current_user.id,
+        ) if request_secondary else []
+
         def notify_review(notifications: NotificationService) -> None:
             if not request_secondary:
                 notifications.notify_review_decision(
@@ -3496,6 +3515,10 @@ class QuestionWorkflowService:
                 question=question, version=version,
                 reason=question_fields["secondary_review"].get("reason") or "",
                 actor_user_id=current_user.id,
+            )
+            notifications.notify_secondary_review_available(
+                question=question, version=version, primary_reviewer_user_id=current_user.id,
+                actor_user_id=current_user.id, recipients=secondary_recipients,
             )
             if question_fields["review_assignment"].get("status") == "ASSIGNED":
                 notifications.notify_review_assigned(
@@ -3574,6 +3597,11 @@ class QuestionWorkflowService:
                     version=version,
                     reason=question_fields["secondary_review"].get("reason") or "",
                     actor_user_id=current_user.id,
+                )
+                safe_notify_secondary_review_available(
+                    database=self.db, question=question, version=version,
+                    primary_reviewer_user_id=current_user.id, actor_user_id=current_user.id,
+                    recipients=secondary_recipients,
                 )
                 if question_fields["review_assignment"].get("status") == "ASSIGNED":
                     safe_notify_review_assigned(

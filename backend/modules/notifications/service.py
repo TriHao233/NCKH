@@ -224,6 +224,16 @@ class NotificationService:
             entity=self._question_entity(question, version),
         )
 
+    def notify_secondary_review_available(self, *, question, version, primary_reviewer_user_id, actor_user_id, recipients) -> list[dict]:
+        code = question.get("question_code") or "Câu hỏi"
+        excluded = {str(primary_reviewer_user_id), str(question.get("created_by_user_id")), str(version.get("created_by_user_id"))}
+        return self.create_many([{
+            "recipient_user_id": recipient, "actor_user_id": actor_user_id,
+            "type": "QUESTION_SECONDARY_REVIEW_AVAILABLE", "title": f"{code} cần duyệt lần 2",
+            "body": "Câu hỏi cần một người duyệt khác xác nhận trước khi vào ngân hàng.",
+            "link": f"/kiem-duyet?questionId={question['_id']}", "entity": self._question_entity(question, version),
+        } for recipient in dict.fromkeys(recipients) if str(recipient) not in excluded])
+
     def notify_exam_owners_question_reopened(
         self,
         *,
@@ -401,3 +411,10 @@ def safe_notify_question_resubmitted(**kwargs) -> None:
         NotificationService(kwargs.pop("database")).notify_question_resubmitted(**kwargs)
     except Exception as exc:
         logger.warning("Failed to notify question resubmission: %s", exc)
+
+
+def safe_notify_secondary_review_available(**kwargs) -> None:
+    try:
+        NotificationService(kwargs.pop("database")).notify_secondary_review_available(**kwargs)
+    except Exception as exc:
+        logger.warning("Failed to notify available secondary review: %s", exc)

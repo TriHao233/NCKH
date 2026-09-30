@@ -1806,6 +1806,9 @@ class SchemaV2Tests(unittest.TestCase):
                 reviewer,
             )
             after_primary = dict(db.questions.find_one({"_id": question_id}))
+            available = [item for item in db.notifications.records if item["type"] == "QUESTION_SECONDARY_REVIEW_AVAILABLE"]
+            self.assertEqual([item["recipient_user_id"] for item in available], [second_reviewer.id])
+            self.assertEqual(available[0]["link"], f"/kiem-duyet?questionId={question_id}")
             with self.assertRaises(PermissionError):
                 service.claim_review(str(question_id), reviewer)
             service.claim_review(str(question_id), second_reviewer)
