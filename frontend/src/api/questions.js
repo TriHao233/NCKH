@@ -224,3 +224,4 @@ export function exportQuestionMoodle(id, format = 'gift') {
 
 export function renewQuestionReview(id) { return apiRequest(`/questions/${id}/review-assignment/renew`, { method: 'POST' }); }
 export function getReviewPolicy() { return apiRequest('/questions/review-policy'); }
+export function suggestReviewSubjects(reviewerUserId) { return apiRequest(`/questions/review-subject-suggestions?reviewer_user_id=${encodeURIComponent(reviewerUserId)}`); }

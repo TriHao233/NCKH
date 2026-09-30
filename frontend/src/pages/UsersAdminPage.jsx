@@ -19,6 +19,8 @@ import {
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
 import { ROLE_DEFAULT_PERMISSIONS, TEACHER_ASSIGNABLE_PERMISSIONS, REVIEW_ASSIGNABLE_PERMISSIONS, PERMISSION_LABELS, assignablePermissions } from '../auth/permissions';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
+import { listSubjects } from '../api/catalog';
+import { suggestReviewSubjects } from '../api/questions';
 import '../css/AdminJobsPage.css';
 import '../css/UsersAdminPage.css';
 
@@ -130,6 +132,16 @@ function UsersAdminPage() {
   const [editRole, setEditRole] = useState('Teacher');
   const [editActive, setEditActive] = useState(true);
   const [editPermissions, setEditPermissions] = useState([]);
+  const [subjects, setSubjects] = useState(null);
+  const [editReviewSubjects, setEditReviewSubjects] = useState([]);
+  const [subjectSuggestions, setSubjectSuggestions] = useState(null);
+  useEffect(() => { listSubjects().then(setSubjects).catch(() => setSubjects(null)); }, []);
+  useEffect(() => {
+    let active = true;
+    setSubjectSuggestions(null);
+    if (editing) suggestReviewSubjects(editing.id).then((result) => { if (active) setSubjectSuggestions(result); }).catch(() => {});
+    return () => { active = false; };
+  }, [editing]);
   const [saving, setSaving] = useState(false);
 
   const [togglingId, setTogglingId] = useState(null);
@@ -281,6 +293,7 @@ function UsersAdminPage() {
     setEditRole(user.role);
     setEditActive(user.is_active);
     setEditPermissions(assignablePermissions(user.permissions || permissionsForRole(user.role)));
+    setEditReviewSubjects(user.review_subject_ids || []);
   };
 
   const closeEdit = () => {
@@ -298,6 +311,7 @@ function UsersAdminPage() {
         role: editRole,
         is_active: editActive,
         permissions: editRole === 'Admin' ? [] : assignablePermissions(editPermissions),
+        ...((editRole === 'Reviewer' || editPermissions.includes('reviews.manage')) ? { review_subject_ids: editReviewSubjects } : {}),
       });
       setEditing(null);
       await refreshAll();
@@ -483,7 +497,7 @@ function UsersAdminPage() {
                       </div>
                     </td>
                     <td>
-                      <span className={`role-pill role-pill--${(u.role || '').toLowerCase()}`}>{ROLE_LABEL[u.role] || u.role}</span>
+                      <span className={`role-pill role-pill--${(u.role || '').toLowerCase()}`}>{ROLE_LABEL[u.role] || u.role}</span>{u.role === 'Reviewer' && <small>{u.review_subject_ids?.length ? `${u.review_subject_ids.length} học phần` : 'Mọi học phần'}</small>}
                     </td>
                     <td>{(u.permissions || []).length} quyền</td>
                     <td>
@@ -726,6 +740,16 @@ function UsersAdminPage() {
 
             <PermissionFields role={editRole} permissions={editPermissions} onToggle={(key) => setEditPermissions((current) => togglePermission(current, key))} />
             <p className="field-hint">Thay đổi quyền có hiệu lực trên giao diện sau khi người dùng đăng nhập lại.</p>
+            {subjects && (editRole === 'Reviewer' || editPermissions.includes('reviews.manage')) && (
+              <fieldset className="field-group"><legend>Học phần phụ trách</legend>
+                <p className="field-hint">Để trống = có thể nhận câu mọi học phần.</p>
+                <div className="permission-grid">{subjects.filter((item) => item.is_active !== false).map((item) => {
+                  const id = String(item.id || item._id);
+                  return <label className="field-checkbox" key={id}><input type="checkbox" checked={editReviewSubjects.includes(id)} onChange={() => setEditReviewSubjects((current) => togglePermission(current, id))} />{item.subject_code} — {item.subject_name}</label>;
+                })}</div>
+                <div className="users-subject-suggestions">{(subjectSuggestions?.items || []).map((item) => <button type="button" key={item.subject_id} onClick={() => setEditReviewSubjects((current) => [...new Set([...current, item.subject_id])])}>{item.subject_code} — {item.reviews} lượt duyệt / {subjectSuggestions.window_days} ngày</button>)}</div>
+              </fieldset>
+            )}
 
             <div className="field-group field-group--checkbox">
               <label className="field-checkbox">
