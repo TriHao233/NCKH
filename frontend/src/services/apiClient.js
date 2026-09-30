@@ -1,5 +1,5 @@
 import { auth } from "../firebase";
-import { demoAuthHeaders } from "../auth/demoSession";
+import { demoAuthHeaders, handleDemoSessionResponse } from "../auth/demoSession";
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "/api/v1"
@@ -64,6 +64,7 @@ export async function apiRequest(
     payload = null;
   }
   if (!response.ok) {
+    handleDemoSessionResponse(response.status, requestHeaders.Authorization);
     const fallbackMessage = [502, 503, 504].includes(response.status)
       ? "Không thể kết nối máy chủ. Vui lòng thử lại."
       : "Yêu cầu API thất bại";

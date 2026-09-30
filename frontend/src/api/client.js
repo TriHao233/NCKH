@@ -1,5 +1,5 @@
 import { auth } from '../firebase';
-import { demoAuthHeaders } from '../auth/demoSession';
+import { demoAuthHeaders, handleDemoSessionResponse } from '../auth/demoSession';
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
@@ -34,6 +34,7 @@ export async function apiFetch(path, options = {}) {
   const headers = { ...(options.headers || {}), ...(await authHeaders()) };
   const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   if (!response.ok) {
+    handleDemoSessionResponse(response.status, headers.Authorization);
     await parseError(response);
   }
   return response.json();
