@@ -16,7 +16,7 @@ from modules.admin.moodle_service import MoodleTargetService
 from modules.exams import service as exam_module
 from modules.exams.postgres_repository import PostgresExamRepository
 from modules.exams.schemas import (
-    AddQuestionsManualRequest, ExamCreateRequest, ExamMatrixRequest,
+    AddQuestionsManualRequest, ExamCreateRequest, ExamHeaderConfig, ExamMatrixRequest,
     ExamStatusUpdateRequest, ExamVariantCreateRequest,
 )
 from modules.notifications.service import NotificationService
@@ -90,7 +90,10 @@ def test_exams_variants_and_moodle_admin_use_postgres(monkeypatch):
 
         created = exams.create_exam(ExamCreateRequest(
             name="Giữa kỳ", exam_title="Kiểm tra", subject_id=str(subject_id),
-            question_count=1), teacher["_id"])
+            question_count=1,
+            header=ExamHeaderConfig(
+                school_name="CTU", exam_name="Kiểm tra", subject_name="Exams",
+            )), teacher["_id"])
         exam_ids.append(created["id"])
         with pytest.raises(PermissionError):
             exams.get_exam(created["id"], stranger)
