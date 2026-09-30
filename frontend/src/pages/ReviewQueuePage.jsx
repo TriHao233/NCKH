@@ -557,6 +557,7 @@ function ReviewQueuePage() {
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
+  const openingDeepLinkId = useRef('');
   const [workspaceView, setWorkspaceView] = useState('queue');
   const [detailView, setDetailView] = useState('question');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -844,10 +845,11 @@ function ReviewQueuePage() {
   useEffect(() => {
     const questionId = new URLSearchParams(location.search).get('questionId') || '';
     if (!questionId) {
+      openingDeepLinkId.current = '';
       setOpenedDeepLinkId('');
       return;
     }
-    if (openedDeepLinkId === questionId) return;
+    if (openedDeepLinkId === questionId || openingDeepLinkId.current === questionId) return;
     if (!isValidQuestionId(questionId)) {
       const params = new URLSearchParams(location.search);
       params.delete('questionId');
@@ -862,6 +864,9 @@ function ReviewQueuePage() {
       setError('');
       return;
     }
+    // Reserve the deep link before requests start: queue loading/StrictMode must
+    // not start another history load that would clear an open review draft.
+    openingDeepLinkId.current = questionId;
     const openLinkedQuestion = async () => {
       try {
         const localQuestion = questions.find((question) => question.id === questionId);
@@ -980,6 +985,8 @@ function ReviewQueuePage() {
   };
 
   const openReviewForm = async (question, decision, { aiEvaluation = null } = {}) => {
+    if (user?.role === 'Admin' && assignmentOf(question).status === 'IN_REVIEW' && !isAssignmentMine(question, user) && !isReviewLockExpired(assignmentOf(question))
+      && !window.confirm(`Câu này đang được ${reviewerLabelForQuestion(question)} xử lý. Bạn vẫn muốn kiểm duyệt thay?`)) return;
     try { await renewExpiredReview(question); } catch (err) { setError(err.message); return; }
     if (!canReviewQuestion(question)) {
       alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
