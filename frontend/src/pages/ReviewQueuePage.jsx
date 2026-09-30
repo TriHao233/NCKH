@@ -46,7 +46,7 @@ import { hasEffectivePermission } from '../auth/permissions';
 import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
 import { shouldRenewLock, renewIntervalMs } from '../utils/reviewLock';
 import { scoreToPercent, percentToScore } from '../utils/reviewPolicy';
-import { assignmentReasonLabel } from '../utils/reviewAssignment';
+import { assignmentReasonLabel, reviewerFlagLabel } from '../utils/reviewAssignment';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -1625,6 +1625,11 @@ function ReviewQueuePage() {
             </fieldset>
           </form>}
           {reviewPolicy && <p>Cập nhật lần cuối: {formatDate(reviewPolicy.updated_at)}</p>}
+          {user?.role === 'Admin' && Boolean(dashboard?.reviewers?.length) && <>
+            <h2>Người duyệt</h2><div className="review-reviewers-table-wrap"><table className="review-reviewers-table"><thead><tr>{['Người duyệt', 'Đang giữ', '7 ngày / 30 ngày', 'Tỷ lệ duyệt', 'Duyệt khác AI', 'Khớp AI', 'TB xử lý', 'Học phần', 'Cảnh báo'].map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>
+              {dashboard.reviewers.map((row) => <tr key={row.user_id}><td>{row.display_name}<small>{row.email}</small></td><td>{row.holding}{row.holding_sla_breached > 0 && <small>{row.holding_sla_breached} quá hạn</small>}</td><td>{row.reviews_7d} / {row.reviews_30d}</td><td>{percent(row.approval_rate)}</td><td>{percent(row.override_rate)}</td><td>{percent(row.ai_agreement_rate)}<small>{row.ai_sample_size} mẫu</small></td><td>{hours(row.average_review_hours)}</td><td>{row.review_subject_ids?.length ? row.review_subject_ids.map((id) => subjectOptionLabel(catalogSubjectById.get(String(id))) || id).join(', ') : 'Mọi học phần'}</td><td>{(row.flags || []).map((flag) => <span className="review-reviewer-flag" key={flag}>{reviewerFlagLabel(flag)}{flag === 'NO_SUBJECTS' && <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly-nguoi-dung')}>Gán học phần</button>}</span>)}</td></tr>)}
+            </tbody></table></div>
+          </>}
         </section>
       )}
       {autoDraft && <div className="review-modal-backdrop"><form className="review-modal" onSubmit={runAutoAssignment}>

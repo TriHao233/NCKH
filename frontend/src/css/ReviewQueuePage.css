@@ -2064,6 +2064,11 @@
 
 .review-policy-panel { margin: 20px 0; padding: 24px; background: #fff; border: 1px solid #dce5eb; border-radius: 12px; }
 .review-policy-panel fieldset { border: 0; padding: 0; display: grid; gap: 16px; }
+.review-reviewers-table-wrap { overflow-x: auto; }
+.review-reviewers-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.review-reviewers-table td, .review-reviewers-table th { padding: 12px; text-align: left; border-bottom: 1px solid #dce5eb; }
+.review-reviewers-table small { display: block; color: #64748b; }
+.review-reviewer-flag { display: block; margin: 4px 0; color: #805a12; }
 
 .review-policy-panel h2 { margin: 0 0 12px; font-size: 20px; }
 .review-policy-panel p { margin: 8px 0 16px; color: #5c6f89; font-size: 14px; }
@@ -2071,5 +2076,6 @@
 .review-policy-panel fieldset > label:first-child { display: flex; align-items: flex-start; gap: 10px; line-height: 1.5; }
 .review-policy-panel select { width: 100%; min-height: 96px; padding: 10px 12px; border: 1px solid #d4e5f7; border-radius: 8px; font: inherit; background: #fff; color: #13253f; }
 .review-policy-panel .btn { justify-self: start; }
+.review-reviewer-flag .btn { display: block; margin-top: 6px; padding: 4px 10px; font-size: 12px; }
 .review-modal .review-form-section > label:not(.review-form-field) { display: flex; align-items: center; gap: 10px; margin-block: 12px; }
 .review-modal .review-form-field select { padding: 10px 12px; border: 1px solid #d4e5f7; border-radius: 8px; font: inherit; }
