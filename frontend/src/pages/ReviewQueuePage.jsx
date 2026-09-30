@@ -41,6 +41,7 @@ import {
   metadataGuardrailInsights,
   mergeAiSuggestionsIntoDraft,
 } from '../utils/reviewAiSuggestions';
+import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -216,6 +217,7 @@ function defaultReviewDraft(question, decision) {
     decision,
     overallNote: '',
     overrideReason: '',
+    selfReviewReason: '',
     secondaryRequired: false,
     secondaryReason: '',
     checklist: REVIEW_RUBRIC.map((item) => ({
@@ -1190,7 +1192,7 @@ function ReviewQueuePage() {
       setReviewFormError('Không thể duyệt khi còn tiêu chí “Không đạt”. Hãy chọn Cần sửa hoặc ghi nhận lại tiêu chí.');
       return;
     }
-    const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
+    const needsOverride = overrideRequired(selected, reviewDraft.decision);
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
       setReviewFormError('Cần ghi lý do khi duyệt câu mà AI đề xuất xem lại.');
       return;
@@ -1203,7 +1205,12 @@ function ReviewQueuePage() {
       setReviewFormError('Cần thêm ít nhất một lỗi để giảng viên sửa.');
       return;
     }
+    if (selfReviewReasonRequired(selected, user) && !reviewDraft.selfReviewReason?.trim()) {
+      setReviewFormError('Cần ghi lý do tự duyệt vì bạn là người tạo/sửa câu này.'); return;
+    }
+    if (isAiRunning(selected) && !window.confirm('AI đang đánh giá câu này. Chốt kết quả sẽ dừng lượt đánh giá AI. Tiếp tục?')) return;
     const payload = {
+      ...(selfReviewReasonRequired(selected, user) ? { self_review_reason: reviewDraft.selfReviewReason.trim() } : {}),
       expected_version: selected.current_version,
       decision: reviewDraft.decision,
       note: overallNote,
@@ -1394,7 +1401,7 @@ function ReviewQueuePage() {
   )) || activeSourcePages[0] || null;
   const pdfPage = activeSourcePage || activePageRecord?.page_number || 1;
   const sourcePdfUrl = sourcePdf?.url ? `${sourcePdf.url}#page=${pdfPage}` : '';
-  const reviewNeedsOverride = reviewDraft?.decision === 'APPROVED' && selected?.evaluation_status !== 'PASSED';
+  const reviewNeedsOverride = overrideRequired(selected, reviewDraft?.decision);
   const availableReviewTemplates = reviewDraft
     ? templatesForDecision(reviewTemplates, reviewDraft.decision)
     : [];
@@ -1941,7 +1948,7 @@ function ReviewQueuePage() {
                 <button
                   type="button"
                   className="detail-action-primary"
-                  disabled={busyId === selected.id || isEvaluationBusy(selected) || !canReviewQuestion(selected)}
+                  disabled={busyId === selected.id || !canReviewQuestion(selected)}
                   onClick={() => openReviewForm(selected, 'APPROVED')}
                 >
                   Duyệt
@@ -2486,9 +2493,10 @@ function ReviewQueuePage() {
                   )}
                 </div>
               )}
+              {selfReviewReasonRequired(selected, user) && <label className="review-form-field"><span>Lý do tự duyệt (bạn là người tạo/sửa câu này)</span><textarea required rows={3} value={reviewDraft.selfReviewReason || ''} onChange={(event) => updateReviewDraft({ selfReviewReason: event.target.value })} /></label>}
               {reviewNeedsOverride && (
                 <label className="review-form-field">
-                  <span>Lý do duyệt khác đề xuất AI</span>
+                  <span>Lý do vẫn duyệt dù AI đề xuất xem lại</span>
                   <textarea
                     value={reviewDraft.overrideReason}
                     onChange={(event) => updateReviewDraft({ overrideReason: event.target.value })}
