@@ -405,6 +405,12 @@ class UserService:
         document_ids = [document["_id"] for document in documents]
         document_ids_with_questions = self.repository.get_document_ids_with_questions(document_ids)
         return calendar_service.build_calendar(
+            review_questions=self.repository.get_review_assignment_questions(user_id)
+            if "reviews.manage" in effective_permissions(user) else (),
+            review_backlog=self.repository.count_unassigned_pending() if user.get("role") == "Admin" else None,
+            lock_timeout_minutes=settings.review_lock_timeout_minutes,
+            assignment_timeout_hours=settings.review_assignment_timeout_hours,
+            sla_hours=settings.review_sla_hours,
             manual_tasks=manual_tasks,
             documents=documents,
             questions=questions,

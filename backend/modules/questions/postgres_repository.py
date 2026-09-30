@@ -462,6 +462,13 @@ class PostgresQuestionRepository:
             [*params, limit],
         )
 
+    def count_unassigned_pending(self) -> int:
+        with postgres_connection() as conn:
+            row = conn.execute("""SELECT count(*) AS n FROM questions
+                WHERE lifecycle_status='ACTIVE' AND review_status='PENDING'
+                AND (assignment->>'status' IS NULL OR assignment->>'status'='UNASSIGNED')""").fetchone()
+        return row["n"]
+
     def held_reviews(self, *, active_at=None) -> list[dict]:
         """Assignment đang giữ (ASSIGNED/IN_REVIEW); `active_at` lọc khóa còn hạn."""
         query = """SELECT * FROM questions
