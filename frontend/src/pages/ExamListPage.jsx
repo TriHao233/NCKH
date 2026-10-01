@@ -17,14 +17,14 @@ const STATUS_LABEL = {
   READY: 'Sẵn sàng',
   FINALIZED: 'Đã chốt',
   ARCHIVED: 'Lưu trữ',
-  draft: 'Nháp',
-  ready: 'Sẵn sàng',
-  finalized: 'Hoàn tất',
-  archived: 'Lưu trữ',
 };
 
+function statusKey(status) {
+  return String(status || 'DRAFT').toUpperCase();
+}
+
 function statusClass(status) {
-  return String(status || 'DRAFT').toLowerCase();
+  return statusKey(status).toLowerCase();
 }
 
 function ExamListPage() {
@@ -80,13 +80,18 @@ function ExamListPage() {
       alert('Vui lòng nhập đầy đủ tên đề thi, tên kỳ thi và môn học.');
       return;
     }
+    const questionCountNumber = Number(questionCount);
+    if (!Number.isInteger(questionCountNumber) || questionCountNumber < 1 || questionCountNumber > 200) {
+      alert('Số lượng câu hỏi phải là số nguyên từ 1 đến 200.');
+      return;
+    }
     setSaving(true);
     try {
       const exam = await createExam({
         name: name.trim(),
         exam_title: examTitle.trim(),
         subject_id: subjectId,
-        question_count: Number(questionCount),
+        question_count: questionCountNumber,
         header: {},
       });
       setCreating(false);
@@ -153,13 +158,13 @@ function ExamListPage() {
                   <div className="exam-card-header">
                     <h3>{exam.name}</h3>
                     <span className={`status-badge status--${statusClass(exam.status)}`}>
-                      {STATUS_LABEL[exam.status] || exam.status}
+                      {STATUS_LABEL[statusKey(exam.status)] || exam.status}
                     </span>
                   </div>
                   <p className="exam-card-meta">{exam.exam_title}</p>
                   <div className="exam-card-stats">
-                    <span>{exam.questions.length}/{exam.question_count} câu hỏi</span>
-                    <span>{exam.variant_count}/4 mã đề</span>
+                    <span>{exam.question_selected_count ?? exam.questions?.length ?? 0}/{exam.question_count} câu hỏi</span>
+                    <span>{exam.variant_count ?? 0}/4 mã đề</span>
                   </div>
                   <div className="exam-card-actions">
 	                    <button type="button" className="btn btn--outline" onClick={() => navigate(`/lam-de-thi/${exam.id}`)}>

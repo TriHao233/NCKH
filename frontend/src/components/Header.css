@@ -105,6 +105,14 @@
   display: none;
 }
 
+.navbar--admin .nav-container {
+  width: calc(100% - 48px);
+}
+
+.navbar--admin .nav-section-links {
+  gap: 18px;
+}
+
 .nav-section {
   display: inline-flex;
   align-items: center;
@@ -554,7 +562,7 @@
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1280px) {
   .navbar {
     --header-height: 76px;
   }
@@ -565,6 +573,10 @@
     min-height: var(--header-height);
     gap: 12px;
     padding: 10px 0;
+  }
+
+  .navbar--admin .nav-container {
+    width: calc(100% - 40px);
   }
 
   .nav-logo {

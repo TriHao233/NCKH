@@ -233,8 +233,8 @@ function SubjectManage() {
       const saved = editingSubject
         ? await updateSubject(refId(editingSubject), payload)
         : await saveSubject(payload);
-      const savedId = refId(saved);
-      setSelectedSubjectId(savedId);
+      const savedId = refId(saved) || refId(editingSubject);
+      if (savedId) setSelectedSubjectId(savedId);
       setNotice(editingSubject ? 'Đã cập nhật học phần.' : 'Đã tạo học phần mới.');
       setSubjectModalOpen(false);
       await fetchSubjects();
@@ -269,11 +269,12 @@ function SubjectManage() {
   };
 
   const handleRestore = async (subject) => {
-    setBusyId(refId(subject));
+    const originalId = refId(subject);
+    setBusyId(originalId);
     setError('');
     try {
-      const updated = await updateSubject(refId(subject), { is_active: true });
-      setSelectedSubjectId(refId(updated));
+      const updated = await updateSubject(originalId, { is_active: true });
+      setSelectedSubjectId(refId(updated) || originalId);
       setNotice('Đã khôi phục học phần.');
       await fetchSubjects();
     } catch (err) {
@@ -449,6 +450,8 @@ function SubjectManage() {
                   {visibleSubjects.map((subject) => {
                     const id = refId(subject);
                     const counts = subject.usage_counts || {};
+                    const activeChapterCount = (subject.chapters || []).filter((chapter) => chapter.is_active !== false).length;
+                    const activeCloCount = (subject.learning_outcomes || []).filter((clo) => clo.is_active !== false).length;
                     return (
                       <button
                         type="button"
@@ -459,7 +462,7 @@ function SubjectManage() {
                         <span className="subject-row-code">{subject.subject_code}</span>
                         <span className="subject-row-main">
                           <b>{subject.subject_name}</b>
-                          <small>{counts.questions || 0} câu hỏi · {subject.chapters?.length || 0} chương · {subject.learning_outcomes?.length || 0} CLO</small>
+                          <small>{counts.questions || 0} câu hỏi · {activeChapterCount} chương · {activeCloCount} CLO</small>
                         </span>
                         <span className="subject-row-tags">
                           {!subject.can_manage && <span>Chỉ xem</span>}
@@ -650,8 +653,10 @@ function SubjectManage() {
                                 <span>{questionKind(question)}</span>
                                 <span>{questionBloom(question)}</span>
                                 <span>{questionDifficulty(question)}</span>
-                                {(question.clos || []).slice(0, 3).map((clo) => (
-                                  <span key={refId(clo.id || clo)}>{clo.code || clo.clo_code || 'CLO'}</span>
+                                {(question.clos || []).slice(0, 3).map((clo, index) => (
+                                  <span key={refId(clo.id || clo) || `${clo.code || clo.clo_code || 'clo'}-${index}`}>
+                                    {clo.code || clo.clo_code || 'CLO'}
+                                  </span>
                                 ))}
                               </div>
                             </article>

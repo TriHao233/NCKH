@@ -848,12 +848,8 @@ function ManagePage() {
     const errors = {};
     if (!payload.subject_code) errors.subject_code = 'Vui lòng nhập mã môn học.';
     if (!payload.subject_name) errors.subject_name = 'Vui lòng nhập tên môn học.';
-    if (
-      payload.subject_code
-      && subjects.some((subject) => String(subject.subject_code || '').trim().toLowerCase() === payload.subject_code.toLowerCase())
-    ) {
-      errors.subject_code = 'Mã môn học đã tồn tại.';
-    }
+    // Không kiểm tra trùng subject_code ở client vì danh sách subjects có thể chưa đầy đủ
+    // (phân trang, quyền hạn) — để server trả 409 làm nguồn xác thực duy nhất.
     if (Object.keys(errors).length > 0) {
       setSubjectFormErrors(errors);
       return;
@@ -1591,8 +1587,25 @@ function ManagePage() {
       }
       if (!window.confirm(`Tạo ${parsed.items.length} câu hỏi từ file "${file.name}"?`)) return;
 
-      const results = await Promise.allSettled(
-        parsed.items.map((item) => createQuestion(item.payload).then(() => item.rowNumber)),
+      // Throttle: chạy tối đa 4 request song song để tránh bùng nổ request khi file lớn.
+      const IMPORT_CONCURRENCY = 4;
+      const results = new Array(parsed.items.length);
+      let cursor = 0;
+      const runWorker = async () => {
+        while (cursor < parsed.items.length) {
+          const index = cursor;
+          cursor += 1;
+          const item = parsed.items[index];
+          try {
+            await createQuestion(item.payload);
+            results[index] = { status: 'fulfilled', value: item.rowNumber };
+          } catch (error) {
+            results[index] = { status: 'rejected', reason: error };
+          }
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(IMPORT_CONCURRENCY, parsed.items.length) }, () => runWorker()),
       );
       const summary = summarizeBulkSettled(results);
       await fetchQuestions(searchTerm);

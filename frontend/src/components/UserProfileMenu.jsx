@@ -3,13 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faUser,
-  faCalendarCheck,
-  faCog,
   faSignOutAlt,
   faChevronDown,
   faListCheck,
   faBook,
   faFileLines,
+  faClockRotateLeft,
+  faChartColumn,
+  faEnvelope,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -119,18 +120,21 @@ const UserProfileMenu = () => {
             </>
           )}
 
-          {['Admin', 'Reviewer'].includes(user.role) && (
-            <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
-              Lịch công việc
-            </Link>
-          )}
-
           {canOpenSettings && (
-            <Link to="/quan-ly-nguoi-dung" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
-              Quản lý người dùng
-            </Link>
+            <>
+              <Link to="/lien-he?tab=all" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faEnvelope} className="dropdown-icon" />
+                Xem liên hệ
+              </Link>
+              <Link to="/nhat-ky-he-thong" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faClockRotateLeft} className="dropdown-icon" />
+                Lịch sử dùng
+              </Link>
+              <Link to="/quan-ly-job" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faChartColumn} className="dropdown-icon" />
+                Thống kê
+              </Link>
+            </>
           )}
           
           <div className="dropdown-divider"></div>

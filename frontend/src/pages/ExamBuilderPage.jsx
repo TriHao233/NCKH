@@ -197,10 +197,16 @@ function ExamBuilderPage() {
 
 function LifecycleBar({ exam, status, onStatusChange }) {
   const selectedCount = exam.questions?.length || 0;
-  const hasExactQuestionCount = selectedCount === exam.question_count;
+  const target = Number(exam.question_count) || 0;
+  const hasExactQuestionCount = selectedCount === target;
   const canReady = status === 'DRAFT' && hasExactQuestionCount;
   const canFinalize = status === 'READY' && hasExactQuestionCount;
   const canArchive = status === 'FINALIZED';
+  const diffMessage = !hasExactQuestionCount
+    ? (selectedCount < target
+      ? `Còn thiếu ${target - selectedCount} câu để chuyển sẵn sàng hoặc chốt đề.`
+      : `Đang dư ${selectedCount - target} câu, cần bỏ bớt để chuyển sẵn sàng hoặc chốt đề.`)
+    : '';
 
   return (
     <section className="lifecycle-bar">
@@ -208,9 +214,9 @@ function LifecycleBar({ exam, status, onStatusChange }) {
         <span className={`exam-status-pill exam-status-pill--${status.toLowerCase()}`}>
           {EXAM_STATUS_LABEL[status] || status}
         </span>
-        <b>{selectedCount}/{exam.question_count} câu</b>
-        {!hasExactQuestionCount && (
-          <small>Cần đủ đúng số câu để chuyển sẵn sàng hoặc chốt đề.</small>
+        <b>{selectedCount}/{target} câu</b>
+        {diffMessage && (
+          <small>{diffMessage}</small>
         )}
       </div>
       <div className="lifecycle-actions">
@@ -353,20 +359,30 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
     setCells((current) => current.map((cell, i) => (i === index ? { ...cell, ...patch } : cell)));
   };
   const addRow = () => setCells((current) => [...current, emptyCell()]);
-  const removeRow = (index) => setCells((current) => current.filter((_, i) => i !== index));
+  const removeRow = (index) => setCells((current) => (
+    current.length <= 1 ? current : current.filter((_, i) => i !== index)
+  ));
 
   const totalCount = cells.reduce((sum, cell) => sum + Number(cell.count || 0), 0);
+  const targetCount = Number(exam.question_count) || 0;
+  const matrixOver = targetCount > 0 && totalCount > targetCount;
+  const matrixUnder = targetCount > 0 && totalCount < targetCount;
 
   const handleSave = async () => {
     if (readOnly) return;
+    const normalizedCells = cells.map((cell) => ({
+      ...cell,
+      chapter_id: cell.chapter_id || null,
+      count: Number(cell.count) || 0,
+    }));
+    const invalidCell = normalizedCells.findIndex((cell) => cell.count <= 0);
+    if (invalidCell >= 0) {
+      alert(`Dòng ${invalidCell + 1} có số câu không hợp lệ (phải ≥ 1).`);
+      return;
+    }
     setSaving(true);
     try {
-      const payload = cells.map((cell) => ({
-        ...cell,
-        chapter_id: cell.chapter_id || null,
-        count: Number(cell.count),
-      }));
-      const updated = await saveMatrix(exam.id, payload);
+      const updated = await saveMatrix(exam.id, normalizedCells);
       onSaved(updated);
       setAvailability(null);
     } catch (err) {
@@ -392,9 +408,12 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
     <div>
       <h3 className="step-title">Ma trận đề thi</h3>
       <p className="step-desc">
-        Tổng số câu trong ma trận: <b>{totalCount}</b> / Số câu đề thi yêu cầu: <b>{exam.question_count}</b>
-        {totalCount > exam.question_count && (
+        Tổng số câu trong ma trận: <b>{totalCount}</b> / Số câu đề thi yêu cầu: <b>{targetCount}</b>
+        {matrixOver && (
           <span className="matrix-warning"> — Vượt quá số câu đã khai báo!</span>
+        )}
+        {matrixUnder && (
+          <span className="matrix-warning"> — Còn thiếu {targetCount - totalCount} câu so với yêu cầu.</span>
         )}
       </p>
       <div className="matrix-table-wrap" role="region" aria-label="Ma trận đề thi" tabIndex={0}>
@@ -435,7 +454,15 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
                   <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly} />
                 </td>
                 <td>
-                  <button type="button" className="icon-btn icon-btn--danger" onClick={() => removeRow(index)} disabled={readOnly}>×</button>
+                  <button
+                    type="button"
+                    className="icon-btn icon-btn--danger"
+                    onClick={() => removeRow(index)}
+                    disabled={readOnly || cells.length <= 1}
+                    title={cells.length <= 1 ? 'Cần giữ ít nhất một dòng' : 'Xoá dòng'}
+                  >
+                    ×
+                  </button>
                 </td>
               </tr>
             ))}
@@ -482,6 +509,7 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
   const poolIds = new Set((exam.questions || []).map((q) => q.question_id));
   const poolPages = Math.max(1, Math.ceil(poolTotal / QUESTION_POOL_PAGE_SIZE));
   const visiblePoolItems = poolItems.filter((q) => !poolIds.has(q.id) && !q.in_exam);
+  const hiddenInPage = poolItems.length - visiblePoolItems.length;
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -633,7 +661,10 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
             </div>
           )}
           <div className="pool-pagination">
-            <span>{poolTotal} câu phù hợp · Trang {poolPage}/{poolPages}</span>
+            <span>
+              Hiển thị {visiblePoolItems.length} câu · Trang {poolPage}/{poolPages} (tổng {poolTotal} khớp bộ lọc
+              {hiddenInPage > 0 ? `, ${hiddenInPage} câu đã có trong đề` : ''})
+            </span>
             <div>
               <button type="button" className="btn btn--outline" disabled={poolPage <= 1 || loadingApproved} onClick={() => setPoolPage((page) => Math.max(1, page - 1))}>
                 Trước
@@ -651,15 +682,15 @@ function QuestionsStep({ exam, chapters, onSaved, readOnly }) {
         </div>
       )}
 
-      <h4 className="pool-title">Câu hỏi trong đề ({exam.questions.length}/{exam.question_count})</h4>
+      <h4 className="pool-title">Câu hỏi trong đề ({(exam.questions || []).length}/{exam.question_count})</h4>
       <div className="question-pool-list">
-        {exam.questions.map((ref, index) => (
+        {(exam.questions || []).map((ref, index) => (
           <div className="question-pool-item" key={ref.question_id}>
             <span>Câu {index + 1}. {ref.content_snapshot?.content}</span>
             <button type="button" className="icon-btn icon-btn--danger" onClick={() => handleRemove(ref.question_id)} disabled={readOnly}>×</button>
           </div>
         ))}
-        {exam.questions.length === 0 && <p className="empty-note">Chưa có câu hỏi nào trong đề.</p>}
+        {(exam.questions || []).length === 0 && <p className="empty-note">Chưa có câu hỏi nào trong đề.</p>}
       </div>
     </div>
   );
@@ -730,7 +761,7 @@ function VariantsStep({ exam }) {
         <div className="variant-list">
           {variants.map((variant) => (
             <div className="variant-item" key={variant.id}>
-              <span>Mã đề <b>{variant.exam_code}</b> — {variant.questions.length} câu</span>
+              <span>Mã đề <b>{variant.exam_code}</b> — {(variant.questions || []).length} câu</span>
               <button type="button" className="icon-btn icon-btn--danger" onClick={() => handleDelete(variant.id)} disabled={busy}>×</button>
             </div>
           ))}
@@ -857,7 +888,7 @@ function ExportStep({ exam }) {
                         <button
                           type="button"
                           className="btn btn--outline"
-                          disabled={busy === key || variant.questions.length === 0}
+                          disabled={busy === key || (variant.questions || []).length === 0}
                           onClick={() => handleExport(variant.id, exportType.value, format.value)}
                           key={format.value}
                         >

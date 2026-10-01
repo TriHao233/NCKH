@@ -5,6 +5,13 @@ export function readDemoSession() {
     const rawValue = globalThis.localStorage?.getItem(DEMO_SESSION_STORAGE_KEY);
     const parsed = rawValue ? JSON.parse(rawValue) : null;
     if (!parsed?.token || !parsed?.user) return null;
+    const [prefix, payload] = parsed.token.split('.');
+    if (prefix !== 'demo' || !payload) throw new Error('Invalid demo session');
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(globalThis.atob(base64));
+    if (!Number.isFinite(claims.exp) || claims.exp <= Date.now() / 1000) {
+      throw new Error('Expired demo session');
+    }
     return parsed;
   } catch {
     globalThis.localStorage?.removeItem(DEMO_SESSION_STORAGE_KEY);

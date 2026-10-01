@@ -55,6 +55,19 @@ export const AuthProvider = ({ children }) => {
     };
 
     useEffect(() => {
+        const handleExpiredSession = () => {
+            authGeneration.current += 1;
+            clearDemoSession();
+            localStorage.removeItem("userInfo");
+            setUser(null);
+            setLoading(false);
+            if (auth?.currentUser) signOut(auth).catch(() => {});
+        };
+        globalThis.addEventListener("qbank:session-expired", handleExpiredSession);
+        return () => globalThis.removeEventListener("qbank:session-expired", handleExpiredSession);
+    }, []);
+
+    useEffect(() => {
         // Firebase is the source of truth for session persistence and token refresh.
         let active = true;
         if (!auth) {
@@ -62,11 +75,18 @@ export const AuthProvider = ({ children }) => {
             if (demoSession?.user) {
                 localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
                 setUser(demoSession.user);
+                apiRequest("/users/me").catch((error) => {
+                    if (active && (error?.status === 401 || error?.status === 403)) {
+                        clearDemoSession();
+                        localStorage.removeItem("userInfo");
+                        setUser(null);
+                    }
+                }).finally(() => { if (active) setLoading(false); });
             } else {
                 localStorage.removeItem("userInfo");
                 setUser(null);
+                setLoading(false);
             }
-            setLoading(false);
             return () => {
                 active = false;
             };
@@ -79,7 +99,17 @@ export const AuthProvider = ({ children }) => {
                     localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
                     if (active) {
                         setUser(demoSession.user);
-                        setLoading(false);
+                    }
+                    try {
+                        await apiRequest("/users/me");
+                    } catch (error) {
+                        if (error?.status === 401 || error?.status === 403) {
+                            clearDemoSession();
+                            localStorage.removeItem("userInfo");
+                            if (active && generation === authGeneration.current) setUser(null);
+                        }
+                    } finally {
+                        if (active && generation === authGeneration.current) setLoading(false);
                     }
                     return;
                 }

@@ -271,6 +271,15 @@ class Settings(BaseModel):
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
     prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()
 
+    # Brevo (Sendinblue) transactional email — used for contact/publication notifications.
+    brevo_api_key: str = os.getenv("BREVO_API_KEY", "").strip()
+    brevo_sender_email: str = os.getenv("BREVO_SENDER_EMAIL", "").strip()
+    brevo_sender_name: str = os.getenv("BREVO_SENDER_NAME", "QBankCTU").strip()
+    contact_admin_email: str = os.getenv("CONTACT_ADMIN_EMAIL", "").strip()
+    email_notifications_enabled: bool = _env_bool("EMAIL_NOTIFICATIONS_ENABLED", True)
+    brevo_api_url: str = os.getenv("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
+    brevo_timeout_seconds: float = float(os.getenv("BREVO_TIMEOUT_SECONDS", "10"))
+
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model_name: str = _env_first(
         ("GEMINI_MODEL_NAME", "DEFAULT_MODEL"),

@@ -1,5 +1,5 @@
 import { auth } from "../firebase";
-import { demoAuthHeaders } from "../auth/demoSession";
+import { clearDemoSession, demoAuthHeaders } from "../auth/demoSession";
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "/api/v1"
@@ -19,6 +19,8 @@ export async function apiRequest(
   { method = "GET", body, headers = {}, authRequired = true, signal } = {},
 ) {
   const requestHeaders = { Accept: "application/json", ...headers };
+  let demoToken = null;
+  let firebaseUser = null;
   if (body !== undefined && !(body instanceof FormData)) {
     requestHeaders["Content-Type"] = "application/json";
   }
@@ -27,6 +29,7 @@ export async function apiRequest(
     const demoHeaders = demoAuthHeaders();
     if (demoHeaders) {
       Object.assign(requestHeaders, demoHeaders);
+      demoToken = demoHeaders.Authorization;
       authRequired = false;
     }
   }
@@ -36,14 +39,14 @@ export async function apiRequest(
       throw new ApiError("Firebase web app chưa được cấu hình", 503, null);
     }
     await auth.authStateReady();
-    const firebaseUser = auth.currentUser;
+    firebaseUser = auth.currentUser;
     if (!firebaseUser) {
       throw new ApiError("Bạn chưa đăng nhập", 401, null);
     }
     requestHeaders.Authorization = `Bearer ${await firebaseUser.getIdToken()}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const requestOptions = {
     method,
     headers: requestHeaders,
     body:
@@ -51,7 +54,25 @@ export async function apiRequest(
         ? body
         : JSON.stringify(body),
     signal,
-  });
+  };
+  let response = await fetch(`${API_BASE_URL}${path}`, requestOptions);
+  if (response.status === 401 && firebaseUser && auth.currentUser?.uid === firebaseUser.uid) {
+    try {
+      requestHeaders.Authorization = `Bearer ${await firebaseUser.getIdToken(true)}`;
+    } catch (error) {
+      if (auth.currentUser?.uid === firebaseUser.uid) {
+        globalThis.dispatchEvent(new Event("qbank:session-expired"));
+      }
+      throw error;
+    }
+    response = await fetch(`${API_BASE_URL}${path}`, requestOptions);
+  }
+  if (response.status === 401 && demoToken && demoAuthHeaders()?.Authorization === demoToken) {
+    clearDemoSession();
+    globalThis.dispatchEvent(new Event("qbank:session-expired"));
+  } else if (response.status === 401 && firebaseUser && auth.currentUser?.uid === firebaseUser.uid) {
+    globalThis.dispatchEvent(new Event("qbank:session-expired"));
+  }
 
   const isJson = response.headers
     .get("content-type")

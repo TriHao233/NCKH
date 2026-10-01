@@ -38,8 +38,11 @@ function idOf(value) {
 }
 
 function documentSubjectIds(document) {
-  const values = document.subject_ids?.length ? document.subject_ids : [document.subject_id];
-  return [...new Set(values.map(idOf).filter(Boolean))];
+  if (Array.isArray(document.subject_ids)) {
+    return [...new Set(document.subject_ids.map(idOf).filter(Boolean))];
+  }
+  const single = idOf(document.subject_id);
+  return single ? [single] : [];
 }
 
 function formatDate(value) {
@@ -204,7 +207,8 @@ function DocumentManagePage() {
       <section className="document-toolbar">
         <form onSubmit={(event) => { event.preventDefault(); setPage(1); setSearch(searchInput.trim()); }}>
           <FontAwesomeIcon icon={faMagnifyingGlass} />
-          <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Tìm theo tên tài liệu hoặc tên file gốc" />
+          <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Tìm theo tên tài liệu hoặc tên file gốc (nhấn Enter hoặc Tìm)" />
+          <button type="submit" className="document-search-btn">Tìm</button>
         </form>
         <select value={subjectId} onChange={(event) => { setPage(1); setSubjectId(event.target.value); }}>
           <option value="">Tất cả học phần</option>
@@ -296,6 +300,11 @@ function DocumentManagePage() {
                 <article key={item.id}><b>Trang {item.page_number || item.unit_number || '—'}</b><p>{item.cleaned_text || item.raw_text || 'Trang chưa có nội dung.'}</p></article>
               ))}
               {!previewLoading && preview.pages.length === 0 && <p>Chưa có trang OCR.</p>}
+              {!previewLoading && preview.pages.length >= 100 && (
+                <p className="document-preview-note">
+                  Chỉ hiển thị 100 trang đầu. Xem đầy đủ nội dung OCR trong module Quản lý câu hỏi.
+                </p>
+              )}
             </div>
           </section>
         </div>
