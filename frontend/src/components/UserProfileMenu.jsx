@@ -3,13 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faUser,
+  faCalendarCheck,
   faSignOutAlt,
   faChevronDown,
   faListCheck,
   faBook,
   faFileLines,
   faClockRotateLeft,
-  faChartColumn,
   faEnvelope,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
@@ -120,6 +120,13 @@ const UserProfileMenu = () => {
             </>
           )}
 
+          {['Admin', 'Reviewer'].includes(user.role) && (
+            <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
+              <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
+              Lịch công việc
+            </Link>
+          )}
+
           {canOpenSettings && (
             <>
               <Link to="/lien-he?tab=all" className="dropdown-item" onClick={() => setIsOpen(false)}>
@@ -131,8 +138,8 @@ const UserProfileMenu = () => {
                 Lịch sử dùng
               </Link>
               <Link to="/quan-ly-job" className="dropdown-item" onClick={() => setIsOpen(false)}>
-                <FontAwesomeIcon icon={faChartColumn} className="dropdown-icon" />
-                Thống kê
+                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
+                Tác vụ hệ thống
               </Link>
             </>
           )}

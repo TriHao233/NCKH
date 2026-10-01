@@ -27,6 +27,7 @@ from modules.notifications.service import (
     NotificationService,
     safe_notify_exam_owners_question_reopened,
     safe_notify_question_resubmitted,
+    safe_notify_question_submitted,
 )
 from modules.questions.workflow_service import (
     QuestionWorkflowService,
@@ -335,7 +336,7 @@ def submit_question_for_review(
         previous_review_status = previous_question.get("review_status") if previous_question else None
         outbox = _collect_notifications(
             workflow_service,
-            lambda notifier: notifier.notify_question_resubmitted(
+            lambda notifier: notifier.notify_question_submitted(
                 question_id=question_id, previous_review_status=previous_review_status,
                 actor_user_id=current_user.id,
             ),
@@ -375,7 +376,7 @@ def submit_question_for_review(
                         )
                 question = service.get(question_id, current_user)
             if outbox is None:
-                safe_notify_question_resubmitted(
+                safe_notify_question_submitted(
                     database=workflow_service.db,
                     question_id=question_id,
                     previous_review_status=previous_review_status,

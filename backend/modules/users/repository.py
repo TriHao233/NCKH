@@ -57,6 +57,10 @@ def serialize_user(user: dict) -> dict:
 
 
 class UserRepository(Protocol):
+    def get_review_assignment_questions(self, user_id: str | ObjectId) -> list[dict]: ...
+
+    def count_unassigned_pending(self) -> int: ...
+
     def find_by_id(self, user_id: str | ObjectId) -> dict | None: ...
 
     def find_by_firebase_uid(self, firebase_uid: str) -> dict | None: ...
@@ -217,6 +221,19 @@ class MongoUserRepository:
                 {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
             )
         )
+
+    def get_review_assignment_questions(self, user_id: str | ObjectId) -> list[dict]:
+        return list(self.db.questions.find({
+            "lifecycle_status": "ACTIVE", "review_status": "PENDING",
+            "review_assignment.reviewer_user_id": object_id(user_id),
+            "review_assignment.status": {"$in": ["ASSIGNED", "IN_REVIEW"]},
+        }))
+
+    def count_unassigned_pending(self) -> int:
+        return self.db.questions.count_documents({
+            "lifecycle_status": "ACTIVE", "review_status": "PENDING",
+            "review_assignment.status": {"$in": [None, "UNASSIGNED"]},
+        })
 
     def get_document_ids_with_questions(self, document_ids: list[ObjectId]) -> set[str]:
         if not document_ids:

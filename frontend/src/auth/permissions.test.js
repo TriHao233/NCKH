@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
+import { ROLE_DEFAULT_PERMISSIONS, ASSIGNABLE_PERMISSIONS, assignablePermissions, hasEffectivePermission, PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
 
 const PROTECTED_APP_ROUTES = [
   "/sinh-cau-hoi",
@@ -92,4 +92,16 @@ test("direct URL permission and landing path use the same route map", () => {
 
 test("protected app routes are declared in the central permission map", () => {
   assert.deepEqual(Object.keys(PROTECTED_ROUTE_ROLES), PROTECTED_APP_ROUTES);
+});
+
+test('role defaults and user editor only use backend assignable permissions', () => {
+  for (const role of ['Teacher', 'Reviewer']) assert.ok(ROLE_DEFAULT_PERMISSIONS[role].every((key) => ASSIGNABLE_PERMISSIONS.includes(key)));
+  assert.deepEqual(assignablePermissions(['reviews.manage', 'admin.users', 'questions.comment']), ['reviews.manage']);
+});
+test('effective reviewer permissions respect revokes and retain legacy fallback', () => {
+  assert.equal(hasEffectivePermission({ role: 'Admin', permissions: [] }, 'reviews.manage'), true);
+  assert.equal(hasEffectivePermission({ role: 'Reviewer', permissions: [] }, 'reviews.manage'), false);
+  assert.equal(hasEffectivePermission({ role: 'Reviewer', permissions: ['reviews.manage'] }, 'reviews.manage'), true);
+  assert.equal(hasEffectivePermission({ role: 'Reviewer' }, 'reviews.manage'), true);
+  assert.equal(hasEffectivePermission(null, 'reviews.manage'), false);
 });

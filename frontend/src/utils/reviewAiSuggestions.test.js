@@ -94,6 +94,25 @@ test('metadata guardrail insights expose missing Bloom and CLO', () => {
   assert.equal(insights.applied, true);
   assert.deepEqual(insights.missingFields, ['bloom', 'clo']);
   assert.deepEqual(insights.issues, ['Thiếu Bloom', 'Thiếu CLO']);
+  assert.deepEqual(insights.notApplicable, []);
+});
+
+test('metadata guardrail insights expose criteria that do not apply', () => {
+  const insights = metadataGuardrailInsights({
+    evidence: {
+      metadata_guardrail: {
+        applied: false,
+        missing_fields: [],
+        issues: [],
+        not_applicable: ['clo_alignment'],
+        notes: ['Câu hỏi không gắn CLO nên tiêu chí Đúng CLO không tính vào tổng điểm'],
+      },
+    },
+  });
+
+  assert.equal(insights.applied, false);
+  assert.deepEqual(insights.notApplicable, ['clo_alignment']);
+  assert.equal(insights.notes.length, 1);
 });
 
 test('answer guardrail insights preserve inferred true-false provenance', () => {

@@ -737,3 +737,15 @@
     width: min(260px, calc(100vw - 24px));
   }
 }
+
+/* Menu Quản trị có 8 mục: thu gọn khoảng cách để vừa một hàng trên desktop.
+   Từ 1280px trở xuống header đã chuyển sang menu thu gọn nên không áp dụng. */
+@media (min-width: 1281px) {
+  .navbar--admin .nav-section-links { gap: 8px; }
+  .navbar--admin .nav-link { gap: 5px; font-size: 0.9rem; }
+}
+
+@media (min-width: 1281px) and (max-width: 1366px) {
+  .navbar--admin .nav-link { font-size: 0.8rem; }
+  .navbar--admin .nav-link-icon { display: none; }
+}

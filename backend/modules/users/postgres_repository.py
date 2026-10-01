@@ -244,6 +244,19 @@ class PostgresUserRepository:
             return PostgresQuestionRepository.owned_questions(user_id)
         return _active_business_repository().get_calendar_questions(user_id)
 
+    def get_review_assignment_questions(self, user_id: str | ObjectId) -> list[dict]:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return [question for question in PostgresQuestionRepository().held_reviews()
+                    if str((question.get("review_assignment") or {}).get("reviewer_user_id")) == str(user_id)]
+        return _active_business_repository().get_review_assignment_questions(user_id)
+
+    def count_unassigned_pending(self) -> int:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            return PostgresQuestionRepository().count_unassigned_pending()
+        return _active_business_repository().count_unassigned_pending()
+
     def get_document_ids_with_questions(self, document_ids: list[ObjectId]) -> set[str]:
         if settings.question_store == "postgres":
             from modules.questions.postgres_repository import PostgresQuestionRepository

@@ -1,5 +1,5 @@
 import { auth } from "../firebase";
-import { clearDemoSession, demoAuthHeaders } from "../auth/demoSession";
+import { demoAuthHeaders, handleDemoSessionResponse, SESSION_EXPIRED_EVENT } from "../auth/demoSession";
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "/api/v1"
@@ -61,17 +61,17 @@ export async function apiRequest(
       requestHeaders.Authorization = `Bearer ${await firebaseUser.getIdToken(true)}`;
     } catch (error) {
       if (auth.currentUser?.uid === firebaseUser.uid) {
-        globalThis.dispatchEvent(new Event("qbank:session-expired"));
+        globalThis.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
       }
       throw error;
     }
     response = await fetch(`${API_BASE_URL}${path}`, requestOptions);
   }
-  if (response.status === 401 && demoToken && demoAuthHeaders()?.Authorization === demoToken) {
-    clearDemoSession();
-    globalThis.dispatchEvent(new Event("qbank:session-expired"));
+  if (response.status === 401 && demoToken) {
+    // Chỉ xoá phiên khi token bị từ chối vẫn là phiên hiện tại (không đụng lần đăng nhập mới hơn).
+    handleDemoSessionResponse(response.status, demoToken);
   } else if (response.status === 401 && firebaseUser && auth.currentUser?.uid === firebaseUser.uid) {
-    globalThis.dispatchEvent(new Event("qbank:session-expired"));
+    globalThis.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
   }
 
   const isJson = response.headers

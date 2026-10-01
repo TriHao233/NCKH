@@ -113,6 +113,12 @@
 .users-page .field-label { display: block; font-size: 0.84rem; font-weight: 600; color: #13253f; margin-bottom: 7px; }
 .users-page .field-hint { font-size: 0.76rem; color: #5c6f89; margin-top: 6px; }
 .users-page .field-hint--warn { color: #b45309; font-weight: 600; }
+.users-page fieldset.field-group { border: 0; padding: 0; min-width: 0; }
+.users-page fieldset.field-group > legend { padding: 0; margin-bottom: 7px; font-size: 0.84rem; font-weight: 600; color: #13253f; }
+.users-page .users-subject-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 0.78rem; color: #5c6f89; }
+.users-page .users-subject-suggestions button { padding: 5px 10px; border: 1px solid #b9d4ee; border-radius: 999px; background: #f2f8fe; color: #0c4f8f; font: inherit; cursor: pointer; }
+.users-page .users-subject-suggestions button:hover:not(:disabled) { background: #e2effb; }
+.users-page .users-subject-suggestions button:disabled { opacity: 0.55; cursor: default; }
 .users-page .field-input,
 .users-page .field-select {
   width: 100%;

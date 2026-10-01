@@ -244,7 +244,7 @@ class CalendarEventItem(BaseModel):
     description: str = ""
     event_type: str
     source: Literal["system", "manual"]
-    related_entity_type: Literal["question", "document", "none"] = "none"
+    related_entity_type: Literal["question", "document", "review_queue", "none"] = "none"
     related_entity_id: Optional[str] = None
     status: Literal["todo", "done", "overdue"]
     priority: Literal["low", "medium", "high"] = "medium"

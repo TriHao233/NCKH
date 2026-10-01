@@ -9,7 +9,7 @@ import {
   faRobot, faChartColumn,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
-import { canAccessPath } from '../auth/permissions';
+import { canAccessPath, hasEffectivePermission } from '../auth/permissions';
 import {
   getUnreadNotificationCount,
   listNotifications,
@@ -29,6 +29,8 @@ const navIcons = {
   'Hướng dẫn': faBookOpen,
   'Liên hệ': faEnvelope,
   'Hàng kiểm duyệt': faClipboardCheck,
+  'Kiểm duyệt': faClipboardCheck,
+  'Tác vụ': faListCheck,
   'Tổng quan': faChartLine,
   'Danh mục': faLayerGroup,
   'Người dùng': faUsers,
@@ -168,7 +170,7 @@ const Header = () => {
       id: 'reviewer',
       label: 'Người duyệt',
       items: [
-        { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+        { path: '/kiem-duyet', label: 'Hàng kiểm duyệt', requires: 'reviews.manage' },
       ],
     },
     {
@@ -189,9 +191,11 @@ const Header = () => {
     label: 'Quản trị',
     items: [
       { path: '/tong-quan', label: 'Tổng quan' },
+      { path: '/kiem-duyet', label: 'Kiểm duyệt' },
       { path: '/quan-ly', label: 'Câu hỏi' },
       { path: '/duyet-ai', label: 'Thẩm định AI' },
       { path: '/lam-de-thi', label: 'Xem đề thi' },
+      { path: '/danh-muc', label: 'Danh mục' },
       { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
       { path: '/quan-ly-moodle', label: 'Moodle' },
     ],
@@ -200,7 +204,7 @@ const Header = () => {
   const visibleNavGroups = roleNavGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !role || canAccessPath(user, item.path)),
+      items: group.items.filter((item) => (!role || canAccessPath(user, item.path)) && (!item.requires || hasEffectivePermission(user, item.requires))),
     }))
     .filter((group) => {
       if (!signedIn) return ['public', 'teacher', 'support'].includes(group.id);

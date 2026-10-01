@@ -8,10 +8,12 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
 from bson import ObjectId
 from docx import Document
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from main import app
@@ -1806,6 +1808,9 @@ class SchemaV2Tests(unittest.TestCase):
                 reviewer,
             )
             after_primary = dict(db.questions.find_one({"_id": question_id}))
+            available = [item for item in db.notifications.records if item["type"] == "QUESTION_SECONDARY_REVIEW_AVAILABLE"]
+            self.assertEqual([item["recipient_user_id"] for item in available], [second_reviewer.id])
+            self.assertEqual(available[0]["link"], f"/kiem-duyet?questionId={question_id}")
             with self.assertRaises(PermissionError):
                 service.claim_review(str(question_id), reviewer)
             service.claim_review(str(question_id), second_reviewer)
@@ -2917,6 +2922,84 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertTrue(evaluation["evidence"]["decision_guardrail"]["blocked_pass"])
         self.assertEqual(db.questions.find_one({"_id": question_id})["evaluation_status"], "FAILED")
 
+    def test_evaluation_without_clo_leaves_clo_out_of_overall_score(self):
+        question_id = ObjectId()
+        version_id = ObjectId()
+        now = datetime.now(timezone.utc)
+        question = {
+            "_id": question_id,
+            "schema_version": SCHEMA_VERSION,
+            "question_code": "Q-NO-CLO",
+            "current_version": 1,
+            "current_version_id": version_id,
+            "lifecycle_status": "ACTIVE",
+            "evaluation_status": "PROCESSING",
+            "review_status": "PENDING",
+            "quality_summary": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        version = {
+            "_id": version_id,
+            "question_id": question_id,
+            "version": 1,
+            "content_hash": "no-clo-hash",
+            "generation_run_id": None,
+        }
+        policy = {
+            "version": 1,
+            "weights": {
+                "faithfulness": 0.35,
+                "contextual_relevancy": 0.20,
+                "answer_relevancy": 0.15,
+                "bloom_alignment": 0.15,
+                "clo_alignment": 0.15,
+            },
+            "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+        }
+        scores = EvaluationScores(
+            faithfulness=0.7,
+            contextual_relevancy=0.7,
+            answer_relevancy=0.7,
+            bloom_alignment=0.7,
+            clo_alignment=0.0,
+        )
+
+        def evaluate(evidence):
+            db = FakeCatalogDatabase(questions=[dict(question)], question_versions=[version])
+            db.question_evaluations = InMemoryCollection([])
+            db.audit_logs = InMemoryCollection([])
+            original_transaction = question_workflow_module.mongo_transaction
+            try:
+                question_workflow_module.mongo_transaction = lambda: nullcontext(None)
+                return QuestionWorkflowService(db).evaluate(
+                    str(question_id),
+                    EvaluationCreateRequest(
+                        expected_version=1,
+                        scores=scores,
+                        feedback={"action": "APPROVE", "severity": "LOW"},
+                        evidence=evidence,
+                        model_snapshot={"model_code": "test", "model_name": "Test"},
+                        policy_snapshot=policy,
+                    ),
+                    ObjectId(),
+                )
+            finally:
+                question_workflow_module.mongo_transaction = original_transaction
+
+        without_clo = evaluate({"metadata_guardrail": {"not_applicable": ["clo_alignment"]}})
+        self.assertTrue(without_clo["passed"])
+        self.assertAlmostEqual(without_clo["scores"]["overall"], 0.7)
+        self.assertEqual(without_clo["policy"]["not_applicable"], ["clo_alignment"])
+        self.assertEqual(without_clo["policy"]["effective_weights"]["clo_alignment"], 0.0)
+        self.assertAlmostEqual(sum(without_clo["policy"]["effective_weights"].values()), 1.0)
+
+        # Câu có gắn CLO mà CLO không đạt thì tiêu chí vẫn được tính như cũ.
+        with_clo = evaluate({})
+        self.assertFalse(with_clo["passed"])
+        self.assertAlmostEqual(with_clo["scores"]["overall"], 0.595)
+        self.assertNotIn("effective_weights", with_clo["policy"])
+
     def test_heuristic_evaluation_is_never_recorded_as_passed(self):
         question_id = ObjectId()
         version_id = ObjectId()
@@ -3476,6 +3559,10 @@ class SchemaV2Tests(unittest.TestCase):
                 self.assertEqual(
                     final_evidence["metadata_guardrail"]["applied"],
                     case["expect_metadata_block"],
+                )
+                self.assertEqual(
+                    final_evidence["metadata_guardrail"]["not_applicable"],
+                    case.get("expect_not_applicable", []),
                 )
 
     def test_answer_guardrail_blocks_mcq_when_fallback_has_no_option_checks(self):
@@ -4158,17 +4245,26 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual("/demo-login" in route_paths, settings.demo_mode)
 
     def test_review_dashboard_route_precedes_question_id_route(self):
-        question_route_paths = [
-            route.path
-            for route in app.routes
-            if getattr(route, "path", "").startswith(f"{settings.api_prefix}/questions")
-            and "GET" in getattr(route, "methods", set())
-        ]
+        from modules.questions.workflow_service import get_workflow_service
 
-        self.assertLess(
-            question_route_paths.index(f"{settings.api_prefix}/questions/review-dashboard"),
-            question_route_paths.index(f"{settings.api_prefix}/questions/{{question_id}}"),
-        )
+        # Exercise dispatch: recent FastAPI versions include routers lazily,
+        # so inspecting app.routes does not expose their individual paths.
+        current_user = _current_user("Reviewer")
+        service = Mock(spec=QuestionWorkflowService)
+        service.review_dashboard.return_value = {"scope": "current_reviewer"}
+        previous_overrides = app.dependency_overrides.copy()
+        app.dependency_overrides[require_reviewer_or_admin] = lambda: current_user
+        app.dependency_overrides[get_workflow_service] = lambda: service
+        client = TestClient(app)
+        try:
+            response = client.get(f"{settings.api_prefix}/questions/review-dashboard")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"scope": "current_reviewer"})
+            service.review_dashboard.assert_called_once_with(current_user)
+        finally:
+            client.close()
+            app.dependency_overrides.clear()
+            app.dependency_overrides.update(previous_overrides)
 
     def test_demo_login_does_not_reenable_disabled_firebase_user(self):
         class FakeFirebaseUser:
@@ -6608,6 +6704,7 @@ class SchemaV2Tests(unittest.TestCase):
         attention = {item["key"]: item for item in overview["attention"]}
         self.assertEqual(attention["retryable_jobs"]["severity"], "danger")
         self.assertEqual(attention["failed_documents"]["count"], 1)
+        self.assertEqual(attention["failed_documents"]["path"], "/quan-ly-job?kind=document&status=retryable")
 
     def test_job_recovery_marks_only_stale_active_jobs(self):
         now = datetime.now(timezone.utc)
