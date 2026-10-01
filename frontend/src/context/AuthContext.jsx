@@ -2,7 +2,7 @@ import { createContext, useState, useEffect, useRef } from 'react';
 import { onIdTokenChanged, signOut } from 'firebase/auth';
 
 import { auth } from '../firebase';
-import { clearDemoSession, DEMO_SESSION_EXPIRED_EVENT, readDemoSession, saveDemoSession } from '../auth/demoSession';
+import { clearDemoSession, readDemoSession, saveDemoSession, SESSION_EXPIRED_EVENT } from '../auth/demoSession';
 import { apiRequest } from '../services/apiClient';
 
 export const AuthContext = createContext();
@@ -50,20 +50,25 @@ export const AuthProvider = ({ children }) => {
     const [sessionNotice, setSessionNotice] = useState(null);
     const authGeneration = useRef(0);
 
-    useEffect(() => {
-        const handleExpiredSession = () => {
-            setUser(null);
-            setSessionNotice('Phiên đăng nhập đã được thay thế hoặc hết hạn. Vui lòng đăng nhập lại.');
-        };
-        window.addEventListener(DEMO_SESSION_EXPIRED_EVENT, handleExpiredSession);
-        return () => window.removeEventListener(DEMO_SESSION_EXPIRED_EVENT, handleExpiredSession);
-    }, []);
-
     const persistUser = (userInfo) => {
         setSessionNotice(null);
         localStorage.setItem("userInfo", JSON.stringify(userInfo));
         setUser(userInfo);
     };
+
+    useEffect(() => {
+        const handleExpiredSession = () => {
+            authGeneration.current += 1;
+            clearDemoSession();
+            localStorage.removeItem("userInfo");
+            setUser(null);
+            setLoading(false);
+            setSessionNotice('Phiên đăng nhập đã được thay thế hoặc hết hạn. Vui lòng đăng nhập lại.');
+            if (auth?.currentUser) signOut(auth).catch(() => {});
+        };
+        globalThis.addEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession);
+        return () => globalThis.removeEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession);
+    }, []);
 
     useEffect(() => {
         // Firebase is the source of truth for session persistence and token refresh.
@@ -73,11 +78,18 @@ export const AuthProvider = ({ children }) => {
             if (demoSession?.user) {
                 localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
                 setUser(demoSession.user);
+                apiRequest("/users/me").catch((error) => {
+                    if (active && (error?.status === 401 || error?.status === 403)) {
+                        clearDemoSession();
+                        localStorage.removeItem("userInfo");
+                        setUser(null);
+                    }
+                }).finally(() => { if (active) setLoading(false); });
             } else {
                 localStorage.removeItem("userInfo");
                 setUser(null);
+                setLoading(false);
             }
-            setLoading(false);
             return () => {
                 active = false;
             };
@@ -90,7 +102,17 @@ export const AuthProvider = ({ children }) => {
                     localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
                     if (active) {
                         setUser(demoSession.user);
-                        setLoading(false);
+                    }
+                    try {
+                        await apiRequest("/users/me");
+                    } catch (error) {
+                        if (error?.status === 401 || error?.status === 403) {
+                            clearDemoSession();
+                            localStorage.removeItem("userInfo");
+                            if (active && generation === authGeneration.current) setUser(null);
+                        }
+                    } finally {
+                        if (active && generation === authGeneration.current) setLoading(false);
                     }
                     return;
                 }

@@ -25,6 +25,7 @@ const navIcons = {
   'Sinh câu hỏi': faWandMagicSparkles,
   'Làm đề thi': faFilePen,
   'Đề thi': faFilePen,
+  'Xem đề thi': faFilePen,
   'Hướng dẫn': faBookOpen,
   'Liên hệ': faEnvelope,
   'Hàng kiểm duyệt': faClipboardCheck,
@@ -51,7 +52,7 @@ const Header = () => {
   // Lấy trạng thái user từ AuthContext thay vì tự check localStorage
   const { user, loading } = useContext(AuthContext);
   const role = user?.role;
-  const signedIn = Boolean(user);
+  const signedIn = Boolean(user) && !loading;
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -191,13 +192,11 @@ const Header = () => {
     items: [
       { path: '/tong-quan', label: 'Tổng quan' },
       { path: '/kiem-duyet', label: 'Kiểm duyệt' },
-      { path: '/danh-muc', label: 'Danh mục' },
-      { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
       { path: '/quan-ly', label: 'Câu hỏi' },
       { path: '/duyet-ai', label: 'Thẩm định AI' },
-      { path: '/lam-de-thi', label: 'Đề thi' },
-      { path: '/nhat-ky-he-thong', label: 'Lịch sử' },
-      { path: '/quan-ly-job', label: 'Tác vụ' },
+      { path: '/lam-de-thi', label: 'Xem đề thi' },
+      { path: '/danh-muc', label: 'Danh mục' },
+      { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
       { path: '/quan-ly-moodle', label: 'Moodle' },
     ],
   };
@@ -231,7 +230,7 @@ const Header = () => {
 
   return (
     <header
-      className="navbar"
+      className={`navbar ${role === 'Admin' ? 'navbar--admin' : ''}`}
       id="navbar"
       style={{ '--header-background': `url("${import.meta.env.BASE_URL}images/header-background.png")` }}
     >

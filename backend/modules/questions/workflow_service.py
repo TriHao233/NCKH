@@ -4230,9 +4230,11 @@ class QuestionWorkflowService:
             "published_at": now,
         }
         if settings.question_store == "postgres":
-            return json_safe(self.questions.record_moodle_publication(
+            saved = json_safe(self.questions.record_moodle_publication(
                 publication, expected_version_id=version["_id"],
             ))
+            self._email_publication_result(saved, question, version, user_id)
+            return saved
         with mongo_transaction() as session:
             existing = self.db.moodle_publications.find_one(
                 {"idempotency_key": idempotency_key},
@@ -4280,7 +4282,74 @@ class QuestionWorkflowService:
                     },
                     session=session,
                 )
-        return json_safe(saved or publication)
+        result = json_safe(saved or publication)
+        self._email_publication_result(result, question, version, user_id)
+        return result
+
+    def _email_publication_result(self, publication, question, version, user_id) -> None:
+        """Send a best-effort email when a publication finishes.
+
+        The Moodle target is a MOCK today, so the wording must not claim the
+        question has landed on a real Moodle site. Only PUBLISHED / FAILED
+        transitions are notified; anything else is skipped.
+        """
+        try:
+            from core.config import settings as _settings
+            from core.email_service import build_email_html, get_email_service
+            from core.postgres import postgres_connection
+        except Exception:  # pragma: no cover
+            return
+        status = (publication or {}).get("status")
+        if status not in ("PUBLISHED", "FAILED"):
+            return
+        if not user_id:
+            return
+        try:
+            with postgres_connection() as conn:
+                row = conn.execute(
+                    "SELECT email, display_name, profile FROM users WHERE id = %s",
+                    (str(user_id),),
+                ).fetchone()
+        except Exception as exc:
+            logger.warning("Publication email: user lookup failed: %s", exc)
+            return
+        if not row:
+            return
+        profile = row.get("profile") or {}
+        if profile.get("email_notifications_enabled", True) is False:
+            return
+        recipient = (profile.get("notification_email") or "").strip() or row.get("email")
+        if not recipient:
+            return
+        question_code = (question or {}).get("question_code", "Câu hỏi")
+        version_no = (version or {}).get("version", "")
+        if status == "PUBLISHED":
+            title = f"Xuất bản câu hỏi {question_code}: hoàn tất"
+            paragraphs = [
+                f"Quy trình xuất bản đã hoàn tất trong QBankCTU cho câu hỏi {question_code}"
+                f"{f' phiên bản {version_no}' if version_no else ''}.",
+                "Lưu ý: hệ thống hiện đang ở chế độ mô phỏng Moodle, dữ liệu chưa được gửi lên Moodle thật.",
+            ]
+        else:
+            title = f"Xuất bản câu hỏi {question_code}: gặp sự cố"
+            error = (publication or {}).get("error") or {}
+            error_msg = error.get("message") if isinstance(error, dict) else str(error)
+            paragraphs = [
+                f"Quy trình xuất bản câu hỏi {question_code} trong QBankCTU không thành công.",
+                f"Lý do: {error_msg or 'không rõ'}",
+                "Vui lòng đăng nhập để kiểm tra chi tiết.",
+            ]
+        html_body = build_email_html(
+            title=title,
+            paragraphs=paragraphs,
+            meta={"Mã câu hỏi": question_code, "Trạng thái": status},
+        )
+        get_email_service().send(
+            to_email=recipient,
+            to_name=row.get("display_name") or "",
+            subject=title,
+            html_body=html_body,
+        )
 
     def history(
         self,

@@ -105,6 +105,14 @@
   display: none;
 }
 
+.navbar--admin .nav-container {
+  width: calc(100% - 48px);
+}
+
+.navbar--admin .nav-section-links {
+  gap: 18px;
+}
+
 .nav-section {
   display: inline-flex;
   align-items: center;
@@ -554,7 +562,7 @@
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1280px) {
   .navbar {
     --header-height: 76px;
   }
@@ -565,6 +573,10 @@
     min-height: var(--header-height);
     gap: 12px;
     padding: 10px 0;
+  }
+
+  .navbar--admin .nav-container {
+    width: calc(100% - 40px);
   }
 
   .nav-logo {
@@ -726,7 +738,14 @@
   }
 }
 
-/* The expanded Admin menu wraps within the available header width. */
-.nav-section--admin { flex: 1 1 auto; min-width: 0; }
-.nav-section--admin .nav-section-links { flex-wrap: wrap; gap: 4px 16px; }
-.nav-section--admin .nav-link { padding-block: 7px; }
+/* Menu Quản trị có 8 mục: thu gọn khoảng cách để vừa một hàng trên desktop.
+   Từ 1280px trở xuống header đã chuyển sang menu thu gọn nên không áp dụng. */
+@media (min-width: 1281px) {
+  .navbar--admin .nav-section-links { gap: 8px; }
+  .navbar--admin .nav-link { gap: 5px; font-size: 0.9rem; }
+}
+
+@media (min-width: 1281px) and (max-width: 1366px) {
+  .navbar--admin .nav-link { font-size: 0.8rem; }
+  .navbar--admin .nav-link-icon { display: none; }
+}

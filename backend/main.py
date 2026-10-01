@@ -24,6 +24,7 @@ from modules.admin.moodle_router import router as admin_moodle_router
 from modules.admin.overview_router import router as admin_overview_router
 from modules.auth import login, profile, register
 from modules.catalog.router import router as catalog_router
+from modules.contact.router import router as contact_router
 from modules.documents.router import router as documents_router
 from modules.exams.router import router as exams_router
 from modules.generation.generate import router as generation_router
@@ -129,6 +130,7 @@ app.include_router(question_workflow_router)
 app.include_router(questions_router)
 app.include_router(exams_router)
 app.include_router(notifications_router)
+app.include_router(contact_router)
 
 firebase_guard = [Depends(require_teacher_or_admin)]
 app.include_router(ocr_router, dependencies=firebase_guard)

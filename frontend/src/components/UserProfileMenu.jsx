@@ -4,12 +4,13 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faUser,
   faCalendarCheck,
-  faCog,
   faSignOutAlt,
   faChevronDown,
   faListCheck,
   faBook,
   faFileLines,
+  faClockRotateLeft,
+  faEnvelope,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -127,10 +128,20 @@ const UserProfileMenu = () => {
           )}
 
           {canOpenSettings && (
-            <Link to="/quan-ly-nguoi-dung" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faCog} className="dropdown-icon" />
-              Quản lý người dùng
-            </Link>
+            <>
+              <Link to="/lien-he?tab=all" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faEnvelope} className="dropdown-icon" />
+                Xem liên hệ
+              </Link>
+              <Link to="/nhat-ky-he-thong" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faClockRotateLeft} className="dropdown-icon" />
+                Lịch sử dùng
+              </Link>
+              <Link to="/quan-ly-job" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
+                Tác vụ hệ thống
+              </Link>
+            </>
           )}
           
           <div className="dropdown-divider"></div>

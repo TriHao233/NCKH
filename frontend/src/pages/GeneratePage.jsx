@@ -275,6 +275,7 @@ function GeneratePage() {
   const abortRef = useRef(null);
   const fileInputRef = useRef(null);
   const timingRef = useRef({});
+  const pipelineBusyRef = useRef(false);
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const [statusDetail, setStatusDetail] = useState('');
@@ -836,7 +837,11 @@ function GeneratePage() {
       return;
     }
     setBulkSubmittingDrafts(true);
+    let successCount = 0;
+    const failures = [];
     try {
+      // Chạy tuần tự để giữ thứ tự và cho backend rate-limit tự nhiên,
+      // nhưng KHÔNG dừng ở lỗi đầu — thu lỗi từng câu để báo cáo cuối.
       for (const draft of targets) {
         setSubmittingDraftId(draft.id);
         let createdQuestion = null;
@@ -848,20 +853,29 @@ function GeneratePage() {
           setDrafts((current) => current.map((item) => (
             item.id === draft.id ? mergeUpdatedDraft(item, updatedQuestion) : item
           )));
+          successCount += 1;
         } catch (error) {
           if (createdQuestion?.id) {
             try {
               await deleteQuestion(createdQuestion.id);
             } catch {
-              // Best-effort cleanup: preserve the original submission error.
+              // Best-effort cleanup: giữ lỗi gốc ở dưới.
             }
           }
-          throw error;
+          failures.push({
+            label: draft.questionCode || draft.id,
+            message: error?.message || 'Lỗi không rõ',
+          });
         }
       }
-      setStatusDetail(`Đã gửi ${targets.length} câu hỏi sang hàng đợi duyệt`);
-    } catch (err) {
-      alert(`Gửi duyệt thất bại: ${err.message}`);
+      if (failures.length === 0) {
+        setStatusDetail(`Đã gửi ${successCount}/${targets.length} câu hỏi sang hàng đợi duyệt`);
+      } else {
+        setStatusDetail(`Đã gửi ${successCount}/${targets.length} câu; ${failures.length} câu thất bại.`);
+        const preview = failures.slice(0, 3).map((item) => `• ${item.label}: ${item.message}`).join('\n');
+        const suffix = failures.length > 3 ? `\n... và ${failures.length - 3} câu khác` : '';
+        alert(`Có ${failures.length}/${targets.length} câu gửi duyệt thất bại:\n${preview}${suffix}`);
+      }
     } finally {
       setSubmittingDraftId(null);
       setBulkSubmittingDrafts(false);
@@ -1160,11 +1174,15 @@ function GeneratePage() {
   };
 
   const runPipeline = async ({ fromGenerateOnly = false, processDocumentOnly = false } = {}) => {
+    // Chặn double-submit: nếu pipeline đang khởi tạo (giữa click và cập nhật phase),
+    // bỏ qua lời gọi trùng để không enqueue hai job sinh câu hỏi cùng payload.
+    if (pipelineBusyRef.current) return;
     const validationError = validateForm(processDocumentOnly);
     if (validationError) {
       setError(validationError);
       return;
     }
+    pipelineBusyRef.current = true;
 
     setError('');
     const pipelineStartedAt = nowMs();
@@ -1224,6 +1242,8 @@ function GeneratePage() {
       setPhase('failed');
       setError(err.message || 'Đã xảy ra lỗi');
       setStatusDetail('');
+    } finally {
+      pipelineBusyRef.current = false;
     }
   };
 
@@ -1788,7 +1808,12 @@ function GeneratePage() {
             <button
               className="btn btn--primary gen-submit"
               type="submit"
-              disabled={isBusy || !chunkReady}
+              disabled={isBusy || !chunkReady || totalQuestions > MAX_TOTAL_QUESTIONS || totalQuestions < 1}
+              title={totalQuestions > MAX_TOTAL_QUESTIONS
+                ? `Tổng số câu (${totalQuestions}) vượt quá giới hạn ${MAX_TOTAL_QUESTIONS}. Giảm bớt số câu ở các dòng.`
+                : totalQuestions < 1
+                  ? 'Cần cấu hình ít nhất 1 câu hỏi.'
+                  : ''}
             >
               {isBusy && chunkReady ? (
                 <>
