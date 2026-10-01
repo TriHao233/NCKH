@@ -159,7 +159,7 @@ POLICY = {
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     },
-    "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.65},
+    "thresholds": {"yellow_min": 0.5, "green_min": 0.75, "pass_min": 0.70},
 }
 QUEUE_EXCERPT = "Hàng đợi hoạt động theo nguyên tắc vào trước ra trước, còn gọi là FIFO."
 
@@ -576,6 +576,27 @@ class EvaluationWithoutCloTests(unittest.TestCase):
         self.assertEqual(feedback["action"], "NEEDS_REVISION")
         self.assertEqual(evidence["metadata_guardrail"]["missing_fields"], ["bloom"])
         self.assertTrue(evidence["metadata_guardrail"]["applied"])
+
+
+class DefaultPassThresholdTests(unittest.TestCase):
+    """Chưa có bộ tiêu chí nào trong cơ sở dữ liệu thì ngưỡng đạt là 0.70."""
+
+    def setUp(self):
+        self.service = QuestionWorkflowService(None)
+        self.policy = self.service._policy()
+
+    def approval_contradictions(self, score):
+        scores = EvaluationScores(**{key: score for key in self.policy["weights"]})
+        return self.service._decision_contradictions(
+            scores, {"action": "APPROVE", "severity": "LOW"}, {"moodle_readiness": "READY"}, self.policy,
+        )
+
+    def test_approval_needs_an_overall_score_of_at_least_070(self):
+        self.assertEqual(self.policy["thresholds"]["pass_min"], 0.70)
+        self.assertEqual(self.approval_contradictions(0.70), [])
+        self.assertEqual(
+            self.approval_contradictions(0.69), ["APPROVE nhưng tổng điểm dưới ngưỡng đạt"],
+        )
 
 
 class EvaluationOutputRepairTests(unittest.TestCase):

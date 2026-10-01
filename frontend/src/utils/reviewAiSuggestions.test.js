@@ -28,6 +28,15 @@ test('evaluation insights identify weak and suspiciously uniform scores', () => 
   assert.equal(uniform.uniformScores, true);
 });
 
+test('evaluation insights fall back to the default pass threshold of 0.7', () => {
+  const insights = evaluationInsights({
+    scores: { faithfulness: 0.7, answer_relevancy: 0.69, bloom_alignment: 0.9 },
+  }, components);
+
+  assert.equal(insights.passMin, 0.7);
+  assert.deepEqual(insights.weakCriteria.map((item) => item.key), ['answer_relevancy']);
+});
+
 test('AI suggestions populate a revision draft without saving a decision', () => {
   const draft = {
     overallNote: '',

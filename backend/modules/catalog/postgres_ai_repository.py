@@ -315,6 +315,45 @@ class PostgresAiRepository:
                             "weights_hash": digest, "is_active": row["is_active"]})
         return _api(row)
 
+    def ensure_default_policy(self, name: str, weights: dict, thresholds: dict,
+                              superseded_pass_min: tuple[float, ...]) -> dict | None:
+        """Add ``thresholds`` once as the next version of the default policy ``name``.
+
+        It becomes active when nothing is active or the active policy is still a
+        default shipped earlier. An empty table is left alone: policies arrive with
+        the data copy, and until then the runtime falls back to the same defaults.
+        """
+        with postgres_connection() as conn:
+            with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('policy:global', 0))")
+                rows = conn.execute(
+                    "SELECT * FROM evaluation_policies ORDER BY version DESC"
+                ).fetchall()
+                versions = [row for row in rows if row["policy_name"] == name]
+                if not rows or any(row["thresholds"] == thresholds for row in versions):
+                    return None
+                active = next((row for row in rows if row["is_active"]), None)
+                replaces_active = (
+                    active is not None and active["policy_name"] == name
+                    and (active["thresholds"] or {}).get("pass_min") in superseded_pass_min
+                )
+                target_id = str(ObjectId())
+                conn.execute("""
+                    INSERT INTO evaluation_policies
+                    (id, policy_name, version, weights, thresholds, weights_hash,
+                     is_active, created_by_user_id, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,false,NULL,%s)
+                """, (
+                    target_id, name, (versions[0]["version"] + 1 if versions else 1),
+                    Jsonb(weights), Jsonb(thresholds),
+                    _hash({"weights": weights, "thresholds": thresholds}), _now(),
+                ))
+                if active is None or replaces_active:
+                    conn.execute("UPDATE evaluation_policies SET is_active=false WHERE is_active")
+                    conn.execute("UPDATE evaluation_policies SET is_active=true WHERE id=%s", (target_id,))
+                row = conn.execute("SELECT * FROM evaluation_policies WHERE id=%s", (target_id,)).fetchone()
+        return _api(row)
+
     def activate_policy(self, name: str, version: int, active: bool, *, actor_id=None) -> dict:
         with postgres_connection() as conn:
             with conn.transaction():

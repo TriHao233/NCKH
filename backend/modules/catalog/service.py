@@ -88,7 +88,7 @@ FALLBACK_EVALUATION_POLICY = {
         "bloom_alignment": 0.15,
         "clo_alignment": 0.15,
     },
-    "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
+    "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.70},
     "is_active": True,
 }
 

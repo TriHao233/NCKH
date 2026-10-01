@@ -9,6 +9,18 @@ from core.config import resolve_path, settings
 
 SCHEMA_VERSION = 2
 
+DEFAULT_POLICY_NAME = "Default question quality policy"
+DEFAULT_POLICY_WEIGHTS = {
+    "faithfulness": 0.35,
+    "contextual_relevancy": 0.20,
+    "answer_relevancy": 0.15,
+    "bloom_alignment": 0.15,
+    "clo_alignment": 0.15,
+}
+DEFAULT_POLICY_THRESHOLDS = {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.70}
+# pass_min of the default policies shipped before the current one (versions 1 and 2).
+SUPERSEDED_DEFAULT_PASS_MIN = (0.80, 0.65)
+
 AUTH_COLLECTIONS = ("User",)
 
 RAG_COLLECTIONS = (
@@ -745,34 +757,54 @@ def _ensure_indexes() -> None:
     )
 
 
+def _seed_evaluation_policy(db, now: datetime) -> None:
+    """Add the current default policy once, as the next version of the default policy.
+
+    It becomes active on a new database, and on a database whose active policy is
+    still a default shipped earlier. A policy an admin configured stays active.
+    """
+    policies = db.evaluation_policies
+    current = {f"thresholds.{key}": value for key, value in DEFAULT_POLICY_THRESHOLDS.items()}
+    if policies.find_one({"policy_name": DEFAULT_POLICY_NAME, **current}, {"_id": 1}):
+        return
+    latest = policies.find_one(
+        {"policy_name": DEFAULT_POLICY_NAME}, {"version": 1}, sort=[("version", -1)]
+    )
+    active = policies.find_one(
+        {"is_active": True}, {"policy_name": 1, "thresholds": 1}, sort=[("version", -1)]
+    )
+    replaces_active = (
+        active is not None
+        and active.get("policy_name") == DEFAULT_POLICY_NAME
+        and (active.get("thresholds") or {}).get("pass_min") in SUPERSEDED_DEFAULT_PASS_MIN
+    )
+    if replaces_active:
+        policies.update_many(
+            {"is_active": True}, {"$set": {"is_active": False, "updated_at": now}}
+        )
+    policies.update_one(
+        {"policy_name": DEFAULT_POLICY_NAME, "version": int((latest or {}).get("version", 0)) + 1},
+        {
+            "$setOnInsert": {
+                "schema_version": SCHEMA_VERSION,
+                "weights": dict(DEFAULT_POLICY_WEIGHTS),
+                "weights_hash": hashlib.sha256(
+                    str(sorted(DEFAULT_POLICY_WEIGHTS.items())).encode()
+                ).hexdigest(),
+                "thresholds": dict(DEFAULT_POLICY_THRESHOLDS),
+                "is_active": active is None or replaces_active,
+                "created_at": now,
+            }
+        },
+        upsert=True,
+    )
+
+
 def _seed_reference_data() -> None:
     db = get_rag_db()
     now = datetime.now(timezone.utc)
-    weights = {
-        "faithfulness": 0.35,
-        "contextual_relevancy": 0.20,
-        "answer_relevancy": 0.15,
-        "bloom_alignment": 0.15,
-        "clo_alignment": 0.15,
-    }
     if mongo_owns("evaluation_policies"):
-        has_active_policy = db.evaluation_policies.find_one(
-            {"is_active": True}, {"_id": 1}
-        ) is not None
-        db.evaluation_policies.update_one(
-            {"policy_name": "Default question quality policy", "version": 2},
-            {
-                "$setOnInsert": {
-                    "schema_version": SCHEMA_VERSION,
-                    "weights": weights,
-                    "weights_hash": hashlib.sha256(str(sorted(weights.items())).encode()).hexdigest(),
-                    "thresholds": {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65},
-                    "is_active": not has_active_policy,
-                    "created_at": now,
-                }
-            },
-            upsert=True,
-        )
+        _seed_evaluation_policy(db, now)
     if mongo_owns("moodle_targets"):
         db.moodle_targets.update_one(
             {"site_key": "demo-moodle"},
@@ -939,6 +971,18 @@ def _seed_prompt_templates(db, now: datetime) -> None:
             },
             upsert=True,
         )
+
+
+def seed_postgres_reference_data() -> None:
+    """PostgreSQL side of the default policy seed; call once migrations are verified."""
+    if mongo_owns("evaluation_policies"):
+        return
+    from modules.catalog.postgres_ai_repository import PostgresAiRepository
+
+    PostgresAiRepository().ensure_default_policy(
+        DEFAULT_POLICY_NAME, DEFAULT_POLICY_WEIGHTS, DEFAULT_POLICY_THRESHOLDS,
+        SUPERSEDED_DEFAULT_PASS_MIN,
+    )
 
 
 def bootstrap_database() -> None:

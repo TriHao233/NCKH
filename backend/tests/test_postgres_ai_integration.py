@@ -100,3 +100,49 @@ def test_versioned_ai_configuration_and_activation():
                 conn.execute("DELETE FROM ai_model_versions WHERE model_id IN (SELECT id FROM ai_models WHERE model_code=%s)", (code,))
                 conn.execute("DELETE FROM ai_models WHERE model_code=%s", (code,))
                 conn.execute("DELETE FROM users WHERE id=%s", (str(actor["_id"]),))
+
+
+def test_default_policy_is_added_once_and_replaces_only_an_earlier_default():
+    repo = PostgresAiRepository()
+    suffix = uuid.uuid4().hex[:12]
+    default_name, admin_name, late_name = (
+        f"Test default {suffix}", f"Test admin {suffix}", f"Test late default {suffix}"
+    )
+    weights = {"faithfulness": 1.0}
+    current = {"yellow_min": 0.5, "pass_min": 0.7, "green_min": 0.75}
+    superseded = (0.8, 0.65)
+
+    def save(name: str, pass_min: float) -> dict:
+        return repo.save_policy(EvaluationPolicyPayload(
+            policy_name=name, weights=weights,
+            thresholds={"yellow_min": 0.5, "pass_min": pass_min, "green_min": 0.8},
+            is_active=True,
+        ))
+
+    with postgres_connection() as conn:
+        active_before = [row["id"] for row in conn.execute(
+            "SELECT id FROM evaluation_policies WHERE is_active"
+        ).fetchall()]
+    try:
+        save(default_name, 0.8)
+        added = repo.ensure_default_policy(default_name, weights, current, superseded)
+        assert (added["version"], added["is_active"], added["thresholds"]) == (2, True, current)
+        assert repo.policy(active_only=True)["_id"] == added["_id"]
+        assert repo.ensure_default_policy(default_name, weights, current, superseded) is None
+
+        # The active policy is one an admin configured: the default is added but not activated.
+        save(admin_name, 0.8)
+        added = repo.ensure_default_policy(late_name, weights, current, superseded)
+        assert (added["version"], added["is_active"]) == (1, False)
+        assert repo.policy(active_only=True)["policy_name"] == admin_name
+    finally:
+        with postgres_connection() as conn:
+            with conn.transaction():
+                conn.execute(
+                    "DELETE FROM evaluation_policies WHERE policy_name = ANY(%s)",
+                    ([default_name, admin_name, late_name],),
+                )
+                conn.execute(
+                    "UPDATE evaluation_policies SET is_active=true WHERE id = ANY(%s)",
+                    (active_before,),
+                )

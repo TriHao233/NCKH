@@ -10,7 +10,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from core.limiter import limiter
-from core.bootstrap import bootstrap_database
+from core.bootstrap import bootstrap_database, seed_postgres_reference_data
 from core.config import settings
 from core.database import close_database, ping_database
 from core.postgres import close_postgres, ping_postgres
@@ -49,6 +49,7 @@ async def lifespan(_app: FastAPI):
         from core.postgres import postgres_connection
         with postgres_connection() as connection:
             apply_migrations(connection, check=True)
+        await asyncio.to_thread(seed_postgres_reference_data)
     await asyncio.to_thread(recover_stale_jobs)
     try:
         yield

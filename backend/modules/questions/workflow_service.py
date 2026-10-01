@@ -55,7 +55,7 @@ DEFAULT_WEIGHTS = {
     "bloom_alignment": 0.15,
     "clo_alignment": 0.15,
 }
-DEFAULT_THRESHOLDS = {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65}
+DEFAULT_THRESHOLDS = {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.70}
 CLO_CRITERION = "clo_alignment"
 # Phương án được coi là "có trong nguồn" khi ít nhất 80% từ của nó xuất hiện trong nguồn.
 OPTION_TEXT_SUPPORT_MIN = 0.8

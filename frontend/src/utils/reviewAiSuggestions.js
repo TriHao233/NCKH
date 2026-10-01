@@ -19,7 +19,7 @@ function uniqueTexts(values) {
 
 export function evaluationInsights(evaluation, components) {
   const scores = evaluation?.scores || {};
-  const passMin = evaluation?.policy?.thresholds?.pass_min ?? 0.65;
+  const passMin = evaluation?.policy?.thresholds?.pass_min ?? 0.7;
   const scored = (components || [])
     .map((component) => ({ ...component, score: numericScore(scores[component.key]) }))
     .filter((component) => component.score !== null);

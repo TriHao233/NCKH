@@ -511,7 +511,6 @@ function ReviewQueuePage() {
   const [evaluationStatusFilter, setEvaluationStatusFilter] = useState('all');
   const [publicationStatusFilter, setPublicationStatusFilter] = useState('all');
   const [creatorFilter, setCreatorFilter] = useState('all');
-  const [minScore, setMinScore] = useState('');
   const [submittedFromFilter, setSubmittedFromFilter] = useState('');
   const [submittedToFilter, setSubmittedToFilter] = useState('');
   const [sortMode, setSortMode] = useState('priority');
@@ -624,7 +623,6 @@ function ReviewQueuePage() {
     setLoading(true);
     setError('');
     try {
-      const numericMinScore = minScore === '' ? undefined : Number(minScore);
       const assignmentStatus = ['UNASSIGNED', 'ASSIGNED', 'IN_REVIEW'].includes(assignmentFilter)
         ? assignmentFilter
         : undefined;
@@ -638,7 +636,6 @@ function ReviewQueuePage() {
         subjectId: subjectFilter === 'all' ? undefined : subjectFilter,
         chapterId: chapterFilter === 'all' ? undefined : chapterFilter,
         cloId: cloFilter === 'all' ? undefined : cloFilter,
-        minScore: Number.isFinite(numericMinScore) ? numericMinScore : undefined,
         evaluationStatus: evaluationStatusFilter === 'all' ? undefined : evaluationStatusFilter,
         publicationStatus: publicationStatusFilter === 'all' ? undefined : publicationStatusFilter,
         creatorUserId: creatorFilter === 'all' ? undefined : creatorFilter,
@@ -815,7 +812,6 @@ function ReviewQueuePage() {
     evaluationStatusFilter,
     publicationStatusFilter,
     creatorFilter,
-    minScore,
     submittedFromFilter,
     submittedToFilter,
     sortMode,
@@ -1563,7 +1559,6 @@ function ReviewQueuePage() {
     setEvaluationStatusFilter('all');
     setPublicationStatusFilter('all');
     setCreatorFilter('all');
-    setMinScore('');
     setSourcePresenceFilter('all');
     setSecondaryStatusFilter('all');
     setSortMode('priority');
@@ -1777,8 +1772,8 @@ function ReviewQueuePage() {
           <b>{colorFilter === 'GREEN' ? total : summary.green}</b>
           <span>AI đề xuất đạt</span>
         </button>
-        <button type="button" onClick={() => updateFilter(setMinScore)('0.8')}>
-          <b>{minScore === '0.8' ? total : summary.passed}</b>
+        <button type="button" onClick={() => updateFilter(setEvaluationStatusFilter)('PASSED')}>
+          <b>{evaluationStatusFilter === 'PASSED' ? total : summary.passed}</b>
           <span>Điểm AI đạt yêu cầu</span>
         </button>
         <button type="button" onClick={() => updateFilter(setStatusFilter)('APPROVED')}>
