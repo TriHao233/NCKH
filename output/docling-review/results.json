@@ -1,0 +1,51 @@
+{
+  "mode": "mocked OCR; no real OCR or speed measurement",
+  "routing": [
+    {
+      "case": "native",
+      "pages": 3,
+      "easyocr_selected_pages": [],
+      "docling_selected_pages": []
+    },
+    {
+      "case": "scan",
+      "pages": 3,
+      "easyocr_selected_pages": [
+        1,
+        2,
+        3
+      ],
+      "docling_selected_pages": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "case": "mixed",
+      "pages": 3,
+      "easyocr_selected_pages": [
+        2
+      ],
+      "docling_selected_pages": [
+        2
+      ]
+    },
+    {
+      "case": "layout",
+      "pages": 3,
+      "easyocr_selected_pages": [],
+      "docling_selected_pages": [
+        2
+      ]
+    }
+  ],
+  "page_mapping": "PASS (source pages 1 and 3; structured block -> page 3)",
+  "tesseract_vietnamese_request": "PASS",
+  "service_failure": [
+    "native_text",
+    "passed_with_warning",
+    "quality_failed"
+  ],
+  "checks": "PASS"
+}

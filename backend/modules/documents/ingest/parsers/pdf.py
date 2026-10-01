@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from pypdf import PdfReader
+from core.config import settings
 
 from modules.documents.ingest.base import DocumentParser
 from modules.documents.ingest.models import (
@@ -315,6 +316,7 @@ def _append_docling_structured_blocks(
     *,
     page_number: int,
     confidence: float,
+    extractor: str = "docling",
 ) -> None:
     page_asset_ids = set(unit.asset_ids)
     page_assets = [
@@ -355,7 +357,7 @@ def _append_docling_structured_blocks(
                         page_number=page_number,
                         source_location={"page_number": page_number, "coord_origin": coord_origin},
                         bbox=bbox,
-                        extractor="docling",
+                        extractor=extractor,
                         extraction_method="pdf_page_region_reference",
                         confidence=confidence,
                         raw_ref=f"{context.source_uri}#page={page_number}&bbox={','.join(map(str, bbox))}",
@@ -402,7 +404,7 @@ def _append_docling_structured_blocks(
             )
             matching.validation_notes = [] if matching.validation_status == "passed" else ["layout block has no source bbox"]
             matching.transformation_log.append(
-                {"operation": "docling_layout_enrichment", "semantic_change": False}
+                {"operation": f"{extractor}_layout_enrichment", "semantic_change": False}
             )
             if len(page_assets) == 1 and block_type == "caption":
                 _link_source_caption(page_assets[0], content)
@@ -414,12 +416,12 @@ def _append_docling_structured_blocks(
             review_notes.append("visual-to-asset link is ambiguous")
         block = make_block(
             context,
-            location_key=f"pdf:{page_number}:docling:{len(unit.content_blocks)}",
+            location_key=f"pdf:{page_number}:{extractor}:{len(unit.content_blocks)}",
             index=len(unit.content_blocks),
             block_type=block_type,
             content=content,
             source_location={"page_number": page_number},
-            extractor="docling",
+            extractor=extractor,
             extraction_method="page_selective_layout",
             page_number=page_number,
             confidence=confidence,
@@ -578,9 +580,14 @@ def _text_is_usable(metrics: dict[str, Any]) -> bool:
 
 
 def _default_ocr_page_extractor(path: Path, page_numbers: list[int], context: ParseContext) -> dict[int, dict[str, Any]]:
-    from modules.ocr.docling_engine import ocr_pdf_pages
+    if settings.pdf_ocr_engine == "docling":
+        from modules.ocr.docling_engine import ocr_pdf_pages as docling_pdf_pages
+        return docling_pdf_pages(str(path), page_numbers)
+    if settings.pdf_ocr_engine != "easyocr":
+        raise ValueError("PDF_OCR_ENGINE must be docling or easyocr")
+    from modules.ocr.easyocr_engine import ocr_pdf_pages
 
-    return ocr_pdf_pages(str(path), page_numbers)
+    return ocr_pdf_pages(str(path), page_numbers, context)
 
 
 class PdfParser(DocumentParser):
@@ -591,6 +598,9 @@ class PdfParser(DocumentParser):
         self.ocr_page_extractor = ocr_page_extractor
 
     def parse(self, path: Path, context: ParseContext) -> ParsedDocument:
+        engine = settings.pdf_ocr_engine
+        if engine not in {"easyocr", "docling"}:
+            raise ValueError("PDF_OCR_ENGINE must be docling or easyocr")
         reader = PdfReader(str(path), strict=False)
         if reader.is_encrypted and not reader.decrypt(""):
             raise ValueError("PDF được mã hóa và không thể mở nếu thiếu mật khẩu")
@@ -598,7 +608,7 @@ class PdfParser(DocumentParser):
         units: list[DocumentUnit] = []
         assets: list[Asset] = []
         raw_engine_outputs: dict[str, Any] = {}
-        docling_required: list[int] = []
+        ocr_required: list[int] = []
         hard_ocr_required: set[int] = set()
         for page_number, page in enumerate(reader.pages, start=1):
             candidates = _candidate_texts(page)
@@ -680,8 +690,10 @@ class PdfParser(DocumentParser):
                     page_asset = next((asset for asset in assets if asset.asset_id == page_assets[0]), None)
                     if page_asset:
                         page_asset.metadata["is_page_raster"] = True
-            if text_is_inadequate or layout_is_material:
-                docling_required.append(page_number)
+            # Keep EasyOCR routing unchanged. Docling also enriches material layout
+            # while retaining usable native text and original page provenance.
+            if text_is_inadequate or (engine == "docling" and layout_is_material):
+                ocr_required.append(page_number)
             block_source = selected
             block_text = selected["text"]
             if (
@@ -715,17 +727,17 @@ class PdfParser(DocumentParser):
                 )
             )
 
-        if docling_required and self.ocr_page_extractor:
+        if ocr_required and self.ocr_page_extractor:
             try:
-                ocr_results = self.ocr_page_extractor(path, docling_required, context)
+                ocr_results = self.ocr_page_extractor(path, ocr_required, context)
             except Exception as exc:
                 ocr_results = {}
-                for page_number in docling_required:
+                for page_number in ocr_required:
                     status = "quality_failed" if page_number in hard_ocr_required else "passed_with_warning"
                     units[page_number - 1].quality.update(
-                        {"status": status, "reason": f"Docling extraction failed: {type(exc).__name__}"}
+                        {"status": status, "reason": f"{engine} extraction failed: {type(exc).__name__}"}
                     )
-            for page_number in docling_required:
+            for page_number in ocr_required:
                 result = ocr_results.get(page_number)
                 if not result or not (result.get("text") or "").strip():
                     if page_number in hard_ocr_required:
@@ -739,9 +751,9 @@ class PdfParser(DocumentParser):
                     continue
                 ocr_text = str(result["text"])
                 score = text_quality_score(ocr_text)
-                if result.get("raw_document") is not None:
+                if engine == "docling" and result.get("raw_document") is not None:
                     raw_engine_outputs["docling"] = result["raw_document"]
-                units[page_number - 1].raw_extraction["docling"] = {
+                units[page_number - 1].raw_extraction[engine] = {
                     key: value for key, value in result.items() if key != "raw_document"
                 }
                 if page_number in hard_ocr_required:
@@ -750,36 +762,38 @@ class PdfParser(DocumentParser):
                         ocr_text,
                         context,
                         page_number=page_number,
-                        extractor="docling",
+                        extractor=engine,
                         extraction_method="page_selective_ocr",
                         confidence=score,
                     )
-                _append_docling_structured_blocks(
-                    units[page_number - 1],
-                    result,
-                    context,
-                    assets,
-                    page_number=page_number,
-                    confidence=score,
-                )
+                if engine == "docling":
+                    _append_docling_structured_blocks(
+                        units[page_number - 1], result, context, assets,
+                        page_number=page_number, confidence=score,
+                    )
                 if page_number in hard_ocr_required:
                     ocr_metrics = text_quality_metrics(ocr_text)
                     units[page_number - 1].quality.update(
                         {
                             **ocr_metrics,
                             "score": score,
-                            "selected_method": "docling_page_selective_ocr",
-                            "layout_method": "docling_page_selective_layout",
+                            "selected_method": f"{engine}_page_selective_ocr",
+                            "layout_method": "docling_page_selective_layout" if engine == "docling" else "easyocr_bounding_boxes",
                             "status": "passed" if _text_is_usable(ocr_metrics) else "quality_failed",
                         }
                     )
                 else:
                     units[page_number - 1].quality.update(
                         {
-                            "layout_method": "docling_page_selective_layout",
+                            "layout_method": "docling_page_selective_layout" if engine == "docling" else "easyocr_bounding_boxes",
                             "layout_quality": {**text_quality_metrics(ocr_text), "score": score},
                             "status": "passed",
                         }
+                    )
+                if engine == "easyocr" and result.get("structured_blocks"):
+                    _append_docling_structured_blocks(
+                        units[page_number - 1], result, context, assets,
+                        page_number=page_number, confidence=score, extractor="easyocr",
                     )
 
         _normalize_layout_blocks(units)
@@ -796,8 +810,8 @@ class PdfParser(DocumentParser):
                 "page_count": len(units),
                 "asset_count": len(assets),
                 "ocr_page_count": len(hard_ocr_required),
-                "layout_page_count": len(docling_required) - len(hard_ocr_required),
-                "docling_page_count": len(docling_required),
+                "layout_page_count": len(ocr_required) - len(hard_ocr_required),
+                f"{engine}_page_count": len(ocr_required),
                 "text_layer_page_count": len(units) - len(hard_ocr_required),
             },
         )

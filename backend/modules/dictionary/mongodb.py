@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from core.database import get_rag_db
+from modules.dictionary.constants import DEFAULT_CORE_KEYWORDS
 
 
 def _dictionaries_collection():
@@ -17,12 +18,7 @@ def init_default_dictionary(course_id: str = "it_fundamentals"):
             "name": "Từ điển Công nghệ Thông tin Căn bản",
             "category": "tech_keywords",
             "is_active": True,
-            "core_keywords": [
-                "struct", "pointer", "array", "linked list", "stack",
-                "queue", "tree", "graph", "heap", "hash", "sort",
-                "search", "binary", "complexity", "con trỏ", "mảng",
-                "giải thuật", "thuật toán", "đệ quy", "biến", "hằng"
-            ],
+            "core_keywords": list(DEFAULT_CORE_KEYWORDS),
             "learned_keywords": [],
             "pending_keywords": [],
             "created_at": datetime.utcnow(),

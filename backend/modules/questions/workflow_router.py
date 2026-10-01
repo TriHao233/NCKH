@@ -6,10 +6,12 @@ from core.config import settings
 from core.dependencies import (
     CurrentUser,
     require_admin,
+    require_permissions,
     require_reviewer_or_admin,
     require_teacher_reviewer_or_admin,
 )
 from modules.questions.workflow_schemas import (
+    AutoAssignRequest,
     AutoEvaluationRequest,
     EvaluationCreateRequest,
     MoodlePublicationRequest,
@@ -18,6 +20,7 @@ from modules.questions.workflow_schemas import (
     ReviewAssignmentRequest,
     ReviewCreateRequest,
     ReviewDraftUpsertRequest,
+    ReviewPolicyPayload,
     SecondaryReviewRequest,
 )
 from modules.questions.workflow_service import (
@@ -25,6 +28,7 @@ from modules.questions.workflow_service import (
     get_workflow_service,
 )
 
+require_moodle_publisher = require_permissions("reviews.manage", "questions.export_moodle")
 router = APIRouter(prefix=f"{settings.api_prefix}/questions", tags=["Question workflow"])
 
 
@@ -47,6 +51,50 @@ def review_dashboard(
 ):
     try:
         return service.review_dashboard(current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.post("/review-assignments/auto")
+def auto_assign_reviews(
+    payload: AutoAssignRequest,
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.auto_assign_reviews(payload, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/review-subject-suggestions")
+def review_subject_suggestions(
+    reviewer_user_id: str = Query(..., min_length=1, max_length=120),
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.suggest_review_subjects(reviewer_user_id)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
+@router.get("/review-policy")
+def get_review_policy(
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    return service.get_review_policy()
+
+
+@router.put("/review-policy")
+def update_review_policy(
+    payload: ReviewPolicyPayload,
+    current_user: CurrentUser = Depends(require_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.update_review_policy(payload, current_user)
     except Exception as exc:
         _translate_workflow_error(exc)
 
@@ -172,6 +220,18 @@ def release_review_question(
         _translate_workflow_error(exc)
 
 
+@router.post("/{question_id}/review-assignment/renew")
+def renew_review_question(
+    question_id: str,
+    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    service: QuestionWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return service.renew_review(question_id, current_user)
+    except Exception as exc:
+        _translate_workflow_error(exc)
+
+
 @router.post("/{question_id}/review-assignment")
 def assign_review_question(
     question_id: str,
@@ -266,7 +326,7 @@ def set_secondary_review(
 def publish_question_to_moodle(
     question_id: str,
     payload: MoodlePublicationRequest,
-    current_user: CurrentUser = Depends(require_reviewer_or_admin),
+    current_user: CurrentUser = Depends(require_moodle_publisher),
     service: QuestionWorkflowService = Depends(get_workflow_service),
 ):
     try:

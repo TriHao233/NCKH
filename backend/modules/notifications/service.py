@@ -9,10 +9,14 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database
+from modules.notifications.postgres_repository import PostgresNotificationRepository
 from modules.questions.repository import json_safe, object_id
 
 logger = logging.getLogger(__name__)
+# Decisions after which a resubmission should reach the reviewer who made them.
+RESUBMITTABLE_DECISIONS = {"NEEDS_REVISION", "REJECTED"}
 
 
 def utc_now() -> datetime:
@@ -37,8 +41,12 @@ def _serialize(record: dict) -> dict:
 
 
 class NotificationService:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, *, sink: list[dict] | None = None):
         self.db = database
+        self.repo = PostgresNotificationRepository() if settings.notification_store == "postgres" else None
+        # With a sink, notifications are only built; the caller writes them in
+        # the same PostgreSQL transaction as the change they report.
+        self.sink = sink
 
     def create(
         self,
@@ -70,7 +78,12 @@ class NotificationService:
             "read_at": None,
             "created_at": now,
         }
-        self.db.notifications.insert_one(record)
+        if self.sink is not None:
+            self.sink.append(record)
+        elif self.repo:
+            record = self.repo.create(record)
+        else:
+            self.db.notifications.insert_one(record)
         return _serialize(record)
 
     def create_many(self, notifications: list[dict[str, Any]]) -> list[dict]:
@@ -88,6 +101,14 @@ class NotificationService:
         return created
 
     def list(self, current_user, page: int, page_size: int, unread_only: bool = False) -> dict:
+        if self.repo:
+            items, total = self.repo.list(current_user.id, page, page_size, unread_only=unread_only)
+            return {
+                "items": [_serialize(item) for item in items],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
         query: dict = {"recipient_user_id": current_user.id}
         if unread_only:
             query["is_read"] = False
@@ -106,12 +127,18 @@ class NotificationService:
         }
 
     def unread_count(self, current_user) -> int:
+        if self.repo:
+            return self.repo.unread_count(current_user.id)
         return self.db.notifications.count_documents(
             {"recipient_user_id": current_user.id, "is_read": False}
         )
 
     def mark_read(self, notification_id: str, current_user) -> dict | None:
         now = utc_now()
+        if self.repo:
+            record = self.repo.mark_read(object_id(notification_id, "notification_id"),
+                                         current_user.id, now)
+            return _serialize(record) if record else None
         record = self.db.notifications.find_one_and_update(
             {
                 "_id": object_id(notification_id, "notification_id"),
@@ -124,6 +151,8 @@ class NotificationService:
 
     def mark_all_read(self, current_user) -> int:
         now = utc_now()
+        if self.repo:
+            return self.repo.mark_all_read(current_user.id, now)
         result = self.db.notifications.update_many(
             {"recipient_user_id": current_user.id, "is_read": False},
             {"$set": {"is_read": True, "read_at": now}},
@@ -173,6 +202,68 @@ class NotificationService:
             entity=self._question_entity(question, version),
         )
 
+    def notify_secondary_review_pending(
+        self,
+        *,
+        question: dict,
+        version: dict,
+        reason: str,
+        actor_user_id: ObjectId,
+    ) -> dict | None:
+        recipient = self._question_owner(question, version)
+        if recipient is None or recipient == actor_user_id:
+            return None
+        question_code = question.get("question_code", "Câu hỏi")
+        return self.create(
+            recipient_user_id=recipient,
+            actor_user_id=actor_user_id,
+            type="QUESTION_SECONDARY_REVIEW_PENDING",
+            title=f"{question_code} đạt lần duyệt đầu, đang chờ duyệt lần 2",
+            body=reason or "Câu hỏi cần thêm một người duyệt xác nhận trước khi vào ngân hàng.",
+            link=f"/quan-ly?questionId={question['_id']}",
+            entity=self._question_entity(question, version),
+        )
+
+    def notify_exam_owners_question_reopened(
+        self,
+        *,
+        question_id: str | ObjectId,
+        question_code: str,
+        actor_user_id: ObjectId,
+    ) -> list[dict]:
+        """An approved question was edited and left review: warn owners of open exams using it."""
+        question_oid = object_id(question_id, "question_id")
+        if settings.exam_store == "postgres":
+            from modules.exams.postgres_repository import PostgresExamRepository
+            exams = PostgresExamRepository.open_exams_using_question(question_oid)
+        else:
+            exams = list(
+                self.db.exams.find(
+                    {
+                        "questions.question_id": question_oid,
+                        "status": {"$nin": ["FINALIZED", "ARCHIVED", "finalized", "archived"]},
+                    },
+                    {"name": 1, "created_by_user_id": 1},
+                )
+            )
+        created = []
+        for exam in exams:
+            owner = exam.get("created_by_user_id")
+            if not owner or owner == actor_user_id:
+                continue
+            item = self.create(
+                recipient_user_id=owner,
+                actor_user_id=actor_user_id,
+                type="EXAM_QUESTION_NEEDS_REVIEW",
+                title=f"{question_code} trong đề \"{exam.get('name', '')}\" đã bị sửa",
+                body="Câu hỏi đã duyệt vừa được chỉnh sửa nên phải duyệt lại; đề chưa thể chốt với câu này.",
+                link=f"/lam-de-thi/{exam['_id']}",
+                entity=json_safe({"type": "EXAM", "id": exam["_id"], "question_id": question_oid}),
+            )
+            if item:
+                created.append(item)
+        return created
+
     def notify_review_assigned(
         self,
         *,
@@ -196,15 +287,14 @@ class NotificationService:
             entity=self._question_entity(question, version),
         )
 
-    def notify_question_resubmitted(
-        self,
-        *,
-        question_id: str | ObjectId,
-        previous_review_status: str | None,
-        actor_user_id: ObjectId,
-    ) -> list[dict]:
-        if previous_review_status != "NEEDS_REVISION":
-            return []
+    def _question_with_latest_review(self, question_id) -> tuple[dict, dict, dict | None] | None:
+        if settings.question_store == "postgres":
+            from modules.questions.postgres_repository import PostgresQuestionRepository
+            repository = PostgresQuestionRepository()
+            pair = repository.find_pair(question_id)
+            if not pair:
+                return None
+            return (*pair, repository.latest_review(pair[0]))
         question = self.db.questions.find_one(
             {
                 "_id": object_id(question_id, "question_id"),
@@ -213,10 +303,10 @@ class NotificationService:
             }
         )
         if not question:
-            return []
+            return None
         version = self.db.question_versions.find_one({"_id": question["current_version_id"]})
         if not version:
-            return []
+            return None
         review = None
         if question.get("latest_review_id"):
             review = self.db.question_reviews.find_one({"_id": question["latest_review_id"]})
@@ -225,18 +315,48 @@ class NotificationService:
                 {"question_id": question["_id"]},
                 sort=[("reviewed_at", -1)],
             )
-        reviewer_id = review.get("reviewer_user_id") if review else None
+        return question, version, review
+
+    def notify_question_resubmitted(
+        self,
+        *,
+        question_id: str | ObjectId,
+        previous_review_status: str | None,
+        actor_user_id: ObjectId,
+    ) -> list[dict]:
+        # Editing a question moves it back to DRAFT before it is resubmitted, so
+        # the status right before submission says nothing about earlier feedback.
+        # Decide from the latest review decision instead.
+        if previous_review_status == "PENDING":
+            return []
+        found = self._question_with_latest_review(question_id)
+        if not found:
+            return []
+        question, version, review = found
+        decision = review.get("decision") if review else None
+        if decision not in RESUBMITTABLE_DECISIONS:
+            return []
+        reviewer_id = review.get("reviewer_user_id")
         if not reviewer_id or reviewer_id == actor_user_id:
             return []
         question_code = question.get("question_code", "Câu hỏi")
+        after_rejection = decision == "REJECTED"
         return self.create_many(
             [
                 {
                     "recipient_user_id": reviewer_id,
                     "actor_user_id": actor_user_id,
                     "type": "QUESTION_RESUBMITTED",
-                    "title": f"{question_code} đã được gửi lại",
-                    "body": "Teacher đã chỉnh sửa và gửi lại câu hỏi cần duyệt.",
+                    "title": (
+                        f"{question_code} được sửa và gửi lại sau khi bị từ chối"
+                        if after_rejection
+                        else f"{question_code} đã được gửi lại"
+                    ),
+                    "body": (
+                        "Giảng viên đã chỉnh sửa câu hỏi bạn từ chối trước đó và gửi duyệt lại."
+                        if after_rejection
+                        else "Giảng viên đã chỉnh sửa theo yêu cầu và gửi lại câu hỏi cần duyệt."
+                    ),
                     "link": f"/kiem-duyet?questionId={question['_id']}",
                     "entity": self._question_entity(question, version),
                 }
@@ -253,6 +373,20 @@ def safe_notify_review_decision(**kwargs) -> None:
         NotificationService(kwargs.pop("database")).notify_review_decision(**kwargs)
     except Exception as exc:
         logger.warning("Failed to notify review decision: %s", exc)
+
+
+def safe_notify_exam_owners_question_reopened(**kwargs) -> None:
+    try:
+        NotificationService(kwargs.pop("database")).notify_exam_owners_question_reopened(**kwargs)
+    except Exception as exc:
+        logger.warning("Failed to notify exam owners about an edited question: %s", exc)
+
+
+def safe_notify_secondary_review_pending(**kwargs) -> None:
+    try:
+        NotificationService(kwargs.pop("database")).notify_secondary_review_pending(**kwargs)
+    except Exception as exc:
+        logger.warning("Failed to notify pending secondary review: %s", exc)
 
 
 def safe_notify_review_assigned(**kwargs) -> None:

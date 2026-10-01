@@ -11,22 +11,32 @@ from pymongo.errors import DuplicateKeyError
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
+from modules.catalog.postgres_subject_repository import subject_record
 from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.questions.schemas import QuestionDifficulty
 
 def utc_now():
     return datetime.now(timezone.utc)
 
 
+def _postgres_store():
+    """PostgreSQL generation store when GENERATION_STORE=postgres, else None."""
+    if settings.generation_store != "postgres":
+        return None
+    from modules.generation.postgres_store import PostgresGenerationStore
+    return PostgresGenerationStore()
+
+
 def get_document_learning_outcomes(document_id: str) -> list[dict]:
     db = get_database()
     try:
-        document = db.documents.find_one({"_id": object_id(document_id, "document_id")})
+        document = get_document_repository(db).find_by_id(object_id(document_id, "document_id"))
     except ValueError:
         return []
     if not document or not document.get("subject_id"):
         return []
-    subject = db.subjects.find_one({"_id": document["subject_id"], "is_active": {"$ne": False}})
+    subject = subject_record(db, document["subject_id"], active_only=True)
     if not subject:
         return []
     return [
@@ -79,7 +89,13 @@ def _resolve_clo_ids(
 
 
 def _model_snapshot(database, provider: str, fallback: dict | None = None) -> dict:
-    model = database.ai_models.find_one({"model_code": provider, "is_active": True})
+    if settings.ai_config_store == "postgres":
+        from modules.catalog.postgres_ai_repository import PostgresAiRepository
+        model = PostgresAiRepository().model(provider)
+        if model and not model["is_active"]:
+            raise ValueError("Mô hình AI này đang tạm dừng")
+    else:
+        model = database.ai_models.find_one({"model_code": provider, "is_active": True})
     if not model:
         return fallback or {"provider": provider}
     return {
@@ -111,7 +127,7 @@ def create_generation_run(
     provider = model_snapshot.get("provider") or model_snapshot.get("model_code") or ""
     if provider and not model_snapshot.get("source"):
         model_snapshot = _model_snapshot(db, provider, model_snapshot)
-    document = db.documents.find_one({"_id": document_oid, "archived_at": None})
+    document = get_document_repository(db).find_by_id(document_oid)
     if not document:
         raise ValueError("Không tìm thấy tài liệu")
     chunk_set_oid = object_id(chunk_set_id, "chunk_set_id")
@@ -173,6 +189,9 @@ def create_generation_run(
         "started_at": now,
         "finished_at": None,
     }
+    store = _postgres_store()
+    if store is not None:
+        return store.create_run(record)
     db.generation_runs.insert_one(record)
     return str(record["_id"])
 
@@ -204,6 +223,13 @@ def finish_generation_run(
         fields["post_processing"] = post_processing
     if model_execution is not None:
         fields["execution.model"] = model_execution
+    store = _postgres_store()
+    if store is not None:
+        execution = {"latency_ms": fields.pop("execution.latency_ms")}
+        if "execution.model" in fields:
+            execution["model"] = fields.pop("execution.model")
+        store.finish_run(generation_run_id, fields, execution)
+        return
     get_database().generation_runs.update_one(
         {"_id": object_id(generation_run_id, "generation_run_id")},
         {"$set": fields},
@@ -213,6 +239,18 @@ def finish_generation_run(
 def get_existing_question_texts(document_id: str, *, limit: int = 2000) -> list[str]:
     """Load current active question text for post-generation deduplication only."""
     document_oid = object_id(document_id, "document_id")
+    if settings.question_store == "postgres":
+        from core.postgres import postgres_connection
+        with postgres_connection() as conn:
+            rows = conn.execute(
+                """SELECT v.content FROM questions q
+                   JOIN question_versions v ON v.id=q.current_version_id
+                   WHERE q.lifecycle_status='ACTIVE' AND v.payload->>'document_id'=%s
+                   LIMIT %s""",
+                (str(document_oid), max(1, limit)),
+            ).fetchall()
+        return [str(row["content"] or "").strip() for row in rows
+                if str(row["content"] or "").strip()]
     pipeline = [
         {
             "$match": {
@@ -283,6 +321,13 @@ def create_generation_job(
     fallback_model_snapshot: dict | None = None,
 ) -> str:
     """Tạo job sinh câu hỏi với trạng thái queued (dùng cho polling ở FE)."""
+    store = _postgres_store()
+    if store is not None:
+        return store.create_job(
+            request, requested_by_user_id, idempotency_key,
+            model_snapshot=model_snapshot, code_model_snapshot=code_model_snapshot,
+            fallback_model_snapshot=fallback_model_snapshot,
+        )
     db = get_database()
     now = utc_now()
     doc = {
@@ -319,6 +364,9 @@ def create_generation_job(
 
 
 def get_generation_job_by_idempotency(requested_by_user_id, idempotency_key: str) -> dict | None:
+    store = _postgres_store()
+    if store is not None:
+        return store.get_by_idempotency(requested_by_user_id, idempotency_key)
     doc = get_database().generation_jobs.find_one(
         {"requested_by_user_id": requested_by_user_id, "idempotency_key": idempotency_key}
     )
@@ -326,6 +374,9 @@ def get_generation_job_by_idempotency(requested_by_user_id, idempotency_key: str
 
 
 def count_active_generation_jobs(requested_by_user_id) -> int:
+    store = _postgres_store()
+    if store is not None:
+        return store.count_active(requested_by_user_id)
     return get_database().generation_jobs.count_documents(
         {"requested_by_user_id": requested_by_user_id, "status": {"$in": ["queued", "processing"]}}
     )
@@ -340,6 +391,9 @@ def update_generation_job(
     worker_id: str | None = None,
 ):
     """Cập nhật trạng thái job sinh câu hỏi."""
+    store = _postgres_store()
+    if store is not None:
+        return store.update(job_id, status, result, metrics, error_message, worker_id)
     db = get_database()
     update_data: dict = {
         "status": status,
@@ -372,6 +426,9 @@ def update_generation_job(
 
 
 def update_generation_progress(job_id: str, worker_id: str, progress: dict) -> bool:
+    store = _postgres_store()
+    if store is not None:
+        return store.update_progress(job_id, worker_id, progress)
     result = get_database().generation_jobs.update_one(
         {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
         {"$set": {"progress": progress, "updated_at": utc_now()}},
@@ -389,6 +446,9 @@ def _serialize_generation_job(doc: dict | None) -> dict | None:
 
 def get_generation_job(job_id: str, *, requested_by_user_id=None) -> dict | None:
     """Lấy thông tin job sinh câu hỏi theo job_id."""
+    store = _postgres_store()
+    if store is not None:
+        return store.get(job_id, requested_by_user_id=requested_by_user_id)
     db = get_database()
     try:
         query = {"_id": ObjectId(job_id)}
@@ -401,6 +461,9 @@ def get_generation_job(job_id: str, *, requested_by_user_id=None) -> dict | None
 
 
 def cancel_generation_job(job_id: str, *, requested_by_user_id=None) -> bool:
+    store = _postgres_store()
+    if store is not None:
+        return store.cancel(job_id, requested_by_user_id=requested_by_user_id) is not None
     try:
         query = {"_id": ObjectId(job_id), "status": {"$in": ["queued", "processing"]}}
     except (InvalidId, TypeError):
@@ -426,6 +489,9 @@ def cancel_generation_job(job_id: str, *, requested_by_user_id=None) -> bool:
 
 def claim_generation_job(job_id: str, worker_id: str) -> dict | None:
     """Atomically claim one queued job so multiple workers cannot run it twice."""
+    store = _postgres_store()
+    if store is not None:
+        return store.claim(job_id, worker_id)
     try:
         object_id = ObjectId(job_id)
     except (InvalidId, TypeError):
@@ -470,6 +536,9 @@ def get_next_queued_generation_job_id(provider_group: str | None = None) -> str 
     slow local generation cannot head-of-line block a remote Gemini request (and
     vice versa).
     """
+    store = _postgres_store()
+    if store is not None:
+        return store.next_queued_id(provider_group)
     now = utc_now()
     runnable_filter = {
         "$or": [
@@ -521,6 +590,9 @@ def get_next_queued_generation_job_id(provider_group: str | None = None) -> str 
 
 
 def heartbeat_generation_job(job_id: str, worker_id: str) -> bool:
+    store = _postgres_store()
+    if store is not None:
+        return store.heartbeat(job_id, worker_id)
     now = utc_now()
     result = get_database().generation_jobs.update_one(
         {"_id": ObjectId(job_id), "status": "processing", "locked_by": worker_id},
@@ -542,6 +614,10 @@ def retry_or_dead_letter_generation_job(
     error_message: str,
     metrics: dict | None = None,
 ) -> str:
+    store = _postgres_store()
+    if store is not None:
+        return store.retry_or_dead_letter(job, worker_id, error_message=error_message,
+                                          metrics=metrics)
     now = utc_now()
     attempts = int(job.get("attempt_count") or 1)
     max_attempts = int(job.get("max_attempts") or settings.job_max_attempts)

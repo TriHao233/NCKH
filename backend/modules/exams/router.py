@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.config import settings
-from core.dependencies import CurrentUser, require_teacher_or_admin
+from core.dependencies import CurrentUser, require_exam_manager
 from modules.exams.pdf_service import VALID_EXPORT_TYPES, render_exam_docx, render_exam_pdf
 from modules.exams.schemas import (
     AddQuestionsManualRequest,
@@ -40,7 +40,7 @@ def _translate(exc: Exception):
 @router.post("", response_model=ExamResponse, status_code=status.HTTP_201_CREATED)
 def create_exam(
     payload: ExamCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -53,7 +53,7 @@ def create_exam(
 def list_exams(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     return service.list_exams(page, page_size, current_user)
@@ -62,7 +62,7 @@ def list_exams(
 @router.get("/{exam_id}", response_model=ExamResponse)
 def get_exam(
     exam_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -78,7 +78,7 @@ def get_exam(
 )
 def duplicate_exam(
     exam_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -91,7 +91,7 @@ def duplicate_exam(
 def update_exam(
     exam_id: str,
     payload: ExamUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -104,7 +104,7 @@ def update_exam(
 def update_exam_status(
     exam_id: str,
     payload: ExamStatusUpdateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -116,7 +116,7 @@ def update_exam_status(
 @router.delete("/{exam_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_exam(
     exam_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -135,7 +135,7 @@ def question_pool(
     bloom_level: int | None = Query(None, ge=1, le=6),
     chapter_id: str | None = Query(None),
     difficulty: str | None = Query(None),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -158,7 +158,7 @@ def question_pool(
 def save_matrix(
     exam_id: str,
     payload: ExamMatrixRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -170,7 +170,7 @@ def save_matrix(
 @router.get("/{exam_id}/matrix/availability", response_model=list[MatrixCellAvailability])
 def matrix_availability(
     exam_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -182,7 +182,7 @@ def matrix_availability(
 @router.post("/{exam_id}/questions/auto-generate", response_model=ExamResponse)
 def auto_generate_questions(
     exam_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -195,7 +195,7 @@ def auto_generate_questions(
 def add_questions_manual(
     exam_id: str,
     payload: AddQuestionsManualRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -208,7 +208,7 @@ def add_questions_manual(
 def remove_question(
     exam_id: str,
     question_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamService = Depends(get_exam_service),
 ):
     try:
@@ -225,7 +225,7 @@ def remove_question(
 def create_variant(
     exam_id: str,
     payload: ExamVariantCreateRequest,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
@@ -237,7 +237,7 @@ def create_variant(
 @router.get("/{exam_id}/variants", response_model=list[ExamVariantResponse])
 def list_variants(
     exam_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
@@ -250,7 +250,7 @@ def list_variants(
 def get_variant(
     exam_id: str,
     variant_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
@@ -265,7 +265,7 @@ def get_variant(
 def delete_variant(
     exam_id: str,
     variant_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
@@ -278,7 +278,7 @@ def delete_variant(
 def preview_variant(
     exam_id: str,
     variant_id: str,
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     try:
@@ -292,7 +292,7 @@ async def export_variant_pdf(
     exam_id: str,
     variant_id: str,
     export_type: str = Query("de", alias="type"),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     if export_type not in VALID_EXPORT_TYPES:
@@ -319,7 +319,7 @@ def export_variant_docx(
     exam_id: str,
     variant_id: str,
     export_type: str = Query("de", alias="type"),
-    current_user: CurrentUser = Depends(require_teacher_or_admin),
+    current_user: CurrentUser = Depends(require_exam_manager),
     service: ExamVariantService = Depends(get_exam_variant_service),
 ):
     if export_type not in VALID_EXPORT_TYPES:

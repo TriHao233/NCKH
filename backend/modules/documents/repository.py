@@ -8,6 +8,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
+from modules.catalog.postgres_subject_repository import subject_record, subject_records
 
 ACTIVE_DOCUMENT_JOB_STATUSES = {"QUEUED", "PROCESSING"}
 RETRYABLE_DOCUMENT_JOB_STATUSES = {"FAILED", "ERROR", "STALE"}
@@ -183,6 +184,7 @@ class DocumentRepository(Protocol):
         sha256: str,
         artifact_type: str,
         mime_type: str,
+        provider: str = "LOCAL",
     ) -> None: ...
 
     def create_job(self, document_id: str | ObjectId, job_type: str, config: dict | None = None) -> dict: ...
@@ -217,9 +219,7 @@ class MongoDocumentRepository:
             if chapter_id is not None:
                 raise ValueError("Chương phải thuộc một học phần")
             return
-        subject = self.db.subjects.find_one(
-            {"_id": subject_id, "is_active": True},
-        )
+        subject = subject_record(self.db, subject_id, active_only=True)
         if not subject:
             raise ValueError("Học phần không tồn tại hoặc đã ngừng hoạt động")
         if chapter_id is None:
@@ -235,20 +235,23 @@ class MongoDocumentRepository:
     def validate_subject_ids(self, subject_ids: list[ObjectId]) -> None:
         if not subject_ids:
             return
-        existing = self.db.subjects.count_documents({
-            "_id": {"$in": subject_ids},
-            "is_active": True,
-        })
+        existing = len(subject_records(self.db, ids=subject_ids, active_only=True))
         if existing != len(subject_ids):
             raise ValueError("Một hoặc nhiều học phần không tồn tại hoặc đã ngừng hoạt động")
 
     def create(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
+        record = self.build_record(data, uploaded_by_user_id)
+        self.collection.insert_one(record)
+        return record
+
+    def build_record(self, data: dict, uploaded_by_user_id: ObjectId | None) -> dict:
+        """Build and validate document metadata without writing a database."""
         now = utc_now()
         document_id = ObjectId()
         subject_id = object_id(data["subject_id"], "subject_id") if data.get("subject_id") else self.default_subject_id()
         subject_ids = list(dict.fromkeys(
-            [object_id(value, "subject_id") for value in data.get("subject_ids") or []]
-            + ([subject_id] if subject_id else [])
+            ([subject_id] if subject_id else [])
+            + [object_id(value, "subject_id") for value in data.get("subject_ids") or []]
         ))
         if not subject_id and subject_ids:
             subject_id = subject_ids[0]
@@ -302,7 +305,6 @@ class MongoDocumentRepository:
             "updated_at": now,
             "archived_at": None,
         }
-        self.collection.insert_one(record)
         return record
 
     def find_by_id(self, document_id: str | ObjectId) -> dict | None:
@@ -451,6 +453,22 @@ class MongoDocumentRepository:
             .limit(limit)
         )
 
+    def list_pages_for_job(self, document_id: str | ObjectId,
+                           ocr_job_id: str | ObjectId) -> list[dict]:
+        pages = self.db.document_pages.find({
+            "document_id": object_id(document_id, "document_id"),
+            "ocr_job_id": object_id(ocr_job_id, "job_id"),
+        })
+        return sorted(pages, key=lambda page: (page.get("unit_number") or page.get("page_number") or 0,
+                                               page.get("page_number") or 0))
+
+    def list_pages_for_document(self, document_id: str | ObjectId) -> list[dict]:
+        pages = self.db.document_pages.find({
+            "document_id": object_id(document_id, "document_id"),
+        })
+        return sorted(pages, key=lambda page: (page.get("unit_number") or page.get("page_number") or 0,
+                                               page.get("page_number") or 0))
+
     def update_page(
         self,
         document_id: str | ObjectId,
@@ -491,6 +509,7 @@ class MongoDocumentRepository:
         sha256: str,
         artifact_type: str = "ORIGINAL_PDF",
         mime_type: str = "application/pdf",
+        provider: str = "LOCAL",
     ) -> None:
         now = utc_now()
         self.collection.update_one(
@@ -502,7 +521,7 @@ class MongoDocumentRepository:
                         "type": artifact_type,
                         "document_version": 1,
                         "storage": {
-                            "provider": "LOCAL",
+                            "provider": provider,
                             "uri": uri,
                             "gridfs_file_id": None,
                         },
@@ -527,6 +546,7 @@ class MongoDocumentRepository:
         sha256: str,
         artifact_type: str,
         mime_type: str,
+        provider: str = "LOCAL",
     ) -> None:
         document = self.find_by_id(document_id)
         job = self.find_job(job_id)
@@ -542,7 +562,7 @@ class MongoDocumentRepository:
                         "type": artifact_type,
                         "document_version": job["document_version"],
                         "job_id": job["_id"],
-                        "storage": {"provider": "LOCAL", "uri": uri, "gridfs_file_id": None},
+                        "storage": {"provider": provider, "uri": uri, "gridfs_file_id": None},
                         "mime_type": mime_type,
                         "size_bytes": size_bytes,
                         "sha256": sha256,

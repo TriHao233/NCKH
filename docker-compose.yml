@@ -1,6 +1,6 @@
 services:
   backend:
-    image: nckh-backend:dev
+    image: nckh-backend:docling
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -16,61 +16,49 @@ services:
       - huggingface_cache:/root/.cache/huggingface
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
     environment:
+      PDF_OCR_ENGINE: docling
+      DOCLING_URL: http://docling:5001
+      DOCLING_OCR_PRESET: tesseract
+      DOCLING_OCR_LANGUAGES: vie
+      DOCLING_TIMEOUT: "600"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
-      DOCLING_OCR_PRESET: ${DOCLING_OCR_PRESET:-tesseract}
-      DOCLING_OCR_LANGUAGES: ${DOCLING_OCR_LANGUAGES:-vie}
+      EASYOCR_GPU: ${EASYOCR_GPU:-false}
+      EASYOCR_LANGUAGES: ${EASYOCR_LANGUAGES:-vi,en}
+      EASYOCR_BATCH_SIZE: ${EASYOCR_BATCH_SIZE:-2}
+      EASYOCR_MODEL_STORAGE_DIRECTORY: /app/data/easyocr_models
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-    # BỎ COMMENT ĐOẠN DƯỚI ĐÂY NẾU CHẠY BẰNG GPU (NVIDIA)
-    # VÀ ĐÃ CÀI ĐẶT NVIDIA CONTAINER TOOLKIT
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
     depends_on:
+      docling:
+        condition: service_healthy
       mongodb:
         condition: service_healthy
-      docling:
-        condition: service_started
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
-  docling:
-    build:
-      context: ./backend
-      dockerfile: Docling.Dockerfile
-    image: nckh-docling-vie
-    container_name: nckh-docling
+  mongodb:
+    image: mongo:7.0
+    container_name: nckh-mongodb
     ports:
-      - "5001:5001"
-    environment:
-      DOCLING_SERVE_OCR_BATCH_SIZE: ${DOCLING_SERVE_OCR_BATCH_SIZE:-4}
-      DOCLING_SERVE_LAYOUT_BATCH_SIZE: ${DOCLING_SERVE_LAYOUT_BATCH_SIZE:-4}
-      DOCLING_SERVE_TABLE_BATCH_SIZE: ${DOCLING_SERVE_TABLE_BATCH_SIZE:-4}
-      DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS: ${DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS:-0.1}
-      DOCLING_SERVE_OPTIONS_CACHE_SIZE: ${DOCLING_SERVE_OPTIONS_CACHE_SIZE:-1}
-      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: ${DOCLING_SERVE_LOAD_MODELS_AT_BOOT:-false}
-      DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG: ${DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG:-false}
+      - "${MONGO_HOST_PORT:-27018}:27017"
     volumes:
-      - docling_models:/root/.cache
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      - mongodb_data:/data/db
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--quiet"]
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
+      interval: 5m
+      start_interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     restart: unless-stopped
     logging: &service-logging
       driver: local
@@ -78,25 +66,27 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  mongodb:
-    image: mongo:latest
-    container_name: nckh-mongodb
+  postgres:
+    image: postgres:17
+    container_name: nckh-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nckh}
+      POSTGRES_USER: ${POSTGRES_USER:-nckh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nckh_local_dev_only}
     ports:
-      - "27017:27017"
+      - "127.0.0.1:5432:5432"
     volumes:
-      - mongodb_data:/data/db
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }\" | grep 1"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nckh} -d ${POSTGRES_DB:-nckh}"]
+      interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 10s
+      retries: 10
     restart: unless-stopped
     logging: *service-logging
 
   worker:
-    image: nckh-backend:dev
+    image: nckh-backend:docling
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -108,26 +98,61 @@ services:
       - huggingface_cache:/root/.cache/huggingface
     command: ["python", "-m", "workers.run"]
     environment:
+      PDF_OCR_ENGINE: docling
+      DOCLING_URL: http://docling:5001
+      DOCLING_OCR_PRESET: tesseract
+      DOCLING_OCR_LANGUAGES: vie
+      DOCLING_TIMEOUT: "600"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
       FIREBASE_CREDENTIALS_PATH: /app/firebase-service-account.json
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       ANONYMIZED_TELEMETRY: "false"
       OLLAMA_GENERATE_URL: ${OLLAMA_GENERATE_URL:-http://host.docker.internal:11434/api/generate}
       OLLAMA_MAX_CONCURRENCY: ${OLLAMA_MAX_CONCURRENCY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     depends_on:
+      docling:
+        condition: service_healthy
       mongodb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *service-logging
+
+  docling:
+    image: nckh-docling-vie:dev-pinned
+    build:
+      context: ./backend
+      dockerfile: Docling.Dockerfile
+    container_name: nckh-docling
+    ports:
+      - "127.0.0.1:5001:5001"
+    environment:
+      DOCLING_DEVICE: cpu
+      DOCLING_NUM_THREADS: "4"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      HF_HOME: /var/cache/docling/huggingface
+      XDG_CACHE_HOME: /var/cache/docling
+      TMPDIR: /var/cache/docling/tmp
+      DOCLING_SERVE_SCRATCH_PATH: /var/cache/docling/scratch
+      DOCLING_SERVE_OCR_BATCH_SIZE: "4"
+      DOCLING_SERVE_LAYOUT_BATCH_SIZE: "4"
+      DOCLING_SERVE_TABLE_BATCH_SIZE: "4"
+      DOCLING_SERVE_BATCH_POLLING_INTERVAL_SECONDS: "0.1"
+      DOCLING_SERVE_OPTIONS_CACHE_SIZE: "1"
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG: "false"
+    volumes:
+      - docling_cache:/var/cache/docling
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      start_period: 90s
+      retries: 20
     restart: unless-stopped
     logging: *service-logging
 
@@ -148,6 +173,7 @@ services:
     logging: *service-logging
 
 volumes:
+  docling_cache:
   mongodb_data:
-  docling_models:
+  postgres_data:
   huggingface_cache:

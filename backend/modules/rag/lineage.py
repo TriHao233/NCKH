@@ -7,8 +7,10 @@ from typing import Callable
 
 from bson import ObjectId
 
+from core.config import settings
 from core.database import get_rag_db, mongo_transaction
 from modules.documents.repository import object_id
+from modules.documents.store import get_document_repository
 from modules.rag.chromadb_engine import get_collection
 
 
@@ -62,8 +64,9 @@ class LineageValidator:
         ids = candidate.as_object_ids()
         errors: list[str] = []
         warnings: list[str] = []
-        document = self.db.documents.find_one({"_id": ids["document_id"], "archived_at": None})
-        ocr_job = self.db.document_jobs.find_one({"_id": ids["ocr_job_id"]})
+        document_repository = get_document_repository(self.db)
+        document = document_repository.find_by_id(ids["document_id"])
+        ocr_job = document_repository.find_job(ids["ocr_job_id"])
         chunk_set = self.db.chunk_sets.find_one({"_id": ids["chunk_set_id"]})
         vector = self.db.vector_collections.find_one({"_id": ids["vector_collection_id"]})
         ownership_mismatch = False
@@ -111,7 +114,7 @@ class LineageValidator:
                 },
             }
 
-        pages = list(self.db.document_pages.find({"document_id": ids["document_id"], "ocr_job_id": ids["ocr_job_id"]}))
+        pages = document_repository.list_pages_for_job(ids["document_id"], ids["ocr_job_id"])
         if not pages:
             errors.append("candidate has no persisted pages")
         pages_without_blocks: list[object] = []
@@ -266,7 +269,7 @@ class LineagePromotionService:
 
     def dry_run(self, candidate: CandidateLineage, *, smoke_queries: list[str]) -> dict:
         validation = self.validator.validate(candidate, smoke_queries=smoke_queries)
-        document = self.db.documents.find_one({"_id": object_id(candidate.document_id)}) or {}
+        document = get_document_repository(self.db).find_by_id(candidate.document_id) or {}
         return {
             "operation": "dry-run",
             "validation": validation,
@@ -287,10 +290,23 @@ class LineagePromotionService:
         self._require_audit(actor, reason)
         if confirmation != self.confirmation_token(candidate):
             raise PermissionError("invalid promotion confirmation token")
+        expected_document = (get_document_repository(self.db).find_by_id(candidate.document_id)
+                             if settings.document_store == "postgres" else None)
+        if settings.document_store == "postgres" and not expected_document:
+            raise LookupError("document missing or archived")
         validation = self.validator.validate(candidate, smoke_queries=smoke_queries)
         if validation["status"] != "passed":
             raise ValueError("candidate lineage did not pass validation")
         ids = candidate.as_object_ids()
+        if settings.document_store == "postgres":
+            return get_document_repository(self.db).promote_lineage(
+                candidate.document_id,
+                {key: value for key, value in ids.items() if key != "document_id"},
+                operation_id=str(uuid.uuid4()), validation=validation,
+                expected_current=_snapshot(expected_document.get("current_processing") or {}),
+                expected_version=expected_document["current_version"],
+                actor=actor, reason=reason,
+            )
         document = self.db.documents.find_one({"_id": ids["document_id"], "archived_at": None})
         if not document:
             raise LookupError("document missing or archived")
@@ -349,6 +365,25 @@ class LineagePromotionService:
 
     def rollback(self, operation_id: str, *, actor: str, reason: str) -> dict:
         self._require_audit(actor, reason)
+        if settings.document_store == "postgres":
+            repository = get_document_repository(self.db)
+            promoted = repository.promotion_event(operation_id)
+            if not promoted:
+                raise LookupError("promotion is missing or no longer rollbackable")
+            before = promoted["from_snapshot"]
+            ocr_job = repository.find_job(before.get("ocr_job_id")) if before.get("ocr_job_id") else None
+            target_checks = {
+                "ocr_job": bool(ocr_job and ocr_job.get("status") == "COMPLETED"),
+                "chunk_set": bool(self.db.chunk_sets.find_one(
+                    {"_id": before.get("chunk_set_id"), "status": "COMPLETED"})),
+                "vector_collection": bool(self.db.vector_collections.find_one(
+                    {"_id": before.get("vector_collection_id"), "is_active": True})),
+            }
+            if not all(target_checks.values()):
+                raise ValueError("rollback target lineage is incomplete")
+            return repository.rollback_lineage(
+                operation_id, rollback_id=str(uuid.uuid4()), actor=actor, reason=reason,
+            )
         promoted = self.db.pipeline_lineage_events.find_one(
             {"operation_id": operation_id, "event_type": "PROMOTE", "rollback_available": True}
         )
@@ -413,7 +448,19 @@ class LineagePromotionService:
     def archive(self, candidate: CandidateLineage, *, actor: str, reason: str) -> dict:
         self._require_audit(actor, reason)
         ids = candidate.as_object_ids()
-        document = self.db.documents.find_one({"_id": ids["document_id"]}) or {}
+        if settings.document_store == "postgres":
+            chunk_set = self.db.chunk_sets.find_one({
+                "_id": ids["chunk_set_id"], "document_id": ids["document_id"],
+                "source_ocr_job_id": ids["ocr_job_id"], "archived_at": None,
+            })
+            if not chunk_set:
+                raise ValueError("lineage missing or already archived")
+            return get_document_repository(self.db).queue_archive_lineage(
+                candidate.document_id,
+                {key: value for key, value in ids.items() if key != "document_id"},
+                operation_id=str(uuid.uuid4()), actor=actor, reason=reason,
+            )
+        document = get_document_repository(self.db).find_by_id(ids["document_id"]) or {}
         referenced = {
             *((document.get("current_processing") or {}).values()),
             *((document.get("pending_processing") or {}).values()),
@@ -481,6 +528,14 @@ class LineagePromotionService:
         chunk_set = self.db.chunk_sets.find_one({"_id": ids["chunk_set_id"], "archived_at": {"$ne": None}})
         if not chunk_set:
             raise ValueError("candidate must be archived before permanent deletion")
+        if settings.document_store == "postgres":
+            if chunk_set.get("document_id") != ids["document_id"]:
+                raise ValueError("chunk set belongs to another document")
+            return get_document_repository(self.db).request_permanent_delete(
+                candidate.document_id,
+                {key: value for key, value in ids.items() if key != "document_id"},
+                operation_id=str(uuid.uuid4()), actor=actor, reason=reason,
+            )
         operation_id = str(uuid.uuid4())
         self.db.pipeline_lineage_events.insert_one(
             {
@@ -506,6 +561,10 @@ class LineagePromotionService:
         expected = f"EXECUTE_DELETE:{request_operation_id}"
         if confirmation != expected:
             raise PermissionError("invalid execution confirmation token")
+        if settings.document_store == "postgres":
+            return get_document_repository(self.db).queue_permanent_delete(
+                request_operation_id,
+            )
         request = self.db.pipeline_lineage_events.find_one(
             {
                 "operation_id": request_operation_id,

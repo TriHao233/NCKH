@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import gzip
 import hashlib
 import json
+from io import BytesIO
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -14,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from bson import ObjectId
 from docx import Document
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 from PIL import Image
 
 from modules.documents.ingest.base import DocumentConversionError, UnsupportedDocumentError
@@ -34,6 +37,7 @@ from modules.documents.retention import (
     protected_artifact_ids,
 )
 from modules.ocr import mongodb as ocr_mongodb
+from modules.ocr import ocr as ocr_module
 from modules.ocr.pipeline import run_document_pipeline
 from modules.rag import lineage
 from modules.rag.lineage import CandidateLineage, LineagePromotionService, LineageValidator
@@ -45,6 +49,25 @@ from scripts.reprocess_document_lineage import (
     inspect_reprocess_plan,
     parse_args as parse_reprocess_args,
 )
+
+
+def test_upload_invalid_chapter_returns_client_error(monkeypatch):
+    def reject_document(**_kwargs):
+        raise ValueError("Chương không thuộc học phần đã chọn")
+
+    monkeypatch.setattr(ocr_module, "create_document_record", reject_document)
+    upload = UploadFile(file=BytesIO(b"lesson"), filename="lesson.txt")
+    user = SimpleNamespace(id=ObjectId())
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(ocr_module.queue_document_upload(
+            BackgroundTasks(), upload, user,
+            subject_id=str(ObjectId()), chapter_id=str(ObjectId()),
+        ))
+
+    assert error.value.status_code == 400
+    assert "Chương" in error.value.detail
+    assert upload.file.closed
 
 
 def _context() -> ParseContext:
@@ -345,9 +368,7 @@ def test_replacement_ocr_completion_preserves_active_pipeline_summary(monkeypatc
     }
     repository = MagicMock()
     repository.find_by_id.return_value = document
-    database = SimpleNamespace(documents=MagicMock())
     monkeypatch.setattr(ocr_mongodb, "_repository", lambda: repository)
-    monkeypatch.setattr(ocr_mongodb, "get_database", lambda: database)
 
     ocr_mongodb.update_document_status(
         str(document_id),
@@ -357,7 +378,7 @@ def test_replacement_ocr_completion_preserves_active_pipeline_summary(monkeypatc
     )
 
     repository.update_job.assert_called_once()
-    database.documents.update_one.assert_not_called()
+    repository.update.assert_not_called()
 
 
 def test_first_ocr_completion_still_marks_chunk_and_index_as_not_started(monkeypatch):
@@ -370,9 +391,7 @@ def test_first_ocr_completion_still_marks_chunk_and_index_as_not_started(monkeyp
     }
     repository = MagicMock()
     repository.find_by_id.return_value = document
-    database = SimpleNamespace(documents=MagicMock())
     monkeypatch.setattr(ocr_mongodb, "_repository", lambda: repository)
-    monkeypatch.setattr(ocr_mongodb, "get_database", lambda: database)
 
     ocr_mongodb.update_document_status(
         str(document_id),
@@ -380,11 +399,14 @@ def test_first_ocr_completion_still_marks_chunk_and_index_as_not_started(monkeyp
         status="completed",
     )
 
-    update = database.documents.update_one.call_args.args[1]["$set"]
+    update = repository.update.call_args.args[1]
     assert update == {
         "status": "PROCESSING",
-        "pipeline_summary.chunk_status": "NOT_STARTED",
-        "pipeline_summary.index_status": "NOT_STARTED",
+        "pipeline_summary": {
+            "ocr_status": "COMPLETED",
+            "chunk_status": "NOT_STARTED",
+            "index_status": "NOT_STARTED",
+        },
     }
 
 

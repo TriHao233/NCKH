@@ -19,7 +19,6 @@ class OCRRunRequest(BaseModel):
     document_title: Optional[str] = None
     languages: Optional[List[str]] = Field(default_factory=lambda: ["vi", "en"])
     gpu: Optional[bool] = None
-    poppler_path: Optional[str] = None
 
 class OCRRunResponse(BaseModel):
     pages: List[OCRPage]

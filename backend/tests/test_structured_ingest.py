@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from docx import Document
@@ -142,7 +143,10 @@ def test_pdf_parser_routes_only_risky_pages_to_docling_and_keeps_good_text(tmp_p
             },
         }
 
-    with patch("modules.documents.ingest.parsers.pdf.PdfReader", return_value=_FakeReader(pages)):
+    with (
+        patch("modules.documents.ingest.parsers.pdf.PdfReader", return_value=_FakeReader(pages)),
+        patch("modules.documents.ingest.parsers.pdf.settings", SimpleNamespace(pdf_ocr_engine="docling")),
+    ):
         parsed = PdfParser(ocr_page_extractor=extract).parse(source, _context(source.name, "pdf"))
 
     assert calls == [[2, 3]]

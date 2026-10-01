@@ -1,7 +1,7 @@
 """
 Docling OCR Engine — gọi Docling container qua HTTP API.
 
-Thay thế hoàn toàn EasyOCR. Output: Markdown có cấu trúc
+Được chọn qua PDF_OCR_ENGINE=docling, không tự fallback EasyOCR. Output: Markdown có cấu trúc
 (heading, table, code block, formula).
 """
 

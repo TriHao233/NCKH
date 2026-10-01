@@ -4,9 +4,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
-import hashlib
-import os
 from pathlib import Path
+
+from modules.documents.storage import LocalArtifactStorage
 
 
 @dataclass(frozen=True)
@@ -20,27 +20,8 @@ class RetentionPolicy:
 
 
 def deduplicate_artifact_file(source: str | Path, blob_root: str | Path) -> dict:
-    """Move a new artifact into content-addressed storage, reusing an identical blob."""
-    source_path = Path(source).resolve()
-    root = Path(blob_root).resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(source_path)
-    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
-    suffix = "".join(source_path.suffixes[-2:]) or ".blob"
-    destination = root / digest[:2] / f"{digest}{suffix}"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    reused = destination.exists()
-    if destination.resolve() != source_path:
-        if reused:
-            source_path.unlink()
-        else:
-            os.replace(source_path, destination)
-    return {
-        "uri": str(destination),
-        "sha256": digest,
-        "size_bytes": destination.stat().st_size,
-        "reused": reused,
-    }
+    """Move a new artifact into content-addressed local storage, reusing an identical blob."""
+    return LocalArtifactStorage(blob_root).save_content_addressed(source)
 
 
 def protected_artifact_ids(document: dict, lineage_records: Iterable[dict] = ()) -> set[str]:

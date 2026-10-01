@@ -4,12 +4,10 @@ from fastapi import BackgroundTasks
 
 from core.audit import record_audit_event
 from core.config import resolve_path, settings
-from core.database import get_database
 from core.dependencies import CurrentUser, has_permission
 from modules.documents.repository import (
     ACTIVE_DOCUMENT_JOB_STATUSES,
     DocumentRepository,
-    MongoDocumentRepository,
     RETRYABLE_DOCUMENT_JOB_STATUSES,
     RETRYABLE_DOCUMENT_JOB_TYPES,
     object_id,
@@ -17,6 +15,7 @@ from modules.documents.repository import (
     serialize_document_job,
     serialize_document_page,
 )
+from modules.documents.store import get_document_repository
 from modules.documents.schemas import (
     DocumentCreateRequest,
     DocumentPageUpdateRequest,
@@ -42,10 +41,10 @@ class DocumentService:
         if not record or DocumentService._can_manage_all(current_user):
             return
         shared_with = set(record.get("shared_with_user_ids") or [])
-        if (
-            DocumentService._is_owner(record, current_user)
-            or current_user.id in shared_with
-            or record.get("shared_scope") == "SUBJECT"
+        can_use_shared = has_permission(current_user, "questions.use_shared_bank")
+        if DocumentService._is_owner(record, current_user) or (
+            can_use_shared
+            and (current_user.id in shared_with or record.get("shared_scope") == "SUBJECT")
         ):
             return
         raise PermissionError("Bạn không có quyền truy cập tài liệu này")
@@ -255,11 +254,12 @@ class DocumentService:
             process_ocr_background,
             document_id=str(document["_id"]),
             job_id=str(new_job["_id"]),
-            upload_path=str(Path(upload_path)),
+            upload_path=str(upload_path),
             output_path=str(output_path),
             document_title=document.get("title") or document.get("original_filename") or "Document",
             source_file_name=document.get("original_filename") or Path(upload_path).name,
             mime_type=artifact.get("mime_type"),
+            source_provider=(artifact.get("storage") or {}).get("provider") or "LOCAL",
         )
         return {"job": serialize_document_job(new_job)}
 
@@ -351,4 +351,4 @@ class DocumentService:
 
 
 def get_document_service() -> DocumentService:
-    return DocumentService(MongoDocumentRepository(get_database()))
+    return DocumentService(get_document_repository())

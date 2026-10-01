@@ -64,6 +64,24 @@ class Settings(BaseModel):
     api_prefix: str = os.getenv("API_PREFIX", "/api/v1")
 
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    postgres_dsn: str = os.getenv("POSTGRES_DSN", "")
+    postgres_pool_min_size: int = int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1"))
+    postgres_pool_max_size: int = int(os.getenv("POSTGRES_POOL_MAX_SIZE", "10"))
+    # Business data lives in PostgreSQL. Setting a flag to "mongo" routes that
+    # group back to MongoDB; kept only as a rollback path during the transition.
+    user_store: str = os.getenv("USER_STORE", "postgres").strip().lower()
+    ai_config_store: str = os.getenv("AI_CONFIG_STORE", "postgres").strip().lower()
+    catalog_store: str = os.getenv("CATALOG_STORE", "postgres").strip().lower()
+    notification_store: str = os.getenv("NOTIFICATION_STORE", "postgres").strip().lower()
+    dictionary_store: str = os.getenv("DICTIONARY_STORE", "postgres").strip().lower()
+    moodle_target_store: str = os.getenv("MOODLE_TARGET_STORE", "postgres").strip().lower()
+    llm_slot_store: str = os.getenv("LLM_SLOT_STORE", "postgres").strip().lower()
+    document_store: str = os.getenv("DOCUMENT_STORE", "postgres").strip().lower()
+    audit_store: str = os.getenv("AUDIT_STORE", "postgres").strip().lower()
+    review_policy_store: str = os.getenv("REVIEW_POLICY_STORE", "postgres").strip().lower()
+    question_store: str = os.getenv("QUESTION_STORE", "postgres").strip().lower()
+    generation_store: str = os.getenv("GENERATION_STORE", "postgres").strip().lower()
+    exam_store: str = os.getenv("EXAM_STORE", "postgres").strip().lower()
     auth_db_name: str = os.getenv("AUTH_DB_NAME", "NCKH")
     rag_db_name: str = os.getenv(
         "RAG_DB_NAME",
@@ -93,6 +111,14 @@ class Settings(BaseModel):
     ollama_generation_batch_size: int = int(os.getenv("OLLAMA_GENERATION_BATCH_SIZE", "1"))
     gemini_max_concurrency: int = int(os.getenv("GEMINI_MAX_CONCURRENCY", "5"))
     review_lock_timeout_minutes: int = int(os.getenv("REVIEW_LOCK_TIMEOUT_MINUTES", "30"))
+    # Admin assignments reserve a question for the assigned reviewer much longer
+    # than an interactive review lock; after this window other reviewers may claim.
+    review_assignment_timeout_hours: int = int(os.getenv("REVIEW_ASSIGNMENT_TIMEOUT_HOURS", "72"))
+    # A pending question is late once it has waited this long since submission.
+    review_sla_hours: int = int(os.getenv("REVIEW_SLA_HOURS", "48"))
+    review_sla_reminder_interval_seconds: float = float(
+        os.getenv("REVIEW_SLA_REMINDER_INTERVAL_SECONDS", "900")
+    )
     gpu_coordination_enabled: bool = _env_bool("GPU_COORDINATION_ENABLED", True)
     gpu_lock_path: str = os.getenv("GPU_LOCK_PATH", "./data/gpu-operation.lock")
     gpu_lock_timeout_seconds: float = float(os.getenv("GPU_LOCK_TIMEOUT_SECONDS", "1200"))
@@ -122,7 +148,17 @@ class Settings(BaseModel):
     )
     generation_fallback_provider: str = os.getenv("GENERATION_FALLBACK_PROVIDER", "").strip()
     evaluation_fallback_provider: str = os.getenv("EVALUATION_FALLBACK_PROVIDER", "").strip()
-    evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "900"))
+    # Qwen3-8B benchmark: evaluation JSON with per-option checks took 600-970
+    # output tokens, and 3 of 14 cases hit the old 900 limit on the first try.
+    evaluation_num_predict: int = int(os.getenv("EVALUATION_NUM_PREDICT", "1400"))
+    # Budget for the retry attempt after a truncated or malformed evaluation JSON.
+    evaluation_retry_num_predict: int = int(os.getenv("EVALUATION_RETRY_NUM_PREDICT", "1800"))
+    # Reasoning models (deepseek-r1 with thinking on) spend 1.1k-1.8k tokens
+    # thinking before the JSON; 900 tokens left them with no answer at all.
+    evaluation_thinking_num_predict: int = int(os.getenv("EVALUATION_THINKING_NUM_PREDICT", "4096"))
+    # The evaluation prompt alone is ~3.2k-4k tokens, so a thinking budget needs
+    # a larger context window than the default 8192.
+    evaluation_thinking_num_ctx: int = int(os.getenv("EVALUATION_THINKING_NUM_CTX", "12288"))
     ollama_generate_url: str = _env_first(
         ("OLLAMA_GENERATE_URL", "OLLAMA_BASE_URL"),
         "http://localhost:11434/api/generate",
@@ -166,21 +202,37 @@ class Settings(BaseModel):
         os.getenv("LEXICAL_FALLBACK_DISTANCE_THRESHOLD", "0.55")
     )
 
-    # Docling OCR
-    docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001")
+    # Docling is the default PDF OCR/layout engine; EASYOCR remains selectable explicitly.
+    pdf_ocr_engine: str = os.getenv("PDF_OCR_ENGINE", "docling").strip().lower()
+    docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001").rstrip("/")
     docling_timeout: int = int(os.getenv("DOCLING_TIMEOUT", "600"))
     docling_poll_seconds: float = float(os.getenv("DOCLING_POLL_SECONDS", "0.5"))
-    docling_ocr_preset: str = os.getenv("DOCLING_OCR_PRESET", "rapidocr").strip().lower()
+    docling_ocr_preset: str = os.getenv("DOCLING_OCR_PRESET", "tesseract").strip().lower()
     docling_ocr_backend: str = os.getenv("DOCLING_OCR_BACKEND", "onnxruntime").strip().lower()
     docling_ocr_languages: list[str] = [
-        language.strip()
-        for language in os.getenv("DOCLING_OCR_LANGUAGES", "vi").split(",")
+        language.strip() for language in os.getenv("DOCLING_OCR_LANGUAGES", "vie").split(",")
         if language.strip()
     ]
     docling_images_scale: float = float(os.getenv("DOCLING_IMAGES_SCALE", "2.0"))
     docling_table_mode: str = os.getenv("DOCLING_TABLE_MODE", "accurate").strip().lower()
     docling_do_table_structure: bool = _env_bool("DOCLING_DO_TABLE_STRUCTURE", True)
     docling_include_images: bool = _env_bool("DOCLING_INCLUDE_IMAGES", True)
+
+    # EasyOCR + PDFium retained for the existing setup and comparison tests.
+    easyocr_languages: list[str] = [
+        language.strip()
+        for language in os.getenv("EASYOCR_LANGUAGES", "vi,en").split(",")
+        if language.strip()
+    ]
+    easyocr_gpu: bool = _env_bool("EASYOCR_GPU", True)
+    easyocr_batch_size: int = int(os.getenv("EASYOCR_BATCH_SIZE", "2"))
+    easyocr_render_scale: float = float(os.getenv("EASYOCR_RENDER_SCALE", "2.0"))
+    easyocr_min_confidence: float = float(os.getenv("EASYOCR_MIN_CONFIDENCE", "0.20"))
+    easyocr_model_storage_directory: str = os.getenv(
+        "EASYOCR_MODEL_STORAGE_DIRECTORY", "./data/easyocr_models"
+    )
+    easyocr_download_enabled: bool = _env_bool("EASYOCR_DOWNLOAD_ENABLED", True)
+    easyocr_unload_after_use: bool = _env_bool("EASYOCR_UNLOAD_AFTER_USE", True)
 
     pdf_text_fast_path_enabled: bool = _env_bool("PDF_TEXT_FAST_PATH_ENABLED", True)
     pdf_text_fast_path_min_coverage: float = float(os.getenv("PDF_TEXT_FAST_PATH_MIN_COVERAGE", "0.98"))
@@ -193,6 +245,11 @@ class Settings(BaseModel):
     )
 
     chromadb_path: str = os.getenv("CHROMADB_PATH", "./data/chroma_data")
+    chroma_mode: str = os.getenv("CHROMA_MODE", "local").strip().lower()
+    chroma_host: str = os.getenv("CHROMA_HOST", "localhost").strip()
+    chroma_port: int = int(os.getenv("CHROMA_PORT", "8000"))
+    chroma_ssl: bool = _env_bool("CHROMA_SSL", False)
+    chroma_auth_token: str = os.getenv("CHROMA_AUTH_TOKEN", "")
     output_dir: str = os.getenv("OUTPUT_DIR", "./data/outputs")
     metadata_dir: str = os.getenv("METADATA_DIR", "./data/metadata")
     chunk_output_dir: str = os.getenv("CHUNK_OUTPUT_DIR", "./data/chunk_outputs")
@@ -203,6 +260,13 @@ class Settings(BaseModel):
     artifact_cold_retention_days: int = int(os.getenv("ARTIFACT_COLD_RETENTION_DAYS", "365"))
     artifact_cold_dir: str = os.getenv("ARTIFACT_COLD_DIR", "./data/artifact_archive")
     artifact_blob_dir: str = os.getenv("ARTIFACT_BLOB_DIR", "./data/artifact_blobs")
+    # New uploads, OCR artifacts and avatars go to this provider; existing
+    # artifacts are always read from the provider recorded with them.
+    storage_provider: str = os.getenv("STORAGE_PROVIDER", "local").strip().lower()
+    s3_bucket: str = os.getenv("S3_BUCKET", "").strip()
+    s3_prefix: str = os.getenv("S3_PREFIX", "").strip().strip("/")
+    s3_endpoint_url: str = os.getenv("S3_ENDPOINT_URL", "").strip()
+    s3_region: str = os.getenv("S3_REGION", "").strip()
 
     prompts_dir: str = os.getenv("PROMPTS_DIR", "./prompts")
     prompt_source: str = os.getenv("PROMPT_SOURCE", "file").strip().lower()

@@ -7,6 +7,7 @@ from typing import Any
 from bson import ObjectId
 
 from core.bootstrap import SCHEMA_VERSION
+from core.config import settings
 from core.database import get_database
 from core.dependencies import CurrentUser
 from modules.exams.repository import (
@@ -111,7 +112,7 @@ class ExamService:
             raise PermissionError("Bạn chưa đăng nhập")
         if current_user.role == "Admin":
             return
-        if current_user.role == "Teacher" and str(exam.get("created_by_user_id")) == str(current_user.id):
+        if str(exam.get("created_by_user_id")) == str(current_user.id):
             return
         raise PermissionError("Bạn không có quyền truy cập đề thi này")
 
@@ -245,7 +246,7 @@ class ExamService:
     def list_exams(self, page: int, page_size: int, current_user: CurrentUser | None) -> dict:
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user and current_user.role != "Admin"
             else None
         )
         exams, total = self.repository.list(page, page_size, owner_user_id)
@@ -271,7 +272,7 @@ class ExamService:
         exam = self._get_for_user_or_404(exam_id, current_user)
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user and current_user.role != "Admin"
             else None
         )
         pairs, total = self.question_repository.list(
@@ -387,7 +388,7 @@ class ExamService:
         chapter_id = str(cell["chapter_id"]) if cell.get("chapter_id") else None
         owner_user_id = (
             current_user.id
-            if current_user and current_user.role == "Teacher"
+            if current_user and current_user.role != "Admin"
             else None
         )
         pairs, _total = self.question_repository.list(
@@ -647,13 +648,28 @@ class ExamVariantService:
         )
 
 
+def _question_repository(database):
+    if settings.question_store == "postgres":
+        from modules.questions.postgres_repository import PostgresQuestionRepository
+        return PostgresQuestionRepository()
+    return MongoQuestionRepository(database)
+
+
+def _exam_repositories(database) -> tuple[ExamRepository, ExamVariantRepository]:
+    if settings.exam_store == "postgres":
+        from modules.exams.postgres_repository import (
+            PostgresExamRepository,
+            PostgresExamVariantRepository,
+        )
+        return PostgresExamRepository(), PostgresExamVariantRepository()
+    return MongoExamRepository(database), MongoExamVariantRepository(database)
+
+
 def get_exam_service() -> ExamService:
     database = get_database()
-    return ExamService(MongoExamRepository(database), MongoQuestionRepository(database))
+    exams, _variants = _exam_repositories(database)
+    return ExamService(exams, _question_repository(database))
 
 
 def get_exam_variant_service() -> ExamVariantService:
-    database = get_database()
-    return ExamVariantService(
-        MongoExamRepository(database), MongoExamVariantRepository(database)
-    )
+    return ExamVariantService(*_exam_repositories(get_database()))

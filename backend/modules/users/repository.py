@@ -8,7 +8,7 @@ from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from core.bootstrap import SCHEMA_VERSION
-from core.dependencies import effective_permissions
+from core.dependencies import DEFAULT_ROLE_PERMISSIONS, effective_permissions
 
 
 def utc_now() -> datetime:
@@ -42,6 +42,13 @@ def serialize_user(user: dict) -> dict:
         "display_name": user["display_name"],
         "role": user["role"],
         "permissions": list(effective_permissions(user)),
+        "permission_grants": sorted(
+            set(effective_permissions(user)) - DEFAULT_ROLE_PERMISSIONS.get(user["role"], set())
+        ),
+        "permission_revokes": sorted(
+            DEFAULT_ROLE_PERMISSIONS.get(user["role"], set()) - set(effective_permissions(user))
+        ),
+        "review_subject_ids": [str(item) for item in user.get("review_subject_ids") or []],
         "profile": profile,
         "is_active": user.get("is_active", True),
         "created_at": user["created_at"],
@@ -91,7 +98,9 @@ class MongoUserRepository:
             "email": data["email"].lower(),
             "display_name": data["display_name"],
             "role": data.get("role", "Teacher"),
-            "permissions": data.get("permissions") or [],
+            "permissions": [],
+            "permission_grants": data.get("permission_grants") or [],
+            "permission_revokes": data.get("permission_revokes") or [],
             "profile": data.get("profile") or {"school": "", "address": "", "avatar": ""},
             "is_active": True,
             "created_at": now,
@@ -178,6 +187,20 @@ class MongoUserRepository:
 
     def delete_by_id(self, user_id: str | ObjectId) -> None:
         self.collection.delete_one({"_id": object_id(user_id)})
+
+    def get_stats(self, user_id: str | ObjectId) -> dict:
+        oid = object_id(user_id)
+        return {
+            "documents_count": self.db.documents.count_documents(
+                {"uploaded_by_user_id": oid, "status": {"$ne": "ARCHIVED"}}
+            ),
+            "questions_count": self.db.questions.count_documents(
+                {"created_by_user_id": oid, "lifecycle_status": {"$ne": "ARCHIVED"}}
+            ),
+            "pending_questions_count": self.db.questions.count_documents(
+                {"created_by_user_id": oid, "review_status": "PENDING"}
+            ),
+        }
 
     def get_calendar_documents(self, user_id: str | ObjectId) -> list[dict]:
         oid = object_id(user_id)

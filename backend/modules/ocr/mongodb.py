@@ -1,13 +1,12 @@
-from core.database import get_database
 from modules.documents.repository import (
-    MongoDocumentRepository,
     json_safe,
     serialize_document,
 )
+from modules.documents.store import get_document_repository
 
 
-def _repository() -> MongoDocumentRepository:
-    return MongoDocumentRepository(get_database())
+def _repository():
+    return get_document_repository()
 
 
 def create_document_record(
@@ -38,10 +37,12 @@ def attach_original_artifact(
     sha256: str,
     artifact_type: str = "ORIGINAL_PDF",
     mime_type: str = "application/pdf",
+    provider: str = "LOCAL",
 ) -> None:
     _repository().attach_original_artifact(
         document_id,
         uri=uri,
+        provider=provider,
         size_bytes=size_bytes,
         sha256=sha256,
         artifact_type=artifact_type,
@@ -58,11 +59,13 @@ def attach_processing_artifact(
     sha256: str,
     artifact_type: str,
     mime_type: str,
+    provider: str = "LOCAL",
 ) -> None:
     _repository().attach_processing_artifact(
         document_id,
         job_id=job_id,
         uri=uri,
+        provider=provider,
         size_bytes=size_bytes,
         sha256=sha256,
         artifact_type=artifact_type,
@@ -102,15 +105,11 @@ def update_document_status(
             ((document or {}).get("current_processing") or {}).get("chunk_set_id")
         )
         if document and not has_active_lineage:
-            get_database().documents.update_one(
-                {"_id": document["_id"], "archived_at": None},
-                {
-                    "$set": {
-                        "status": "PROCESSING",
-                        "pipeline_summary.chunk_status": "NOT_STARTED",
-                        "pipeline_summary.index_status": "NOT_STARTED",
-                    }
-                },
+            summary = dict(document.get("pipeline_summary") or {})
+            summary.update(chunk_status="NOT_STARTED", index_status="NOT_STARTED")
+            repository.update(
+                document["_id"],
+                {"status": "PROCESSING", "pipeline_summary": summary},
             )
 
 
