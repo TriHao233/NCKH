@@ -4,7 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from modules.questions.workflow_schemas import EvaluationScores
-from modules.questions.workflow_service import EvidenceGateError, QuestionWorkflowService
+from modules.questions.workflow_service import (
+    EvidenceGateError,
+    QuestionWorkflowService,
+    effective_weights,
+)
 from modules.rag.search import get_evaluation_evidence
 
 
@@ -444,6 +448,166 @@ class EvaluationFinalizeTests(unittest.TestCase):
         self.assertFalse(names_only("Đáp án A sai, C mới đúng", options, {"A"}))
         self.assertFalse(names_only("FIFO là đáp án sai", options, {"A"}))
         self.assertFalse(names_only("Đáp án không đúng", options, {"A"}))
+
+
+def _raw_scored(action, severity, *, clo, others=0.9, missing=(), **score_overrides):
+    """Model output for a correct FIFO answer with explicit per-criterion scores."""
+    payload = json.loads(_raw(action, severity, "READY", score=others, answer_entailment="SUPPORTED"))
+    payload["scores"].update({"clo_alignment": clo, **score_overrides})
+    payload["feedback"]["missing"] = list(missing)
+    return json.dumps(payload, ensure_ascii=False)
+
+
+class EvaluationWithoutCloTests(unittest.TestCase):
+    """Không phải câu hỏi nào cũng gắn CLO; thiếu CLO không được làm câu rớt."""
+
+    def setUp(self):
+        self.service = QuestionWorkflowService(None)
+
+    def finalize(self, raw, *, clos=(), **version_changes):
+        version = _version(correct_answer="FIFO")
+        version["clos"] = list(clos)
+        version.update(version_changes)
+        return self.service._finalize_llm_evaluation(raw, [_source()], version, POLICY)
+
+    def test_effective_weights_drop_the_clo_criterion_and_keep_the_total(self):
+        weights = effective_weights(POLICY, {"metadata_guardrail": {"not_applicable": ["clo_alignment"]}})
+
+        self.assertEqual(weights["clo_alignment"], 0.0)
+        self.assertAlmostEqual(sum(weights.values()), 1.0)
+        self.assertAlmostEqual(weights["faithfulness"], 0.35 / 0.85)
+        self.assertEqual(effective_weights(POLICY, {}), POLICY["weights"])
+        self.assertEqual(effective_weights(POLICY, None), POLICY["weights"])
+
+    def test_question_without_clo_is_approved_and_clo_is_left_out_of_the_score(self):
+        scores, feedback, evidence = self.finalize(_raw_scored("APPROVE", "LOW", clo=0.0))
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertFalse(evidence["metadata_guardrail"]["applied"])
+        self.assertEqual(evidence["metadata_guardrail"]["not_applicable"], ["clo_alignment"])
+        self.assertEqual(evidence["metadata_guardrail"]["missing_fields"], [])
+        self.assertAlmostEqual(evidence["consistency"]["calculated_overall"], 0.9)
+        self.assertNotIn("clo_alignment", evidence["consistency"]["weak_criteria"])
+        self.assertNotIn("decision_normalization", evidence)
+        self.assertEqual(scores.clo_alignment, 0.0)
+
+    def test_revision_asked_only_because_clo_is_missing_is_cleared(self):
+        raw = _raw_scored(
+            "NEEDS_REVISION", "MEDIUM", clo=0.3, others=0.8,
+            missing=["Thiếu CLO", "Câu hỏi chưa gắn chuẩn đầu ra"],
+        )
+
+        _, feedback, evidence = self.finalize(raw)
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertEqual(feedback["severity"], "LOW")
+        self.assertEqual(feedback["missing"], [])
+        self.assertEqual(
+            evidence["metadata_guardrail"]["cleared_missing"],
+            ["Thiếu CLO", "Câu hỏi chưa gắn chuẩn đầu ra"],
+        )
+
+    def test_revision_with_another_stated_problem_is_kept(self):
+        raw = _raw_scored(
+            "NEEDS_REVISION", "MEDIUM", clo=0.3, others=0.8,
+            missing=["Thiếu CLO", "Giải thích chưa nêu lý do chọn đáp án"],
+        )
+
+        _, feedback, evidence = self.finalize(raw)
+
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(feedback["missing"], ["Giải thích chưa nêu lý do chọn đáp án"])
+        self.assertEqual(evidence["metadata_guardrail"]["cleared_missing"], ["Thiếu CLO"])
+
+    def test_missing_clo_note_is_dropped_from_an_approval(self):
+        raw = _raw_scored("APPROVE", "LOW", clo=0.0, missing=["Thiếu gắn CLO"])
+
+        _, feedback, evidence = self.finalize(raw)
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertEqual(feedback["missing"], [])
+        self.assertEqual(evidence["metadata_guardrail"]["cleared_missing"], ["Thiếu gắn CLO"])
+
+    def test_clo_note_is_kept_when_the_question_has_a_clo(self):
+        clos = [{"code": "CLO1", "description": "Nêu nguyên tắc hoạt động của hàng đợi."}]
+        raw = _raw_scored("NEEDS_REVISION", "MEDIUM", clo=0.4, others=0.8, missing=["Câu hỏi chưa đo được CLO đã gắn"])
+
+        _, feedback, evidence = self.finalize(raw, clos=clos)
+
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(feedback["missing"], ["Câu hỏi chưa đo được CLO đã gắn"])
+        self.assertNotIn("cleared_missing", evidence["metadata_guardrail"])
+
+    def test_revision_is_kept_when_another_criterion_is_below_the_minimum(self):
+        raw = _raw_scored(
+            "NEEDS_REVISION", "MEDIUM", clo=0.3, others=0.8,
+            missing=["Thiếu CLO"], bloom_alignment=0.5,
+        )
+
+        _, feedback, _ = self.finalize(raw)
+
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+
+    def test_revision_without_a_stated_reason_or_with_high_severity_is_kept(self):
+        _, no_reason, _ = self.finalize(_raw_scored("NEEDS_REVISION", "MEDIUM", clo=0.3, others=0.8))
+        _, severe, _ = self.finalize(
+            _raw_scored("NEEDS_REVISION", "HIGH", clo=0.3, others=0.8, missing=["Thiếu CLO"])
+        )
+
+        self.assertEqual(no_reason["action"], "NEEDS_REVISION")
+        self.assertEqual(severe["action"], "NEEDS_REVISION")
+
+    def test_attached_clo_that_the_question_does_not_measure_still_counts(self):
+        clos = [{"code": "CLO1", "description": "Nêu nguyên tắc hoạt động của hàng đợi."}]
+
+        _, feedback, evidence = self.finalize(_raw_scored("APPROVE", "LOW", clo=0.0), clos=clos)
+
+        self.assertEqual(evidence["metadata_guardrail"]["not_applicable"], [])
+        self.assertAlmostEqual(evidence["consistency"]["calculated_overall"], 0.765)
+        self.assertIn("clo_alignment", evidence["consistency"]["weak_criteria"])
+        self.assertEqual(feedback["action"], "APPROVE")
+
+    def test_missing_bloom_still_blocks_a_question_without_clo(self):
+        _, feedback, evidence = self.finalize(
+            _raw_scored("APPROVE", "LOW", clo=0.0),
+            classification={"assessment_type": "DIEN_KHUYET", "bloom": {}},
+        )
+
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+        self.assertEqual(evidence["metadata_guardrail"]["missing_fields"], ["bloom"])
+        self.assertTrue(evidence["metadata_guardrail"]["applied"])
+
+
+class EvaluationOutputRepairTests(unittest.TestCase):
+    def test_punctuation_typo_in_an_option_check_field_name_is_read(self):
+        # qwen3:8b writes "ver,dict" for the fourth option; that typo used to
+        # block a correct question with "option_checks không hợp lệ: D".
+        payload = json.loads(_raw("APPROVE", "LOW", "READY", score=0.9, answer_entailment="SUPPORTED"))
+        payload["evidence"]["option_checks"] = [
+            {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "còn gọi là FIFO"},
+            {"key": "B", "ver,dict": "NOT_IN_SOURCE", "source_label": "S1", "supporting_excerpt": ""},
+        ]
+
+        _, _, evidence = QuestionWorkflowService._parse_llm_evaluation(json.dumps(payload, ensure_ascii=False))
+
+        self.assertEqual(
+            [(item["key"], item["verdict"]) for item in evidence["option_checks"]],
+            [("A", "SUPPORTED"), ("B", "NOT_IN_SOURCE")],
+        )
+
+    def test_evaluation_payload_states_whether_a_clo_is_attached(self):
+        service = QuestionWorkflowService(None)
+        question = {"_id": "q-1", "question_code": "Q-1"}
+
+        with_clo, _, _ = service._build_evaluation_prompt(
+            question, _version(correct_answer="FIFO"), POLICY, source_chunks=[_source()]
+        )
+        version = _version(correct_answer="FIFO")
+        version["clos"] = []
+        without_clo, _, _ = service._build_evaluation_prompt(question, version, POLICY, source_chunks=[_source()])
+
+        self.assertIn('"clo_status": "ATTACHED"', with_clo)
+        self.assertIn('"clo_status": "NOT_ATTACHED"', without_clo)
 
 
 class EvaluationOutputBudgetTests(unittest.TestCase):

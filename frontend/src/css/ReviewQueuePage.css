@@ -1445,6 +1445,8 @@
   padding-left: 19px;
 }
 
+.metadata-guardrail-note { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid #7aa7d6; background: #f2f8fe; color: #35506f; font-size: 13px; }
+
 .metadata-guardrail-warning {
   display: grid;
   gap: 5px;

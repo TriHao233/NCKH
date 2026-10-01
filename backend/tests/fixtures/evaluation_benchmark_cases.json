@@ -151,7 +151,7 @@
     },
     {
       "name": "mcq_queue_missing_clo",
-      "expect": "BLOCK",
+      "expect": "PASS",
       "source": "queue",
       "type": "TRAC_NGHIEM",
       "bloom": 1,

@@ -232,7 +232,10 @@ function defaultReviewDraft(question, decision) {
     })),
     criteria: REVIEW_CRITERIA.map((item) => ({
       ...item,
-      rating: decision === 'APPROVED' ? 'PASS' : 'REVIEW',
+      // Câu không gắn CLO thì tiêu chí CLO mặc định là "Không đủ dữ liệu", không ép người duyệt chấm.
+      rating: item.key === 'clo_alignment' && !(question.clos || []).length
+        ? 'NO_DATA'
+        : (decision === 'APPROVED' ? 'PASS' : 'REVIEW'),
       note: '',
       source_chunk_id: '',
       page_number: '',
@@ -1453,7 +1456,8 @@ function ReviewQueuePage() {
   const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
   const latestFeedback = latestEvaluation?.feedback || qualitySummary.feedback || {};
   const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || {});
-  const latestWeights = latestEvaluation?.policy?.weights || {};
+  // Khi có tiêu chí không áp dụng, backend lưu thêm trọng số đã chia lại.
+  const latestWeights = latestEvaluation?.policy?.effective_weights || latestEvaluation?.policy?.weights || {};
   const latestEvaluationForInsights = latestEvaluation
     ? {
         ...latestEvaluation,
@@ -1465,6 +1469,7 @@ function ReviewQueuePage() {
   const aiInsights = evaluationInsights(latestEvaluationForInsights, SCORE_COMPONENTS);
   const answerGuardrail = answerGuardrailInsights(latestEvaluationForInsights);
   const metadataGuardrail = metadataGuardrailInsights(latestEvaluationForInsights);
+  const notApplicableCriteria = new Set(metadataGuardrail.notApplicable);
   const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
   const aiMissingItems = textList(latestFeedback.missing);
   const aiRiskItems = textList(latestEvidence.risks);
@@ -2134,14 +2139,16 @@ function ReviewQueuePage() {
                       {SCORE_COMPONENTS.map((component) => (
                         <div
                           key={component.key}
-                          className={aiWeakCriterionKeys.has(component.key) ? 'score-card--weak' : ''}
+                          className={aiWeakCriterionKeys.has(component.key) && !notApplicableCriteria.has(component.key) ? 'score-card--weak' : ''}
                         >
                           <span>{component.label}</span>
-                          <b>{score(latestScores[component.key])}</b>
+                          <b>{notApplicableCriteria.has(component.key) ? 'Không áp dụng' : score(latestScores[component.key])}</b>
                           <small>
-                            Trọng số {percent(latestWeights[component.key])}
+                            {notApplicableCriteria.has(component.key)
+                              ? 'Không tính vào tổng điểm'
+                              : `Trọng số ${percent(latestWeights[component.key])}`}
                           </small>
-                          {aiWeakCriterionKeys.has(component.key) && (
+                          {aiWeakCriterionKeys.has(component.key) && !notApplicableCriteria.has(component.key) && (
                             <em>Dưới ngưỡng đạt {score(aiInsights.passMin)}</em>
                           )}
                         </div>
@@ -2166,6 +2173,9 @@ function ReviewQueuePage() {
                               {answerGuardrail.issues.map((item) => <li key={item}>{item}</li>)}
                             </ul>
                           </div>
+                        )}
+                        {metadataGuardrail.notes.length > 0 && (
+                          <p className="metadata-guardrail-note">{metadataGuardrail.notes.join(' ')}</p>
                         )}
                         {metadataGuardrail.applied && (
                           <div className="metadata-guardrail-warning" role="alert">
@@ -2509,7 +2519,7 @@ function ReviewQueuePage() {
                     </div>
                     <div className="review-criterion-ai">
                       <span>AI gợi ý</span>
-                      <b>{score(latestScores[item.key])}</b>
+                      <b>{notApplicableCriteria.has(item.key) ? 'Không áp dụng' : score(latestScores[item.key])}</b>
                     </div>
                     <label>
                       <span>Người duyệt</span>

@@ -242,8 +242,10 @@ function AdminAiReviewPage() {
   const hasCurrentEvaluationError = Boolean(qualitySummary.error);
   const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || qualitySummary.scores || {});
   const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
-  const latestWeights = latestEvaluation?.policy?.weights || qualitySummary.policy?.weights || {};
+  const latestWeights = latestEvaluation?.policy?.effective_weights || latestEvaluation?.policy?.weights || qualitySummary.policy?.weights || {};
   const latestModel = latestEvaluation?.evaluator_model || {};
+  // Tiêu chí không áp dụng (ví dụ CLO khi câu hỏi không gắn CLO) không tính vào tổng điểm.
+  const notApplicableCriteria = new Set(latestEvidence.metadata_guardrail?.not_applicable || []);
   const overallScore = hasCurrentEvaluationError ? undefined : (latestScores.overall ?? qualitySummary.overall_score);
   const evaluationColor = hasCurrentEvaluationError ? undefined : (latestEvaluation?.color || qualitySummary.color);
   const evidenceCitations = Array.isArray(latestEvidence.citations) ? latestEvidence.citations : [];
@@ -454,8 +456,8 @@ function AdminAiReviewPage() {
                     {SCORE_COMPONENTS.map((component) => (
                       <div key={component.key}>
                         <span>{component.label}</span>
-                        <b>{formatScore(latestScores[component.key])}</b>
-                        <small>Trọng số {formatScore(latestWeights[component.key])}</small>
+                        <b>{notApplicableCriteria.has(component.key) ? 'Không áp dụng' : formatScore(latestScores[component.key])}</b>
+                        <small>{notApplicableCriteria.has(component.key) ? 'Không tính vào tổng điểm' : `Trọng số ${formatScore(latestWeights[component.key])}`}</small>
                       </div>
                     ))}
                   </div>

@@ -56,6 +56,32 @@ DEFAULT_WEIGHTS = {
     "clo_alignment": 0.15,
 }
 DEFAULT_THRESHOLDS = {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65}
+CLO_CRITERION = "clo_alignment"
+# Nhận diện ý "thiếu CLO" trong danh sách cần sửa mà mô hình trả về.
+CLO_MENTION_PATTERN = re.compile(r"\bCLO\b|chuẩn đầu ra", re.IGNORECASE)
+
+
+def not_applicable_criteria(evidence: dict | None) -> set[str]:
+    """Tiêu chí không áp dụng cho câu hỏi này (hiện chỉ có CLO khi câu không gắn CLO)."""
+    guardrail = (evidence or {}).get("metadata_guardrail") or {}
+    return {str(item) for item in guardrail.get("not_applicable") or []} & set(DEFAULT_WEIGHTS)
+
+
+def effective_weights(policy: dict | None, evidence: dict | None = None) -> dict:
+    """Trọng số dùng để tính tổng điểm: bỏ tiêu chí không áp dụng, chia lại theo tỉ lệ."""
+    configured = (policy or {}).get("weights") or DEFAULT_WEIGHTS
+    weights = {key: configured.get(key, DEFAULT_WEIGHTS[key]) for key in DEFAULT_WEIGHTS}
+    skipped = not_applicable_criteria(evidence)
+    if not skipped:
+        return weights
+    kept_total = sum(value for key, value in weights.items() if key not in skipped)
+    if kept_total <= 0:
+        return weights
+    full_total = sum(weights.values())
+    return {
+        key: 0.0 if key in skipped else value * full_total / kept_total
+        for key, value in weights.items()
+    }
 EVALUATION_PROMPT_KEY = "evaluation:question_quality"
 EVALUATION_PROMPT_PATH = "evaluation/question_quality.txt"
 EVALUATION_SCORING_PROMPT_KEY = "evaluation:scoring_policy"
@@ -771,6 +797,8 @@ class QuestionWorkflowService:
             ),
             "requested_bloom": classification.get("bloom"),
             "current_difficulty": classification.get("difficulty"),
+            # Nói thẳng câu hỏi có gắn CLO hay không để mô hình không phải tự suy ra.
+            "clo_status": "ATTACHED" if clos else "NOT_ATTACHED",
             "clos": clos,
             "source_chunks": source_chunks,
         }
@@ -857,13 +885,21 @@ class QuestionWorkflowService:
             for check in option_checks:
                 if not isinstance(check, dict):
                     continue
+                # Local models sometimes insert punctuation into a field name
+                # (qwen3:8b writes "ver,dict" for the fourth option). Read the
+                # field by its letters so a typo in the evaluator's own output is
+                # not reported as a defect of the question.
+                fields = {
+                    re.sub(r"[^a-z_]", "", str(name).lower()): value
+                    for name, value in check.items()
+                }
                 normalized_checks.append(
                     {
-                        "key": str(check.get("key") or "").strip().upper(),
-                        "verdict": str(check.get("verdict") or "").strip().upper(),
-                        "source_label": str(check.get("source_label") or "").strip().upper(),
+                        "key": str(fields.get("key") or "").strip().upper(),
+                        "verdict": str(fields.get("verdict") or "").strip().upper(),
+                        "source_label": str(fields.get("source_label") or "").strip().upper(),
                         "supporting_excerpt": cls._compact_text(
-                            check.get("supporting_excerpt") or "",
+                            fields.get("supporting_excerpt") or "",
                             300,
                         ),
                     }
@@ -1128,11 +1164,19 @@ class QuestionWorkflowService:
         evidence: dict,
         version: dict,
     ) -> tuple[EvaluationScores, dict, dict]:
+        """Thiếu Bloom thì chặn; không gắn CLO thì tiêu chí CLO chỉ là "không áp dụng".
+
+        Không phải câu hỏi nào cũng gắn CLO, nên việc thiếu CLO không được làm câu rớt:
+        tiêu chí clo_alignment bị loại khỏi tổng điểm (xem effective_weights) và một kết
+        luận NEEDS_REVISION mà lý do duy nhất là thiếu CLO được trả về APPROVE.
+        """
         classification = version.get("classification") or {}
         bloom = classification.get("bloom") or {}
         clos = version.get("clos") if isinstance(version.get("clos"), list) else []
         missing_fields = []
         issues = []
+        notes = []
+        not_applicable = []
         score_values = scores.model_dump()
 
         if not bloom.get("level"):
@@ -1147,31 +1191,37 @@ class QuestionWorkflowService:
             and str(clo.get("description") or "").strip()
         ]
         if not valid_clos:
-            missing_fields.append("clo")
-            issues.append("Câu hỏi chưa được gắn chuẩn đầu ra CLO hợp lệ")
-            score_values["clo_alignment"] = min(scores.clo_alignment, 0.35)
+            not_applicable.append(CLO_CRITERION)
+            notes.append("Câu hỏi không gắn CLO nên tiêu chí Đúng CLO không tính vào tổng điểm")
 
         guardrail = {
             "applied": bool(issues),
             "missing_fields": missing_fields,
             "issues": issues,
+            "not_applicable": not_applicable,
+            "notes": notes,
         }
+        guarded_feedback = feedback
+        if not_applicable:
+            guarded_feedback, cleared = cls._clear_clo_only_revision(scores, feedback, evidence)
+            if cleared:
+                guardrail["cleared_missing"] = cleared
         if not issues:
-            return scores, feedback, {**evidence, "metadata_guardrail": guardrail}
+            return scores, guarded_feedback, {**evidence, "metadata_guardrail": guardrail}
 
-        current_action = str(feedback.get("action") or "").strip().upper()
-        current_severity = str(feedback.get("severity") or "").strip().upper()
+        current_action = str(guarded_feedback.get("action") or "").strip().upper()
+        current_severity = str(guarded_feedback.get("severity") or "").strip().upper()
         guarded_feedback = {
-            **feedback,
+            **guarded_feedback,
             "action": "REJECT" if current_action == "REJECT" else "NEEDS_REVISION",
             "severity": "HIGH" if current_severity == "HIGH" else "MEDIUM",
             "summary": (
-                feedback.get("summary")
+                guarded_feedback.get("summary")
                 if current_action in {"NEEDS_REVISION", "REJECT"}
-                else "Guardrail metadata yêu cầu bổ sung Bloom/CLO trước khi duyệt."
+                else "Guardrail metadata yêu cầu bổ sung mức Bloom trước khi duyệt."
             ),
             "missing": list(
-                dict.fromkeys([*(feedback.get("missing") or []), *issues])
+                dict.fromkeys([*(guarded_feedback.get("missing") or []), *issues])
             ),
         }
         guarded_evidence = {
@@ -1187,6 +1237,41 @@ class QuestionWorkflowService:
             "metadata_guardrail": guardrail,
         }
         return EvaluationScores(**score_values), guarded_feedback, guarded_evidence
+
+    @staticmethod
+    def _clear_clo_only_revision(
+        scores: EvaluationScores,
+        feedback: dict,
+        evidence: dict,
+    ) -> tuple[dict, list[str]]:
+        """Với câu không gắn CLO: bỏ các mục "thiếu CLO" khỏi danh sách cần sửa.
+
+        Nếu sau đó không còn mục nào và mô hình chỉ yêu cầu sửa vì thiếu CLO thì trả
+        kết luận về APPROVE. Việc này chỉ làm khi mọi điều kiện đều rõ ràng: mức lỗi
+        không phải HIGH, không có nhận định thiếu căn cứ và bốn tiêu chí còn lại đều
+        đạt ngưỡng tối thiểu. Thiếu một điều kiện thì giữ nguyên kết luận.
+        """
+        missing = [str(item) for item in feedback.get("missing") or [] if str(item or "").strip()]
+        cleared = [item for item in missing if CLO_MENTION_PATTERN.search(item)]
+        if not cleared:
+            return feedback, []
+        remaining = [item for item in missing if item not in cleared]
+        updated = {**feedback, "missing": remaining}
+
+        action = str(feedback.get("action") or "").strip().upper()
+        severity = str(feedback.get("severity") or "").strip().upper()
+        other_scores = [
+            value for key, value in scores.model_dump().items() if key != CLO_CRITERION
+        ]
+        if (
+            action == "NEEDS_REVISION"
+            and severity != "HIGH"
+            and not remaining
+            and not evidence.get("unsupported_claims")
+            and min(other_scores) >= DEFAULT_THRESHOLDS["pass_min"]
+        ):
+            updated.update({"action": "APPROVE", "severity": "LOW"})
+        return updated, cleared
 
     @classmethod
     def _apply_evaluation_guardrails(
@@ -1210,15 +1295,16 @@ class QuestionWorkflowService:
         )
 
     @staticmethod
-    def _overall_and_pass_min(scores: EvaluationScores, policy: dict) -> tuple[float, float]:
+    def _overall_and_pass_min(
+        scores: EvaluationScores,
+        policy: dict,
+        evidence: dict | None = None,
+    ) -> tuple[float, float]:
         score_values = scores.model_dump()
-        weights = policy.get("weights") or DEFAULT_WEIGHTS
+        weights = effective_weights(policy, evidence)
         thresholds = policy.get("thresholds") or DEFAULT_THRESHOLDS
         pass_min = thresholds.get("pass_min", DEFAULT_THRESHOLDS["pass_min"])
-        overall = round(
-            sum(score_values[key] * weights.get(key, DEFAULT_WEIGHTS[key]) for key in DEFAULT_WEIGHTS),
-            4,
-        )
+        overall = round(sum(score_values[key] * weights[key] for key in DEFAULT_WEIGHTS), 4)
         return overall, pass_min
 
     @classmethod
@@ -1229,7 +1315,7 @@ class QuestionWorkflowService:
         evidence: dict,
         policy: dict,
     ) -> list[str]:
-        overall, pass_min = cls._overall_and_pass_min(scores, policy)
+        overall, pass_min = cls._overall_and_pass_min(scores, policy, evidence)
         action = str(feedback.get("action") or "").strip().upper()
         severity = str(feedback.get("severity") or "").strip().upper()
         moodle_readiness = str(evidence.get("moodle_readiness") or "").strip().upper()
@@ -1302,7 +1388,7 @@ class QuestionWorkflowService:
         policy: dict,
     ) -> dict:
         score_values = scores.model_dump()
-        overall, pass_min = cls._overall_and_pass_min(scores, policy)
+        overall, pass_min = cls._overall_and_pass_min(scores, policy, evidence)
         contradictions = cls._decision_contradictions(scores, feedback, evidence, policy)
         if contradictions:
             raise ValueError("AI evaluation tự mâu thuẫn: " + "; ".join(contradictions))
@@ -1317,7 +1403,7 @@ class QuestionWorkflowService:
             "weak_criteria": [
                 key
                 for key, value in score_values.items()
-                if value < pass_min
+                if value < pass_min and key not in not_applicable_criteria(evidence)
             ],
         }
 
@@ -1547,10 +1633,10 @@ class QuestionWorkflowService:
             raise RuntimeError("VERSION_CONFLICT")
         policy = payload.policy_snapshot or self._policy()
         scores = payload.scores.model_dump()
-        overall = round(
-            sum(scores[key] * policy["weights"][key] for key in DEFAULT_WEIGHTS),
-            4,
-        )
+        # Tiêu chí không áp dụng (câu không gắn CLO) không tính vào tổng điểm.
+        weights = effective_weights(policy, payload.evidence)
+        skipped_criteria = sorted(not_applicable_criteria(payload.evidence))
+        overall = round(sum(scores[key] * weights[key] for key in DEFAULT_WEIGHTS), 4)
         thresholds = policy["thresholds"]
         color = (
             "GREEN"
@@ -1613,6 +1699,11 @@ class QuestionWorkflowService:
                 "version": policy["version"],
                 "weights": policy["weights"],
                 "thresholds": thresholds,
+                **(
+                    {"effective_weights": weights, "not_applicable": skipped_criteria}
+                    if skipped_criteria
+                    else {}
+                ),
             },
             "scores": {**scores, "overall": overall},
             "color": color,
@@ -4538,9 +4629,14 @@ class QuestionWorkflowService:
                     if key in criterion_calibration:
                         human_by_key[key] = "PASS" if item.get("passed") else "FAIL"
             evaluation_scores = evaluation.get("scores") or {}
+            skipped_keys = not_applicable_criteria(evaluation.get("evidence"))
             for key, human_rating in human_by_key.items():
                 ai_score = evaluation_scores.get(key)
-                if not isinstance(ai_score, (int, float)) or human_rating == "NO_DATA":
+                if (
+                    not isinstance(ai_score, (int, float))
+                    or human_rating == "NO_DATA"
+                    or key in skipped_keys
+                ):
                     continue
                 ai_positive = ai_score >= DEFAULT_THRESHOLDS["pass_min"]
                 human_positive = human_rating == "PASS"

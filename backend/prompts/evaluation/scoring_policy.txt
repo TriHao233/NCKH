@@ -11,14 +11,15 @@ TIÊU CHÍ
 - contextual_relevancy: câu hỏi có đánh vào ý quan trọng trong ngữ cảnh không.
 - answer_relevancy: đáp án đúng, duy nhất/đủ, giải thích hợp lý, phương án nhiễu phù hợp.
 - bloom_alignment: yêu cầu tư duy có khớp Bloom được yêu cầu không.
-- clo_alignment: câu hỏi có đo được CLO đã gắn không.
+- clo_alignment: câu hỏi có đo được CLO đã gắn không. Chỉ chấm khi clo_status = ATTACHED.
 
 GIỚI HẠN ĐIỂM
 - Ngưỡng pass mặc định: overall_score từ 0.65 trở lên là đạt để chuyển duyệt, nếu không có lỗi HIGH.
 - Nguồn rỗng/không liên quan: không được chấm điểm; hệ thống sẽ trả về INSUFFICIENT_EVIDENCE trước khi gọi mô hình.
 - Có nhận định trọng yếu không được nguồn hỗ trợ: không được APPROVE; faithfulness tối đa 0.40.
 - Nguồn mâu thuẫn với đáp án đúng hoặc giải thích: faithfulness tối đa 0.20 và action = REJECT.
-- Thiếu CLO: clo_alignment tối đa 0.65; chỉ tối đa 0.45 nếu bắt buộc phải gắn CLO.
+- clo_status = NOT_ATTACHED: tiêu chí clo_alignment không áp dụng, ghi 0.0; đây không phải lỗi và không ảnh hưởng tới action.
+- clo_status = ATTACHED nhưng câu hỏi không đo được CLO đó: clo_alignment tối đa 0.55.
 - Đáp án sai, thiếu, hoặc mâu thuẫn lựa chọn: answer_relevancy tối đa 0.40.
 - Cấu trúc chưa thật chuẩn nhưng vẫn chấm được: answer_relevancy tối đa 0.75 và moodle_readiness = "NEEDS_FIX".
 - Cấu trúc không thể chấm/nhập Moodle: answer_relevancy tối đa 0.50.

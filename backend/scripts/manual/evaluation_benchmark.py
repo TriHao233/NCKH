@@ -29,6 +29,7 @@ from modules.generation.llm.model_registry import (  # noqa: E402
 from modules.questions.workflow_service import (  # noqa: E402
     DEFAULT_THRESHOLDS,
     DEFAULT_WEIGHTS,
+    effective_weights,
     QuestionWorkflowService,
     _limit_evaluation_output,
     _prepare_evaluation_attempt,
@@ -90,7 +91,8 @@ def _build_case(case: dict, sources: dict) -> tuple[dict, dict, list[dict], dict
 
 def _passed(scores, feedback: dict, evidence: dict) -> tuple[bool, float]:
     """Mirror QuestionWorkflowService.evaluate() pass decision."""
-    overall = round(sum(getattr(scores, key) * DEFAULT_WEIGHTS[key] for key in DEFAULT_WEIGHTS), 4)
+    weights = effective_weights(POLICY, evidence)
+    overall = round(sum(getattr(scores, key) * weights[key] for key in DEFAULT_WEIGHTS), 4)
     action = str(feedback.get("action") or "").upper()
     passed = (
         overall >= DEFAULT_THRESHOLDS["pass_min"]

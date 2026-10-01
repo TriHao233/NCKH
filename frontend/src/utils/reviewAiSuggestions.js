@@ -61,6 +61,9 @@ export function metadataGuardrailInsights(evaluation) {
     applied: guardrail.applied === true,
     missingFields: uniqueTexts(guardrail.missing_fields),
     issues: uniqueTexts(guardrail.issues),
+    // Tiêu chí không áp dụng (ví dụ clo_alignment khi câu hỏi không gắn CLO): không tính vào tổng điểm.
+    notApplicable: uniqueTexts(guardrail.not_applicable),
+    notes: uniqueTexts(guardrail.notes),
   };
 }
 
