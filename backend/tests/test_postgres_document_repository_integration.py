@@ -222,6 +222,48 @@ def test_document_metadata_crud_is_postgres_backed(monkeypatch):
             conn.execute("DELETE FROM users WHERE id=%s", (str(owner["_id"]),))
 
 
+def test_legacy_artifact_without_id_stays_readable(monkeypatch):
+    """Artifact chép từ MongoDB không có _id nhận id tổng hợp, không phải ObjectId."""
+    monkeypatch.setattr(settings, "user_store", "postgres")
+    monkeypatch.setattr(settings, "catalog_store", "postgres")
+    monkeypatch.setattr(settings, "document_store", "postgres")
+    suffix = uuid4().hex[:12]
+    owner = PostgresUserRepository().create({
+        "firebase_uid": f"legacy-artifact-{suffix}",
+        "email": f"legacy-artifact-{suffix}@example.test",
+        "display_name": "Teacher", "role": "Teacher",
+    })
+    now = datetime.now(timezone.utc)
+    document_id = ObjectId()
+    title = f"Legacy {suffix}"
+    legacy_document = {
+        "_id": document_id, "title": title, "original_filename": "legacy.pdf",
+        "uploaded_by_user_id": owner["_id"], "status": "READY", "current_version": 1,
+        "artifacts": [{
+            "type": "ORIGINAL_PDF", "storage": {"provider": "LOCAL", "uri": "C:/uploads/legacy.pdf"},
+            "document_version": 1, "created_at": now,
+        }],
+        "created_at": now, "updated_at": now,
+    }
+    try:
+        with postgres_connection() as conn:
+            for table, row in projected_rows("documents", legacy_document):
+                upsert(conn, table, row)
+        repository = PostgresDocumentRepository()
+        synthetic_id = f"{document_id}:artifact:0"
+        assert repository.find_by_id(document_id)["artifacts"][0]["_id"] == synthetic_id
+        listed, total = repository.list(1, 10, None, title)
+        assert total == 1 and listed[0]["artifacts"][0]["_id"] == synthetic_id
+        monitor = AdminOverviewService(SimpleNamespace()).list_documents(1, 10, None, title)
+        assert monitor["total"] == 1
+        assert monitor["items"][0]["owner"]["email"] == owner["email"]
+    finally:
+        with postgres_connection() as conn:
+            conn.execute("DELETE FROM document_artifacts WHERE document_id=%s", (str(document_id),))
+            conn.execute("DELETE FROM documents WHERE id=%s", (str(document_id),))
+            conn.execute("DELETE FROM users WHERE id=%s", (str(owner["_id"]),))
+
+
 def test_chunk_completion_promotes_postgres_document_after_vector_write(monkeypatch):
     from contextlib import contextmanager
     from modules.rag import mongodb as rag_store

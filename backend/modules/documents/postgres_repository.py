@@ -25,6 +25,11 @@ def _lineage_snapshot(value: dict) -> dict:
     )}
 
 
+def _artifact_id(value: str):
+    """Artifact chép từ MongoDB không có _id mang id tổng hợp "<document>:artifact:<n>"."""
+    return ObjectId(value) if ObjectId.is_valid(value) else value
+
+
 class PostgresDocumentRepository:
     def __init__(self):
         if settings.user_store != "postgres" or settings.catalog_store != "postgres":
@@ -58,7 +63,7 @@ class PostgresDocumentRepository:
         for artifact in artifacts:
             item = _restore(artifact["payload"] or {})
             item.update({
-                "_id": ObjectId(artifact["id"]), "type": artifact["artifact_type"],
+                "_id": _artifact_id(artifact["id"]), "type": artifact["artifact_type"],
                 "document_version": artifact["version"],
                 "storage": {
                     **(item.get("storage") or {}),
