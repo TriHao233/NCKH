@@ -1,6 +1,7 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+  renewQuestionReview, getReviewPolicy, updateReviewPolicy, autoAssignReviews,
   assignQuestionReview,
   autoEvaluateQuestion,
   claimQuestionReview,
@@ -41,6 +42,11 @@ import {
   metadataGuardrailInsights,
   mergeAiSuggestionsIntoDraft,
 } from '../utils/reviewAiSuggestions';
+import { hasEffectivePermission } from '../auth/permissions';
+import { overrideRequired, isAiRunning, selfReviewReasonRequired } from '../utils/reviewDecisionRules';
+import { shouldRenewLock, renewIntervalMs } from '../utils/reviewLock';
+import { scoreToPercent, percentToScore } from '../utils/reviewPolicy';
+import { assignmentReasonLabel, reviewerFlagLabel } from '../utils/reviewAssignment';
 import '../css/ReviewQueuePage.css';
 
 const REVIEW_STATUS_LABEL = {
@@ -216,6 +222,7 @@ function defaultReviewDraft(question, decision) {
     decision,
     overallNote: '',
     overrideReason: '',
+    selfReviewReason: '',
     secondaryRequired: false,
     secondaryReason: '',
     checklist: REVIEW_RUBRIC.map((item) => ({
@@ -225,7 +232,10 @@ function defaultReviewDraft(question, decision) {
     })),
     criteria: REVIEW_CRITERIA.map((item) => ({
       ...item,
-      rating: decision === 'APPROVED' ? 'PASS' : 'REVIEW',
+      // Câu không gắn CLO thì tiêu chí CLO mặc định là "Không đủ dữ liệu", không ép người duyệt chấm.
+      rating: item.key === 'clo_alignment' && !(question.clos || []).length
+        ? 'NO_DATA'
+        : (decision === 'APPROVED' ? 'PASS' : 'REVIEW'),
       note: '',
       source_chunk_id: '',
       page_number: '',
@@ -552,9 +562,63 @@ function ReviewQueuePage() {
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
+  const openingDeepLinkId = useRef('');
   const [workspaceView, setWorkspaceView] = useState('queue');
   const [detailView, setDetailView] = useState('question');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [reviewPolicy, setReviewPolicy] = useState(null);
+  const [policyDraft, setPolicyDraft] = useState(null);
+  const [policyError, setPolicyError] = useState('');
+  const [policyBusy, setPolicyBusy] = useState(false);
+  const [autoDraft, setAutoDraft] = useState(null);
+  const [autoResult, setAutoResult] = useState(null);
+  const [autoError, setAutoError] = useState('');
+  const [autoBusy, setAutoBusy] = useState(false);
+  const lastActivityAt = useRef(Date.now());
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const lockTimeout = reviewPolicy?.lock_timeout_minutes || 30;
+  const lockLostMessage = 'Bạn không còn giữ câu này — người khác đã nhận. Bản nháp đánh giá vẫn được lưu.';
+  const applyRenewedQuestion = (fresh) => {
+    setSelected((current) => current?.id === fresh.id ? fresh : current);
+    setQuestions((current) => current.map((item) => item.id === fresh.id ? fresh : item));
+  };
+  const renewExpiredReview = async (question) => {
+    if (assignmentOf(question).status === 'IN_REVIEW' && isAssignmentMine(question, user) && isReviewLockExpired(assignmentOf(question))) {
+      try { const fresh = await renewQuestionReview(question.id); applyRenewedQuestion(fresh); }
+      catch (err) { throw new Error([400, 403, 409].includes(err.status) ? lockLostMessage : err.message); }
+    }
+  };
+  useEffect(() => {
+    let active = true;
+    getReviewPolicy().then((policy) => {
+      if (!active) return;
+      setReviewPolicy(policy); setPolicyDraft({ ...policy, scorePercent: scoreToPercent(policy.secondary_below_score) });
+    }).catch(() => { if (active) setPolicyError('Không tải được chính sách kiểm duyệt.'); });
+    const activity = () => { lastActivityAt.current = Date.now(); };
+    ['keydown', 'pointerdown', 'input'].forEach((name) => window.addEventListener(name, activity));
+    return () => { active = false; ['keydown', 'pointerdown', 'input'].forEach((name) => window.removeEventListener(name, activity)); };
+  }, []);
+  useEffect(() => {
+    if (!selected?.id || selected.review_status !== 'PENDING' || selected.review_assignment?.status !== 'IN_REVIEW'
+      || String(selected.review_assignment?.reviewer_user_id) !== String(user?.id)) return;
+    let stopped = false; let running = false;
+    const renew = async () => {
+      const question = selectedRef.current;
+      if (stopped || running || !shouldRenewLock({ question, userId: user?.id, now: Date.now(), lastActivityAt: lastActivityAt.current,
+        timeoutMinutes: lockTimeout, visible: document.visibilityState === 'visible' })) return;
+      running = true;
+      try { const fresh = await renewQuestionReview(question.id); if (!stopped) applyRenewedQuestion(fresh); }
+      catch (err) {
+        if (!stopped && [400, 403, 409].includes(err.status)) { stopped = true; window.clearInterval(interval); setError(lockLostMessage); }
+        else if (!stopped) setError(err.message || 'Không gia hạn được câu. Vui lòng thử lại.');
+      } finally { running = false; }
+    };
+    const interval = window.setInterval(renew, renewIntervalMs(lockTimeout));
+    document.addEventListener('visibilitychange', renew);
+    return () => { stopped = true; window.clearInterval(interval); document.removeEventListener('visibilitychange', renew); };
+  }, [selected?.id, selected?.review_status, selected?.review_assignment?.status, selected?.review_assignment?.reviewer_user_id, user?.id, lockTimeout]);
+
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -594,7 +658,7 @@ function ReviewQueuePage() {
       setTotal(result.total || 0);
       return items;
     } catch (err) {
-      setError(err.message || 'Không tải được hàng đợi kiểm duyệt');
+      setError(err.status === 403 ? 'Tài khoản của bạn hiện không có quyền kiểm duyệt. Liên hệ quản trị viên.' : err.message || 'Không tải được hàng đợi kiểm duyệt');
       setQuestions([]);
       setTotal(0);
       return [];
@@ -658,7 +722,7 @@ function ReviewQueuePage() {
     try {
       setDashboard(await getReviewDashboard());
     } catch (err) {
-      setDashboardError(err.message || 'Không tải được tổng quan người duyệt');
+      setDashboardError(err.status === 403 ? 'Tài khoản của bạn hiện không có quyền kiểm duyệt. Liên hệ quản trị viên.' : err.message || 'Không tải được tổng quan người duyệt');
       setDashboard(null);
     } finally {
       setDashboardLoading(false);
@@ -793,10 +857,11 @@ function ReviewQueuePage() {
   useEffect(() => {
     const questionId = new URLSearchParams(location.search).get('questionId') || '';
     if (!questionId) {
+      openingDeepLinkId.current = '';
       setOpenedDeepLinkId('');
       return;
     }
-    if (openedDeepLinkId === questionId) return;
+    if (openedDeepLinkId === questionId || openingDeepLinkId.current === questionId) return;
     if (!isValidQuestionId(questionId)) {
       const params = new URLSearchParams(location.search);
       params.delete('questionId');
@@ -811,6 +876,9 @@ function ReviewQueuePage() {
       setError('');
       return;
     }
+    // Reserve the deep link before requests start: queue loading/StrictMode must
+    // not start another history load that would clear an open review draft.
+    openingDeepLinkId.current = questionId;
     const openLinkedQuestion = async () => {
       try {
         const localQuestion = questions.find((question) => question.id === questionId);
@@ -925,11 +993,13 @@ function ReviewQueuePage() {
     return (
       assignment.status === 'IN_REVIEW'
       && isAssignmentMine(question, user)
-      && !isReviewLockExpired(assignment)
     );
   };
 
-  const openReviewForm = (question, decision, { aiEvaluation = null } = {}) => {
+  const openReviewForm = async (question, decision, { aiEvaluation = null } = {}) => {
+    if (user?.role === 'Admin' && assignmentOf(question).status === 'IN_REVIEW' && !isAssignmentMine(question, user) && !isReviewLockExpired(assignmentOf(question))
+      && !window.confirm(`Câu này đang được ${reviewerLabelForQuestion(question)} xử lý. Bạn vẫn muốn kiểm duyệt thay?`)) return;
+    try { await renewExpiredReview(question); } catch (err) { setError(err.message); return; }
     if (!canReviewQuestion(question)) {
       alert('Bạn cần nhận câu hỏi và giữ quyền xử lý còn hiệu lực trước khi kiểm duyệt.');
       return;
@@ -1057,8 +1127,9 @@ function ReviewQueuePage() {
   const claimReview = async (question) => {
     setBusyId(question.id);
     try {
-      await claimQuestionReview(question.id);
-      await refreshAfterAction(question);
+      if (assignmentOf(question).status === 'IN_REVIEW' && isAssignmentMine(question, user)) {
+        const fresh = await renewQuestionReview(question.id); applyRenewedQuestion(fresh);
+      } else { await claimQuestionReview(question.id); await refreshAfterAction(question); }
     } catch (err) {
       alert('Nhận câu kiểm duyệt thất bại: ' + err.message);
     } finally {
@@ -1190,7 +1261,7 @@ function ReviewQueuePage() {
       setReviewFormError('Không thể duyệt khi còn tiêu chí “Không đạt”. Hãy chọn Cần sửa hoặc ghi nhận lại tiêu chí.');
       return;
     }
-    const needsOverride = reviewDraft.decision === 'APPROVED' && selected.evaluation_status !== 'PASSED';
+    const needsOverride = overrideRequired(selected, reviewDraft.decision);
     if (needsOverride && !reviewDraft.overrideReason.trim()) {
       setReviewFormError('Cần ghi lý do khi duyệt câu mà AI đề xuất xem lại.');
       return;
@@ -1203,7 +1274,12 @@ function ReviewQueuePage() {
       setReviewFormError('Cần thêm ít nhất một lỗi để giảng viên sửa.');
       return;
     }
+    if (selfReviewReasonRequired(selected, user) && !reviewDraft.selfReviewReason?.trim()) {
+      setReviewFormError('Cần ghi lý do tự duyệt vì bạn là người tạo/sửa câu này.'); return;
+    }
+    if (isAiRunning(selected) && !window.confirm('AI đang đánh giá câu này. Chốt kết quả sẽ dừng lượt đánh giá AI. Tiếp tục?')) return;
     const payload = {
+      ...(selfReviewReasonRequired(selected, user) ? { self_review_reason: reviewDraft.selfReviewReason.trim() } : {}),
       expected_version: selected.current_version,
       decision: reviewDraft.decision,
       note: overallNote,
@@ -1245,6 +1321,7 @@ function ReviewQueuePage() {
     setBusyId(selected.id);
     setReviewFormError('');
     try {
+      await renewExpiredReview(selected);
       await reviewQuestion(selected.id, payload);
       await deleteQuestionReviewDraft(selected.id).catch(() => null);
       localStorage.removeItem(reviewDraftKey(selected.id, reviewDraft.decision));
@@ -1306,6 +1383,25 @@ function ReviewQueuePage() {
     }
   };
 
+  const savePolicy = async (event) => {
+    event.preventDefault(); setPolicyError(''); setPolicyBusy(true);
+    try {
+      const policy = await updateReviewPolicy({ secondary_on_override: Boolean(policyDraft.secondary_on_override),
+        secondary_below_score: percentToScore(policyDraft.scorePercent), secondary_subject_ids: policyDraft.secondary_subject_ids || [] });
+      setReviewPolicy(policy); setPolicyDraft({ ...policy, scorePercent: scoreToPercent(policy.secondary_below_score) });
+    } catch (err) { setPolicyError(err.message || 'Không lưu được chính sách.'); } finally { setPolicyBusy(false); }
+  };
+  const runAutoAssignment = async (event) => {
+    event.preventDefault(); setAutoBusy(true); setAutoError(''); setAutoResult(null);
+    try {
+      const ids = questions.filter((item) => item.review_status === 'PENDING').map((item) => item.id);
+      if (autoDraft.scope === 'visible' && !ids.length) throw new Error('Không có câu chờ duyệt đang hiển thị.');
+      const result = await autoAssignReviews({ question_ids: autoDraft.scope === 'visible' ? ids : [], limit: 100,
+        max_load_per_reviewer: Number(autoDraft.maxLoad), subject_mode: autoDraft.strict ? 'strict' : 'prefer', include_admins: autoDraft.includeAdmins });
+      setAutoResult(result); await Promise.all([fetchQuestions(), fetchDashboard()]);
+    } catch (err) { setAutoError(err.message || 'Không chia được việc.'); } finally { setAutoBusy(false); }
+  };
+
   const dashboardWorkload = dashboard?.workload || {};
   const dashboardPerformance = dashboard?.performance || {};
   const dashboardDecisions = dashboard?.decisions || {};
@@ -1360,7 +1456,8 @@ function ReviewQueuePage() {
   const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
   const latestFeedback = latestEvaluation?.feedback || qualitySummary.feedback || {};
   const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || {});
-  const latestWeights = latestEvaluation?.policy?.weights || {};
+  // Khi có tiêu chí không áp dụng, backend lưu thêm trọng số đã chia lại.
+  const latestWeights = latestEvaluation?.policy?.effective_weights || latestEvaluation?.policy?.weights || {};
   const latestEvaluationForInsights = latestEvaluation
     ? {
         ...latestEvaluation,
@@ -1372,6 +1469,7 @@ function ReviewQueuePage() {
   const aiInsights = evaluationInsights(latestEvaluationForInsights, SCORE_COMPONENTS);
   const answerGuardrail = answerGuardrailInsights(latestEvaluationForInsights);
   const metadataGuardrail = metadataGuardrailInsights(latestEvaluationForInsights);
+  const notApplicableCriteria = new Set(metadataGuardrail.notApplicable);
   const aiWeakCriterionKeys = new Set(aiInsights.weakCriteria.map((item) => item.key));
   const aiMissingItems = textList(latestFeedback.missing);
   const aiRiskItems = textList(latestEvidence.risks);
@@ -1394,7 +1492,7 @@ function ReviewQueuePage() {
   )) || activeSourcePages[0] || null;
   const pdfPage = activeSourcePage || activePageRecord?.page_number || 1;
   const sourcePdfUrl = sourcePdf?.url ? `${sourcePdf.url}#page=${pdfPage}` : '';
-  const reviewNeedsOverride = reviewDraft?.decision === 'APPROVED' && selected?.evaluation_status !== 'PASSED';
+  const reviewNeedsOverride = overrideRequired(selected, reviewDraft?.decision);
   const availableReviewTemplates = reviewDraft
     ? templatesForDecision(reviewTemplates, reviewDraft.decision)
     : [];
@@ -1481,6 +1579,7 @@ function ReviewQueuePage() {
         </div>
         {workspaceView !== 'performance' && (
           <div className="review-actions">
+            {user?.role === 'Admin' && <button type="button" className="btn btn--outline" onClick={() => { setAutoDraft({ scope: 'all', maxLoad: 20, strict: false, includeAdmins: false }); setAutoResult(null); setAutoError(''); }}>Tự chia việc</button>}
             {evaluationModels.length > 0 && (
               <label className="review-model-picker">
                 <span>AI hỗ trợ đánh giá</span>
@@ -1516,6 +1615,38 @@ function ReviewQueuePage() {
           Thống kê và so sánh với AI
         </button>
       </nav>
+
+      {workspaceView === 'performance' && (
+        <section className="review-policy-panel">
+          <h2>Chính sách duyệt lần 2</h2>
+          {policyError && <p className="review-form-error">{policyError}</p>}
+          {reviewPolicy && <p>Thời gian giữ câu: {reviewPolicy.lock_timeout_minutes} phút · Hạn nhận câu được giao: {reviewPolicy.assignment_timeout_hours} giờ</p>}
+          {policyDraft && <form onSubmit={savePolicy}>
+            <fieldset disabled={user?.role !== 'Admin' || policyBusy}>
+              <label><input type="checkbox" checked={Boolean(policyDraft.secondary_on_override)} onChange={(event) => setPolicyDraft({ ...policyDraft, secondary_on_override: event.target.checked })} />Bắt duyệt lần 2 khi người duyệt vẫn duyệt dù AI đề xuất xem lại</label>
+              <label className="review-form-field"><span>Bắt duyệt lần 2 khi điểm AI dưới (%) — để trống = tắt</span><input type="number" min="0" max="100" step="any" value={policyDraft.scorePercent} onChange={(event) => setPolicyDraft({ ...policyDraft, scorePercent: event.target.value })} /></label>
+              <label className="review-form-field"><span>Luôn duyệt lần 2 với các học phần</span><select multiple value={policyDraft.secondary_subject_ids || []} onChange={(event) => setPolicyDraft({ ...policyDraft, secondary_subject_ids: [...event.target.selectedOptions].map((option) => option.value) })}>{catalogSubjects.map((subject) => <option key={refId(subject)} value={refId(subject)}>{subjectOptionLabel(subject)}</option>)}</select></label>
+              {user?.role === 'Admin' && <button type="submit" className="btn btn--primary">{policyBusy ? 'Đang lưu...' : 'Lưu chính sách'}</button>}
+            </fieldset>
+          </form>}
+          {reviewPolicy && <p>Cập nhật lần cuối: {formatDate(reviewPolicy.updated_at)}</p>}
+          {user?.role === 'Admin' && Boolean(dashboard?.reviewers?.length) && <>
+            <h2>Người duyệt</h2><div className="review-reviewers-table-wrap"><table className="review-reviewers-table"><thead><tr>{['Người duyệt', 'Đang giữ', '7 ngày / 30 ngày', 'Tỷ lệ duyệt', 'Duyệt khác AI', 'Khớp AI', 'TB xử lý', 'Học phần', 'Cảnh báo'].map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>
+              {dashboard.reviewers.map((row) => <tr key={row.user_id}><td>{row.display_name}<small>{row.email}</small></td><td>{row.holding}{row.holding_sla_breached > 0 && <small>{row.holding_sla_breached} quá hạn</small>}</td><td>{row.reviews_7d} / {row.reviews_30d}</td><td>{percent(row.approval_rate)}</td><td>{percent(row.override_rate)}</td><td>{percent(row.ai_agreement_rate)}<small>{row.ai_sample_size} mẫu</small></td><td>{hours(row.average_review_hours)}</td><td>{row.review_subject_ids?.length ? row.review_subject_ids.map((id) => subjectOptionLabel(catalogSubjectById.get(String(id))) || id).join(', ') : 'Mọi học phần'}</td><td>{(row.flags || []).map((flag) => <span className="review-reviewer-flag" key={flag}>{reviewerFlagLabel(flag)}{flag === 'NO_SUBJECTS' && <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly-nguoi-dung')}>Gán học phần</button>}</span>)}</td></tr>)}
+            </tbody></table></div>
+          </>}
+        </section>
+      )}
+      {autoDraft && <div className="review-modal-backdrop"><form className="review-modal" onSubmit={runAutoAssignment}>
+        <div className="review-modal__head"><h2>Tự chia việc kiểm duyệt</h2></div><div className="review-form-section">
+          <label className="review-form-field"><span>Phạm vi</span><select value={autoDraft.scope} onChange={(event) => setAutoDraft({ ...autoDraft, scope: event.target.value })}><option value="all">Mọi câu đang mở</option><option value="visible">Chỉ các câu đang hiển thị</option></select></label>
+          <label className="review-form-field"><span>Tối đa mỗi người</span><input type="number" required min="1" max="500" value={autoDraft.maxLoad} onChange={(event) => setAutoDraft({ ...autoDraft, maxLoad: event.target.value })} /></label>
+          <label><input type="checkbox" checked={autoDraft.strict} onChange={(event) => setAutoDraft({ ...autoDraft, strict: event.target.checked })} />Chỉ giao cho người phụ trách học phần</label>
+          <label><input type="checkbox" checked={autoDraft.includeAdmins} onChange={(event) => setAutoDraft({ ...autoDraft, includeAdmins: event.target.checked })} />Tính cả Quản trị viên</label>
+          {autoError && <p className="review-form-error">{autoError}</p>}
+          {autoResult && <><h3>Đã giao {autoResult.assigned?.length || 0} câu</h3><table><tbody>{(autoResult.assigned || []).map((item) => <tr key={item.question_id}><td>{item.question_code}</td><td>{item.reviewer_name}</td></tr>)}</tbody></table><h3>Bỏ qua {autoResult.skipped?.length || 0} câu</h3><table><tbody>{(autoResult.skipped || []).map((item) => <tr key={item.question_id}><td>{item.question_code}</td><td>{assignmentReasonLabel(item.reason)}</td></tr>)}</tbody></table></>}
+        </div><div className="review-modal__foot"><button type="button" disabled={autoBusy} onClick={() => setAutoDraft(null)}>Đóng</button><button type="submit" disabled={autoBusy}>{autoBusy ? 'Đang chia...' : 'Chia việc'}</button></div>
+      </form></div>}
 
       <section className="review-dashboard" aria-label="Tổng quan công việc kiểm duyệt" hidden={workspaceView !== 'performance'}>
         <div className="review-dashboard__group">
@@ -1941,7 +2072,7 @@ function ReviewQueuePage() {
                 <button
                   type="button"
                   className="detail-action-primary"
-                  disabled={busyId === selected.id || isEvaluationBusy(selected) || !canReviewQuestion(selected)}
+                  disabled={busyId === selected.id || !canReviewQuestion(selected)}
                   onClick={() => openReviewForm(selected, 'APPROVED')}
                 >
                   Duyệt
@@ -2008,14 +2139,16 @@ function ReviewQueuePage() {
                       {SCORE_COMPONENTS.map((component) => (
                         <div
                           key={component.key}
-                          className={aiWeakCriterionKeys.has(component.key) ? 'score-card--weak' : ''}
+                          className={aiWeakCriterionKeys.has(component.key) && !notApplicableCriteria.has(component.key) ? 'score-card--weak' : ''}
                         >
                           <span>{component.label}</span>
-                          <b>{score(latestScores[component.key])}</b>
+                          <b>{notApplicableCriteria.has(component.key) ? 'Không áp dụng' : score(latestScores[component.key])}</b>
                           <small>
-                            Trọng số {percent(latestWeights[component.key])}
+                            {notApplicableCriteria.has(component.key)
+                              ? 'Không tính vào tổng điểm'
+                              : `Trọng số ${percent(latestWeights[component.key])}`}
                           </small>
-                          {aiWeakCriterionKeys.has(component.key) && (
+                          {aiWeakCriterionKeys.has(component.key) && !notApplicableCriteria.has(component.key) && (
                             <em>Dưới ngưỡng đạt {score(aiInsights.passMin)}</em>
                           )}
                         </div>
@@ -2040,6 +2173,9 @@ function ReviewQueuePage() {
                               {answerGuardrail.issues.map((item) => <li key={item}>{item}</li>)}
                             </ul>
                           </div>
+                        )}
+                        {metadataGuardrail.notes.length > 0 && (
+                          <p className="metadata-guardrail-note">{metadataGuardrail.notes.join(' ')}</p>
                         )}
                         {metadataGuardrail.applied && (
                           <div className="metadata-guardrail-warning" role="alert">
@@ -2336,7 +2472,7 @@ function ReviewQueuePage() {
                       ))}
                       {publications.length === 0 && <p>Chưa có lần xuất bản.</p>}
                       <div className="history-moodle-actions">
-                        <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>
+                        {hasEffectivePermission(user, 'questions.export_moodle') && <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED' || selected.publication_status === 'PUBLISHED'} onClick={() => publish(selected)}>Đưa lên Moodle</button>}
                         <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'gift')}>Tải tệp GIFT</button>
                         <button type="button" disabled={busyId === selected.id || selected.review_status !== 'APPROVED'} onClick={() => exportMoodle(selected, 'xml')}>Tải tệp XML</button>
                       </div>
@@ -2383,7 +2519,7 @@ function ReviewQueuePage() {
                     </div>
                     <div className="review-criterion-ai">
                       <span>AI gợi ý</span>
-                      <b>{score(latestScores[item.key])}</b>
+                      <b>{notApplicableCriteria.has(item.key) ? 'Không áp dụng' : score(latestScores[item.key])}</b>
                     </div>
                     <label>
                       <span>Người duyệt</span>
@@ -2486,9 +2622,10 @@ function ReviewQueuePage() {
                   )}
                 </div>
               )}
+              {selfReviewReasonRequired(selected, user) && <label className="review-form-field"><span>Lý do tự duyệt (bạn là người tạo/sửa câu này)</span><textarea required rows={3} value={reviewDraft.selfReviewReason || ''} onChange={(event) => updateReviewDraft({ selfReviewReason: event.target.value })} /></label>}
               {reviewNeedsOverride && (
                 <label className="review-form-field">
-                  <span>Lý do duyệt khác đề xuất AI</span>
+                  <span>Lý do vẫn duyệt dù AI đề xuất xem lại</span>
                   <textarea
                     value={reviewDraft.overrideReason}
                     onChange={(event) => updateReviewDraft({ overrideReason: event.target.value })}

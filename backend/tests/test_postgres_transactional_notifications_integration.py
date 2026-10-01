@@ -106,16 +106,24 @@ def test_notifications_commit_and_roll_back_with_the_question_change(monkeypatch
             body="Xem giúp", mention_user_ids=[str(teacher["_id"])]), reviewer_actor)
         assert _kinds(teacher["_id"]) == ["QUESTION_MENTION"]
         workflow.claim_review(str(question_id), reviewer_actor)
+        # Keep recipient assertions independent of other active test/demo users.
+        monkeypatch.setattr("modules.questions.workflow_service.review_candidate_users",
+                            lambda *_args, **_kwargs: [teacher, reviewer, admin])
         workflow.review(str(question_id),
-                        ReviewCreateRequest(expected_version=1, decision="APPROVED"),
+                        ReviewCreateRequest(expected_version=1, decision="APPROVED", secondary_required=True),
                         reviewer_actor)
-        assert _kinds(teacher["_id"]) == ["QUESTION_MENTION", "QUESTION_APPROVED"]
+        assert _kinds(teacher["_id"]) == ["QUESTION_MENTION", "QUESTION_SECONDARY_REVIEW_PENDING"]
+        assert "QUESTION_SECONDARY_REVIEW_AVAILABLE" in _kinds(admin["_id"])
+        assert "QUESTION_SECONDARY_REVIEW_AVAILABLE" not in _kinds(reviewer["_id"])
+        workflow.claim_review(str(question_id), admin_actor)
+        workflow.review(str(question_id), ReviewCreateRequest(expected_version=1, decision="APPROVED"), admin_actor)
+        assert _kinds(teacher["_id"]) == ["QUESTION_MENTION", "QUESTION_SECONDARY_REVIEW_PENDING", "QUESTION_APPROVED"]
         # A conflicting second decision fails before anything is written.
         with pytest.raises(Exception):
             workflow.review(str(question_id),
                             ReviewCreateRequest(expected_version=1, decision="REJECTED"),
                             reviewer_actor)
-        assert _kinds(teacher["_id"]) == ["QUESTION_MENTION", "QUESTION_APPROVED"]
+        assert _kinds(teacher["_id"]) == ["QUESTION_MENTION", "QUESTION_SECONDARY_REVIEW_PENDING", "QUESTION_APPROVED"]
     finally:
         user_ids = [str(teacher["_id"]), str(reviewer["_id"]), str(admin["_id"])]
         with postgres_connection() as conn:

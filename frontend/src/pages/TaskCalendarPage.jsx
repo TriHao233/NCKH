@@ -254,6 +254,9 @@ function TaskCalendarPage() {
           navigate('/quan-ly');
           return;
         }
+      } else if (item.related_entity_type === 'review_queue') {
+        navigate('/kiem-duyet');
+        return;
       } else if (item.related_entity_type === 'question') {
         navigate(user?.role === 'Teacher' ? `/quan-ly${query}` : `/kiem-duyet${query}`);
         return;

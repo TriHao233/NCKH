@@ -53,3 +53,18 @@ def test_postgres_user_stats_and_calendar_read_live_business_data(monkeypatch):
     assert repository.get_calendar_documents(user_id) == [documents.records[0]]
     assert repository.get_calendar_questions(user_id) == [questions.records[0]]
     assert repository.get_document_ids_with_questions([document_id]) == {str(document_id)}
+
+
+def test_postgres_review_calendar_delegates_to_question_store(monkeypatch):
+    from core.config import settings
+    from modules.questions.postgres_repository import PostgresQuestionRepository
+    user_id, other_id = ObjectId(), ObjectId()
+    held = [{"_id": ObjectId(), "review_assignment": {"reviewer_user_id": user_id}},
+            {"_id": ObjectId(), "review_assignment": {"reviewer_user_id": other_id}}]
+    monkeypatch.setattr(settings, "question_store", "postgres")
+    monkeypatch.setattr(PostgresQuestionRepository, "__init__", lambda self: None)
+    monkeypatch.setattr(PostgresQuestionRepository, "held_reviews", lambda self: held)
+    monkeypatch.setattr(PostgresQuestionRepository, "count_unassigned_pending", lambda self: 7)
+    repository = postgres_repository.PostgresUserRepository()
+    assert repository.get_review_assignment_questions(user_id) == held[:1]
+    assert repository.count_unassigned_pending() == 7

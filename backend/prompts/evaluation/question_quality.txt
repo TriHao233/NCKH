@@ -12,7 +12,8 @@ NGUYÊN TẮC
 - Với câu có options, kiểm tra độc lập TỪNG phương án và trả đủ option_checks. SUPPORTED nghĩa là phương án đúng trong quan hệ mà câu hỏi đang hỏi, không chỉ là có vài từ xuất hiện trong nguồn.
 - Mỗi phương án SUPPORTED phải trỏ tới đúng nhãn S1/S2/S3 có thật và chép một trích đoạn ngắn từ chính nguồn đó. Không được dùng correct_answer hoặc explanation làm trích dẫn.
 - Nhận diện câu phủ định (ví dụ: "không", "không phải", "ngoại trừ", "sai"). Câu một đáp án chỉ hợp lệ khi có đúng một phương án thỏa điều kiện phủ định; nếu không có hoặc có nhiều phương án thì phải NEEDS_REVISION hoặc REJECT.
-- Nếu thiếu dữ liệu nguồn hoặc CLO, ghi nhận đúng mức độ rủi ro; không phóng đại thành lỗi nghiêm trọng khi câu hỏi vẫn tự thân rõ và đúng.
+- Nếu thiếu dữ liệu nguồn, ghi nhận đúng mức độ rủi ro; không phóng đại thành lỗi nghiêm trọng khi câu hỏi vẫn tự thân rõ và đúng.
+- Xem trường clo_status trong QUESTION_PAYLOAD. ATTACHED: câu hỏi có gắn CLO (danh sách clos), chấm clo_alignment như bình thường và không được ghi là thiếu CLO. NOT_ATTACHED: câu hỏi không gắn CLO, đây KHÔNG phải lỗi; ghi clo_alignment = 0.0 (hệ thống sẽ bỏ tiêu chí này khỏi tổng điểm), không đưa việc thiếu CLO vào missing, không vì thế mà chọn NEEDS_REVISION/REJECT hay hạ điểm tiêu chí khác, và ước lượng overall chỉ từ bốn tiêu chí còn lại.
 - Phản hồi cho người dùng phải viết bằng tiếng Việt, ngắn gọn và có hành động sửa cụ thể.
 - Đọc quy định độ khó kèm theo. Ghi assessed_difficulty trong evidence bằng de, trung_binh hoặc kho. Đây là độ khó ước lượng độc lập với Bloom, không dùng để APPROVE/REJECT.
 
@@ -22,4 +23,4 @@ QUY TẮC KẾT LUẬN
 - REJECT: sai kiến thức, thiếu căn cứ nghiêm trọng, đáp án mơ hồ/không kiểm tra được, hoặc phải viết lại gần như toàn bộ.
 - Không chọn REJECT chỉ vì câu hỏi chưa hoàn hảo; ưu tiên NEEDS_REVISION cho lỗi có thể sửa nhanh.
 - Không chọn NEEDS_REVISION chỉ vì góp ý nhỏ: độ khó ước lượng, cách diễn đạt, hoặc gợi ý Bloom/CLO khi bloom_alignment và clo_alignment vẫn từ 0.65 trở lên. Ghi các góp ý này vào risks, để missing rỗng, và vẫn APPROVE với severity LOW.
-- Chỉ chọn NEEDS_REVISION khi nêu được một lỗi cụ thể cần sửa trong missing, hoặc có tiêu chí dưới 0.65.
+- Chỉ chọn NEEDS_REVISION khi nêu được một lỗi cụ thể cần sửa trong missing, hoặc có tiêu chí dưới 0.65 (không xét clo_alignment khi clo_status = NOT_ATTACHED).

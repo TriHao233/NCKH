@@ -40,6 +40,8 @@ function toFormState(user) {
     school: user?.profile?.school || '',
     address: user?.profile?.address || '',
     avatar: normalizeAvatarUrl(user?.profile?.avatar),
+    notificationEmail: user?.profile?.notification_email || '',
+    emailNotificationsEnabled: user?.profile?.email_notifications_enabled !== false,
   };
 }
 
@@ -56,6 +58,10 @@ function validateForm(form) {
   }
   if (form.avatar.trim() && !URL_PATTERN.test(form.avatar.trim())) {
     errors.avatar = 'Ảnh đại diện phải là URL hợp lệ, đường dẫn /api/... hoặc để trống.';
+  }
+  const notif = (form.notificationEmail || '').trim();
+  if (notif && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(notif)) {
+    errors.notificationEmail = 'Email nhận thông báo không hợp lệ.';
   }
   return errors;
 }
@@ -115,7 +121,9 @@ function InfoTab({ user, onProfileUpdated }) {
       form.displayName !== initialForm.displayName ||
       form.school !== initialForm.school ||
       form.address !== initialForm.address ||
-      form.avatar !== initialForm.avatar,
+      form.avatar !== initialForm.avatar ||
+      form.notificationEmail !== initialForm.notificationEmail ||
+      form.emailNotificationsEnabled !== initialForm.emailNotificationsEnabled,
     [form, initialForm],
   );
 
@@ -182,6 +190,8 @@ function InfoTab({ user, onProfileUpdated }) {
           school: form.school.trim(),
           address: form.address.trim(),
           avatar: normalizeAvatarUrl(form.avatar),
+          notification_email: (form.notificationEmail || '').trim(),
+          email_notifications_enabled: !!form.emailNotificationsEnabled,
         },
       });
       onProfileUpdated(updated);
@@ -317,6 +327,35 @@ function InfoTab({ user, onProfileUpdated }) {
             disabled={isLoading}
           />
           {fieldErrors.address && <span className="field-error">{fieldErrors.address}</span>}
+        </div>
+      </div>
+
+      <div className="profile-form-section">
+        <h4><FontAwesomeIcon icon={faFileLines} /> Thông báo qua email</h4>
+        <div className="field-group">
+          <label className="field-label">Email nhận thông báo</label>
+          <input
+            className="field-input"
+            type="email"
+            placeholder={`Để trống để dùng ${user?.email || 'email đăng nhập'}`}
+            value={form.notificationEmail}
+            onChange={handleChange('notificationEmail')}
+            maxLength={320}
+            disabled={isLoading}
+          />
+          <span className="field-hint">Nếu bỏ trống, hệ thống dùng email đăng nhập của bạn.</span>
+          {fieldErrors.notificationEmail && <span className="field-error">{fieldErrors.notificationEmail}</span>}
+        </div>
+        <div className="field-group">
+          <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={!!form.emailNotificationsEnabled}
+              onChange={(e) => setForm((prev) => ({ ...prev, emailNotificationsEnabled: e.target.checked }))}
+              disabled={isLoading}
+            />
+            Nhận email thông báo từ QBankCTU (liên hệ, xuất bản, ...)
+          </label>
         </div>
       </div>
 
@@ -469,7 +508,6 @@ function SecurityTab() {
 
 function ProfileSidebar({ user }) {
   const quickLinks = [
-    { path: '/lich-cong-viec', label: 'Lịch công việc' },
     { path: '/quan-ly', label: 'Quản lý câu hỏi' },
     { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
     { path: '/huong-dan', label: 'Hướng dẫn sử dụng' },

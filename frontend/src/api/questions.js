@@ -221,3 +221,9 @@ export function exportQuestionMoodle(id, format = 'gift') {
   const params = new URLSearchParams({ format });
   return apiRequest(`/questions/${id}/moodle-export?${params.toString()}`);
 }
+
+export function renewQuestionReview(id) { return apiRequest(`/questions/${id}/review-assignment/renew`, { method: 'POST' }); }
+export function getReviewPolicy() { return apiRequest('/questions/review-policy'); }
+export function updateReviewPolicy(payload) { return apiRequest('/questions/review-policy', { method: 'PUT', body: payload }); }
+export function autoAssignReviews(payload) { return apiRequest('/questions/review-assignments/auto', { method: 'POST', body: payload }); }
+export function suggestReviewSubjects(reviewerUserId) { return apiRequest(`/questions/review-subject-suggestions?reviewer_user_id=${encodeURIComponent(reviewerUserId)}`); }

@@ -39,11 +39,12 @@ function googleLoginErrorMessage(error) {
 function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, loginWithDemoSession, user, loading } = useContext(AuthContext);
+  const { login, loginWithDemoSession, user, loading, sessionNotice } = useContext(AuthContext);
   const requestedPath = location.state?.from;
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [authNotice, setAuthNotice] = useState(null);
+  const notice = authNotice || (sessionNotice ? { type: 'info', message: sessionNotice } : null);
   const redirectChecked = useRef(false);
 
   const [formData, setFormData] = useState({
@@ -251,9 +252,9 @@ function LoginPage() {
                 </p>
               </div>
 
-              {authNotice && (
-                <p className={`auth-notice auth-notice--${authNotice.type}`} role="alert">
-                  {authNotice.message}
+              {notice && (
+                <p className={`auth-notice auth-notice--${notice.type}`} role="alert">
+                  {notice.message}
                 </p>
               )}
 

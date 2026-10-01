@@ -17,8 +17,10 @@ import {
   faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 import { createUser, deleteUser, importUsers, inviteUser, listUsers, resetUserPassword, updateUser } from '../api/users';
-import { ROLE_DEFAULT_PERMISSIONS } from '../auth/permissions';
+import { ROLE_DEFAULT_PERMISSIONS, TEACHER_ASSIGNABLE_PERMISSIONS, REVIEW_ASSIGNABLE_PERMISSIONS, PERMISSION_LABELS, assignablePermissions } from '../auth/permissions';
 import { normalizeAvatarUrl } from '../utils/avatarUrl';
+import { listSubjects } from '../api/catalog';
+import { suggestReviewSubjects } from '../api/questions';
 import '../css/AdminJobsPage.css';
 import '../css/UsersAdminPage.css';
 
@@ -37,26 +39,14 @@ const ROLE_COLOR = {
   Reviewer: '#087f5b',
 };
 
-const PERMISSION_OPTIONS = [
-  { value: 'questions.generate', label: 'Sinh câu hỏi' },
-  { value: 'questions.manage_own', label: 'Quản lý câu hỏi cá nhân' },
-  { value: 'questions.manage_all', label: 'Quản lý mọi câu hỏi' },
-  { value: 'questions.share_bank', label: 'Chia sẻ ngân hàng câu hỏi' },
-  { value: 'questions.use_shared_bank', label: 'Dùng ngân hàng được chia sẻ' },
-  { value: 'questions.read_review_queue', label: 'Xem hàng đợi kiểm duyệt' },
-  { value: 'questions.comment', label: 'Bình luận câu hỏi' },
-  { value: 'questions.export_moodle', label: 'Xuất câu hỏi ra Moodle' },
-  { value: 'reviews.manage', label: 'Kiểm duyệt câu hỏi' },
-  { value: 'documents.manage_own', label: 'Quản lý tài liệu cá nhân' },
-  { value: 'documents.manage_all', label: 'Quản lý mọi tài liệu' },
-  { value: 'exams.manage_own', label: 'Làm đề thi' },
-  { value: 'admin.overview', label: 'Tổng quan Admin' },
-  { value: 'admin.users', label: 'Quản lý người dùng' },
-  { value: 'admin.catalog', label: 'Quản lý danh mục' },
-  { value: 'admin.audit', label: 'Xem audit log' },
-  { value: 'admin.jobs', label: 'Quản lý job' },
-  { value: 'admin.moodle', label: 'Quản lý Moodle' },
-];
+function PermissionFields({ role, permissions, onToggle }) {
+  if (role === 'Admin') return <p className="field-hint">Quản trị viên luôn có toàn bộ quyền.</p>;
+  return [['Giảng viên', TEACHER_ASSIGNABLE_PERMISSIONS], ['Kiểm duyệt', REVIEW_ASSIGNABLE_PERMISSIONS]].map(([label, keys]) => (
+    <fieldset key={label} className="field-group"><legend>{label}</legend><div className="permission-grid">
+      {keys.map((key) => <label className="field-checkbox" key={key}><input type="checkbox" checked={permissions.includes(key)} onChange={() => onToggle(key)} />{PERMISSION_LABELS[key]}</label>)}
+    </div></fieldset>
+  ));
+}
 
 const emptyCreateForm = {
   email: '',
@@ -67,7 +57,7 @@ const emptyCreateForm = {
 };
 
 function permissionsForRole(role) {
-  return [...(ROLE_DEFAULT_PERMISSIONS[role] || [])];
+  return role === 'Admin' ? [] : assignablePermissions(ROLE_DEFAULT_PERMISSIONS[role]);
 }
 
 function togglePermission(list, permission) {
@@ -107,8 +97,8 @@ function parseImportRows(text) {
         email,
         display_name: displayName || email,
         role: ROLE_LABEL[role] ? role : 'Teacher',
-        permissions: permissions
-          ? permissions.split('|').map((item) => item.trim()).filter(Boolean)
+        permissions: role === 'Admin' ? [] : permissions
+          ? assignablePermissions(permissions.split('|').map((item) => item.trim()).filter(Boolean))
           : permissionsForRole(ROLE_LABEL[role] ? role : 'Teacher'),
       };
     });
@@ -142,6 +132,21 @@ function UsersAdminPage() {
   const [editRole, setEditRole] = useState('Teacher');
   const [editActive, setEditActive] = useState(true);
   const [editPermissions, setEditPermissions] = useState([]);
+  const [subjects, setSubjects] = useState(null);
+  const [editReviewSubjects, setEditReviewSubjects] = useState([]);
+  const [subjectSuggestions, setSubjectSuggestions] = useState(null);
+  useEffect(() => { listSubjects().then(setSubjects).catch(() => setSubjects(null)); }, []);
+  const showReviewSubjects = editRole === 'Reviewer' || editPermissions.includes('reviews.manage');
+  useEffect(() => {
+    let active = true;
+    setSubjectSuggestions(null);
+    if (editing && showReviewSubjects) {
+      suggestReviewSubjects(editing.id)
+        .then((result) => { if (active) setSubjectSuggestions(result); })
+        .catch(() => {});
+    }
+    return () => { active = false; };
+  }, [editing, showReviewSubjects]);
   const [saving, setSaving] = useState(false);
 
   const [togglingId, setTogglingId] = useState(null);
@@ -264,7 +269,7 @@ function UsersAdminPage() {
         ...createForm,
         email,
         display_name: displayName,
-        permissions: createForm.permissions || [],
+        permissions: createForm.role === 'Admin' ? [] : assignablePermissions(createForm.permissions),
       };
       if (createMode === 'invite') {
         const result = await inviteUser({
@@ -292,7 +297,8 @@ function UsersAdminPage() {
     setEditDisplayName(user.display_name || '');
     setEditRole(user.role);
     setEditActive(user.is_active);
-    setEditPermissions(user.permissions || permissionsForRole(user.role));
+    setEditPermissions(assignablePermissions(user.permissions || permissionsForRole(user.role)));
+    setEditReviewSubjects(user.review_subject_ids || []);
   };
 
   const closeEdit = () => {
@@ -309,7 +315,11 @@ function UsersAdminPage() {
         display_name: editDisplayName,
         role: editRole,
         is_active: editActive,
-        permissions: editPermissions,
+        permissions: editRole === 'Admin' ? [] : assignablePermissions(editPermissions),
+        // Không còn kiểm duyệt thì xoá học phần phụ trách cũ để không giữ dữ liệu thừa.
+        ...(showReviewSubjects
+          ? { review_subject_ids: editReviewSubjects }
+          : (editing.review_subject_ids?.length ? { review_subject_ids: [] } : {})),
       });
       setEditing(null);
       await refreshAll();
@@ -495,7 +505,7 @@ function UsersAdminPage() {
                       </div>
                     </td>
                     <td>
-                      <span className={`role-pill role-pill--${(u.role || '').toLowerCase()}`}>{ROLE_LABEL[u.role] || u.role}</span>
+                      <span className={`role-pill role-pill--${(u.role || '').toLowerCase()}`}>{ROLE_LABEL[u.role] || u.role}</span>{u.role === 'Reviewer' && <small>{u.review_subject_ids?.length ? `${u.review_subject_ids.length} học phần` : 'Mọi học phần'}</small>}
                     </td>
                     <td>{(u.permissions || []).length} quyền</td>
                     <td>
@@ -611,24 +621,7 @@ function UsersAdminPage() {
               </select>
             </div>
 
-            <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
-              <div className="permission-grid">
-                {PERMISSION_OPTIONS.map((permission) => (
-                  <label className="field-checkbox" key={permission.value}>
-                    <input
-                      type="checkbox"
-                      checked={(createForm.permissions || []).includes(permission.value)}
-                      onChange={() => setCreateForm({
-                        ...createForm,
-                        permissions: togglePermission(createForm.permissions, permission.value),
-                      })}
-                    />
-                    {permission.label}
-                  </label>
-                ))}
-              </div>
-            </div>
+            <PermissionFields role={createForm.role} permissions={createForm.permissions || []} onToggle={(key) => setCreateForm({ ...createForm, permissions: togglePermission(createForm.permissions, key) })} />
 
             {inviteResult?.reset_link && (
               <div className="users-result-box">
@@ -675,6 +668,7 @@ function UsersAdminPage() {
                 </p>
               )}
             </div>
+            {importText.split(/\r?\n/).some((line) => (line.split(',')[3] || '').split('|').some((key) => key.trim() && !assignablePermissions([key.trim()]).length)) && <p className="field-hint field-hint--warn">Quyền không hợp lệ hoặc chỉ dành cho Admin sẽ bị bỏ khỏi CSV trước khi gửi.</p>}
             {importResult && (
               <div className="users-result-box">
                 <b>{importResult.created} tạo thành công, {importResult.failed} lỗi</b>
@@ -752,21 +746,45 @@ function UsersAdminPage() {
               </select>
             </div>
 
-            <div className="field-group">
-              <label className="field-label">Quyền chi tiết</label>
-              <div className="permission-grid">
-                {PERMISSION_OPTIONS.map((permission) => (
-                  <label className="field-checkbox" key={permission.value}>
-                    <input
-                      type="checkbox"
-                      checked={(editPermissions || []).includes(permission.value)}
-                      onChange={() => setEditPermissions((current) => togglePermission(current, permission.value))}
-                    />
-                    {permission.label}
-                  </label>
-                ))}
-              </div>
-            </div>
+            <PermissionFields role={editRole} permissions={editPermissions} onToggle={(key) => setEditPermissions((current) => togglePermission(current, key))} />
+            <p className="field-hint">Thay đổi quyền có hiệu lực trên giao diện sau khi người dùng đăng nhập lại.</p>
+            {subjects && showReviewSubjects && (
+              <fieldset className="field-group">
+                <legend>Học phần phụ trách</legend>
+                <p className="field-hint">Để trống = có thể nhận câu mọi học phần.</p>
+                <div className="permission-grid">
+                  {subjects
+                    .map((item) => ({ item, id: String(item.id || item._id) }))
+                    // Học phần đã ngừng vẫn hiện nếu đang được gán, để có thể bỏ tick.
+                    .filter(({ item, id }) => item.is_active !== false || editReviewSubjects.includes(id))
+                    .map(({ item, id }) => (
+                      <label className="field-checkbox" key={id}>
+                        <input
+                          type="checkbox"
+                          checked={editReviewSubjects.includes(id)}
+                          onChange={() => setEditReviewSubjects((current) => togglePermission(current, id))}
+                        />
+                        {item.subject_code} — {item.subject_name}{item.is_active === false ? ' (đã ngừng)' : ''}
+                      </label>
+                    ))}
+                </div>
+                {Boolean(subjectSuggestions?.items?.length) && (
+                  <div className="users-subject-suggestions">
+                    <span>Gợi ý theo lịch sử duyệt:</span>
+                    {subjectSuggestions.items.map((item) => (
+                      <button
+                        type="button"
+                        key={item.subject_id}
+                        disabled={editReviewSubjects.includes(String(item.subject_id))}
+                        onClick={() => setEditReviewSubjects((current) => [...new Set([...current, String(item.subject_id)])])}
+                      >
+                        {item.subject_code} — {item.reviews} lượt duyệt / {subjectSuggestions.window_days} ngày
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </fieldset>
+            )}
 
             <div className="field-group field-group--checkbox">
               <label className="field-checkbox">

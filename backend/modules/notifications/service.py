@@ -11,12 +11,28 @@ from pymongo.database import Database
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import get_database
+from core.dependencies import effective_permissions
+from modules.users.store import review_candidate_users
 from modules.notifications.postgres_repository import PostgresNotificationRepository
 from modules.questions.repository import json_safe, object_id
 
 logger = logging.getLogger(__name__)
 # Decisions after which a resubmission should reach the reviewer who made them.
 RESUBMITTABLE_DECISIONS = {"NEEDS_REVISION", "REJECTED"}
+
+
+def submission_review_recipients(users: list[dict], *, question: dict, version: dict, actor_user_id) -> list:
+    """Only notify active subject specialists about first-time submissions."""
+    subject = (version.get("classification") or {}).get("subject") or {}
+    subject_id = str(question.get("subject_id") or (subject.get("id") if isinstance(subject, dict) else subject) or "")
+    if not subject_id:
+        return []
+    excluded = {str(actor_user_id), str(question.get("created_by_user_id")), str(version.get("created_by_user_id"))}
+    excluded.update(str(item) for item in question.get("author_user_ids") or [])
+    return list(dict.fromkeys(user["_id"] for user in users
+        if user.get("is_active", True) and user.get("role") != "Admin"
+        and str(user["_id"]) not in excluded and "reviews.manage" in effective_permissions(user)
+        and subject_id in {str(item) for item in user.get("review_subject_ids") or []}))
 
 
 def utc_now() -> datetime:
@@ -224,6 +240,16 @@ class NotificationService:
             entity=self._question_entity(question, version),
         )
 
+    def notify_secondary_review_available(self, *, question, version, primary_reviewer_user_id, actor_user_id, recipients) -> list[dict]:
+        code = question.get("question_code") or "Câu hỏi"
+        excluded = {str(primary_reviewer_user_id), str(question.get("created_by_user_id")), str(version.get("created_by_user_id"))}
+        return self.create_many([{
+            "recipient_user_id": recipient, "actor_user_id": actor_user_id,
+            "type": "QUESTION_SECONDARY_REVIEW_AVAILABLE", "title": f"{code} cần duyệt lần 2",
+            "body": "Câu hỏi cần một người duyệt khác xác nhận trước khi vào ngân hàng.",
+            "link": f"/kiem-duyet?questionId={question['_id']}", "entity": self._question_entity(question, version),
+        } for recipient in dict.fromkeys(recipients) if str(recipient) not in excluded])
+
     def notify_exam_owners_question_reopened(
         self,
         *,
@@ -317,6 +343,27 @@ class NotificationService:
             )
         return question, version, review
 
+    def notify_question_submitted(self, *, question_id, previous_review_status, actor_user_id) -> list[dict]:
+        if previous_review_status == "PENDING":
+            return []
+        found = self._question_with_latest_review(question_id)
+        if not found:
+            return []
+        question, version, review = found
+        if review:
+            return self.notify_question_resubmitted(question_id=question_id,
+                previous_review_status=previous_review_status, actor_user_id=actor_user_id)
+        recipients = submission_review_recipients(review_candidate_users(self.db),
+            question=question, version=version, actor_user_id=actor_user_id)
+        code = question.get("question_code") or "Câu hỏi"
+        return self.create_many([{
+            "recipient_user_id": recipient, "actor_user_id": actor_user_id,
+            "type": "QUESTION_SUBMITTED_FOR_REVIEW", "title": f"{code} mới được gửi duyệt",
+            "body": "Có câu hỏi mới thuộc học phần bạn phụ trách cần kiểm duyệt.",
+            "link": f"/kiem-duyet?questionId={question['_id']}",
+            "entity": self._question_entity(question, version),
+        } for recipient in recipients])
+
     def notify_question_resubmitted(
         self,
         *,
@@ -396,8 +443,22 @@ def safe_notify_review_assigned(**kwargs) -> None:
         logger.warning("Failed to notify review assignment: %s", exc)
 
 
+def safe_notify_question_submitted(**kwargs) -> None:
+    try:
+        NotificationService(kwargs.pop("database")).notify_question_submitted(**kwargs)
+    except Exception as exc:
+        logger.warning("Failed to notify question submission: %s", exc)
+
+
 def safe_notify_question_resubmitted(**kwargs) -> None:
     try:
         NotificationService(kwargs.pop("database")).notify_question_resubmitted(**kwargs)
     except Exception as exc:
         logger.warning("Failed to notify question resubmission: %s", exc)
+
+
+def safe_notify_secondary_review_available(**kwargs) -> None:
+    try:
+        NotificationService(kwargs.pop("database")).notify_secondary_review_available(**kwargs)
+    except Exception as exc:
+        logger.warning("Failed to notify available secondary review: %s", exc)

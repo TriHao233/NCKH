@@ -29,6 +29,7 @@ from modules.generation.llm.model_registry import (  # noqa: E402
 from modules.questions.workflow_service import (  # noqa: E402
     DEFAULT_THRESHOLDS,
     DEFAULT_WEIGHTS,
+    effective_weights,
     QuestionWorkflowService,
     _limit_evaluation_output,
     _prepare_evaluation_attempt,
@@ -68,7 +69,11 @@ def _build_case(case: dict, sources: dict) -> tuple[dict, dict, list[dict], dict
             "difficulty": "de",
         },
         "clos": [] if case.get("no_clo") else [
-            {"code": "CLO1", "description": "Trình bày và vận dụng các cấu trúc dữ liệu cơ bản."}
+            {
+                "code": "CLO1",
+                # A case may name the CLO that fits its source; the default suits the data-structure cases.
+                "description": case.get("clo") or "Trình bày và vận dụng các cấu trúc dữ liệu cơ bản.",
+            }
         ],
         "question_data": question_data,
     }
@@ -90,7 +95,8 @@ def _build_case(case: dict, sources: dict) -> tuple[dict, dict, list[dict], dict
 
 def _passed(scores, feedback: dict, evidence: dict) -> tuple[bool, float]:
     """Mirror QuestionWorkflowService.evaluate() pass decision."""
-    overall = round(sum(getattr(scores, key) * DEFAULT_WEIGHTS[key] for key in DEFAULT_WEIGHTS), 4)
+    weights = effective_weights(POLICY, evidence)
+    overall = round(sum(getattr(scores, key) * weights[key] for key in DEFAULT_WEIGHTS), 4)
     action = str(feedback.get("action") or "").upper()
     passed = (
         overall >= DEFAULT_THRESHOLDS["pass_min"]

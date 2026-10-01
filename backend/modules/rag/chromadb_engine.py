@@ -378,7 +378,8 @@ def sanitize_metadata_for_chromadb(meta: dict) -> dict:
         if isinstance(value, (str, int, float, bool)):
             cleaned[key] = value
         else:
-            cleaned[key] = json.dumps(value, ensure_ascii=True)
+            # default=str: an ObjectId or datetime nested in a list must not abort chunking.
+            cleaned[key] = json.dumps(value, ensure_ascii=True, default=str)
     return cleaned
 
 

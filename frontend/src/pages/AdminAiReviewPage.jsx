@@ -5,7 +5,6 @@ import {
   getQuestion,
   listQuestionEvaluations,
   listQuestions,
-  reviewQuestion,
 } from '../api/questions';
 import { questionTypeLabel } from '../constants/generationEnums';
 import '../css/AdminAiReviewPage.css';
@@ -243,8 +242,10 @@ function AdminAiReviewPage() {
   const hasCurrentEvaluationError = Boolean(qualitySummary.error);
   const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || qualitySummary.scores || {});
   const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
-  const latestWeights = latestEvaluation?.policy?.weights || qualitySummary.policy?.weights || {};
+  const latestWeights = latestEvaluation?.policy?.effective_weights || latestEvaluation?.policy?.weights || qualitySummary.policy?.weights || {};
   const latestModel = latestEvaluation?.evaluator_model || {};
+  // Tiêu chí không áp dụng (ví dụ CLO khi câu hỏi không gắn CLO) không tính vào tổng điểm.
+  const notApplicableCriteria = new Set(latestEvidence.metadata_guardrail?.not_applicable || []);
   const overallScore = hasCurrentEvaluationError ? undefined : (latestScores.overall ?? qualitySummary.overall_score);
   const evaluationColor = hasCurrentEvaluationError ? undefined : (latestEvaluation?.color || qualitySummary.color);
   const evidenceCitations = Array.isArray(latestEvidence.citations) ? latestEvidence.citations : [];
@@ -315,94 +316,13 @@ function AdminAiReviewPage() {
     }
   };
 
-  const approveQuestion = async (question) => {
-    setBusyId(question.id);
-    setMessage('');
-    const needsOverride = question.evaluation_status !== 'PASSED';
-    const overrideReason = needsOverride
-      ? `Admin cho phép sử dụng sau khi xem kết quả AI: ${questionSummary(question)}.`
-      : '';
-    try {
-      await reviewQuestion(question.id, {
-        expected_version: question.current_version,
-        decision: 'APPROVED',
-        note: needsOverride
-          ? 'Admin duyệt sau khi xem xét kết quả thẩm định AI, dù AI chưa đánh dấu đạt.'
-          : 'Admin duyệt sau khi câu hỏi đạt thẩm định AI.',
-        override: {
-          applied: needsOverride,
-          score: typeof question.quality_summary?.overall_score === 'number'
-            ? question.quality_summary.overall_score
-            : null,
-          color: ['RED', 'YELLOW', 'GREEN'].includes(question.quality_summary?.color)
-            ? question.quality_summary.color
-            : null,
-          reason: overrideReason,
-        },
-        review_form: {
-          checklist: SCORE_COMPONENTS.map((component) => ({
-            key: component.key,
-            label: component.label,
-            passed: true,
-            note: '',
-          })),
-          overall_note: needsOverride
-            ? 'Admin quyết định duyệt sau khi cân nhắc kết quả kiểm thử chất lượng của AI.'
-            : 'Đạt thẩm định AI và sẵn sàng sử dụng trong ngân hàng câu hỏi.',
-          revision_issues: [],
-        },
-      });
-      setMessage('Đã duyệt câu hỏi. Câu hỏi đã sẵn sàng trong tab Câu hỏi.');
-      await refreshSelection(question.id);
-    } catch (err) {
-      setMessage(err.message || 'Duyệt câu hỏi thất bại');
-    } finally {
-      setBusyId('');
-    }
-  };
-
-  const requestRevision = async (question) => {
-    const reason = window.prompt('Nhập lý do cần chỉnh sửa câu hỏi:', 'Cần rà soát lại theo kết quả thẩm định AI.');
-    if (reason === null) return;
-    const detail = reason.trim() || 'Cần rà soát lại theo kết quả thẩm định AI.';
-    setBusyId(question.id);
-    setMessage('');
-    try {
-      await reviewQuestion(question.id, {
-        expected_version: question.current_version,
-        decision: 'NEEDS_REVISION',
-        note: detail,
-        review_form: {
-          checklist: SCORE_COMPONENTS.map((component) => ({
-            key: component.key,
-            label: component.label,
-            passed: false,
-            note: '',
-          })),
-          overall_note: detail,
-          revision_issues: [{
-            title: 'Cần chỉnh sửa sau thẩm định AI',
-            severity: 'MEDIUM',
-            detail,
-          }],
-        },
-      });
-      setMessage('Đã trả câu hỏi về trạng thái cần sửa.');
-      await refreshSelection(question.id);
-    } catch (err) {
-      setMessage(err.message || 'Trả về cần sửa thất bại');
-    } finally {
-      setBusyId('');
-    }
-  };
-
   return (
     <main className="admin-ai-review-page">
       <section className="ai-review-toolbar">
         <div className="ai-review-toolbar__title">
           <span>Quản trị AI</span>
           <h1>Thẩm định bằng AI</h1>
-          <p>AI cung cấp điểm và minh chứng tham khảo; Admin hoặc Reviewer vẫn là người quyết định trạng thái sử dụng.</p>
+          <p>Theo dõi điểm và minh chứng tham khảo từ AI. Quyết định duyệt được thực hiện ở trang Kiểm duyệt.</p>
         </div>
         <div className="ai-review-actions">
           <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly')}>
@@ -506,21 +426,7 @@ function AdminAiReviewPage() {
                 <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
                   {['FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(selected.evaluation_status) ? 'Thử lại AI' : 'Chạy AI'}
                 </button>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={busyId === selected.id || isEvaluationBusy(selected) || selected.review_status !== 'PENDING'}
-                  onClick={() => approveQuestion(selected)}
-                >
-                  Duyệt
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === selected.id || selected.review_status !== 'PENDING'}
-                  onClick={() => requestRevision(selected)}
-                >
-                  Cần sửa
-                </button>
+                <button type="button" className="primary" onClick={() => navigate(`/kiem-duyet?questionId=${selected.id}`)}>Mở để kiểm duyệt</button>
               </div>
 
               {historyLoading ? (
@@ -550,8 +456,8 @@ function AdminAiReviewPage() {
                     {SCORE_COMPONENTS.map((component) => (
                       <div key={component.key}>
                         <span>{component.label}</span>
-                        <b>{formatScore(latestScores[component.key])}</b>
-                        <small>Trọng số {formatScore(latestWeights[component.key])}</small>
+                        <b>{notApplicableCriteria.has(component.key) ? 'Không áp dụng' : formatScore(latestScores[component.key])}</b>
+                        <small>{notApplicableCriteria.has(component.key) ? 'Không tính vào tổng điểm' : `Trọng số ${formatScore(latestWeights[component.key])}`}</small>
                       </div>
                     ))}
                   </div>

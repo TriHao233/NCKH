@@ -19,6 +19,9 @@ class UserProfile(BaseModel):
     school: str = Field("", max_length=200)
     address: str = Field("", max_length=300)
     avatar: str = Field("", max_length=500)
+    # Địa chỉ nhận email thông báo (rỗng = dùng users.email). Bật/tắt riêng cho email.
+    notification_email: str = Field("", max_length=320)
+    email_notifications_enabled: bool = True
 
     @field_validator("school", "address", mode="before")
     @classmethod
@@ -29,6 +32,18 @@ class UserProfile(BaseModel):
     @classmethod
     def _trim_avatar(cls, value: str | None) -> str:
         return (value or "").strip()
+
+    @field_validator("notification_email", mode="before")
+    @classmethod
+    def _trim_notification_email(cls, value: str | None) -> str:
+        return (value or "").strip()
+
+    @field_validator("notification_email")
+    @classmethod
+    def _validate_notification_email(cls, value: str) -> str:
+        if value and "@" not in value:
+            raise ValueError("Email nhận thông báo không hợp lệ")
+        return value
 
     @field_validator("avatar")
     @classmethod
@@ -229,7 +244,7 @@ class CalendarEventItem(BaseModel):
     description: str = ""
     event_type: str
     source: Literal["system", "manual"]
-    related_entity_type: Literal["question", "document", "none"] = "none"
+    related_entity_type: Literal["question", "document", "review_queue", "none"] = "none"
     related_entity_id: Optional[str] = None
     status: Literal["todo", "done", "overdue"]
     priority: Literal["low", "medium", "high"] = "medium"
