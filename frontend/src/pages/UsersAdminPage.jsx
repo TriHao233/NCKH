@@ -136,12 +136,17 @@ function UsersAdminPage() {
   const [editReviewSubjects, setEditReviewSubjects] = useState([]);
   const [subjectSuggestions, setSubjectSuggestions] = useState(null);
   useEffect(() => { listSubjects().then(setSubjects).catch(() => setSubjects(null)); }, []);
+  const showReviewSubjects = editRole === 'Reviewer' || editPermissions.includes('reviews.manage');
   useEffect(() => {
     let active = true;
     setSubjectSuggestions(null);
-    if (editing) suggestReviewSubjects(editing.id).then((result) => { if (active) setSubjectSuggestions(result); }).catch(() => {});
+    if (editing && showReviewSubjects) {
+      suggestReviewSubjects(editing.id)
+        .then((result) => { if (active) setSubjectSuggestions(result); })
+        .catch(() => {});
+    }
     return () => { active = false; };
-  }, [editing]);
+  }, [editing, showReviewSubjects]);
   const [saving, setSaving] = useState(false);
 
   const [togglingId, setTogglingId] = useState(null);
@@ -311,7 +316,10 @@ function UsersAdminPage() {
         role: editRole,
         is_active: editActive,
         permissions: editRole === 'Admin' ? [] : assignablePermissions(editPermissions),
-        ...((editRole === 'Reviewer' || editPermissions.includes('reviews.manage')) ? { review_subject_ids: editReviewSubjects } : {}),
+        // Không còn kiểm duyệt thì xoá học phần phụ trách cũ để không giữ dữ liệu thừa.
+        ...(showReviewSubjects
+          ? { review_subject_ids: editReviewSubjects }
+          : (editing.review_subject_ids?.length ? { review_subject_ids: [] } : {})),
       });
       setEditing(null);
       await refreshAll();
@@ -740,14 +748,41 @@ function UsersAdminPage() {
 
             <PermissionFields role={editRole} permissions={editPermissions} onToggle={(key) => setEditPermissions((current) => togglePermission(current, key))} />
             <p className="field-hint">Thay đổi quyền có hiệu lực trên giao diện sau khi người dùng đăng nhập lại.</p>
-            {subjects && (editRole === 'Reviewer' || editPermissions.includes('reviews.manage')) && (
-              <fieldset className="field-group"><legend>Học phần phụ trách</legend>
+            {subjects && showReviewSubjects && (
+              <fieldset className="field-group">
+                <legend>Học phần phụ trách</legend>
                 <p className="field-hint">Để trống = có thể nhận câu mọi học phần.</p>
-                <div className="permission-grid">{subjects.filter((item) => item.is_active !== false).map((item) => {
-                  const id = String(item.id || item._id);
-                  return <label className="field-checkbox" key={id}><input type="checkbox" checked={editReviewSubjects.includes(id)} onChange={() => setEditReviewSubjects((current) => togglePermission(current, id))} />{item.subject_code} — {item.subject_name}</label>;
-                })}</div>
-                <div className="users-subject-suggestions">{(subjectSuggestions?.items || []).map((item) => <button type="button" key={item.subject_id} onClick={() => setEditReviewSubjects((current) => [...new Set([...current, item.subject_id])])}>{item.subject_code} — {item.reviews} lượt duyệt / {subjectSuggestions.window_days} ngày</button>)}</div>
+                <div className="permission-grid">
+                  {subjects
+                    .map((item) => ({ item, id: String(item.id || item._id) }))
+                    // Học phần đã ngừng vẫn hiện nếu đang được gán, để có thể bỏ tick.
+                    .filter(({ item, id }) => item.is_active !== false || editReviewSubjects.includes(id))
+                    .map(({ item, id }) => (
+                      <label className="field-checkbox" key={id}>
+                        <input
+                          type="checkbox"
+                          checked={editReviewSubjects.includes(id)}
+                          onChange={() => setEditReviewSubjects((current) => togglePermission(current, id))}
+                        />
+                        {item.subject_code} — {item.subject_name}{item.is_active === false ? ' (đã ngừng)' : ''}
+                      </label>
+                    ))}
+                </div>
+                {Boolean(subjectSuggestions?.items?.length) && (
+                  <div className="users-subject-suggestions">
+                    <span>Gợi ý theo lịch sử duyệt:</span>
+                    {subjectSuggestions.items.map((item) => (
+                      <button
+                        type="button"
+                        key={item.subject_id}
+                        disabled={editReviewSubjects.includes(String(item.subject_id))}
+                        onClick={() => setEditReviewSubjects((current) => [...new Set([...current, String(item.subject_id)])])}
+                      >
+                        {item.subject_code} — {item.reviews} lượt duyệt / {subjectSuggestions.window_days} ngày
+                      </button>
+                    ))}
+                  </div>
+                )}
               </fieldset>
             )}
 
