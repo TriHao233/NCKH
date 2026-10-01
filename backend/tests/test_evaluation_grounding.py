@@ -610,6 +610,108 @@ class EvaluationOutputRepairTests(unittest.TestCase):
         self.assertIn('"clo_status": "NOT_ATTACHED"', without_clo)
 
 
+class EvaluatorIncompleteOutputTests(unittest.TestCase):
+    """Thiếu sót của kết quả chấm không được tính là lỗi của câu hỏi."""
+
+    OPTIONS = {"A": "FIFO", "B": "LIFO", "C": "Ngẫu nhiên", "D": "Theo độ ưu tiên"}
+
+    def setUp(self):
+        self.service = QuestionWorkflowService(None)
+
+    def version(self):
+        version = _version("TRAC_NGHIEM", options=dict(self.OPTIONS), correct_answer="A")
+        version["content"] = "Hàng đợi hoạt động theo nguyên tắc nào?"
+        return version
+
+    def raw(self, option_checks):
+        return _raw(
+            "APPROVE", "LOW", "READY", score=0.9, answer_entailment="SUPPORTED",
+            question_polarity="POSITIVE", option_checks=option_checks,
+        )
+
+    def finalize(self, option_checks):
+        return self.service._finalize_llm_evaluation(
+            self.raw(option_checks), [_source()], self.version(), POLICY
+        )
+
+    @staticmethod
+    def checks(**overrides):
+        checks = {
+            "A": {"key": "A", "verdict": "SUPPORTED", "source_label": "S1", "supporting_excerpt": "còn gọi là FIFO"},
+            "B": {"key": "B", "verdict": "NOT_IN_SOURCE", "source_label": "", "supporting_excerpt": ""},
+            "C": {"key": "C", "verdict": "NOT_IN_SOURCE", "source_label": "", "supporting_excerpt": ""},
+            "D": {"key": "D", "verdict": "NOT_IN_SOURCE", "source_label": "", "supporting_excerpt": ""},
+        }
+        for key, value in overrides.items():
+            if value is None:
+                checks.pop(key)
+            else:
+                checks[key] = {**checks[key], **value}
+        return list(checks.values())
+
+    def test_complete_option_checks_are_approved(self):
+        _, feedback, evidence = self.finalize(self.checks())
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertEqual(evidence["answer_guardrail"]["evaluator_incomplete"], [])
+        self.assertEqual(evidence["answer_guardrail"]["verified_by_option_text"], [])
+
+    def test_unchecked_option_is_a_retryable_error_not_a_verdict(self):
+        with self.assertRaisesRegex(ValueError, "chưa kiểm tra đủ các phương án.*AI chưa kiểm tra phương án: D"):
+            self.finalize(self.checks(D=None))
+
+    def test_invalid_verdict_is_a_retryable_error_not_a_verdict(self):
+        with self.assertRaisesRegex(ValueError, "option_checks không hợp lệ: D"):
+            self.finalize(self.checks(D={"verdict": "MAYBE"}))
+
+    def test_guardrail_alone_still_reports_the_gap_for_the_heuristic_path(self):
+        scores = EvaluationScores(
+            faithfulness=0.9, contextual_relevancy=0.9, answer_relevancy=0.9,
+            bloom_alignment=0.9, clo_alignment=0.9,
+        )
+        feedback = {"summary": "Đạt", "missing": [], "action": "APPROVE", "severity": "LOW"}
+        evidence = {"moodle_readiness": "READY", "question_polarity": "POSITIVE", "option_checks": self.checks(D=None)}
+
+        _, guarded, guarded_evidence = QuestionWorkflowService._apply_answer_guardrail(
+            scores, feedback, evidence, self.version()
+        )
+
+        self.assertEqual(guarded["action"], "NEEDS_REVISION")
+        self.assertEqual(
+            guarded_evidence["answer_guardrail"]["evaluator_incomplete"],
+            ["AI chưa kiểm tra phương án: D"],
+        )
+
+    def test_missing_excerpt_is_checked_against_the_source_text(self):
+        _, feedback, evidence = self.finalize(self.checks(A={"supporting_excerpt": ""}))
+
+        self.assertEqual(feedback["action"], "APPROVE")
+        self.assertEqual(evidence["answer_guardrail"]["verified_by_option_text"], ["A"])
+        self.assertFalse(evidence["answer_guardrail"]["applied"])
+
+    def test_missing_excerpt_still_blocks_when_the_option_is_not_in_the_source(self):
+        version = self.version()
+        version["question_data"]["options"]["A"] = "Vào sau ra trước hoàn toàn"
+        raw = self.raw(self.checks(A={"supporting_excerpt": ""}))
+
+        _, feedback, evidence = self.service._finalize_llm_evaluation(raw, [_source()], version, POLICY)
+
+        self.assertEqual(feedback["action"], "NEEDS_REVISION")
+        self.assertIn("Phương án A thiếu trích dẫn nguồn", evidence["answer_guardrail"]["issues"])
+        self.assertEqual(evidence["answer_guardrail"]["verified_by_option_text"], [])
+
+    def test_fabricated_excerpt_or_unknown_source_label_still_blocks(self):
+        _, wrong_quote, wrong_quote_evidence = self.finalize(
+            self.checks(A={"supporting_excerpt": "ngăn xếp dùng con trỏ đỉnh để quản lý phần tử"})
+        )
+        _, wrong_label, wrong_label_evidence = self.finalize(self.checks(A={"source_label": "S9"}))
+
+        self.assertEqual(wrong_quote["action"], "NEEDS_REVISION")
+        self.assertIn("Trích dẫn của phương án A không khớp nguồn S1", wrong_quote_evidence["answer_guardrail"]["issues"])
+        self.assertEqual(wrong_label["action"], "NEEDS_REVISION")
+        self.assertIn("Phương án A không trỏ tới nguồn S hợp lệ", wrong_label_evidence["answer_guardrail"]["issues"])
+
+
 class EvaluationOutputBudgetTests(unittest.TestCase):
     def test_thinking_evaluator_gets_thinking_budget_and_context(self):
         from core.config import settings

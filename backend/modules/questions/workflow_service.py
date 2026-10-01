@@ -57,6 +57,8 @@ DEFAULT_WEIGHTS = {
 }
 DEFAULT_THRESHOLDS = {"yellow_min": 0.50, "green_min": 0.75, "pass_min": 0.65}
 CLO_CRITERION = "clo_alignment"
+# Phương án được coi là "có trong nguồn" khi ít nhất 80% từ của nó xuất hiện trong nguồn.
+OPTION_TEXT_SUPPORT_MIN = 0.8
 # Nhận diện ý "thiếu CLO" trong danh sách cần sửa mà mô hình trả về.
 CLO_MENTION_PATTERN = re.compile(r"\bCLO\b|chuẩn đầu ra", re.IGNORECASE)
 
@@ -184,10 +186,11 @@ PLACEHOLDER_CLAIM_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 EVALUATION_RETRY_INSTRUCTION = """
-LẦN THỬ LẠI: Phản hồi trước không phải JSON hoàn chỉnh.
+LẦN THỬ LẠI: Phản hồi trước không phải JSON hoàn chỉnh hoặc chưa kiểm tra đủ các phương án.
 - Chỉ trả về đúng một object JSON và phải đóng đủ mọi dấu ngoặc.
 - summary, reasoning và answer_diagnostics: tối đa 120 ký tự mỗi trường.
 - supporting_excerpt của từng option: tối đa 18 từ, không lặp lại đoạn nguồn dài.
+- option_checks phải có đủ từng phương án; mỗi mục có đủ key, verdict, source_label và supporting_excerpt.
 - Không thêm trường ngoài schema OUTPUT.
 """.strip()
 evaluation_semaphore = asyncio.Semaphore(1)
@@ -1025,9 +1028,12 @@ class QuestionWorkflowService:
             issues.append(
                 f"AI nhận diện sai dạng câu: báo {reported_polarity}, thực tế {detected_polarity}"
             )
+        # Thiếu sót của chính kết quả chấm (không phải lỗi của câu hỏi): được ghi riêng
+        # để lượt chấm được thử lại thay vì kết luận câu hỏi cần sửa.
+        evaluator_incomplete = []
         missing_keys = [key for key in options if key not in checks_by_key]
         if missing_keys:
-            issues.append(f"AI chưa kiểm tra phương án: {', '.join(missing_keys)}")
+            evaluator_incomplete.append(f"AI chưa kiểm tra phương án: {', '.join(missing_keys)}")
 
         invalid_keys = [
             key
@@ -1035,7 +1041,8 @@ class QuestionWorkflowService:
             if key not in options or check.get("verdict") not in OPTION_CHECK_VERDICTS
         ]
         if invalid_keys:
-            issues.append(f"option_checks không hợp lệ: {', '.join(sorted(invalid_keys))}")
+            evaluator_incomplete.append(f"option_checks không hợp lệ: {', '.join(sorted(invalid_keys))}")
+        issues.extend(evaluator_incomplete)
 
         supported = {
             key
@@ -1096,12 +1103,18 @@ class QuestionWorkflowService:
             str(source.get("label") or "").upper(): str(source.get("excerpt") or "")
             for source in compact_sources
         }
-        for key in supported:
+        verified_by_option_text = []
+        for key in sorted(supported):
             check = checks_by_key[key]
             excerpt = str(check.get("supporting_excerpt") or "").strip()
             source_label = str(check.get("source_label") or "").strip().upper()
             if not excerpt:
-                issues.append(f"Phương án {key} thiếu trích dẫn nguồn")
+                # Mô hình quên kèm trích dẫn cho phương án nó xác nhận. Tự đối chiếu nội
+                # dung phương án với nguồn; chỉ chặn khi nguồn không chứa phương án đó.
+                if lexical_support.get(key, 0.0) >= OPTION_TEXT_SUPPORT_MIN:
+                    verified_by_option_text.append(key)
+                else:
+                    issues.append(f"Phương án {key} thiếu trích dẫn nguồn")
             if not source_label or source_label not in source_by_label:
                 issues.append(f"Phương án {key} không trỏ tới nguồn S hợp lệ")
             elif excerpt and cls._overlap_score(excerpt, source_by_label[source_label]) < 0.5:
@@ -1118,6 +1131,8 @@ class QuestionWorkflowService:
             "unsupported_option_keys": sorted(unsupported),
             "ambiguous_option_keys": sorted(ambiguous),
             "option_source_overlap": lexical_support,
+            "verified_by_option_text": verified_by_option_text,
+            "evaluator_incomplete": evaluator_incomplete,
             "issues": list(dict.fromkeys(issues)),
         }
         if not issues:
@@ -1553,6 +1568,11 @@ class QuestionWorkflowService:
             evidence,
             grounded_version,
         )
+        incomplete = (evidence.get("answer_guardrail") or {}).get("evaluator_incomplete") or []
+        if incomplete:
+            # Kết quả chấm thiếu sót chưa nói được gì về câu hỏi: báo lỗi để tác vụ chấm
+            # lại; hết lượt thử thì câu ở trạng thái "Chưa đánh giá được", không phải "xem lại".
+            raise ValueError("AI evaluation chưa kiểm tra đủ các phương án: " + "; ".join(incomplete))
         feedback, evidence = self._normalize_decision(scores, feedback, evidence, policy)
         consistency = self._validate_llm_evaluation_consistency(scores, feedback, evidence, policy)
         return scores, feedback, {

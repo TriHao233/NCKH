@@ -69,7 +69,11 @@ def _build_case(case: dict, sources: dict) -> tuple[dict, dict, list[dict], dict
             "difficulty": "de",
         },
         "clos": [] if case.get("no_clo") else [
-            {"code": "CLO1", "description": "Trình bày và vận dụng các cấu trúc dữ liệu cơ bản."}
+            {
+                "code": "CLO1",
+                # A case may name the CLO that fits its source; the default suits the data-structure cases.
+                "description": case.get("clo") or "Trình bày và vận dụng các cấu trúc dữ liệu cơ bản.",
+            }
         ],
         "question_data": question_data,
     }
