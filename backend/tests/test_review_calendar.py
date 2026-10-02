@@ -76,7 +76,8 @@ def test_mongo_calendar_assignment_scope_backlog_and_permission_revokes(monkeypa
     monkeypatch.setattr(settings, "review_lock_timeout_minutes", 30)
     with patch("modules.users.calendar_service.utc_now", return_value=NOW):
         result = service.get_calendar(str(first))
-        assert [item["related_entity_id"] for item in result["items"]] == [str(held["_id"])]
+        assert [item["related_entity_id"] for item in result["items"]] == [str(held["_id"]), None]
+        assert result["items"][1]["event_type"] == "review_unassigned_backlog"
         CalendarResponse.model_validate(result)
         admin_result = service.get_calendar(str(admin))
         assert admin_result["items"][0]["event_type"] == "review_unassigned_backlog"

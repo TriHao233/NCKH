@@ -227,6 +227,7 @@ function EventRow({ item, onClick }) {
 function TaskCalendarPage() {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
+  const isReviewer = user?.role === 'Reviewer';
   const [view, setView] = useState('list');
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -364,18 +365,22 @@ function TaskCalendarPage() {
                 <b>{summary.overdue}</b>
                 <span>Việc quá hạn</span>
               </div>
-              <div className="stat-card">
-                <b>{summary.questions_need_revision}</b>
-                <span>Câu cần sửa</span>
-              </div>
+              {!isReviewer && (
+                <div className="stat-card">
+                  <b>{summary.questions_need_revision}</b>
+                  <span>Câu cần sửa</span>
+                </div>
+              )}
               <div className="stat-card">
                 <b>{summary.questions_pending_review}</b>
                 <span>Câu chờ duyệt</span>
               </div>
-              <div className="stat-card">
-                <b>{summary.documents_waiting}</b>
-                <span>Tài liệu cần xử lý</span>
-              </div>
+              {!isReviewer && (
+                <div className="stat-card">
+                  <b>{summary.documents_waiting}</b>
+                  <span>Tài liệu cần xử lý</span>
+                </div>
+              )}
             </div>
           )}
 
