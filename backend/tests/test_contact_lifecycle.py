@@ -135,3 +135,30 @@ def test_admin_sends_one_email_when_submitting_status_with_optional_message(serv
     else:
         service._email_user_status.assert_called_once()
         service._email_user_reply.assert_not_called()
+
+
+@pytest.mark.parametrize("role", ["Teacher", "Reviewer", "Admin"])
+def test_every_signed_in_role_can_send_a_request(service, role):
+    from modules.contact.schemas import ContactRequestCreate
+
+    service.repo.next_ticket_sequence.return_value = 1
+    service.repo.create_request.side_effect = lambda record: record
+    service._email_admin_new_ticket = Mock()
+    requester = user(TEACHER_ID, role)
+
+    created = service.create_request(
+        ContactRequestCreate(category="BUG", title=" Lỗi ", content=" Mô tả "), requester,
+    )
+
+    assert created["user_id"] == str(TEACHER_ID)
+    assert created["title"] == "Lỗi"
+    service._email_admin_new_ticket.assert_called_once()
+
+
+def test_contact_routes_accept_reviewers():
+    from modules.contact.router import router
+    from core.dependencies import require_authenticated, require_teacher_or_admin
+
+    guards = [dep.call for route in router.routes for dep in route.dependant.dependencies]
+    assert require_authenticated in guards
+    assert require_teacher_or_admin not in guards

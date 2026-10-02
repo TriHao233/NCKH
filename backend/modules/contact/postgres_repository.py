@@ -20,6 +20,7 @@ def _request_row(row: dict | None) -> dict | None:
         "user_id": row["user_id"],
         "user_name": row.get("user_name") or "",
         "user_email": row.get("user_email") or "",
+        "user_role": row.get("user_role") or "",
         "category": row["category"],
         "title": row["title"],
         "content": row["content"],
@@ -72,7 +73,7 @@ class PostgresContactRepository:
         with postgres_connection() as conn:
             row = conn.execute(
                 """
-                SELECT r.*, u.display_name AS user_name, u.email AS user_email,
+                SELECT r.*, u.display_name AS user_name, u.email AS user_email, u.role AS user_role,
                        (SELECT count(*) FROM contact_messages m WHERE m.request_id=r.id)
                            AS message_count
                 FROM contact_requests r
@@ -117,7 +118,7 @@ class PostgresContactRepository:
             ).fetchone()["n"]
             rows = conn.execute(
                 f"""
-                SELECT r.*, u.display_name AS user_name, u.email AS user_email,
+                SELECT r.*, u.display_name AS user_name, u.email AS user_email, u.role AS user_role,
                        (SELECT count(*) FROM contact_messages m WHERE m.request_id=r.id)
                            AS message_count
                 FROM contact_requests r

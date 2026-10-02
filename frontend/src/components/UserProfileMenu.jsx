@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faUser,
-  faCalendarCheck,
   faSignOutAlt,
   faChevronDown,
   faListCheck,
@@ -124,13 +123,7 @@ const UserProfileMenu = () => {
             </Link>
           )}
 
-          {/* Quản trị viên mở các mục còn lại từ thanh điều hướng chính. */}
-          {user.role === 'Reviewer' && (
-            <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
-              <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
-              Lịch công việc
-            </Link>
-          )}
+          {/* Quản trị viên và người duyệt mở các mục còn lại từ thanh điều hướng chính. */}
 
           <div className="dropdown-divider"></div>
           

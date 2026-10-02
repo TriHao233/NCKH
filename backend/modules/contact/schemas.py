@@ -70,6 +70,7 @@ class ContactRequestResponse(BaseModel):
     user_id: str
     user_name: str = ""
     user_email: str = ""
+    user_role: str = ""
     category: ContactCategory
     title: str
     content: str

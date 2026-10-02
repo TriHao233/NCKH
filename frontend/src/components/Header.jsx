@@ -202,9 +202,12 @@ const Header = () => {
       label: 'Người duyệt',
       items: [
         { path: '/kiem-duyet', label: 'Hàng kiểm duyệt', requires: 'reviews.manage' },
+        { path: '/lich-cong-viec', label: 'Lịch công việc' },
       ],
     },
   ];
+  // Người duyệt thấy việc chính của mình trước; các trang giới thiệu chung chỉ còn ở chân trang.
+  const reviewerGroupOrder = ['reviewer', 'teacher', 'support', 'public'];
   // Menu Quản trị: 5 nhóm theo tần suất dùng; nhóm nhiều mục mở thành menu thả xuống.
   const adminNavGroups = [
     {
@@ -249,7 +252,11 @@ const Header = () => {
       ],
     },
   ];
-  const roleNavGroups = role === 'Admin' ? adminNavGroups : navGroups;
+  const roleNavGroups = role === 'Admin'
+    ? adminNavGroups
+    : role === 'Reviewer'
+      ? [...navGroups].sort((left, right) => reviewerGroupOrder.indexOf(left.id) - reviewerGroupOrder.indexOf(right.id))
+      : navGroups;
   const visibleNavGroups = roleNavGroups
     .map((group) => ({
       ...group,
@@ -257,7 +264,7 @@ const Header = () => {
     }))
     .filter((group) => {
       if (!signedIn) return ['public', 'teacher', 'support'].includes(group.id);
-      if (role === 'Admin' && group.id === 'public') return false;
+      if (['Admin', 'Reviewer'].includes(role) && group.id === 'public') return false;
       return group.isPublic || group.id === 'public' || (signedIn && group.items.length > 0);
     });
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
@@ -308,7 +315,7 @@ const Header = () => {
     >
       <div className="nav-container">
         <div className="nav-brand">
-          <Link to={role === 'Admin' ? '/tong-quan' : '/'} className="nav-brand-link">
+          <Link to={role === 'Admin' ? '/tong-quan' : role === 'Reviewer' ? '/kiem-duyet' : '/'} className="nav-brand-link">
             <img 
               src={`${import.meta.env.BASE_URL}images/qbankctu-header-logo.png`}
               alt="QBankCTU - Đại học Cần Thơ"

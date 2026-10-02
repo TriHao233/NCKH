@@ -48,6 +48,10 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Vai trò được gửi yêu cầu liên hệ, kèm cách gọi trong email báo cho quản trị viên.
+REQUESTER_ROLE_LABELS = {"Teacher": "giảng viên", "Reviewer": "người duyệt", "Admin": "quản trị viên"}
+
+
 class ContactService:
     def __init__(self) -> None:
         self.repo = PostgresContactRepository()
@@ -75,8 +79,8 @@ class ContactService:
     # ---- create / list -------------------------------------------------
 
     def create_request(self, payload: ContactRequestCreate, user: CurrentUser) -> dict:
-        if user.role not in ("Teacher", "Admin"):
-            raise PermissionError("Chỉ giảng viên hoặc quản trị viên mới có thể gửi yêu cầu")
+        if user.role not in REQUESTER_ROLE_LABELS:
+            raise PermissionError("Chỉ giảng viên, người duyệt hoặc quản trị viên mới có thể gửi yêu cầu")
         now = utc_now()
         record = {
             "id": str(ObjectId()),
@@ -392,8 +396,9 @@ class ContactService:
         html_body = build_email_html(
             title=f"Yêu cầu liên hệ mới: {request['title']}",
             paragraphs=[
-                "Một giảng viên vừa gửi yêu cầu liên hệ. Thông tin chi tiết được ghi bên dưới.",
-                "Đăng nhập vào QBankCTU, mở mục Xem liên hệ để xem và phản hồi yêu cầu này.",
+                f"Một {REQUESTER_ROLE_LABELS.get(requester.role, 'người dùng')} vừa gửi yêu cầu liên hệ. "
+                "Thông tin chi tiết được ghi bên dưới.",
+                "Đăng nhập vào QBankCTU, mở mục Liên hệ để xem và phản hồi yêu cầu này.",
             ],
             meta=meta,
             highlight=request["content"],

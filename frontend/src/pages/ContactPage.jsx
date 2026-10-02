@@ -318,7 +318,7 @@ function TicketDetail({ ticketId, currentUser, onBack, onChanged, onDeleted, onR
         <div className="msg-bubble msg-bubble--origin">
           <div className="msg-bubble__author">
             {detail.user_name || 'Người gửi'}
-            <span className="msg-bubble__role">{detail.user_id === currentUser?.id && isAdmin ? 'Quản trị' : 'Giảng viên'}</span>
+            <span className="msg-bubble__role">{senderRoleLabel(detail.user_role || (detail.user_id === currentUser?.id ? currentUser?.role : ''))}</span>
           </div>
           <div className="msg-bubble__body-wrap">
             <div className="msg-bubble__label">Mô tả ngắn</div>
@@ -333,7 +333,7 @@ function TicketDetail({ ticketId, currentUser, onBack, onChanged, onDeleted, onR
           >
             <div className="msg-bubble__author">
               {m.sender_name || 'Người dùng'}
-              <span className="msg-bubble__role">{m.sender_role === 'Admin' ? 'Quản trị' : 'Giảng viên'}</span>
+              <span className="msg-bubble__role">{senderRoleLabel(m.sender_role)}</span>
             </div>
             <div className="msg-bubble__body-wrap">
               <div className="msg-bubble__body">{m.message}</div>
@@ -671,6 +671,10 @@ const StatIconBell = () => (
   </svg>
 );
 
+function senderRoleLabel(role) {
+  return { Admin: 'Quản trị', Teacher: 'Giảng viên', Reviewer: 'Người duyệt' }[role] || 'Người gửi';
+}
+
 function AdminContactOverview({ reloadKey }) {
   const [counts, setCounts] = useState(null);
 
@@ -715,8 +719,9 @@ function ContactPage() {
   const openTicketId = searchParams.get('ticket');
   const initialTab = searchParams.get('tab');
   const isAdmin = !authLoading && user?.role === 'Admin';
-  const isTeacher = !authLoading && user?.role === 'Teacher';
-  const canUseTickets = isAdmin || isTeacher;
+  // Giảng viên và người duyệt đều là người gửi yêu cầu; quản trị viên là người xử lý.
+  const isRequester = !authLoading && ['Teacher', 'Reviewer'].includes(user?.role);
+  const canUseTickets = isAdmin || isRequester;
 
   const [tab, setTab] = useState(isAdmin ? 'all' : 'mine');
   const [reloadKey, setReloadKey] = useState(0);
@@ -771,14 +776,14 @@ function ContactPage() {
   }, [canUseTickets, isAdmin]);
 
   return (
-    <main className={`contact-page ${isAdmin ? 'contact-page--admin' : ''} ${isTeacher ? 'contact-page--teacher' : ''}`}>
+    <main className={`contact-page ${isAdmin ? 'contact-page--admin' : ''} ${isRequester ? 'contact-page--teacher' : ''}`}>
       <section className="page-hero">
         <div className="container">
           <div className="page-hero-badge">Liên hệ</div>
-          <h1 className="page-hero-title">{isAdmin ? 'Quản lý liên hệ' : isTeacher ? 'Trung tâm hỗ trợ' : 'Kết nối với nhóm nghiên cứu QBankCTU'}</h1>
+          <h1 className="page-hero-title">{isAdmin ? 'Quản lý liên hệ' : isRequester ? 'Trung tâm hỗ trợ' : 'Kết nối với nhóm nghiên cứu QBankCTU'}</h1>
           <p className="page-hero-desc">
             {isAdmin
-              ? 'Tiếp nhận, phân loại và phản hồi các yêu cầu liên hệ từ giảng viên.'
+              ? 'Tiếp nhận, phân loại và phản hồi các yêu cầu liên hệ từ giảng viên và người duyệt.'
               : canUseTickets
               ? 'Gửi yêu cầu cho quản trị viên và theo dõi phản hồi của bạn tại đây.'
               : 'Mọi góp ý về đề tài, đề xuất hợp tác hoặc câu hỏi trong quá trình sử dụng hệ thống, vui lòng liên hệ qua thông tin bên dưới.'}
@@ -790,7 +795,7 @@ function ContactPage() {
         {isAdmin && <div className="container"><AdminContactOverview reloadKey={reloadKey} /></div>}
         <div className="container contact-grid">
 
-          {isTeacher ? (
+          {isRequester ? (
             <details className="teacher-contact-other" open>
               <summary>
                 <span className="teacher-contact-other__heading">
@@ -808,7 +813,7 @@ function ContactPage() {
               <div className="contact-panel contact-anonymous">
                 <h3 className="form-card-title">Bạn cần đăng nhập để gửi yêu cầu</h3>
                 <p className="form-card-sub">
-                  Chức năng Liên hệ nội bộ dành cho giảng viên và quản trị viên. Vui lòng đăng nhập để tạo và theo dõi yêu cầu hỗ trợ.
+                  Chức năng Liên hệ nội bộ dành cho người dùng đã đăng nhập. Vui lòng đăng nhập để tạo và theo dõi yêu cầu hỗ trợ.
                 </p>
                 <p className="form-card-sub">Với các liên hệ khác, vui lòng dùng thông tin bên trái.</p>
               </div>
@@ -833,14 +838,14 @@ function ContactPage() {
                     ticketId={openTicketId}
                     currentUser={user}
                     onBack={() => {
-                      if (isTeacher) selectTab(tab === 'deleted' ? 'deleted' : 'mine');
+                      if (isRequester) selectTab(tab === 'deleted' ? 'deleted' : 'mine');
                       else setOpenTicket(null);
                     }}
                     onChanged={bump}
                     onDeleted={() => { selectTab('deleted'); bump(); }}
                     onRestored={() => { selectTab(isAdmin ? 'all' : 'mine'); bump(); }}
                   />
-                ) : isTeacher && createdTicket ? (
+                ) : isRequester && createdTicket ? (
                   <TeacherTicketConfirmation
                     ticket={createdTicket}
                     onOpen={setOpenTicket}
@@ -848,9 +853,9 @@ function ContactPage() {
                   />
                 ) : tab === 'new' ? (
                   <CreateTicketForm
-                    teacherView={isTeacher}
+                    teacherView={isRequester}
                     onCreated={(created) => {
-                      if (isTeacher) setCreatedTicket(created);
+                      if (isRequester) setCreatedTicket(created);
                       else selectTab('all');
                       bump();
                     }}
@@ -862,7 +867,7 @@ function ContactPage() {
                     onOpen={setOpenTicket}
                     onCreate={() => selectTab('new')}
                     reloadKey={reloadKey}
-                    teacherView={isTeacher}
+                    teacherView={isRequester}
                   />
                 )}
               </>
