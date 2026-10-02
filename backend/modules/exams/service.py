@@ -30,6 +30,7 @@ from modules.exams.schemas import (
     ExamUpdateRequest,
     ExamVariantCreateRequest,
     MatrixCell,
+    normalize_cognitive_level,
 )
 from modules.questions.repository import MongoQuestionRepository, serialize_question
 
@@ -53,7 +54,7 @@ def _matrix_cell_dict(cell: MatrixCell) -> dict:
     return {
         "chapter_id": object_id(cell.chapter_id, "chapter_id") if cell.chapter_id else None,
         "cognitive_level": cell.cognitive_level.value,
-        "difficulty": cell.difficulty.value,
+        "difficulty": cell.difficulty.value if cell.difficulty else None,
         "count": cell.count,
     }
 
@@ -67,7 +68,10 @@ def serialize_exam(exam: dict, variant_count: int = 0) -> dict:
             "subject_id": exam["subject_id"],
             "question_count": exam["question_count"],
             "header": exam["header"],
-            "matrix": exam.get("matrix", []),
+            "matrix": [
+                {**cell, "cognitive_level": normalize_cognitive_level(cell["cognitive_level"])}
+                for cell in exam.get("matrix", [])
+            ],
             "questions": exam.get("questions", []),
             "status": _exam_status(exam),
             "variant_count": variant_count,
@@ -350,6 +354,10 @@ class ExamService:
         if payload.exam_title is not None:
             updates["exam_title"] = payload.exam_title
         if payload.question_count is not None:
+            if payload.question_count < len(current_exam.get("questions", [])):
+                raise ValueError("Số câu khai báo không được ít hơn số câu đã chọn; hãy bỏ bớt câu trước")
+            if payload.question_count < sum(cell["count"] for cell in current_exam.get("matrix", [])):
+                raise ValueError("Số câu khai báo không được ít hơn tổng ma trận; hãy sửa ma trận trước")
             updates["question_count"] = payload.question_count
         if payload.header is not None:
             updates["header"] = payload.header.model_dump()
@@ -384,45 +392,83 @@ class ExamService:
         cell: dict,
         current_user: CurrentUser | None = None,
     ) -> list[tuple[dict, dict]]:
-        bloom_level = COGNITIVE_LEVEL_TO_BLOOM.get(cell["cognitive_level"])
+        bloom_level = COGNITIVE_LEVEL_TO_BLOOM[normalize_cognitive_level(cell["cognitive_level"])]
         chapter_id = str(cell["chapter_id"]) if cell.get("chapter_id") else None
         owner_user_id = (
             current_user.id
             if current_user and current_user.role != "Admin"
             else None
         )
-        pairs, _total = self.question_repository.list(
-            1,
-            1000,
-            APPROVED_STATUS,
-            None,
-            bloom_level=bloom_level,
-            subject_id=str(exam["subject_id"]),
-            chapter_id=chapter_id,
-            difficulty=cell["difficulty"],
-            owner_user_id=owner_user_id,
-            approved_current_only=True,
-        )
+        pairs = []
+        page = 1
+        while True:
+            batch, total = self.question_repository.list(
+                page, 1000, APPROVED_STATUS, None,
+                bloom_level=bloom_level,
+                subject_id=str(exam["subject_id"]),
+                chapter_id=chapter_id,
+                difficulty=cell.get("difficulty") or None,
+                owner_user_id=owner_user_id,
+                approved_current_only=True,
+            )
+            pairs.extend(batch)
+            if not batch or page * 1000 >= total:
+                break
+            page += 1
         return [
             pair
             for pair in pairs
             if self._is_question_usable_for_exam(exam, pair[0], pair[1])
         ]
 
+    def _allocate_matrix(self, exam: dict, current_user: CurrentUser, *, shuffle: bool = False):
+        """Match distinct questions to slots, including overlapping matrix groups.
+
+        Reassign earlier slots when a later group needs a question they used.
+        This avoids random greedy shortages when a valid allocation exists.
+        """
+        matrix = exam.get("matrix", [])
+        pools = [self._find_approved_for_cell(exam, cell, current_user) for cell in matrix]
+        pairs_by_id = {str(pair[0]["_id"]): pair for pool in pools for pair in pool}
+        candidates = [list(dict.fromkeys(str(pair[0]["_id"]) for pair in pool)) for pool in pools]
+        if shuffle:
+            for ids in candidates:
+                random.shuffle(ids)
+        slots = [index for index, cell in enumerate(matrix) for _ in range(cell["count"])]
+        owners: dict[str, int] = {}
+
+        def assign(slot, visited):
+            for question_id in candidates[slots[slot]]:
+                if question_id in visited:
+                    continue
+                visited.add(question_id)
+                previous = owners.get(question_id)
+                if previous is None or assign(previous, visited):
+                    owners[question_id] = slot
+                    return True
+            return False
+
+        for slot in sorted(range(len(slots)), key=lambda index: len(candidates[slots[index]])):
+            assign(slot, set())
+        allocated = [[] for _ in matrix]
+        for question_id, slot in owners.items():
+            allocated[slots[slot]].append(pairs_by_id[question_id])
+        return pools, allocated
+
     def matrix_availability(self, exam_id: str, current_user: CurrentUser) -> list[dict]:
         exam = self._get_for_user_or_404(exam_id, current_user)
+        pools, allocated = self._allocate_matrix(exam, current_user)
         results = []
-        for cell in exam.get("matrix", []):
-            pairs = self._find_approved_for_cell(exam, cell, current_user)
-            available = len(pairs)
+        for index, cell in enumerate(exam.get("matrix", [])):
+            available = len(pools[index])
             results.append(
                 {
                     "chapter_id": json_safe(cell.get("chapter_id")),
-                    "cognitive_level": cell["cognitive_level"],
-                    "difficulty": cell["difficulty"],
+                    "cognitive_level": normalize_cognitive_level(cell["cognitive_level"]),
+                    "difficulty": cell.get("difficulty"),
                     "requested": cell["count"],
                     "available": available,
-                    "sufficient": available >= cell["count"],
+                    "sufficient": len(allocated[index]) >= cell["count"],
                 }
             )
         return results
@@ -433,26 +479,24 @@ class ExamService:
         matrix = exam.get("matrix", [])
         if not matrix:
             raise ValueError("Chưa cấu hình ma trận đề thi")
-        selected_ids: set[str] = set()
+        if sum(cell["count"] for cell in matrix) != int(exam["question_count"]):
+            raise ValueError("Tổng số câu trong ma trận phải khớp số câu đã khai báo trước khi tự chọn câu hỏi")
+        _pools, allocated = self._allocate_matrix(exam, current_user, shuffle=True)
         selected_refs: list[dict] = []
         shortages: list[dict] = []
-        for cell in matrix:
-            pairs = self._find_approved_for_cell(exam, cell, current_user)
-            pool = [pair for pair in pairs if str(pair[0]["_id"]) not in selected_ids]
-            if len(pool) < cell["count"]:
+        for cell, chosen in zip(matrix, allocated):
+            if len(chosen) < cell["count"]:
                 shortages.append(
                     {
                         "chapter_id": json_safe(cell.get("chapter_id")),
-                        "cognitive_level": cell["cognitive_level"],
-                        "difficulty": cell["difficulty"],
+                        "cognitive_level": normalize_cognitive_level(cell["cognitive_level"]),
+                        "difficulty": cell.get("difficulty"),
                         "requested": cell["count"],
-                        "available": len(pool),
+                        "available": len(chosen),
                     }
                 )
                 continue
-            chosen = random.sample(pool, cell["count"])
             for question, version in chosen:
-                selected_ids.add(str(question["_id"]))
                 selected_refs.append(
                     {
                         "question_id": question["_id"],
@@ -465,8 +509,6 @@ class ExamService:
                 "Không đủ câu hỏi đã duyệt cho một số nhóm trong ma trận: "
                 + str(shortages)
             )
-        if len(selected_refs) > exam["question_count"]:
-            selected_refs = selected_refs[: exam["question_count"]]
         updates: dict[str, Any] = {"questions": selected_refs}
         if _exam_status(exam) == "READY":
             updates["status"] = ExamStatus.DRAFT.value
@@ -584,6 +626,8 @@ class ExamVariantService:
                 if isinstance(correct_answer, str):
                     correct_keys = [c.strip() for c in correct_answer.split(",") if c.strip()]
                     correct_answer = ",".join(key_map.get(k, k) for k in correct_keys)
+                elif isinstance(correct_answer, list):
+                    correct_answer = [key_map.get(str(k).strip(), k) for k in correct_answer]
                 question_data = {**question_data, "options": shuffled_options, "correct_answer": correct_answer}
                 snapshot = {**snapshot, "question_data": question_data}
             variant_questions.append(
@@ -635,7 +679,7 @@ class ExamVariantService:
                         "assessment_type", ""
                     ),
                     "options": [
-                        {"label": key, "text": value} for key, value in options.items()
+                        {"label": key, "text": value} for key, value in sorted(options.items())
                     ],
                 }
             )

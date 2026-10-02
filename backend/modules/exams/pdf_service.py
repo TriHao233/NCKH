@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt
+from docx.shared import Mm, Pt, RGBColor
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.async_api import async_playwright
 
@@ -18,10 +20,32 @@ _env = Environment(
 )
 
 VALID_EXPORT_TYPES = {"de", "dapan", "de_dapan"}
+EXAM_FONT_NAME = "Times New Roman"
+EXAM_FONT_SIZE_PT = 13
+EXAM_LINE_SPACING = 1.3
+EXAM_FONT_FILES = {
+    ("normal", "normal"): "times.ttf",
+    ("bold", "normal"): "timesbd.ttf",
+    ("normal", "italic"): "timesi.ttf",
+    ("bold", "italic"): "timesbi.ttf",
+}
+
+
+def _pdf_font_faces() -> str:
+    """Embed locally supplied Times fonts so Chromium does not silently substitute them."""
+    font_dir = Path(os.environ.get("EXAM_FONT_DIR") or Path(__file__).resolve().parents[2] / "data" / "exam_fonts")
+    if not all((font_dir / filename).is_file() for filename in EXAM_FONT_FILES.values()):
+        return ""
+    return "\n".join(
+        f'@font-face {{ font-family: "Exam Times New Roman"; font-style: {style}; '
+        f'font-weight: {weight}; src: url(data:font/ttf;base64,'
+        f'{base64.b64encode((font_dir / filename).read_bytes()).decode("ascii")}) format("truetype"); }}'
+        for (weight, style), filename in EXAM_FONT_FILES.items()
+    )
 
 
 def _split_answer_keys(correct_answer: Any) -> list[str]:
-    if not correct_answer:
+    if correct_answer is None or correct_answer == "":
         return []
     if isinstance(correct_answer, list):
         return [str(item).strip() for item in correct_answer]
@@ -45,10 +69,11 @@ def _build_context(
         question_data = snapshot.get("question_data") or {}
         options = question_data.get("options") or {}
         correct_answer = question_data.get("correct_answer")
-        correct_keys = set(_split_answer_keys(correct_answer))
+        answer_parts = _split_answer_keys(correct_answer)
+        correct_keys = set(answer_parts)
         rendered_options = [
             {"label": key, "text": value, "correct": key in correct_keys}
-            for key, value in options.items()
+            for key, value in sorted(options.items())
         ]
         rendered_questions.append(
             {
@@ -60,7 +85,7 @@ def _build_context(
         answer_rows.append(
             {
                 "number": entry["order"],
-                "answer": ", ".join(sorted(correct_keys)) if correct_keys else (correct_answer or ""),
+                "answer": ", ".join(answer_parts),
             }
         )
 
@@ -86,6 +111,7 @@ def render_exam_html(
         raise ValueError(f"export_type không hợp lệ: {export_type}")
     template = _env.get_template("exam_pdf.html")
     context = _build_context(header, exam_code, questions, export_type)
+    context["font_faces"] = _pdf_font_faces()
     return template.render(**context)
 
 
@@ -98,6 +124,7 @@ async def render_exam_pdf(
     if not questions:
         raise ValueError("Đề thi chưa có câu hỏi, không thể xuất PDF")
     html = render_exam_html(header, exam_code, questions, export_type)
+    font_faces = _pdf_font_faces()
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
         try:
@@ -110,8 +137,9 @@ async def render_exam_pdf(
                 display_header_footer=True,
                 header_template="<span></span>",
                 footer_template=(
-                    '<div style="width:100%;font-family:Times New Roman,Liberation Serif,serif;'
-                    'font-size:9pt;text-align:center;color:#000;">'
+                    f'<style>{font_faces}</style>'
+                    '<div style="width:100%;font-family:Exam Times New Roman,Times New Roman,Liberation Serif,serif;'
+                    'font-size:13pt;line-height:1.3;text-align:center;color:#000;">'
                     'Trang <span class="pageNumber"></span>/<span class="totalPages"></span></div>'
                 ),
             )
@@ -141,9 +169,19 @@ def render_exam_docx(
 
     context = _build_context(header, exam_code, questions, export_type)
     document = Document()
-    normal_style = document.styles["Normal"]
-    normal_style.font.name = "Times New Roman"
-    normal_style.font.size = Pt(12)
+    section = document.sections[0]
+    section.page_width = Mm(210)
+    section.page_height = Mm(297)
+    section.top_margin = Mm(20)
+    section.bottom_margin = Mm(20)
+    section.left_margin = Mm(30)
+    section.right_margin = Mm(20)
+    for style_name in ("Normal", "Heading 1", "Heading 2", "Table Grid"):
+        style = document.styles[style_name]
+        style.font.name = EXAM_FONT_NAME
+        style.font.size = Pt(EXAM_FONT_SIZE_PT)
+        style.font.color.rgb = RGBColor(0, 0, 0)
+        style.paragraph_format.line_spacing = EXAM_LINE_SPACING
 
     if header.get("school_name"):
         document.add_paragraph(str(header["school_name"]))

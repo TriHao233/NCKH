@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faClone, faTrashCan } from '@fortawesome/free-solid-svg-icons';
@@ -37,27 +37,35 @@ function ExamListPage() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [duplicatingId, setDuplicatingId] = useState(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const [name, setName] = useState('');
   const [examTitle, setExamTitle] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [questionCount, setQuestionCount] = useState(25);
 
-  const fetchExams = async () => {
+  const fetchExams = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const result = await listExams({ page: 1, pageSize: 100 });
+      const result = await listExams({ page, pageSize: 20 });
       setExams(result.items || []);
+      setTotal(result.total || 0);
+      const lastPage = Math.max(1, Math.ceil((result.total || 0) / 20));
+      if (page > lastPage) setPage(lastPage);
     } catch (err) {
       setError(err.message || 'Không tải được danh sách đề thi');
     } finally {
       setLoading(false);
     }
-  };
+  }, [page]);
 
   useEffect(() => {
     fetchExams();
+  }, [fetchExams]);
+
+  useEffect(() => {
     listSubjects().then(setSubjects).catch(() => {});
   }, []);
 
@@ -182,8 +190,8 @@ function ExamListPage() {
 	                    <button
 	                      type="button"
 	                      className="icon-btn icon-btn--danger"
-                      title="Xoá"
-                      disabled={deletingId === exam.id}
+                      title={['FINALIZED', 'ARCHIVED'].includes(statusKey(exam.status)) ? 'Đề đã chốt hoặc lưu trữ không thể xoá' : 'Xoá'}
+                      disabled={deletingId === exam.id || ['FINALIZED', 'ARCHIVED'].includes(statusKey(exam.status))}
                       onClick={() => handleDelete(exam)}
                     >
                       <FontAwesomeIcon icon={faTrashCan} />
@@ -194,6 +202,13 @@ function ExamListPage() {
               {exams.length === 0 && (
                 <p className="empty-note">Chưa có đề thi nào. Bấm "Tạo đề thi mới" để bắt đầu.</p>
               )}
+            </div>
+          )}
+          {total > 20 && (
+            <div className="section-actions">
+              <button type="button" className="btn btn--outline" disabled={loading || page <= 1} onClick={() => setPage((current) => current - 1)}>← Trước</button>
+              <span>Trang {page}/{Math.max(1, Math.ceil(total / 20))} · {total} đề thi</span>
+              <button type="button" className="btn btn--outline" disabled={loading || page >= Math.ceil(total / 20)} onClick={() => setPage((current) => current + 1)}>Sau →</button>
             </div>
           )}
         </div>

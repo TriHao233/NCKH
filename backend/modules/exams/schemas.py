@@ -2,24 +2,44 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-# Mapping từ 4 mức nhận thức VN sang bloom_level (1-6) đã có sẵn trên câu hỏi.
+# Keep legacy matrix values readable without changing their original Bloom level.
+LEGACY_COGNITIVE_LEVELS = {
+    "nhan_biet": "nho",
+    "thong_hieu": "hieu",
+    "van_dung_cao": "phan_tich",
+}
+
+
+def normalize_cognitive_level(value):
+    return LEGACY_COGNITIVE_LEVELS.get(value, value) if isinstance(value, str) else value
+
+
 COGNITIVE_LEVEL_TO_BLOOM = {
-    "nhan_biet": 1,
-    "thong_hieu": 2,
+    "nho": 1,
+    "hieu": 2,
     "van_dung": 3,
-    "van_dung_cao": 4,
+    "phan_tich": 4,
+    "danh_gia": 5,
+    "sang_tao": 6,
 }
 
 MAX_VARIANTS_PER_EXAM = 4
 
 
 class CognitiveLevel(str, Enum):
-    NHAN_BIET = "nhan_biet"
-    THONG_HIEU = "thong_hieu"
+    NHO = "nho"
+    HIEU = "hieu"
     VAN_DUNG = "van_dung"
-    VAN_DUNG_CAO = "van_dung_cao"
+    PHAN_TICH = "phan_tich"
+    DANH_GIA = "danh_gia"
+    SANG_TAO = "sang_tao"
+
+    @classmethod
+    def _missing_(cls, value):
+        normalized = normalize_cognitive_level(value)
+        return cls(normalized) if normalized != value else None
 
 
 class QuestionDifficulty(str, Enum):
@@ -49,7 +69,7 @@ class ExamHeaderConfig(BaseModel):
 class MatrixCell(BaseModel):
     chapter_id: str | None = None
     cognitive_level: CognitiveLevel
-    difficulty: QuestionDifficulty
+    difficulty: QuestionDifficulty | None = None
     count: int = Field(..., ge=1)
 
 
@@ -60,7 +80,7 @@ class ExamMatrixRequest(BaseModel):
 class MatrixCellAvailability(BaseModel):
     chapter_id: str | None
     cognitive_level: CognitiveLevel
-    difficulty: QuestionDifficulty
+    difficulty: QuestionDifficulty | None = None
     requested: int
     available: int
     sufficient: bool
@@ -73,12 +93,24 @@ class ExamCreateRequest(BaseModel):
     question_count: int = Field(..., ge=1, le=200)
     header: ExamHeaderConfig = Field(default_factory=ExamHeaderConfig)
 
+    @field_validator("name", "exam_title")
+    @classmethod
+    def validate_title(cls, value):
+        if not value.strip():
+            raise ValueError("Tên đề thi và tên kỳ thi không được để trống")
+        return value.strip()
+
 
 class ExamUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=300)
     exam_title: str | None = Field(None, min_length=1, max_length=300)
     question_count: int | None = Field(None, ge=1, le=200)
     header: ExamHeaderConfig | None = None
+
+    @field_validator("name", "exam_title")
+    @classmethod
+    def validate_title(cls, value):
+        return ExamCreateRequest.validate_title(value) if value is not None else value
 
 
 class ExamStatusUpdateRequest(BaseModel):
@@ -132,6 +164,16 @@ class ExamQuestionPoolResponse(BaseModel):
 class ExamVariantCreateRequest(BaseModel):
     exam_code: str = Field(..., min_length=1, max_length=40)
     shuffle: bool = True
+
+    @field_validator("exam_code")
+    @classmethod
+    def validate_code(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Mã đề không được để trống")
+        if any(character in value for character in '\r\n"/\\'):
+            raise ValueError("Mã đề chứa ký tự không hợp lệ")
+        return value
 
 
 class ExamVariantQuestionEntry(BaseModel):

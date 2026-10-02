@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from urllib.parse import quote
 
 from core.config import settings
 from core.dependencies import CurrentUser, require_exam_manager
@@ -310,7 +311,7 @@ async def export_variant_pdf(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}"},
     )
 
 
@@ -337,5 +338,5 @@ def export_variant_docx(
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}"},
     )
