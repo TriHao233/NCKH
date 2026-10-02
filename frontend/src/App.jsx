@@ -9,6 +9,7 @@ const pageImports = {
     AboutPage: () => import('./pages/AboutPage'),
     GeneratePage: () => import('./pages/GeneratePage'),
     ManagePage: () => import('./pages/ManagePage'),
+    AdminQuestionBankPage: () => import('./pages/AdminQuestionBankPage'),
     ReviewQueuePage: () => import('./pages/ReviewQueuePage'),
     AdminAiReviewPage: () => import('./pages/AdminAiReviewPage'),
     AdminOverviewPage: () => import('./pages/AdminOverviewPage'),
@@ -32,6 +33,7 @@ const pageImports = {
 const AboutPage = lazy(pageImports.AboutPage);
 const GeneratePage = lazy(pageImports.GeneratePage);
 const ManagePage = lazy(pageImports.ManagePage);
+const AdminQuestionBankPage = lazy(pageImports.AdminQuestionBankPage);
 const ReviewQueuePage = lazy(pageImports.ReviewQueuePage);
 const AdminAiReviewPage = lazy(pageImports.AdminAiReviewPage);
 const AdminOverviewPage = lazy(pageImports.AdminOverviewPage);
@@ -86,6 +88,12 @@ function ProtectedPage({ path, children }) {
     );
 }
 
+// Cùng đường dẫn /quan-ly: quản trị viên xem ngân hàng toàn hệ thống, giảng viên xem trang soạn câu hỏi.
+function QuestionBankPage() {
+    const { user } = useContext(AuthContext);
+    return user?.role === 'Admin' ? <AdminQuestionBankPage /> : <ManagePage />;
+}
+
 function App() {
     useEffect(() => preloadDevPages(), []);
 
@@ -108,7 +116,7 @@ function App() {
                     path="/quan-ly"
                     element={(
                         <ProtectedPage path="/quan-ly">
-                            <ManagePage />
+                            <QuestionBankPage />
                         </ProtectedPage>
                     )}
                 />
