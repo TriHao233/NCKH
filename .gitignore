@@ -30,6 +30,7 @@ venv/
 # Node.js (frontend)
 # ===========================
 node_modules/
+.npm-cache/
 /frontend/dist/
 
 # ===========================
