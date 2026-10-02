@@ -5942,6 +5942,15 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(evaluation["rendered_prompt"], "SELECTED_EVALUATION")
         self.assertEqual(evaluation["preview_mode"], "template")
 
+        draft = service.test_prompt_template(
+            PromptTemplateTestPayload(template_key="system", prompt_body="UNSAVED_SYSTEM_DRAFT")
+        )
+        self.assertIn("UNSAVED_SYSTEM_DRAFT", draft["rendered_prompt"])
+        self.assertNotIn("ACTIVE_SYSTEM_V2", draft["rendered_prompt"])
+        self.assertEqual(draft["effective_sources"]["system"], "selected")
+        with self.assertRaises(ValueError):
+            service.test_prompt_template(PromptTemplateTestPayload(prompt_body="NO_KEY"))
+
     def test_evaluation_policy_rejects_out_of_order_thresholds(self):
         weights = {"faithfulness": 1.0}
         valid = {"yellow_min": 0.5, "pass_min": 0.65, "green_min": 0.75}

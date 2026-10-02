@@ -959,12 +959,24 @@ class CatalogService:
         return json_safe(record)
 
     def test_prompt_template(self, payload: PromptTemplateTestPayload) -> dict:
-        if bool(payload.template_key) != bool(payload.version):
+        if payload.prompt_body and not payload.template_key:
+            raise ValueError("Chọn mã prompt cho nội dung đang soạn để chạy thử")
+        if not payload.prompt_body and bool(payload.template_key) != bool(payload.version):
             raise ValueError("Chọn cả mã prompt và phiên bản để chạy thử")
         selected = None
-        if payload.template_key:
-            selected = self.db.prompt_templates.find_one(
-                {"template_key": payload.template_key, "version": payload.version}
+        if payload.prompt_body:
+            # Nội dung đang soạn, chưa lưu thành phiên bản.
+            selected = {
+                "template_key": payload.template_key,
+                "prompt_body": payload.prompt_body,
+                "version": payload.version,
+            }
+        elif payload.template_key:
+            selected = (
+                self.ai_repo.prompt_version(payload.template_key, payload.version) if self.ai_repo else
+                self.db.prompt_templates.find_one(
+                    {"template_key": payload.template_key, "version": payload.version}
+                )
             )
             if not selected:
                 raise LookupError("Không tìm thấy phiên bản prompt")

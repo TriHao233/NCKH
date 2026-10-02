@@ -183,11 +183,16 @@ class PostgresAiRepository:
         return self.model(code)
 
     def update_health(self, code: str, snapshot: dict) -> None:
+        # Cột JSONB không nhận datetime; lưu thời điểm kiểm tra dạng chuỗi ISO.
+        stored = {
+            key: value.isoformat() if isinstance(value, datetime) else value
+            for key, value in snapshot.items()
+        }
         with postgres_connection() as conn:
             conn.execute("""
                 UPDATE ai_models SET last_health_check=%s, updated_at=%s
                 WHERE model_code=%s
-            """, (Jsonb(snapshot), _now(), code))
+            """, (Jsonb(stored), _now(), code))
 
     def prompts(self) -> list[dict]:
         with postgres_connection() as conn:
@@ -202,6 +207,13 @@ class PostgresAiRepository:
             row = conn.execute("""
                 SELECT * FROM prompt_templates WHERE template_key=%s
             """ + condition + " ORDER BY version DESC LIMIT 1", (key,)).fetchone()
+        return _api(row)
+
+    def prompt_version(self, key: str, version: int) -> dict | None:
+        with postgres_connection() as conn:
+            row = conn.execute("""
+                SELECT * FROM prompt_templates WHERE template_key=%s AND version=%s
+            """, (key, version)).fetchone()
         return _api(row)
 
     def active_prompt_count(self) -> int:

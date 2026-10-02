@@ -159,6 +159,8 @@ class PromptTemplateActivationPayload(BaseModel):
 class PromptTemplateTestPayload(BaseModel):
     template_key: str | None = Field(None, min_length=1, max_length=120)
     version: int | None = Field(None, ge=1)
+    # Nội dung đang soạn để chạy thử trước khi lưu thành phiên bản.
+    prompt_body: str | None = Field(None, min_length=1)
     context: str = Field(
         "Stack uses LIFO, queue uses FIFO.",
         min_length=1,
