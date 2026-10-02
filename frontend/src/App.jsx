@@ -11,6 +11,7 @@ const pageImports = {
     ManagePage: () => import('./pages/ManagePage'),
     AdminQuestionBankPage: () => import('./pages/AdminQuestionBankPage'),
     AdminDocumentsPage: () => import('./pages/AdminDocumentsPage'),
+    AdminExamsPage: () => import('./pages/AdminExamsPage'),
     ReviewQueuePage: () => import('./pages/ReviewQueuePage'),
     AdminAiReviewPage: () => import('./pages/AdminAiReviewPage'),
     AdminOverviewPage: () => import('./pages/AdminOverviewPage'),
@@ -36,6 +37,7 @@ const GeneratePage = lazy(pageImports.GeneratePage);
 const ManagePage = lazy(pageImports.ManagePage);
 const AdminQuestionBankPage = lazy(pageImports.AdminQuestionBankPage);
 const AdminDocumentsPage = lazy(pageImports.AdminDocumentsPage);
+const AdminExamsPage = lazy(pageImports.AdminExamsPage);
 const ReviewQueuePage = lazy(pageImports.ReviewQueuePage);
 const AdminAiReviewPage = lazy(pageImports.AdminAiReviewPage);
 const AdminOverviewPage = lazy(pageImports.AdminOverviewPage);
@@ -96,6 +98,11 @@ function QuestionBankPage() {
     return user?.role === 'Admin' ? <AdminQuestionBankPage /> : <ManagePage />;
 }
 
+function ExamsPage() {
+    const { user } = useContext(AuthContext);
+    return user?.role === 'Admin' ? <AdminExamsPage /> : <ExamListPage />;
+}
+
 function DocumentsPage() {
     const { user } = useContext(AuthContext);
     return user?.role === 'Admin' ? <AdminDocumentsPage /> : <DocumentManagePage />;
@@ -147,7 +154,7 @@ function App() {
                     path="/lam-de-thi"
                     element={(
                         <ProtectedPage path="/lam-de-thi">
-                            <ExamListPage />
+                            <ExamsPage />
                         </ProtectedPage>
                     )}
                 />
