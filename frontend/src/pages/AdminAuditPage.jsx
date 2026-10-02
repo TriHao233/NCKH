@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronLeft,
@@ -10,6 +11,7 @@ import {
   faSearch,
 } from '@fortawesome/free-solid-svg-icons';
 import { listAdminAuditLogs } from '../api/adminAudit';
+import { listUsers } from '../api/users';
 import {
   downloadCsv,
   downloadXlsx,
@@ -32,6 +34,19 @@ const ACTION_OPTIONS = [
   { value: 'QUESTION_NEEDS_REVISION', label: 'Yêu cầu sửa' },
   { value: 'QUESTION_REVIEW_CLAIMED', label: 'Nhận kiểm duyệt' },
   { value: 'QUESTION_REVIEW_RELEASED', label: 'Trả câu kiểm duyệt' },
+  { value: 'QUESTION_SUBMITTED_FOR_REVIEW', label: 'Câu hỏi được gửi duyệt' },
+  { value: 'question.submit_review', label: 'Gửi duyệt câu hỏi' },
+  { value: 'question.sharing_update', label: 'Đổi chia sẻ câu hỏi' },
+  { value: 'document.sharing_update', label: 'Đổi chia sẻ tài liệu' },
+  { value: 'document.ocr_correction', label: 'Sửa nội dung đã đọc của tài liệu' },
+  { value: 'REVIEW_POLICY_UPDATED', label: 'Sửa chính sách duyệt lần 2' },
+  { value: 'ai_model.save', label: 'Lưu mô hình AI' },
+  { value: 'ai_model.activate', label: 'Bật / khóa mô hình AI' },
+  { value: 'prompt.save', label: 'Lưu mẫu prompt' },
+  { value: 'prompt.activate', label: 'Bật / tắt mẫu prompt' },
+  { value: 'evaluation_policy.save', label: 'Lưu tiêu chí đánh giá' },
+  { value: 'evaluation_policy.activate', label: 'Đổi tiêu chí đánh giá đang dùng' },
+  { value: 'user.invite', label: 'Mời người dùng' },
   { value: 'admin.job_retry', label: 'Chạy lại tác vụ' },
   { value: 'admin.job_cancel', label: 'Hủy tác vụ' },
   { value: 'admin.moodle_target_save', label: 'Lưu cấu hình Moodle' },
@@ -44,12 +59,25 @@ const ACTION_OPTIONS = [
 const ENTITY_OPTIONS = [
   { value: 'all', label: 'Tất cả đối tượng' },
   { value: 'user', label: 'Người dùng' },
-  { value: 'QUESTION', label: 'Câu hỏi' },
+  { value: 'question', label: 'Câu hỏi (soạn, chia sẻ)' },
+  { value: 'QUESTION', label: 'Câu hỏi (kiểm duyệt)' },
+  { value: 'document', label: 'Tài liệu' },
   { value: 'generation', label: 'Tác vụ sinh câu hỏi' },
   { value: 'evaluation', label: 'Tác vụ đánh giá' },
-  { value: 'document', label: 'Tác vụ tài liệu' },
-  { value: 'moodle_target', label: 'Cấu hình Moodle' },
+  { value: 'ai_model', label: 'Mô hình AI' },
+  { value: 'prompt_template', label: 'Mẫu prompt' },
+  { value: 'evaluation_policy', label: 'Tiêu chí đánh giá' },
+  { value: 'review_policy', label: 'Chính sách duyệt' },
+  { value: 'moodle_target', label: 'Kết nối Moodle' },
 ];
+const ENTITY_LABEL = {
+  ...Object.fromEntries(ENTITY_OPTIONS.slice(1).map((option) => [option.value, option.label])),
+  question: 'Câu hỏi',
+  QUESTION: 'Câu hỏi',
+  document_page: 'Trang tài liệu',
+  subject: 'Học phần',
+};
+const ROLE_LABEL = { Admin: 'Quản trị viên', Teacher: 'Giảng viên', Reviewer: 'Người duyệt' };
 
 function compactId(value) {
   if (!value) return 'Chưa có';
@@ -82,9 +110,32 @@ function jsonText(value) {
   return JSON.stringify(value, null, 2);
 }
 
-function entityText(log) {
+// Nhật ký chỉ lưu mã đối tượng; tra tên người dùng từ danh sách tài khoản khi có thể.
+function entityText(log, userById = new Map()) {
   const entity = log.entity || {};
-  return `${entity.type || 'entity'} ${compactId(entity.id)}`;
+  const label = ENTITY_LABEL[entity.type] || entity.type || 'Đối tượng';
+  if (entity.type === 'user') {
+    const user = userById.get(entity.id);
+    if (user) return `${label}: ${user.display_name || user.email}`;
+  }
+  return `${label} ${compactId(entity.id)}`;
+}
+
+function roleText(log, userById = new Map()) {
+  const role = log.actor?.role || userById.get(log.actor?.user_id)?.role;
+  if (role) return ROLE_LABEL[role] || role;
+  return log.actor?.type === 'USER' ? 'Người dùng' : 'Hệ thống';
+}
+
+async function fetchAllUsers() {
+  const first = await listUsers({ page: 1, pageSize: 100 });
+  const items = [...(first.items || [])];
+  for (let page = 2; items.length < (first.total || 0); page += 1) {
+    const next = await listUsers({ page, pageSize: 100 });
+    if (!next.items?.length) break;
+    items.push(...next.items);
+  }
+  return items;
 }
 
 function actorText(log) {
@@ -102,7 +153,7 @@ const AUDIT_EXPORT_COLUMNS = [
   { header: 'Người dùng/Hệ thống', value: actorText },
   { header: 'Vai trò', value: (log) => log.actor?.role || '' },
   { header: 'Loại tác nhân', value: (log) => log.actor?.type || '' },
-  { header: 'Đối tượng', value: entityText },
+  { header: 'Đối tượng', value: (log) => entityText(log) },
   { header: 'Loại đối tượng', value: (log) => log.entity?.type || '' },
   { header: 'Mã đối tượng', value: (log) => log.entity?.id || '' },
   { header: 'Mã phiên bản đối tượng', value: (log) => log.entity?.version_id || '' },
@@ -128,6 +179,14 @@ function AdminAuditPage() {
   const [error, setError] = useState('');
   const [exportKey, setExportKey] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [users, setUsers] = useState([]);
+  const userById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+
+  useEffect(() => {
+    fetchAllUsers()
+      .then((items) => setUsers(items.sort((left, right) => String(left.display_name || left.email).localeCompare(String(right.display_name || right.email), 'vi'))))
+      .catch(() => setUsers([]));
+  }, []);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -251,9 +310,9 @@ function AdminAuditPage() {
     <main className="admin-jobs-page">
       <section className="jobs-header">
         <div>
-          <span>Quản trị hệ thống</span>
+          <span>Hệ thống</span>
           <h1>Nhật ký hệ thống</h1>
-          <p>Theo dõi hành động nhạy cảm, thay đổi quyền và luồng xử lý trên toàn hệ thống.</p>
+          <p>Ai đã làm gì, lúc nào và thay đổi những gì trên toàn hệ thống.</p>
         </div>
         <div className="jobs-header-actions">
           <button
@@ -314,12 +373,15 @@ function AdminAuditPage() {
           </select>
         </div>
         <div className="toolbar-field">
-          <label htmlFor="audit-actor">ID người thực hiện</label>
-          <input id="audit-actor" value={actorUserId} onChange={(event) => updateActorUserId(event.target.value)} placeholder="User ID" />
+          <label htmlFor="audit-actor">Người thực hiện</label>
+          <select id="audit-actor" value={actorUserId} onChange={(event) => updateActorUserId(event.target.value)}>
+            <option value="">Tất cả</option>
+            {users.map((user) => <option key={user.id} value={user.id}>{user.display_name || user.email}</option>)}
+          </select>
         </div>
         <div className="toolbar-field">
-          <label htmlFor="audit-entity">ID đối tượng</label>
-          <input id="audit-entity" value={entityId} onChange={(event) => updateEntityId(event.target.value)} placeholder="Object ID" />
+          <label htmlFor="audit-entity">Mã đối tượng</label>
+          <input id="audit-entity" value={entityId} onChange={(event) => updateEntityId(event.target.value)} placeholder="Dán mã để lọc một đối tượng" />
         </div>
         <div className="toolbar-field">
           <label htmlFor="audit-from">Từ ngày</label>
@@ -366,11 +428,10 @@ function AdminAuditPage() {
                     </td>
                     <td>
                       <span>{actorText(log)}</span>
-                      <small>{log.actor?.role || log.actor?.type || 'actor'}</small>
+                      <small>{roleText(log, userById)}</small>
                     </td>
                     <td>
-                      <span className="entity-text">{entityText(log)}</span>
-                      <small>{compactId(log.entity?.version_id)}</small>
+                      <span className="entity-text">{entityText(log, userById)}</span>
                     </td>
                   </tr>
                 ))}
@@ -408,11 +469,20 @@ function AdminAuditPage() {
                 </div>
                 <div>
                   <dt>Người thực hiện</dt>
-                  <dd>{actorText(selectedLog)}</dd>
+                  <dd>{actorText(selectedLog)} · {roleText(selectedLog, userById)}</dd>
                 </div>
                 <div>
                   <dt>Đối tượng</dt>
-                  <dd>{entityText(selectedLog)}</dd>
+                  <dd>
+                    {entityText(selectedLog, userById)}
+                    {['question', 'QUESTION'].includes(selectedLog.entity?.type) && selectedLog.entity?.id && (
+                      <> · <Link to={`/quan-ly?questionId=${selectedLog.entity.id}`}>Mở câu hỏi</Link></>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Mã đối tượng</dt>
+                  <dd>{selectedLog.entity?.id || 'Không có'}</dd>
                 </div>
               </dl>
               <div className="audit-json-grid">

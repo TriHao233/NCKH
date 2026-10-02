@@ -12,6 +12,7 @@ import {
   faSearch,
 } from '@fortawesome/free-solid-svg-icons';
 import { cancelAdminJob, listAdminJobs, retryAdminJob } from '../api/adminJobs';
+import { listUsers } from '../api/users';
 import {
   downloadCsv,
   downloadXlsx,
@@ -39,8 +40,8 @@ const JOB_TYPE_LABEL = {
   'Evaluation': 'Đánh giá câu hỏi',
   'document': 'Tài liệu',
   'DOCUMENT': 'Tài liệu',
-  'EXTRACT_TEXT': 'Trích xuất văn bản',
-  'CHUNK_AND_EMBED': 'Phân mảnh & Nhúng',
+  'EXTRACT_TEXT': 'Đọc nội dung tài liệu',
+  'CHUNK_AND_EMBED': 'Tách đoạn và lập chỉ mục',
 };
 
 const STATUS_LABEL = {
@@ -103,6 +104,23 @@ function statusClass(status) {
   return 'muted';
 }
 
+// Lý do hủy do máy chủ ghi bằng tiếng Anh.
+function errorText(message) {
+  const cancelled = String(message || '').match(/^Cancelled by admin (.+)$/);
+  return cancelled ? `Quản trị viên ${cancelled[1]} đã hủy` : message;
+}
+
+async function fetchAllUsers() {
+  const first = await listUsers({ page: 1, pageSize: 100 });
+  const items = [...(first.items || [])];
+  for (let page = 2; items.length < (first.total || 0); page += 1) {
+    const next = await listUsers({ page, pageSize: 100 });
+    if (!next.items?.length) break;
+    items.push(...next.items);
+  }
+  return items;
+}
+
 function entityText(job) {
   const entity = job.entity || {};
   return entity.label || entity.id || 'Chưa gắn đối tượng';
@@ -116,7 +134,7 @@ const JOB_EXPORT_COLUMNS = [
   { header: 'Loại đối tượng', value: (job) => job.entity?.type || '' },
   { header: 'Mã đối tượng', value: (job) => job.entity?.id || '' },
   { header: 'Tên người tạo', value: (job) => job.actor_user_name || job.actor_user_id || '' },
-  { header: 'Ngày vào hàng đợi', value: (job) => job.queued_at || '' },
+  { header: 'Ngày vào hàng chờ', value: (job) => job.queued_at || '' },
   { header: 'Ngày bắt đầu', value: (job) => job.started_at || '' },
   { header: 'Ngày hoàn tất', value: (job) => job.finished_at || '' },
   { header: 'Ngày cập nhật', value: (job) => job.updated_at || '' },
@@ -125,7 +143,7 @@ const JOB_EXPORT_COLUMNS = [
   { header: 'Quá thời gian (Long running)', value: (job) => (job.is_long_running ? 'có' : 'không') },
   { header: 'Có thể chạy lại', value: (job) => (job.can_retry ? 'có' : 'không') },
   { header: 'Có thể hủy', value: (job) => (job.can_cancel ? 'có' : 'không') },
-  { header: 'Lỗi', value: (job) => job.error_message || '' },
+  { header: 'Lỗi', value: (job) => errorText(job.error_message) || '' },
   { header: 'Dữ liệu trạng thái', value: (job) => job.snapshot || {} },
 ];
 
@@ -140,6 +158,7 @@ function AdminJobsPage() {
   const [statusFilter, setStatusFilter] = useState(initialFilters.status);
   const [staleOnly, setStaleOnly] = useState(initialFilters.staleOnly);
   const [userIdFilter, setUserIdFilter] = useState('');
+  const [users, setUsers] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [searchInput, setSearchInput] = useState(initialFilters.search);
@@ -149,6 +168,12 @@ function AdminJobsPage() {
   const [actionKey, setActionKey] = useState('');
   const [exportKey, setExportKey] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
+
+  useEffect(() => {
+    fetchAllUsers()
+      .then((items) => setUsers(items.sort((left, right) => String(left.display_name || left.email).localeCompare(String(right.display_name || right.email), 'vi'))))
+      .catch(() => setUsers([]));
+  }, []);
 
   useEffect(() => {
     const filters = parseJobFilters(location.search);
@@ -340,7 +365,7 @@ function AdminJobsPage() {
     <main className="admin-jobs-page">
       <section className="jobs-header">
         <div>
-          <span>Quản trị hệ thống</span>
+          <span>Hệ thống</span>
           <h1>Tác vụ hệ thống</h1>
           <p>Theo dõi các tác vụ sinh câu hỏi, đánh giá chất lượng và xử lý tài liệu.</p>
         </div>
@@ -370,7 +395,7 @@ function AdminJobsPage() {
         </div>
       </section>
 
-      <section className="jobs-summary" aria-label="Tổng quan hàng đợi">
+      <section className="jobs-summary" aria-label="Số tác vụ theo tình trạng">
         <button type="button" className="summary-tile" onClick={showAllJobs}>
           <b>{summary.total}</b>
           <span>Tổng tác vụ</span>
@@ -389,7 +414,7 @@ function AdminJobsPage() {
         </button>
       </section>
 
-      <section className="jobs-toolbar" aria-label="Bộ lọc hàng đợi">
+      <section className="jobs-toolbar" aria-label="Bộ lọc tác vụ">
         <div className="toolbar-field toolbar-field--search">
           <label htmlFor="job-search">
             <FontAwesomeIcon icon={faSearch} />
@@ -424,12 +449,10 @@ function AdminJobsPage() {
         </div>
         <div className="toolbar-field">
           <label htmlFor="job-user">Người tạo</label>
-          <input
-            id="job-user"
-            value={userIdFilter}
-            onChange={(event) => updateUserIdFilter(event.target.value)}
-            placeholder="User ID"
-          />
+          <select id="job-user" value={userIdFilter} onChange={(event) => updateUserIdFilter(event.target.value)}>
+            <option value="">Tất cả</option>
+            {users.map((user) => <option key={user.id} value={user.id}>{user.display_name || user.email}</option>)}
+          </select>
         </div>
         <div className="toolbar-field">
           <label htmlFor="job-date-from">Từ ngày</label>
@@ -507,7 +530,7 @@ function AdminJobsPage() {
                         <small>{formatAge(job.age_seconds)}</small>
                       </td>
                       <td>
-                        <span className="error-cell">{job.error_message || 'Không có'}</span>
+                        <span className="error-cell" title={errorText(job.error_message) || undefined}>{errorText(job.error_message) || 'Không có'}</span>
                       </td>
                       <td>
                         <div className="row-actions">
@@ -575,7 +598,7 @@ function AdminJobsPage() {
                   <dd>{entityText(selectedJob)}</dd>
                 </div>
                 <div>
-                  <dt>Đưa vào hàng đợi</dt>
+                  <dt>Vào hàng chờ</dt>
                   <dd>{formatDateTime(selectedJob.queued_at)}</dd>
                 </div>
                 <div>
@@ -594,7 +617,7 @@ function AdminJobsPage() {
               {selectedJob.error_message && (
                 <div className="job-detail-error">
                   <span>Lỗi gần nhất</span>
-                  <p>{selectedJob.error_message}</p>
+                  <p>{errorText(selectedJob.error_message)}</p>
                 </div>
               )}
               <div className="job-detail-json">
