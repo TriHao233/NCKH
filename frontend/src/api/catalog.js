@@ -52,6 +52,10 @@ export function saveAiModel(payload) {
   return apiRequest('/catalog/ai-models', { method: 'POST', body: payload });
 }
 
+export function updateAiModel(modelCode, payload) {
+  return apiRequest(`/catalog/ai-models/${encodeURIComponent(modelCode)}`, { method: 'PUT', body: payload });
+}
+
 export function setAiModelActive(payload) {
   return apiRequest('/catalog/ai-models/active', { method: 'POST', body: payload });
 }
