@@ -57,6 +57,40 @@
   color: #005bac;
 }
 
+.admin-ai-review-page .btn--danger,
+.ai-review-detail-actions .danger {
+  background: #fff;
+  color: #c0392b;
+  border-color: #f1c4bd;
+}
+
+.ai-review-actions {
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.ai-review-model-picker {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-review-model-picker span {
+  color: #52677d;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.ai-review-model-picker select {
+  min-height: 36px;
+  max-width: 240px;
+  border: 1px solid #d9e6f2;
+  border-radius: 8px;
+  background: #fff;
+  color: #17324d;
+  font-family: inherit;
+  padding: 7px 28px 7px 10px;
+}
+
 .admin-ai-review-page button:disabled {
   opacity: 0.55;
   cursor: not-allowed;

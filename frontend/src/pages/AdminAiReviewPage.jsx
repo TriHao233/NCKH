@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   autoEvaluateQuestion,
@@ -6,6 +6,8 @@ import {
   listQuestionEvaluations,
   listQuestions,
 } from '../api/questions';
+import { cancelAdminJob } from '../api/adminJobs';
+import { listAvailableAiModels } from '../api/catalog';
 import { questionTypeLabel } from '../constants/generationEnums';
 import '../css/AdminAiReviewPage.css';
 
@@ -88,6 +90,18 @@ function canQueueEvaluation(question) {
   return question && !isEvaluationBusy(question) && question.evaluation_status !== 'PASSED';
 }
 
+function evaluationJobId(question) {
+  return question?.quality_summary?.latest_evaluation_job_id || '';
+}
+
+function evaluationErrorText(error = {}) {
+  const message = error.message || '';
+  if (message.startsWith('Cancelled by admin')) return 'Quản trị viên đã dừng lượt kiểm tra này.';
+  if (error.code === 'INSUFFICIENT_EVIDENCE') return `Không thể chấm vì thiếu nguồn: ${message}`;
+  if (error.code === 'EVIDENCE_VALIDATION_FAILED') return `Minh chứng AI không hợp lệ: ${message}`;
+  return `Lỗi AI: ${message}`;
+}
+
 function questionSummary(question) {
   const quality = question?.quality_summary || {};
   if (typeof quality.overall_score === 'number') {
@@ -112,36 +126,41 @@ function AdminAiReviewPage() {
   const [message, setMessage] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
   const [checkingAll, setCheckingAll] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [evaluationModels, setEvaluationModels] = useState([]);
+  const [evaluationModelCode, setEvaluationModelCode] = useState('');
+  const stopRequestedRef = useRef(false);
+  const sendingRef = useRef(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearchTerm(searchInput.trim()), 350);
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  const fetchQuestionPages = async (params) => {
+    const first = await listQuestions({ page: 1, pageSize: 100, ...params });
+    const items = [...(first.items || [])];
+    const total = first.total || items.length;
+    for (let page = 2; items.length < total; page += 1) {
+      const next = await listQuestions({ page, pageSize: 100, ...params });
+      const pageItems = next.items || [];
+      if (!pageItems.length) break;
+      items.push(...pageItems);
+    }
+    return items;
+  };
+
   const fetchAiQuestions = async () => {
     setLoading(true);
     setError('');
     try {
-      const evaluationStatus = Array.from(AI_REVIEW_STATUSES).join(',');
-      const first = await listQuestions({
-        page: 1,
-        pageSize: 100,
-        search: searchTerm || undefined,
-        evaluationStatus,
-      });
-      const items = [...(first.items || [])];
-      const total = first.total || items.length;
-      for (let page = 2; items.length < total; page += 1) {
-        const next = await listQuestions({
-          page,
-          pageSize: 100,
-          search: searchTerm || undefined,
-          evaluationStatus,
-        });
-        const pageItems = next.items || [];
-        if (!pageItems.length) break;
-        items.push(...pageItems);
-      }
+      const search = searchTerm || undefined;
+      // Gồm cả câu chờ duyệt chưa chấm AI (kể cả câu vừa bị dừng) để chạy lại được ngay tại đây.
+      const [evaluated, pending] = await Promise.all([
+        fetchQuestionPages({ search, evaluationStatus: Array.from(AI_REVIEW_STATUSES).join(',') }),
+        fetchQuestionPages({ search, reviewStatus: 'PENDING' }),
+      ]);
+      const items = [...new Map([...evaluated, ...pending].map((item) => [item.id, item])).values()];
       setQuestions(items);
       return items;
     } catch (err) {
@@ -172,6 +191,16 @@ function AdminAiReviewPage() {
     fetchAiQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm]);
+
+  useEffect(() => {
+    listAvailableAiModels('QUESTION_EVALUATION')
+      .then((result) => {
+        const items = result.items || [];
+        setEvaluationModels(items);
+        setEvaluationModelCode(result.default_model_code || items[0]?.code || '');
+      })
+      .catch(() => setEvaluationModels([]));
+  }, []);
 
   useEffect(() => {
     if (!selected) return;
@@ -257,16 +286,19 @@ function AdminAiReviewPage() {
     if (fresh) await loadEvaluationHistory(fresh);
   };
 
+  const queueEvaluation = (question) => autoEvaluateQuestion(question.id, {
+    expected_version: question.current_version,
+    fallback_to_heuristic: false,
+    ...(evaluationModelCode ? { evaluator_model_code: evaluationModelCode } : {}),
+  });
+
   const runEvaluation = async (question) => {
     setBusyId(question.id);
     setMessage('');
     try {
-      await autoEvaluateQuestion(question.id, {
-        expected_version: question.current_version,
-        fallback_to_heuristic: false,
-      });
-      setMessage('Đã đưa câu hỏi vào hàng đợi AI đánh giá.');
+      await queueEvaluation(question);
       await refreshSelection(question.id);
+      setMessage('Đã đưa câu hỏi vào hàng đợi AI đánh giá.');
     } catch (err) {
       setMessage(err.message || 'Đánh giá AI thất bại');
     } finally {
@@ -274,24 +306,55 @@ function AdminAiReviewPage() {
     }
   };
 
-  const fetchAllPendingQuestions = async () => {
-    const first = await listQuestions({ page: 1, pageSize: 100, reviewStatus: 'PENDING' });
-    const items = [...(first.items || [])];
-    const total = first.total || items.length;
-    for (let page = 2; items.length < total; page += 1) {
-      const next = await listQuestions({ page, pageSize: 100, reviewStatus: 'PENDING' });
-      const pageItems = next.items || [];
-      if (!pageItems.length) break;
-      items.push(...pageItems);
+  const stopEvaluation = async (question) => {
+    const jobId = evaluationJobId(question);
+    if (!jobId) return;
+    setBusyId(question.id);
+    setMessage('');
+    try {
+      await cancelAdminJob('evaluation', jobId);
+      const items = await fetchAiQuestions();
+      // Câu đã dừng quay về "Chưa đánh giá"; nếu không còn trong danh sách vẫn giữ lại để chạy lại.
+      const fresh = items.find((item) => item.id === question.id) || await getQuestion(question.id);
+      await loadEvaluationHistory(fresh);
+      setMessage('Đã dừng kiểm tra AI cho câu hỏi này.');
+    } catch (err) {
+      setMessage(err.message || 'Dừng kiểm tra AI thất bại');
+    } finally {
+      setBusyId('');
     }
-    return items;
+  };
+
+  const stopAllEvaluations = async () => {
+    // Dừng cả lượt đang gửi dở lẫn các câu đã nằm trong hàng đợi AI.
+    stopRequestedRef.current = true;
+    setStopping(true);
+    setMessage('');
+    try {
+      // Chờ yêu cầu đang gửi dở xong để không sót câu vừa vào hàng đợi.
+      await sendingRef.current;
+      const items = await fetchAiQuestions();
+      const targets = items.filter((item) => isEvaluationBusy(item) && evaluationJobId(item));
+      const outcomes = await Promise.allSettled(
+        targets.map((item) => cancelAdminJob('evaluation', evaluationJobId(item))),
+      );
+      const stopped = outcomes.filter((outcome) => outcome.status === 'fulfilled').length;
+      setMessage(targets.length === 0
+        ? 'Không có câu hỏi nào đang kiểm tra AI.'
+        : `Đã dừng kiểm tra AI cho ${stopped}/${targets.length} câu hỏi.`);
+      await fetchAiQuestions();
+    } catch (err) {
+      setMessage(err.message || 'Dừng kiểm tra AI thất bại');
+    } finally {
+      setStopping(false);
+    }
   };
 
   const checkAllPending = async () => {
     setCheckingAll(true);
     setMessage('');
     try {
-      const pending = await fetchAllPendingQuestions();
+      const pending = await fetchQuestionPages({ reviewStatus: 'PENDING' });
       const targets = pending.filter(canQueueEvaluation);
       if (targets.length === 0) {
         setMessage('Không có câu hỏi đang chờ duyệt nào cần kiểm tra AI.');
@@ -300,15 +363,29 @@ function AdminAiReviewPage() {
       if (!window.confirm(`Đưa ${targets.length} câu hỏi đang chờ duyệt vào hàng đợi kiểm tra AI?`)) {
         return;
       }
-      const outcomes = await Promise.allSettled(targets.map((question) => autoEvaluateQuestion(question.id, {
-        expected_version: question.current_version,
-        fallback_to_heuristic: false,
-      })));
-      const failed = outcomes.filter((outcome) => outcome.status === 'rejected').length;
-      setMessage(failed > 0
-        ? `Đã đưa ${targets.length - failed}/${targets.length} câu hỏi vào hàng đợi AI (${failed} lỗi).`
-        : `Đã đưa toàn bộ ${targets.length} câu hỏi vào hàng đợi kiểm tra AI.`);
-      await fetchAiQuestions();
+      // Gửi lần lượt để nút "Dừng kiểm tra" có thể ngắt giữa chừng.
+      stopRequestedRef.current = false;
+      let queued = 0;
+      let failed = 0;
+      const sending = (async () => {
+        for (const question of targets) {
+          if (stopRequestedRef.current) break;
+          try {
+            await queueEvaluation(question);
+            queued += 1;
+          } catch {
+            failed += 1;
+          }
+        }
+      })();
+      sendingRef.current = sending;
+      await sending;
+      if (!stopRequestedRef.current) {
+        setMessage(failed > 0
+          ? `Đã đưa ${queued}/${targets.length} câu hỏi vào hàng đợi AI (${failed} lỗi).`
+          : `Đã đưa toàn bộ ${targets.length} câu hỏi vào hàng đợi kiểm tra AI.`);
+        await fetchAiQuestions();
+      }
     } catch (err) {
       setMessage(err.message || 'Kiểm tra toàn bộ thất bại');
     } finally {
@@ -328,9 +405,29 @@ function AdminAiReviewPage() {
           <button type="button" className="btn btn--outline" onClick={() => navigate('/quan-ly')}>
             Câu hỏi
           </button>
+          {evaluationModels.length > 0 && (
+            <label className="ai-review-model-picker">
+              <span>Mô hình thẩm định</span>
+              <select
+                aria-label="Mô hình thẩm định"
+                value={evaluationModelCode}
+                onChange={(event) => setEvaluationModelCode(event.target.value)}
+                disabled={checkingAll}
+              >
+                {evaluationModels.map((model) => (
+                  <option key={model.code} value={model.code}>{model.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <button type="button" className="btn btn--outline" onClick={checkAllPending} disabled={checkingAll || loading}>
             {checkingAll ? 'Đang kiểm tra...' : 'Kiểm tra toàn bộ'}
           </button>
+          {(checkingAll || counts.processing > 0) && (
+            <button type="button" className="btn btn--danger" onClick={stopAllEvaluations} disabled={stopping}>
+              {stopping ? 'Đang dừng...' : 'Dừng kiểm tra'}
+            </button>
+          )}
           <button type="button" className="btn btn--primary" onClick={fetchAiQuestions} disabled={loading}>
             {loading ? 'Đang tải' : 'Làm mới'}
           </button>
@@ -423,9 +520,15 @@ function AdminAiReviewPage() {
               </div>
 
               <div className="ai-review-detail-actions">
-                <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
-                  {['FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(selected.evaluation_status) ? 'Thử lại AI' : 'Chạy AI'}
-                </button>
+                {isEvaluationBusy(selected) ? (
+                  <button type="button" className="danger" disabled={busyId === selected.id || !evaluationJobId(selected)} onClick={() => stopEvaluation(selected)}>
+                    {busyId === selected.id ? 'Đang dừng...' : 'Dừng kiểm tra'}
+                  </button>
+                ) : (
+                  <button type="button" disabled={busyId === selected.id || !canQueueEvaluation(selected)} onClick={() => runEvaluation(selected)}>
+                    {['FAILED', 'ERROR', 'STALE', 'INSUFFICIENT_EVIDENCE', 'EVIDENCE_VALIDATION_FAILED'].includes(selected.evaluation_status) ? 'Thử lại AI' : 'Chạy AI'}
+                  </button>
+                )}
                 <button type="button" className="primary" onClick={() => navigate(`/kiem-duyet?questionId=${selected.id}`)}>Mở để kiểm duyệt</button>
               </div>
 
@@ -473,14 +576,7 @@ function AdminAiReviewPage() {
                     <p>{latestEvidence.supporting_excerpt || latestEvidence.source_excerpt || 'Chưa có minh chứng.'}</p>
                     {latestEvidence.reasoning && <span>{latestEvidence.reasoning}</span>}
                     {qualitySummary.error?.message && (
-                      <span className="ai-evidence-warning">
-                        {qualitySummary.error.code === 'INSUFFICIENT_EVIDENCE'
-                          ? 'Không thể chấm vì thiếu nguồn: '
-                          : qualitySummary.error.code === 'EVIDENCE_VALIDATION_FAILED'
-                            ? 'Minh chứng AI không hợp lệ: '
-                            : 'Lỗi AI: '}
-                        {qualitySummary.error.message}
-                      </span>
+                      <span className="ai-evidence-warning">{evaluationErrorText(qualitySummary.error)}</span>
                     )}
                     {retrievalEvidence.status && (
                       <div className="ai-retrieval-summary">
