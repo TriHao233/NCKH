@@ -3,11 +3,14 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from bson import ObjectId
+from psycopg import Rollback, sql
+from psycopg.errors import UniqueViolation
 
 from core.config import settings
 from core.dependencies import CurrentUser
@@ -20,6 +23,8 @@ from modules.questions.workflow_schemas import (
     ReviewDraftUpsertRequest, SecondaryReviewRequest,
 )
 from modules.questions.repository import serialize_question
+from modules.questions.schemas import QuestionCreateRequest
+from modules.questions.service import QuestionService
 from modules.users.postgres_repository import PostgresUserRepository
 
 
@@ -27,6 +32,144 @@ pytestmark = pytest.mark.skipif(
     os.getenv("RUN_POSTGRES_INTEGRATION") != "1",
     reason="Requires an explicitly configured PostgreSQL test database",
 )
+
+
+def test_short_code_migration_seeds_numeric_codes_and_skips_occupied_numbers():
+    schema = f"qa_codes_{uuid4().hex}"
+    migration = (Path(__file__).parents[1] / "db/migrations/0021_short_question_codes.sql").read_text()
+    with postgres_connection() as conn:
+        with conn.transaction():
+            conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
+            conn.execute("CREATE TABLE questions (question_code text UNIQUE)")
+            conn.execute("INSERT INTO questions VALUES ('Q-000042'), ('Q-507F1F77BCF86CD799439011')")
+            conn.execute(migration)
+            conn.execute("INSERT INTO questions VALUES ('Q-000043')")
+            assert PostgresQuestionRepository._next_question_code(conn) == "Q-000044"
+            conn.execute("SELECT setval('question_code_seq', 1000000, false)")
+            assert PostgresQuestionRepository._next_question_code(conn) == "Q-1000000"
+            # Roll back only this temporary schema and its test data.
+            raise Rollback()
+
+
+def test_short_question_codes_are_unique_during_concurrent_creation(monkeypatch):
+    monkeypatch.setattr(settings, "user_store", "postgres")
+    monkeypatch.setattr(settings, "catalog_store", "postgres")
+    suffix = uuid4().hex[:12]
+    author = PostgresUserRepository().create({
+        "firebase_uid": f"short-code-{suffix}",
+        "email": f"short-code-{suffix}@example.test",
+        "display_name": "Short code test", "role": "Teacher",
+    })
+    repository = PostgresQuestionRepository()
+    service = QuestionService(repository, references=object())
+    actor = CurrentUser(id=author["_id"], firebase_uid="", email=author["email"],
+                        role="Teacher", is_active=True)
+    try:
+        def create(index):
+            return service.create(
+                QuestionCreateRequest(content=f"Short code {suffix} {index}"),
+                author["_id"], origin=("AI", "MANUAL", "IMPORT")[index % 3],
+            )
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            questions = list(executor.map(create, range(24)))
+        codes = [item["question_code"] for item in questions]
+        assert len(set(codes)) == 24
+        assert all(code.startswith("Q-") and code[2:].isdigit() and len(code) >= 8
+                   for code in codes)
+        assert all(len(item["id"]) == 24 for item in questions)
+
+        original = questions[0]
+        duplicate = service.duplicate(original["id"], actor)
+        assert duplicate["question_code"] not in codes
+        assert duplicate["id"] != original["id"]
+        assert duplicate["content"] == original["content"]
+        updated, _ = repository.create_version(original["id"], 1, {
+            "content": "Edited short code question", "content_hash": f"edited-{suffix}",
+        })
+        assert updated["question_code"] == original["question_code"]
+        repository.archive(original["id"])
+        assert create(25)["question_code"] not in [*codes, duplicate["question_code"]]
+    finally:
+        with postgres_connection() as conn:
+            # Remove only records created by this test author.
+            ids = [row["id"] for row in conn.execute(
+                "SELECT id FROM questions WHERE created_by_user_id=%s", (str(author["_id"]),),
+            )]
+            conn.execute("UPDATE questions SET current_version_id=NULL, approved_version_id=NULL "
+                         "WHERE id=ANY(%s)", (ids,))
+            conn.execute("DELETE FROM question_versions WHERE question_id=ANY(%s)", (ids,))
+            conn.execute("DELETE FROM questions WHERE id=ANY(%s)", (ids,))
+            conn.execute("DELETE FROM users WHERE id=%s", (str(author["_id"]),))
+
+
+@pytest.mark.parametrize("collision_count", [1, 5])
+def test_short_code_creation_recovers_when_import_claims_allocated_code(monkeypatch, collision_count):
+    monkeypatch.setattr(settings, "user_store", "postgres")
+    monkeypatch.setattr(settings, "catalog_store", "postgres")
+    repository = PostgresQuestionRepository()
+    service = QuestionService(repository, references=object())
+    created_ids = []
+    allocated_codes = []
+    try:
+        original = service.create(QuestionCreateRequest(content="Code collision fixture"), None)
+        created_ids.append(original["id"])
+        template, template_version = repository.find_pair(original["id"])
+        allocate = repository._next_question_code
+
+        def import_before_save(conn):
+            code = allocate(conn)
+            if len(allocated_codes) < collision_count:
+                imported_id, imported_version_id = ObjectId(), ObjectId()
+                # A separate writer commits this code after the availability check.
+                repository.create(
+                    {**template, "_id": imported_id, "question_code": code,
+                     "current_version_id": imported_version_id},
+                    {**template_version, "_id": imported_version_id, "question_id": imported_id},
+                )
+                created_ids.append(str(imported_id))
+            allocated_codes.append(code)
+            return code
+
+        monkeypatch.setattr(repository, "_next_question_code", import_before_save)
+        if collision_count == 5:
+            with pytest.raises(UniqueViolation):
+                service.create(QuestionCreateRequest(content="Bounded code collision"), None)
+            assert len(allocated_codes) == 5
+        else:
+            created = service.create(QuestionCreateRequest(content="Recovered code collision"), None)
+            created_ids.append(created["id"])
+            assert len(allocated_codes) == 2
+            assert created["question_code"] == allocated_codes[1]
+            assert repository.find_pair(created_ids[1])[0]["question_code"] == allocated_codes[0]
+            assert repository.find_pair(created["id"])[1]["content"] == "Recovered code collision"
+
+            # Explicit codes are preserved, so a conflict is not silently renamed.
+            with pytest.raises(UniqueViolation):
+                repository.create({**template, "_id": ObjectId()}, template_version)
+            assert len(allocated_codes) == 2
+
+            failed_ids = []
+            save_version = repository._save_version
+
+            def fail_version(conn, version):
+                failed_ids.append(str(version["question_id"]))
+                save_version(conn, {**template_version, "_id": ObjectId()})
+
+            monkeypatch.setattr(repository, "_save_version", fail_version)
+            with pytest.raises(UniqueViolation) as error:
+                service.create(QuestionCreateRequest(content="Version conflict must roll back"), None)
+            assert error.value.diag.constraint_name == "question_versions_question_id_version_key"
+            assert len(allocated_codes) == 3
+            with postgres_connection() as conn:
+                assert conn.execute("SELECT 1 FROM questions WHERE id=ANY(%s)", (failed_ids,)).fetchone() is None
+    finally:
+        with postgres_connection() as conn:
+            conn.execute("UPDATE questions SET current_version_id=NULL, approved_version_id=NULL "
+                         "WHERE id=ANY(%s)", (created_ids,))
+            conn.execute("DELETE FROM question_versions WHERE question_id=ANY(%s)", (created_ids,))
+            conn.execute("DELETE FROM questions WHERE id=ANY(%s)", (created_ids,))
 
 
 def test_question_versions_submit_sharing_and_archive_are_transactional(monkeypatch):

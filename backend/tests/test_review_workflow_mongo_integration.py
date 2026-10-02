@@ -9,9 +9,15 @@ Run with RUN_MONGO_INTEGRATION=1 and MONGO_URI pointing at a replica set.
 
 import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+from uuid import uuid4
 
 from bson import ObjectId
+from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION, bootstrap_database
 from core.config import settings
@@ -28,6 +34,117 @@ from modules.questions.workflow_schemas import (
 from modules.questions.workflow_service import REVIEW_POLICY_ID, QuestionWorkflowService
 
 MARKER = "review-workflow-integration"
+
+
+@unittest.skipUnless(os.getenv("RUN_MONGO_INTEGRATION") == "1", "requires MongoDB")
+class ShortQuestionCodeMongoTests(unittest.TestCase):
+    def test_creation_recovers_code_collision_and_rolls_back_version_conflict(self):
+        client = MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        database_name = f"qa_short_codes_{uuid4().hex}"
+        db = client[database_name]
+        try:
+            db.questions.create_index("question_code", unique=True)
+            repository = MongoQuestionRepository(db)
+            allocate = repository._next_question_code
+            allocated_codes = []
+
+            @contextmanager
+            def transaction():
+                with client.start_session() as session:
+                    with session.start_transaction():
+                        yield session
+
+            def import_before_save():
+                code = allocate()
+                if not allocated_codes:
+                    db.questions.insert_one({"question_code": code})
+                allocated_codes.append(code)
+                return code
+
+            question_id, version_id = ObjectId(), ObjectId()
+            with patch("modules.questions.repository.mongo_transaction", transaction):
+                with patch.object(repository, "_next_question_code", import_before_save):
+                    question, _ = repository.create(
+                        {"_id": question_id}, {"_id": version_id, "question_id": question_id},
+                    )
+                self.assertEqual(len(allocated_codes), 2)
+                self.assertEqual(question["question_code"], allocated_codes[1])
+                self.assertEqual(db.questions.count_documents({"question_code": allocated_codes[0]}), 1)
+
+                # Explicit imported codes must be preserved and conflicts reported.
+                with patch.object(repository, "_next_question_code", wraps=allocate) as allocator:
+                    with self.assertRaises(DuplicateKeyError):
+                        repository.create(
+                            {"_id": ObjectId(), "question_code": allocated_codes[0]},
+                            {"_id": ObjectId()},
+                        )
+                    allocator.assert_not_called()
+
+                # A version conflict is a different error: no retry or partial question.
+                failed_id = ObjectId()
+                with patch.object(repository, "_next_question_code", wraps=allocate) as allocator:
+                    with self.assertRaises(DuplicateKeyError):
+                        repository.create({"_id": failed_id}, {"_id": version_id})
+                    self.assertEqual(allocator.call_count, 1)
+                self.assertIsNone(db.questions.find_one({"_id": failed_id}))
+                self.assertEqual(db.question_versions.count_documents({}), 1)
+
+                with ThreadPoolExecutor(max_workers=6) as executor:
+                    pairs = list(executor.map(
+                        lambda _: repository.create({"_id": ObjectId()}, {"_id": ObjectId()}),
+                        range(24),
+                    ))
+                codes = [item[0]["question_code"] for item in pairs]
+                self.assertEqual(len(set(codes)), 24)
+                self.assertNotIn(question["question_code"], codes)
+                self.assertEqual(db.question_versions.count_documents({}), 25)
+
+                # Persistent competing imports must stop after the retry budget.
+                conflicts = []
+
+                def always_import_before_save():
+                    code = allocate()
+                    db.questions.insert_one({"question_code": code})
+                    conflicts.append(code)
+                    return code
+
+                exhausted_id = ObjectId()
+                with patch.object(repository, "_next_question_code", always_import_before_save):
+                    with self.assertRaises(DuplicateKeyError):
+                        repository.create({"_id": exhausted_id}, {"_id": ObjectId()})
+                self.assertEqual(len(conflicts), 5)
+                self.assertIsNone(db.questions.find_one({"_id": exhausted_id}))
+                self.assertEqual(db.question_versions.count_documents({}), 25)
+        finally:
+            client.drop_database(database_name)
+            client.close()
+
+    def test_counter_initialization_concurrency_and_occupied_codes(self):
+        client = MongoClient(settings.mongo_uri, serverSelectionTimeoutMS=5000)
+        database_name = f"qa_short_codes_{uuid4().hex}"
+        db = client[database_name]
+        try:
+            db.questions.create_index("question_code", unique=True)
+            db.questions.insert_many([
+                {"question_code": "Q-000042", "lifecycle_status": "ARCHIVED"},
+                {"question_code": "Q-507F1F77BCF86CD799439011"},
+            ])
+            repository = MongoQuestionRepository(db)
+            # A cold counter must initialize safely across multiple processes.
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                codes = list(executor.map(lambda _: repository._next_question_code(), range(30)))
+            self.assertEqual(len(set(codes)), 30)
+            self.assertEqual(sorted(int(code[2:]) for code in codes), list(range(43, 73)))
+            self.assertTrue(all(len(code) == 8 for code in codes))
+            db.questions.insert_one({"question_code": "Q-000073"})
+            self.assertEqual(repository._next_question_code(), "Q-000074")
+            db.question_code_counters.update_one(
+                {"_id": "question_code"}, {"$set": {"value": 999999}},
+            )
+            self.assertEqual(repository._next_question_code(), "Q-1000000")
+        finally:
+            client.drop_database(database_name)
+            client.close()
 
 
 def _current_user(user_id: ObjectId, role: str) -> CurrentUser:

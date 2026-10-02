@@ -7,12 +7,16 @@ from typing import Protocol
 from bson import ObjectId
 from pymongo import ReturnDocument
 from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 
 from core.bootstrap import SCHEMA_VERSION
 from core.config import settings
 from core.database import mongo_transaction
 from modules.catalog.postgres_subject_repository import subject_record
 from modules.documents.store import get_document_repository
+
+
+QUESTION_CODE_MAX_ATTEMPTS = 5
 
 
 def utc_now() -> datetime:
@@ -585,11 +589,55 @@ class MongoQuestionRepository:
         }
         return pairs, total, status_counts
 
+    def _next_question_code(self) -> str:
+        counters = self.db.question_code_counters
+        if counters.find_one({"_id": "question_code"}) is None:
+            # Seed once from numeric codes, including archived questions. Legacy
+            # ObjectId codes are 24 characters and must not become counter values.
+            highest = max((
+                int(item["question_code"][2:])
+                for item in self.db.questions.find(
+                    {"question_code": {"$regex": r"^Q-[0-9]{1,18}$"}},
+                    {"question_code": 1},
+                )
+            ), default=0)
+            try:
+                counters.update_one(
+                    {"_id": "question_code"},
+                    {"$setOnInsert": {"value": highest}},
+                    upsert=True,
+                )
+            except DuplicateKeyError:
+                # Another process initialized the same counter first.
+                pass
+        while True:
+            counter = counters.find_one_and_update(
+                {"_id": "question_code"}, {"$inc": {"value": 1}},
+                return_document=ReturnDocument.AFTER,
+            )
+            code = f"Q-{counter['value']:06d}"
+            # Imported codes or a restored counter can already occupy a number.
+            if self.db.questions.find_one({"question_code": code}, {"_id": 1}) is None:
+                return code
+
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]:
-        with mongo_transaction() as session:
-            self.db.questions.insert_one(aggregate, session=session)
-            self.db.question_versions.insert_one(version, session=session)
-        return aggregate, version
+        allocate_code = not aggregate.get("question_code")
+        for attempt in range(QUESTION_CODE_MAX_ATTEMPTS):
+            if allocate_code:
+                aggregate = {**aggregate, "question_code": self._next_question_code()}
+            try:
+                with mongo_transaction() as session:
+                    self.db.questions.insert_one(aggregate, session=session)
+                    self.db.question_versions.insert_one(version, session=session)
+            except DuplicateKeyError as exc:
+                # An import can occupy the code after the availability check.
+                # Retry only automatic codes; ID/version conflicts must propagate.
+                if (not allocate_code
+                        or (exc.details or {}).get("keyPattern") != {"question_code": 1}
+                        or attempt == QUESTION_CODE_MAX_ATTEMPTS - 1):
+                    raise
+            else:
+                return aggregate, version
 
     def create_version(
         self,

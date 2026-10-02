@@ -497,7 +497,6 @@ class QuestionService:
         aggregate = {
             "_id": question_id,
             "schema_version": SCHEMA_VERSION,
-            "question_code": f"Q-{str(question_id).upper()}",
             "current_version": 1,
             "current_version_id": version_id,
             "approved_version_id": None,
@@ -596,7 +595,6 @@ class QuestionService:
         aggregate = {
             "_id": new_question_id,
             "schema_version": SCHEMA_VERSION,
-            "question_code": f"Q-{str(new_question_id).upper()}",
             "current_version": 1,
             "current_version_id": new_version_id,
             "approved_version_id": None,

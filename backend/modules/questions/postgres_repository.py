@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import timedelta
 
 from bson import ObjectId
+from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
 from core.config import settings
@@ -14,7 +15,7 @@ from core.postgres_audit import write_postgres_audit_event
 from db.bson_json import restore
 from db.copy_business_data import projected_rows, upsert
 from modules.notifications.postgres_repository import insert_notifications
-from modules.questions.repository import object_id, utc_now
+from modules.questions.repository import QUESTION_CODE_MAX_ATTEMPTS, object_id, utc_now
 
 
 def _question(row: dict | None) -> dict | None:
@@ -1105,10 +1106,33 @@ class PostgresQuestionRepository:
         with postgres_connection() as conn:
             return self._pair(conn, question_id)
 
+    @staticmethod
+    def _next_question_code(conn) -> str:
+        while True:
+            number = conn.execute("SELECT nextval('question_code_seq') AS value").fetchone()["value"]
+            code = f"Q-{number:06d}"
+            if conn.execute("SELECT 1 FROM questions WHERE question_code=%s", (code,)).fetchone() is None:
+                return code
+
     def create(self, aggregate: dict, version: dict) -> tuple[dict, dict]:
+        allocate_code = not aggregate.get("question_code")
         with postgres_connection() as conn:
-            self._save_question(conn, aggregate)
-            self._save_version(conn, version)
+            for attempt in range(QUESTION_CODE_MAX_ATTEMPTS):
+                if allocate_code:
+                    aggregate = {**aggregate, "question_code": self._next_question_code(conn)}
+                try:
+                    # A savepoint restores the transaction before retrying a code
+                    # claimed by an import after the availability check.
+                    with conn.transaction():
+                        self._save_question(conn, aggregate)
+                        self._save_version(conn, version)
+                except UniqueViolation as exc:
+                    if (not allocate_code
+                            or exc.diag.constraint_name != "questions_question_code_key"
+                            or attempt == QUESTION_CODE_MAX_ATTEMPTS - 1):
+                        raise
+                else:
+                    break
         return aggregate, version
 
     def create_version(self, question_id: str | ObjectId, expected_version: int,

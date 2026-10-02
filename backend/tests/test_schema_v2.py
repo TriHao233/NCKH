@@ -1429,6 +1429,7 @@ class SchemaV2Tests(unittest.TestCase):
                 return source_question, source_version
 
             def create(self, aggregate, version):
+                aggregate = {**aggregate, "question_code": "Q-000001"}
                 self.created_question = aggregate
                 self.created_version = version
                 return aggregate, version
@@ -1438,6 +1439,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         duplicated = service.duplicate(str(question_id), teacher)
 
+        self.assertEqual(duplicated["question_code"], "Q-000001")
         self.assertNotEqual(duplicated["id"], str(question_id))
         self.assertEqual(duplicated["review_status"], "DRAFT")
         self.assertEqual(duplicated["evaluation_status"], "NOT_STARTED")
@@ -3718,6 +3720,7 @@ class SchemaV2Tests(unittest.TestCase):
 
         class Repository:
             def create(self, aggregate, version):
+                aggregate = {**aggregate, "question_code": "Q-000001"}
                 self.aggregate = aggregate
                 self.version = version
                 return aggregate, version
