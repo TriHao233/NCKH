@@ -10,7 +10,7 @@ import {
   faTriangleExclamation,
   faUsers,
 } from '@fortawesome/free-solid-svg-icons';
-import { getAdminOverview, listAdminDocuments } from '../api/adminOverview';
+import { getAdminOverview } from '../api/adminOverview';
 import '../css/AdminOverviewPage.css';
 
 function formatNumber(value) {
@@ -53,16 +53,8 @@ function AdminOverviewPage() {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [documentFilters, setDocumentFilters] = useState({ search: '', status: '' });
-  const [documentFilterDraft, setDocumentFilterDraft] = useState({ search: '', status: '' });
-  const [documentPage, setDocumentPage] = useState(1);
-  const [documentRefresh, setDocumentRefresh] = useState(0);
-  const [documentData, setDocumentData] = useState(null);
-  const [documentsLoading, setDocumentsLoading] = useState(true);
-  const [documentsError, setDocumentsError] = useState('');
 
   const loadOverview = useCallback(async () => {
-    setDocumentRefresh((value) => value + 1);
     setLoading(true);
     setError('');
     try {
@@ -77,18 +69,6 @@ function AdminOverviewPage() {
   useEffect(() => {
     loadOverview();
   }, [loadOverview]);
-
-  useEffect(() => {
-    let active = true;
-    setDocumentsLoading(true);
-    setDocumentsError('');
-    listAdminDocuments({ page: documentPage, ...documentFilters }).then((result) => {
-      if (active) setDocumentData(result);
-    }).catch((err) => {
-      if (active) { setDocumentData(null); setDocumentsError(err.message || 'Không tải được bảng tài liệu.'); }
-    }).finally(() => { if (active) setDocumentsLoading(false); });
-    return () => { active = false; };
-  }, [documentPage, documentFilters, documentRefresh]);
 
   const stats = useMemo(() => {
     const users = overview?.users || {};
@@ -351,42 +331,6 @@ function AdminOverviewPage() {
           </div>
         </section>
 
-        <section className="overview-panel overview-panel--wide" aria-label="Giám sát tài liệu">
-          <div className="overview-panel-heading">
-            <div><span>Tài liệu toàn hệ thống · Chỉ đọc</span><h2>Giám sát tài liệu</h2></div>
-            <Link to="/quan-ly-tai-lieu">Mở trang Tài liệu</Link>
-          </div>
-          <form className="overview-document-filters" onSubmit={(event) => {
-            event.preventDefault(); setDocumentPage(1);
-            setDocumentFilters({ ...documentFilterDraft, search: documentFilterDraft.search.trim() });
-          }}>
-            <label>Tìm tài liệu<input type="search" maxLength={200} placeholder="Tên tài liệu hoặc tên file" value={documentFilterDraft.search} onChange={(event) => setDocumentFilterDraft({ ...documentFilterDraft, search: event.target.value })} /></label>
-            <label>Trạng thái<select value={documentFilterDraft.status} onChange={(event) => setDocumentFilterDraft({ ...documentFilterDraft, status: event.target.value })}>
-              <option value="">Tất cả</option><option value="UPLOADED">Đã tải lên</option><option value="PROCESSING">Đang xử lý</option><option value="READY">Sẵn sàng</option><option value="FAILED">Lỗi</option>
-            </select></label>
-            <button type="submit" className="overview-primary-button" disabled={documentsLoading}>Lọc</button>
-          </form>
-          {documentsError && <p className="overview-error" role="alert">{documentsError}</p>}
-          <div className="overview-table-wrap" aria-busy={documentsLoading}>
-            <table className="overview-table"><thead><tr><th>Tài liệu</th><th>Người tải</th><th>Học phần</th><th>Trạng thái</th><th>Số trang</th><th>Xử lý / lỗi</th><th>Cập nhật</th></tr></thead><tbody>
-              {(documentData?.items || []).map((item) => <tr key={item.id}>
-                <td><strong>{item.title || item.original_filename}</strong><small>{item.original_filename}</small></td>
-                <td>{item.owner?.display_name || item.owner?.email || 'Chưa có'}<small>{item.owner?.display_name ? item.owner?.email : ''}</small></td>
-                <td>{item.subjects?.map((subject) => subject.name || subject.code || subject.id).join(', ') || 'Chưa gắn học phần'}</td>
-                <td>{({ UPLOADED: 'Đã tải lên', PROCESSING: 'Đang xử lý', READY: 'Sẵn sàng', FAILED: 'Lỗi' })[item.status] || item.status}</td>
-                <td>{item.page_count ?? '—'}</td>
-                <td className="overview-error-cell">{item.error_message || <><span>OCR: {item.pipeline_summary?.ocr_status || '—'}</span><small>Chunk: {item.pipeline_summary?.chunk_status || '—'}</small></>}</td>
-                <td>{formatDateTime(item.updated_at)}</td>
-              </tr>)}
-            </tbody></table>
-            {documentsLoading && <p className="overview-empty">Đang tải tài liệu...</p>}
-            {!documentsLoading && !documentsError && !documentData?.items?.length && <p className="overview-empty">Không có tài liệu phù hợp.</p>}
-          </div>
-          {documentData && <div className="overview-document-pagination"><span>{formatNumber(documentData.total)} tài liệu · Trang {documentPage}</span>
-            <button type="button" disabled={documentsLoading || documentPage <= 1} onClick={() => setDocumentPage((value) => value - 1)}>Trước</button>
-            <button type="button" disabled={documentsLoading || documentPage * documentData.page_size >= documentData.total} onClick={() => setDocumentPage((value) => value + 1)}>Sau</button>
-          </div>}
-        </section>
       </section>
     </main>
   );

@@ -1,4 +1,5 @@
-/* Trang Ngân hàng câu hỏi của quản trị viên — dùng chung khung với css/AdminJobsPage.css */
+/* Các trang nhóm Ngân hàng của quản trị viên (Câu hỏi, Tài liệu, Đề thi) —
+   dùng chung khung với css/AdminJobsPage.css */
 
 .question-bank-page .jobs-layout {
   grid-template-columns: minmax(0, 1fr);
@@ -6,6 +7,14 @@
 
 .qbank-summary {
   grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.qbank-summary--five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.qbank-summary--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .qbank-export-select {
@@ -21,6 +30,10 @@
 
 .qbank-toolbar {
   grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(140px, 1fr)) auto;
+}
+
+.qbank-toolbar--documents {
+  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(160px, 1fr)) auto;
 }
 
 .qbank-toolbar-actions {
@@ -262,6 +275,39 @@
   white-space: pre-wrap;
 }
 
+.qbank-error-text {
+  color: #c0392b;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.qbank-muted a {
+  color: #0c78d4;
+  font-weight: 700;
+}
+
+.qbank-page-preview h3 {
+  color: #5c6f89;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.qbank-page-preview pre {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #eaf3fc;
+  border-radius: 8px;
+  background: #fbfdff;
+  color: #13253f;
+  font-family: inherit;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 .qbank-muted {
   color: #7a8da7;
 }
@@ -302,6 +348,10 @@
   box-shadow: 0 24px 60px rgba(5, 40, 90, 0.28);
   color: #13253f;
   padding: 22px;
+}
+
+.qbank-dialog--narrow {
+  width: min(520px, 100%);
 }
 
 .modal-overlay:has(.qbank-dialog) {

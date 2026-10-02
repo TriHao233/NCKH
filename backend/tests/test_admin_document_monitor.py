@@ -41,6 +41,10 @@ def test_document_monitor_filters_paginates_and_excludes_private_artifacts():
     assert "original_uri" not in item and "artifacts" not in item and "latest_error" not in item
     assert service.list_documents(2, 1, None, None)["items"] == []
     assert service.list_documents(1, 20, "READY", None)["total"] == 0
+    owner_id, subject_id = str(row["uploaded_by_user_id"]), str(row["subject_id"])
+    assert service.list_documents(1, 20, None, None, subject_id, owner_id)["total"] == 1
+    assert service.list_documents(1, 20, None, None, None, str(ObjectId()))["total"] == 0
+    assert service.list_documents(1, 20, None, None, str(ObjectId()), None)["total"] == 0
 
 
 def test_document_monitor_uses_postgres_repository_without_mongo_reads(monkeypatch):

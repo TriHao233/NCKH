@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from math import isfinite
 from typing import Any
 
+from bson import ObjectId
 from pymongo.database import Database
 
 from core.config import settings
@@ -172,8 +173,14 @@ class AdminOverviewService:
     def __init__(self, database: Database):
         self.db = database
 
-    def list_documents(self, page: int, page_size: int, status: str | None, search: str | None) -> dict:
-        records, total = get_document_repository(self.db).list(page, page_size, status, search)
+    def list_documents(self, page: int, page_size: int, status: str | None, search: str | None,
+                       subject_id: str | None = None, owner_id: str | None = None) -> dict:
+        filters = {}
+        if subject_id:
+            filters["subject_id"] = ObjectId(subject_id)
+        if owner_id:
+            filters["uploaded_by_user_id"] = ObjectId(owner_id)
+        records, total = get_document_repository(self.db).list(page, page_size, status, search, **filters)
         owner_ids = list({row["uploaded_by_user_id"] for row in records if row.get("uploaded_by_user_id")})
         owners = {str(row["_id"]): row for row in users_by_ids(self.db, owner_ids)}
         subject_ids = list({subject_id for row in records for subject_id in

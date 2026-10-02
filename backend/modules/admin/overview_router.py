@@ -28,7 +28,9 @@ def list_admin_documents(
     page_size: int = Query(20, ge=1, le=100),
     status: Literal["UPLOADED", "PROCESSING", "READY", "FAILED"] | None = None,
     search: str | None = Query(None, max_length=200),
+    subject_id: str | None = Query(None, pattern="^[0-9a-fA-F]{24}$"),
+    owner_id: str | None = Query(None, pattern="^[0-9a-fA-F]{24}$"),
     _admin: CurrentUser = Depends(require_permissions("admin.overview")),
     service: AdminOverviewService = Depends(get_admin_overview_service),
 ):
-    return service.list_documents(page, page_size, status, search)
+    return service.list_documents(page, page_size, status, search, subject_id, owner_id)

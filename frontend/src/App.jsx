@@ -10,6 +10,7 @@ const pageImports = {
     GeneratePage: () => import('./pages/GeneratePage'),
     ManagePage: () => import('./pages/ManagePage'),
     AdminQuestionBankPage: () => import('./pages/AdminQuestionBankPage'),
+    AdminDocumentsPage: () => import('./pages/AdminDocumentsPage'),
     ReviewQueuePage: () => import('./pages/ReviewQueuePage'),
     AdminAiReviewPage: () => import('./pages/AdminAiReviewPage'),
     AdminOverviewPage: () => import('./pages/AdminOverviewPage'),
@@ -34,6 +35,7 @@ const AboutPage = lazy(pageImports.AboutPage);
 const GeneratePage = lazy(pageImports.GeneratePage);
 const ManagePage = lazy(pageImports.ManagePage);
 const AdminQuestionBankPage = lazy(pageImports.AdminQuestionBankPage);
+const AdminDocumentsPage = lazy(pageImports.AdminDocumentsPage);
 const ReviewQueuePage = lazy(pageImports.ReviewQueuePage);
 const AdminAiReviewPage = lazy(pageImports.AdminAiReviewPage);
 const AdminOverviewPage = lazy(pageImports.AdminOverviewPage);
@@ -88,10 +90,15 @@ function ProtectedPage({ path, children }) {
     );
 }
 
-// Cùng đường dẫn /quan-ly: quản trị viên xem ngân hàng toàn hệ thống, giảng viên xem trang soạn câu hỏi.
+// Cùng một đường dẫn: quản trị viên xem dữ liệu toàn hệ thống, giảng viên xem trang làm việc của mình.
 function QuestionBankPage() {
     const { user } = useContext(AuthContext);
     return user?.role === 'Admin' ? <AdminQuestionBankPage /> : <ManagePage />;
+}
+
+function DocumentsPage() {
+    const { user } = useContext(AuthContext);
+    return user?.role === 'Admin' ? <AdminDocumentsPage /> : <DocumentManagePage />;
 }
 
 function App() {
@@ -132,7 +139,7 @@ function App() {
                     path="/quan-ly-tai-lieu"
                     element={(
                         <ProtectedPage path="/quan-ly-tai-lieu">
-                            <DocumentManagePage />
+                            <DocumentsPage />
                         </ProtectedPage>
                     )}
                 />
