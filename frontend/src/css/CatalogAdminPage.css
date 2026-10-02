@@ -5,9 +5,34 @@
 }
 
 .catalog-header,
+.catalog-tabs,
 .catalog-grid {
   max-width: 1280px;
   margin: 0 auto;
+}
+
+.catalog-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 22px;
+  padding: 5px;
+  border: 1px solid #dce9f5;
+  border-radius: 12px;
+  background: #eef5fb;
+}
+
+.catalog-page .catalog-tabs button {
+  border: 0;
+  background: transparent;
+  color: #536a82;
+  padding: 9px 14px;
+}
+
+.catalog-page .catalog-tabs button.is-active {
+  background: #fff;
+  color: #005bac;
+  box-shadow: 0 2px 8px rgba(0, 74, 140, 0.1);
 }
 
 .catalog-header {

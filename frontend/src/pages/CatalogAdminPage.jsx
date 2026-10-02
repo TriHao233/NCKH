@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   activateEvaluationPolicy,
   activatePromptTemplate,
@@ -27,6 +28,12 @@ const DEFAULT_WEIGHTS = {
 };
 
 const DEFAULT_THRESHOLDS = { yellow_min: 0.5, green_min: 0.75, pass_min: 0.7 };
+const CONFIG_TABS = [
+  { id: 'subjects', label: 'Học phần' },
+  { id: 'models', label: 'Mô hình AI' },
+  { id: 'prompts', label: 'Mẫu prompt' },
+  { id: 'policy', label: 'Tiêu chí đánh giá' },
+];
 const EMPTY_SUBJECT_FORM = { id: '', subject_code: '', subject_name: '', description: '', is_active: true };
 const EMPTY_CHAPTER_FORM = { id: '', chapter_code: '', chapter_name: '', sequence_no: 1, is_active: true };
 const EMPTY_CLO_FORM = { id: '', clo_code: '', description: '', target_weight: 1, is_active: true };
@@ -139,6 +146,9 @@ function CatalogAdminPage() {
   const [promptTesting, setPromptTesting] = useState(false);
   const [promptPreview, setPromptPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab = CONFIG_TABS.some((item) => item.id === requestedTab) ? requestedTab : 'subjects';
 
   const activeSubject = useMemo(
     () => catalog.subjects.find((subject) => subject.id === activeSubjectId) || catalog.subjects[0],
@@ -171,7 +181,7 @@ function CatalogAdminPage() {
         ));
       }
     } catch (err) {
-      setError(err.message || 'Không tải được dữ liệu nền');
+      setError(err.message || 'Không tải được cấu hình');
     } finally {
       setLoading(false);
     }
@@ -189,7 +199,7 @@ function CatalogAdminPage() {
       const result = await action();
       await loadCatalog(result?.activeSubjectId);
     } catch (err) {
-      setError(err.message || 'Lưu dữ liệu nền thất bại');
+      setError(err.message || 'Lưu cấu hình thất bại');
     } finally {
       setSaving(false);
     }
@@ -440,15 +450,29 @@ function CatalogAdminPage() {
       <section className="catalog-header">
         <div>
           <span>Khu vực quản trị</span>
-          <h1>Cấu hình dữ liệu nền</h1>
+          <h1>Cấu hình hệ thống</h1>
         </div>
         <button type="button" onClick={() => loadCatalog()} disabled={loading || saving}>Làm mới</button>
       </section>
+      <nav className="catalog-tabs" aria-label="Nhóm cấu hình">
+        {CONFIG_TABS.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className={tab === item.id ? 'is-active' : ''}
+            aria-current={tab === item.id ? 'page' : undefined}
+            onClick={() => setSearchParams(item.id === 'subjects' ? {} : { tab: item.id }, { replace: true })}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
       {error && <p className="catalog-error">{error}</p>}
       {loading ? (
-        <p className="catalog-empty">Đang tải dữ liệu nền...</p>
+        <p className="catalog-empty">Đang tải cấu hình...</p>
       ) : (
         <section className="catalog-grid">
+          {tab !== 'subjects' && (
           <div className="catalog-card catalog-card--wide catalog-runtime-panel">
             <div className="catalog-card-title-row">
               <h2>Runtime đang dùng</h2>
@@ -486,7 +510,9 @@ function CatalogAdminPage() {
               </div>
             )}
           </div>
+          )}
 
+          {tab === 'subjects' && (
           <div className="catalog-card catalog-card--wide">
             <div className="catalog-card-title-row">
               <h2>Môn học / Chương / CLO</h2>
@@ -606,8 +632,10 @@ function CatalogAdminPage() {
               </div>
             </div>
           </div>
+          )}
 
-          <div className="catalog-card">
+          {tab === 'models' && (
+          <div className="catalog-card catalog-card--wide">
             <h2>Mô hình AI</h2>
             <p className="catalog-card-note">Thêm phiên bản mới hoặc đổi model đang dùng mà không cần sửa code.</p>
             <form className="catalog-form" onSubmit={handleSaveModel}>
@@ -713,7 +741,9 @@ function CatalogAdminPage() {
               </p>
             )}
           </div>
+          )}
 
+          {tab === 'prompts' && (
           <div className="catalog-card catalog-card--wide">
             <div className="catalog-card-title-row">
               <h2>Mẫu prompt</h2>
@@ -768,8 +798,10 @@ function CatalogAdminPage() {
               ))}
             </div>
           </div>
+          )}
 
-          <div className="catalog-card">
+          {tab === 'policy' && (
+          <div className="catalog-card catalog-card--wide">
             <h2>Bộ tiêu chí đánh giá</h2>
             <form className="catalog-form" onSubmit={handleSavePolicy}>
               <input value={policyForm.policy_name} onChange={(e) => setPolicyForm({ ...policyForm, policy_name: e.target.value })} />
@@ -796,6 +828,7 @@ function CatalogAdminPage() {
               ))}
             </div>
           </div>
+          )}
         </section>
       )}
     </main>
