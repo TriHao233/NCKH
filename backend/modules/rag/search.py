@@ -6,6 +6,7 @@ import unicodedata
 from bson import ObjectId
 
 from core.config import settings
+from core.text_normalization import normalize_source_text
 from core.database import get_rag_db
 from core.gpu_coordination import current_gpu_operation_label
 from modules.documents.store import get_document_repository
@@ -381,6 +382,8 @@ def get_context_snapshot(
         assembled_context = []
         retrieval_results = []
         for doc, meta in selected_chunks:
+            if meta.get("content_type") not in {"code", "formula"}:
+                doc = normalize_source_text(doc)
             heading_label = _build_heading_label(meta)
             heading = f"[{heading_label}]" if heading_label else ""
             assembled_context.append(f"Mục lục: {heading}\nNội dung: {doc}")

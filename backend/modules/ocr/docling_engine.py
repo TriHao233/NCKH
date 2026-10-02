@@ -341,47 +341,53 @@ def ocr_pdf_pages(file_path: str, page_numbers: list[int]) -> dict[int, dict[str
     selected = sorted(set(page_numbers))
     if selected[0] < 1 or selected[-1] > len(reader.pages):
         raise ValueError("Selected OCR page is outside the PDF page range")
-    writer = PdfWriter()
-    for page_number in selected:
-        writer.add_page(reader.pages[page_number - 1])
-    handle = tempfile.NamedTemporaryFile(prefix="qbank-ocr-pages-", suffix=".pdf", delete=False)
-    temp_path = Path(handle.name)
-    try:
-        with handle:
-            writer.write(handle)
-        result = ocr_pdf(str(temp_path))
-    finally:
-        try:
-            os.remove(temp_path)
-        except FileNotFoundError:
-            pass
-
-    relative_pages = {
-        int(page.get("page_number", index)): page
-        for index, page in enumerate(result.get("pages") or [], start=1)
-        if isinstance(page, dict)
-    }
-    relative_blocks: dict[int, list[dict]] = {}
-    for block in result.get("structured_blocks") or []:
-        relative_blocks.setdefault(int(block.get("page_number") or 1), []).append(block)
-
     mapped: dict[int, dict[str, Any]] = {}
-    for relative_number, original_number in enumerate(selected, start=1):
-        page = relative_pages.get(relative_number) or {}
-        blocks = []
-        for block in relative_blocks.get(relative_number, []):
-            mapped_block = dict(block)
-            mapped_block["page_number"] = original_number
-            blocks.append(mapped_block)
-        mapped[original_number] = {
-            "text": page.get("text") or page.get("content") or "",
-            "original_text": page.get("original_text") or page.get("text") or "",
-            "formula_blocks": page.get("formula_blocks") or [],
-            "structured_blocks": blocks,
-            "diagnostics": result.get("diagnostics") or {},
+    batch_size = max(1, settings.docling_page_batch_size)
+    batch_count = (len(selected) + batch_size - 1) // batch_size
+    for offset in range(0, len(selected), batch_size):
+        batch = selected[offset:offset + batch_size]
+        logger.info("Docling OCR batch %d/%d: source pages %d-%d", offset // batch_size + 1,
+                    batch_count, batch[0], batch[-1])
+        writer = PdfWriter()
+        for page_number in batch:
+            writer.add_page(reader.pages[page_number - 1])
+        handle = tempfile.NamedTemporaryFile(prefix="qbank-ocr-pages-", suffix=".pdf", delete=False)
+        temp_path = Path(handle.name)
+        try:
+            with handle:
+                writer.write(handle)
+            result = ocr_pdf(str(temp_path))
+        finally:
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
+
+        relative_pages = {
+            int(page.get("page_number", index)): page
+            for index, page in enumerate(result.get("pages") or [], start=1)
+            if isinstance(page, dict)
         }
-    if selected and result.get("raw_document"):
-        mapped[selected[0]]["raw_document"] = result["raw_document"]
+        relative_blocks: dict[int, list[dict]] = {}
+        for block in result.get("structured_blocks") or []:
+            relative_blocks.setdefault(int(block.get("page_number") or 1), []).append(block)
+
+        for relative_number, original_number in enumerate(batch, start=1):
+            page = relative_pages.get(relative_number) or {}
+            blocks = []
+            for block in relative_blocks.get(relative_number, []):
+                mapped_block = dict(block)
+                mapped_block["page_number"] = original_number
+                blocks.append(mapped_block)
+            mapped[original_number] = {
+                "text": page.get("text") or page.get("content") or "",
+                "original_text": page.get("original_text") or page.get("text") or "",
+                "formula_blocks": page.get("formula_blocks") or [],
+                "structured_blocks": blocks,
+                "diagnostics": result.get("diagnostics") or {},
+            }
+        if result.get("raw_document"):
+            mapped[batch[0]]["raw_document"] = result["raw_document"]
     return mapped
 
 

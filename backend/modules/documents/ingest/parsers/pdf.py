@@ -752,7 +752,12 @@ class PdfParser(DocumentParser):
                 ocr_text = str(result["text"])
                 score = text_quality_score(ocr_text)
                 if engine == "docling" and result.get("raw_document") is not None:
-                    raw_engine_outputs["docling"] = result["raw_document"]
+                    if "docling" not in raw_engine_outputs:
+                        raw_engine_outputs["docling"] = result["raw_document"]
+                    else:
+                        raw_engine_outputs.setdefault("docling_additional_batches", []).append(
+                            {"first_source_page": page_number, "document": result["raw_document"]}
+                        )
                 units[page_number - 1].raw_extraction[engine] = {
                     key: value for key, value in result.items() if key != "raw_document"
                 }

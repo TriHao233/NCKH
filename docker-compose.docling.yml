@@ -8,7 +8,7 @@ services:
       DOCLING_URL: http://docling:5001
       DOCLING_OCR_PRESET: tesseract
       DOCLING_OCR_LANGUAGES: vie
-      DOCLING_TIMEOUT: "600"
+      DOCLING_TIMEOUT: "1200"
     depends_on:
       docling:
         condition: service_healthy
