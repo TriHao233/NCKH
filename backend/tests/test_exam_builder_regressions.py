@@ -1,6 +1,7 @@
 from copy import deepcopy
 from io import BytesIO
 import asyncio
+from xml.etree import ElementTree
 from unittest.mock import Mock
 
 import pytest
@@ -20,6 +21,7 @@ from modules.exams.schemas import (
     MatrixCell,
 )
 from modules.exams.service import ExamService, ExamVariantService, serialize_exam
+from modules.questions.workflow_service import QuestionWorkflowService
 from test_schema_v2 import FakeExamRepository, FakeExamVariantRepository, _current_user, _exam_doc
 
 
@@ -158,6 +160,8 @@ def test_shuffling_remaps_list_answers_and_preserves_source_snapshot(monkeypatch
     monkeypatch.setattr("modules.exams.service.random.shuffle", lambda items: items.reverse())
     service = ExamVariantService(FakeExamRepository([exam]), FakeExamVariantRepository())
     result = service.create_variant(str(exam["_id"]), ExamVariantCreateRequest(exam_code=" 101 "), owner)
+    stored_variant = service.variants.find(result["id"])
+    assert stored_variant["header"] == exam["header"]
     data = result["questions"][0]["content_snapshot"]["question_data"]
     assert data["correct_answer"] == ["C", "A"]
     assert [data["options"][key] for key in data["correct_answer"]] == ["Alpha", "Gamma"]
@@ -202,6 +206,66 @@ def test_pdf_rendering_produces_real_pdf_with_ordered_answers():
             for font in page["/Resources"]["/Font"].get_object().values()
         }
         assert any("TimesNewRoman" in name for name in font_names)
+
+
+def test_structured_questions_keep_prompts_separate_from_answer_keys_in_exports():
+    questions = [
+        {"order": 1, "content_snapshot": {
+            "content": "Sắp xếp các bước", "classification": {"assessment_type": "SAP_XEP"},
+            "question_data": {"options": {"1": "Bước A", "2": "Bước B", "3": "Bước C", "4": "Bước D"},
+                              "correct_answer": "2, 4, 1, 3"},
+        }},
+        {"order": 2, "content_snapshot": {
+            "content": "Ghép hai cột", "classification": {"assessment_type": "GHEP_COT"},
+            "question_data": {"options": {"1": "Một", "2": "Hai", "3": "Ba", "a": "A", "b": "B", "c": "C", "d": "Nhiễu"},
+                              "correct_answer": "1-b, 2-a, 3-c"},
+        }},
+    ]
+    context = _build_context({}, "101", questions, "de_dapan")
+    assert all(not option["correct"] for question in context["questions"] for option in question["options"])
+    assert [item["label"] for item in context["questions"][1]["numbered_options"]] == ["1", "2", "3"]
+    assert [item["label"] for item in context["questions"][1]["lettered_options"]] == ["a", "b", "c", "d"]
+
+    question_html = render_exam_html({}, "101", questions, "de")
+    assert "Cột số" in question_html and "Cột chữ" in question_html
+    assert "2, 4, 1, 3" not in question_html
+    assert "1-b, 2-a, 3-c" not in question_html
+    answer_html = render_exam_html({}, "101", questions, "de_dapan")
+    assert 'class="option correct"' not in answer_html
+    assert "2, 4, 1, 3" in answer_html and "1-b, 2-a, 3-c" in answer_html
+
+    question_doc = Document(BytesIO(render_exam_docx({}, "101", questions, "de")))
+    assert question_doc.tables[0].cell(0, 0).text == "Cột số"
+    assert question_doc.tables[0].cell(0, 1).text == "Cột chữ"
+    assert question_doc.tables[0].cell(1, 0).text == "1. Một"
+    assert question_doc.tables[0].cell(1, 1).text == "a. A"
+    assert all("2, 4, 1, 3" not in paragraph.text for paragraph in question_doc.paragraphs)
+    assert all("1-b, 2-a, 3-c" not in paragraph.text for paragraph in question_doc.paragraphs)
+
+    pdf = PdfReader(BytesIO(asyncio.run(render_exam_pdf({}, "101", questions, "de"))))
+    pdf_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    assert "Cột số" in pdf_text and "Cột chữ" in pdf_text
+    assert "1-b, 2-a, 3-c" not in pdf_text
+
+
+def test_moodle_ordering_export_uses_sequence_answer_instead_of_all_steps_as_correct():
+    question = {"question_code": "Q-ORDER"}
+    version = {
+        "content": "Sắp xếp các bước",
+        "classification": {"assessment_type": "SAP_XEP"},
+        "question_data": {
+            "options": {"1": "Bước A", "2": "Bước B", "3": "Bước C", "4": "Bước D"},
+            "correct_answer": "2, 4, 1, 3",
+        },
+    }
+    gift = QuestionWorkflowService._moodle_gift(question, version)
+    xml = QuestionWorkflowService._moodle_xml_question(question, version)
+    assert "1. Bước A; 2. Bước B" in gift
+    assert "=2,4,1,3" in gift
+    assert '<question type="shortanswer">' in xml
+    assert "Các bước: 1. Bước A" in xml
+    parsed = ElementTree.fromstring(f"<quiz>{xml}</quiz>")
+    assert {answer.findtext("text") for answer in parsed.findall(".//answer")} == {"2,4,1,3", "2, 4, 1, 3"}
 
 
 def test_docx_download_supports_unicode_exam_codes():

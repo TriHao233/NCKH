@@ -100,9 +100,13 @@ class MongoExamRepository:
         return result
 
     def delete(self, exam_id: str | ObjectId) -> bool:
-        result = self.db.exams.delete_one(
-            {"_id": object_id(exam_id, "exam_id"), "schema_version": SCHEMA_VERSION}
-        )
+        key = object_id(exam_id, "exam_id")
+        with mongo_transaction() as session:
+            result = self.db.exams.delete_one(
+                {"_id": key, "schema_version": SCHEMA_VERSION}, session=session
+            )
+            if result.deleted_count:
+                self.db.exam_variants.delete_many({"exam_id": key}, session=session)
         return result.deleted_count == 1
 
     def count_variants(self, exam_id: str | ObjectId) -> int:

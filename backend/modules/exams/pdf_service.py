@@ -52,6 +52,11 @@ def _split_answer_keys(correct_answer: Any) -> list[str]:
     return [part.strip() for part in str(correct_answer).split(",") if part.strip()]
 
 
+def _option_sort_key(item: tuple[str, Any]) -> tuple[int, int | str]:
+    key = str(item[0])
+    return (0, int(key)) if key.isdigit() else (1, key.casefold())
+
+
 def _build_context(
     header: dict,
     exam_code: str,
@@ -71,15 +76,20 @@ def _build_context(
         correct_answer = question_data.get("correct_answer")
         answer_parts = _split_answer_keys(correct_answer)
         correct_keys = set(answer_parts)
+        question_type = str((snapshot.get("classification") or {}).get("assessment_type") or "").lower()
+        structured = question_type in {"sap_xep", "ghep_cot"}
         rendered_options = [
-            {"label": key, "text": value, "correct": key in correct_keys}
-            for key, value in sorted(options.items())
+            {"label": key, "text": value, "correct": not structured and key in correct_keys}
+            for key, value in sorted(options.items(), key=_option_sort_key)
         ]
         rendered_questions.append(
             {
                 "number": entry["order"],
                 "content": snapshot.get("content", ""),
+                "question_type": question_type,
                 "options": rendered_options,
+                "numbered_options": [option for option in rendered_options if str(option["label"]).isdigit()],
+                "lettered_options": [option for option in rendered_options if str(option["label"]).isalpha()],
             }
         )
         answer_rows.append(
@@ -205,6 +215,20 @@ def render_exam_docx(
             paragraph = document.add_paragraph()
             paragraph.add_run(f"Câu {question['number']}. ").bold = True
             paragraph.add_run(str(question["content"]))
+            if question["question_type"] == "ghep_cot":
+                numbered = question["numbered_options"]
+                lettered = question["lettered_options"]
+                table = document.add_table(rows=1 + max(len(numbered), len(lettered)), cols=2)
+                table.style = "Table Grid"
+                table.cell(0, 0).text = "Cột số"
+                table.cell(0, 1).text = "Cột chữ"
+                for index, option in enumerate(numbered, start=1):
+                    table.cell(index, 0).text = f"{option['label']}. {option['text']}"
+                for index, option in enumerate(lettered, start=1):
+                    table.cell(index, 1).text = f"{option['label']}. {option['text']}"
+                continue
+            if question["question_type"] == "sap_xep":
+                document.add_paragraph("Các bước cần sắp xếp:")
             for option in question["options"]:
                 option_paragraph = document.add_paragraph(style=None)
                 option_paragraph.paragraph_format.left_indent = Pt(18)

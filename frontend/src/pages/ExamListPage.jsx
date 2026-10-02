@@ -112,7 +112,11 @@ function ExamListPage() {
   };
 
   const handleDelete = async (exam) => {
-    if (!window.confirm(`Xoá đề thi "${exam.name}"?`)) return;
+    const variantCount = exam.variant_count || 0;
+    const message = variantCount
+      ? `Xoá đề thi "${exam.name}" và ${variantCount} mã đề đi kèm? Hành động này không thể hoàn tác.`
+      : `Xoá đề thi "${exam.name}"? Hành động này không thể hoàn tác.`;
+    if (!window.confirm(message)) return;
     setDeletingId(exam.id);
     try {
       await deleteExam(exam.id);
@@ -190,8 +194,8 @@ function ExamListPage() {
 	                    <button
 	                      type="button"
 	                      className="icon-btn icon-btn--danger"
-                      title={['FINALIZED', 'ARCHIVED'].includes(statusKey(exam.status)) ? 'Đề đã chốt hoặc lưu trữ không thể xoá' : 'Xoá'}
-                      disabled={deletingId === exam.id || ['FINALIZED', 'ARCHIVED'].includes(statusKey(exam.status))}
+                      title="Xoá đề thi"
+                      disabled={deletingId === exam.id}
                       onClick={() => handleDelete(exam)}
                     >
                       <FontAwesomeIcon icon={faTrashCan} />

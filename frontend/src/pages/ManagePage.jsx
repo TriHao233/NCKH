@@ -50,6 +50,7 @@ import { listTeacherOptions } from '../api/users';
 import { permissionsForUser } from '../auth/permissions';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
+import StructuredQuestion, { isStructuredQuestionType } from '../components/StructuredQuestion';
 import {
   SINGLE_CHOICE_TYPES,
   MULTI_CHOICE_TYPES,
@@ -3165,7 +3166,17 @@ function ManagePage() {
 
             <p className="question-view-content">{viewingQuestion.content}</p>
 
-            {viewingEntries.length > 0 ? (
+            {isStructuredQuestionType(questionAssessmentType(viewingQuestion)) ? (
+              <>
+                <StructuredQuestion
+                  questionType={questionAssessmentType(viewingQuestion)}
+                  options={viewingQuestion.question_data?.options}
+                />
+                <p className="question-view-answer">
+                  <b>Đáp án đúng:</b> {viewingQuestion.question_data?.correct_answer || 'Chưa có'}
+                </p>
+              </>
+            ) : viewingEntries.length > 0 ? (
               <ul className="question-view-options">
                 {viewingEntries.map((entry) => (
                   <li key={entry.key} className={viewingCorrectKeys.includes(entry.key) ? 'is-correct' : ''}>
@@ -3325,8 +3336,22 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Lựa chọn và đáp án</label>
-              {renderEditAnswerEditor()}
+              {isStructuredQuestionType(questionAssessmentType(editing)) ? (
+                <>
+                  <StructuredQuestion
+                    questionType={questionAssessmentType(editing)}
+                    options={editRawOptions || entriesToOptions(optionEntriesForQuestion({ questionType: questionAssessmentType(editing), rawOptions: null }))}
+                    onOptionChange={updateEditOption}
+                  />
+                  <label className="field-label">Đáp án đúng</label>
+                  <input className="field-input" value={editCorrectAnswer} onChange={(event) => setEditCorrectAnswer(event.target.value)} />
+                </>
+              ) : (
+                <>
+                  <label className="field-label">Lựa chọn và đáp án</label>
+                  {renderEditAnswerEditor()}
+                </>
+              )}
             </div>
 
             <div className="field-group">
@@ -3492,8 +3517,23 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Lựa chọn và đáp án</label>
-              {renderChoiceEditor({
+              {isStructuredQuestionType(newQuestionType) ? (
+                <>
+                  <StructuredQuestion
+                    questionType={newQuestionType}
+                    options={newRawOptions || entriesToOptions(optionEntriesForQuestion({ questionType: newQuestionType, rawOptions: null }))}
+                    onOptionChange={(key, value) => {
+                      const entries = optionEntriesForQuestion({ questionType: newQuestionType, rawOptions: newRawOptions });
+                      setNewRawOptions(entriesToOptions(entries.map((entry) => entry.key === key ? { ...entry, value } : entry)));
+                    }}
+                  />
+                  <label className="field-label">Đáp án đúng</label>
+                  <input className="field-input" value={newCorrectAnswer} onChange={(event) => setNewCorrectAnswer(event.target.value)} />
+                </>
+              ) : (
+                <>
+                  <label className="field-label">Lựa chọn và đáp án</label>
+                  {renderChoiceEditor({
                 questionType: newQuestionType,
                 rawOptions: newRawOptions,
                 correctAnswer: newCorrectAnswer,
@@ -3512,7 +3552,9 @@ function ManagePage() {
                   setNewCorrectAnswer(joinCorrectValues(nextValues, entries));
                 },
                 keyPrefix: 'new',
-              })}
+                  })}
+                </>
+              )}
             </div>
 
             <div className="field-group">

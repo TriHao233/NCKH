@@ -23,6 +23,7 @@ from modules.exams.service import (
     ExamVariantService,
     get_exam_service,
     get_exam_variant_service,
+    variant_header,
 )
 
 router = APIRouter(prefix=f"{settings.api_prefix}/exams", tags=["Exams"])
@@ -305,7 +306,7 @@ async def export_variant_pdf(
     if not variant["questions"]:
         raise HTTPException(status_code=400, detail="Mã đề chưa có câu hỏi, không thể xuất PDF")
     pdf_bytes = await render_exam_pdf(
-        exam["header"], variant["exam_code"], variant["questions"], export_type
+        variant_header(exam, variant), variant["exam_code"], variant["questions"], export_type
     )
     filename = f"{variant['exam_code']}_{export_type}.pdf"
     return Response(
@@ -332,7 +333,7 @@ def export_variant_docx(
     if not variant["questions"]:
         raise HTTPException(status_code=400, detail="Mã đề chưa có câu hỏi, không thể xuất DOCX")
     docx_bytes = render_exam_docx(
-        exam["header"], variant["exam_code"], variant["questions"], export_type
+        variant_header(exam, variant), variant["exam_code"], variant["questions"], export_type
     )
     filename = f"{variant['exam_code']}_{export_type}.docx"
     return Response(

@@ -29,6 +29,11 @@
   .q-content { margin: 0 0 1mm; text-align: justify; overflow-wrap: anywhere; white-space: pre-line; }
   .option { margin: 0 0 0.5mm 7mm; padding-left: 6mm; text-indent: -6mm; overflow-wrap: anywhere; white-space: pre-line; }
   .option.correct { font-weight: bold; text-decoration: underline; }
+  .matching-columns { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; margin: 1mm 0 2mm; }
+  .matching-column { display: table-cell; width: 50%; vertical-align: top; border: 1px solid #000; padding: 2mm; }
+  .matching-column + .matching-column { border-left: 0; }
+  .matching-column p { margin: 0 0 1mm; overflow-wrap: anywhere; }
+  .structured-label { font-weight: bold; margin: 0 0 1mm; }
   .end-marker { text-align: center; font-weight: bold; margin-top: 7mm; }
   .answer-heading { text-align: center; font-size: inherit; font-weight: bold; margin: 0 0 4mm; }
   .answer-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: inherit; }
@@ -69,9 +74,15 @@
   {% for q in questions %}
   <div class="question">
     <p class="q-content"><strong>Câu {{ q.number }}.</strong> {{ q.content }}</p>
-    {% for opt in q.options %}
-    <p class="option{% if show_answers and opt.correct %} correct{% endif %}">{{ opt.label }}. {{ opt.text }}</p>
-    {% endfor %}
+    {% if q.question_type == 'ghep_cot' %}
+    <div class="matching-columns">
+      <div class="matching-column"><p class="structured-label">Cột số</p>{% for opt in q.numbered_options %}<p>{{ opt.label }}. {{ opt.text }}</p>{% endfor %}</div>
+      <div class="matching-column"><p class="structured-label">Cột chữ</p>{% for opt in q.lettered_options %}<p>{{ opt.label }}. {{ opt.text }}</p>{% endfor %}</div>
+    </div>
+    {% else %}
+    {% if q.question_type == 'sap_xep' %}<p class="structured-label">Các bước cần sắp xếp:</p>{% endif %}
+    {% for opt in q.options %}<p class="option{% if show_answers and opt.correct %} correct{% endif %}">{{ opt.label }}. {{ opt.text }}</p>{% endfor %}
+    {% endif %}
   </div>
   {% endfor %}
   <div class="end-marker">— HẾT —</div>

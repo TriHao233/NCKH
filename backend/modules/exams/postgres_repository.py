@@ -100,6 +100,7 @@ class PostgresExamRepository:
     def delete(self, exam_id: str | ObjectId) -> bool:
         key = str(object_id(exam_id, "exam_id"))
         with postgres_connection() as conn:
+            conn.execute("DELETE FROM exam_variants WHERE exam_id=%s", (key,))
             conn.execute("DELETE FROM exam_questions WHERE exam_id=%s", (key,))
             return conn.execute("DELETE FROM exams WHERE id=%s", (key,)).rowcount == 1
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import QuestionContent from '../components/QuestionContent';
+import StructuredQuestion, { isStructuredQuestionType } from '../components/StructuredQuestion';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faLayerGroup, faUpload, faWandMagicSparkles, faMicrochip, faRobot, faRotateRight, faBookOpen, faArrowRight, faPlus, faPen, faPaperPlane, faTrashCan, faFloppyDisk, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { chunkDocument } from '../api/chunk';
@@ -206,6 +207,30 @@ function reusableDocumentLabel(document) {
       ? 'đã xử lý'
       : document.status;
   return `${document.title} (${pages}, ${state})`;
+}
+
+function renderDraftAnswerDisplay(question) {
+  const type = String(question.questionType || '').toLowerCase();
+  if (type === 'sap_xep' || type === 'ghep_cot') {
+    const text = String(question.correctAnswer || '').trim();
+    return (
+      <div className="draft-item-answer-key">
+        {text || <em className="draft-muted">Chưa có đáp án.</em>}
+      </div>
+    );
+  }
+  return (
+    <div className="draft-item-choices">
+      {question.choices.map((choice) => (
+        <span
+          key={choice.text}
+          className={`choice ${choice.isCorrect ? 'choice--correct' : ''}`}
+        >
+          {choice.text}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function validateDraftBeforeSave(draft) {
@@ -1966,9 +1991,27 @@ function GeneratePage() {
                               onChange={(e) => updateDraft(question.id, { text: e.target.value })}
                             />
                           </label>
+                          {isStructuredQuestionType(question.questionType) && (
+                            <div className="draft-edit-field">
+                              <StructuredQuestion
+                                questionType={question.questionType}
+                                options={question.rawOptions}
+                                disabled={isSaving || isRemoving}
+                                onOptionChange={(key, value) => updateDraftOption(question, key, value)}
+                              />
+                            </div>
+                          )}
                           <div className="draft-edit-field">
                             <span>Đáp án</span>
-                            {renderDraftAnswerEditor(question, isSaving || isRemoving)}
+                            {isStructuredQuestionType(question.questionType) ? (
+                              <input
+                                className="field-input"
+                                value={question.correctAnswer || ''}
+                                disabled={isSaving || isRemoving}
+                                aria-label="Đáp án đúng"
+                                onChange={(event) => updateDraft(question.id, { correctAnswer: event.target.value })}
+                              />
+                            ) : renderDraftAnswerEditor(question, isSaving || isRemoving)}
                           </div>
                           <label className="draft-edit-field">
                             <span>Giải thích</span>
@@ -1986,6 +2029,7 @@ function GeneratePage() {
                           <section className="draft-section">
                             <h4 className="draft-section-label">Nội dung</h4>
                             <QuestionContent text={question.text} />
+                            <StructuredQuestion questionType={question.questionType} options={question.rawOptions} />
                           </section>
 
                           {question.validationWarnings?.length ? (
@@ -2001,16 +2045,7 @@ function GeneratePage() {
 
                           <section className="draft-section">
                             <h4 className="draft-section-label">Đáp án</h4>
-                            <div className="draft-item-choices">
-                              {question.choices.map((choice) => (
-                                <span
-                                  key={choice.text}
-                                  className={`choice ${choice.isCorrect ? 'choice--correct' : ''}`}
-                                >
-                                  {choice.text}
-                                </span>
-                              ))}
-                            </div>
+                            {renderDraftAnswerDisplay(question)}
                           </section>
 
                           {question.explanation && (

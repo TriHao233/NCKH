@@ -28,6 +28,7 @@ import {
 import { listAvailableAiModels, listSubjects } from '../api/catalog';
 import { listReviewerOptions, listTeacherOptions } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
+import StructuredQuestion, { isStructuredQuestionType } from '../components/StructuredQuestion';
 import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import {
   DEFAULT_REVIEW_COMMENT_TEMPLATES,
@@ -2089,13 +2090,20 @@ function ReviewQueuePage() {
                     </div>
                     <h3>Nội dung câu hỏi</h3>
                     <p>{selected.content}</p>
-                    <div className="question-option-list">
-                      {Object.entries(selected.question_data?.options || {}).map(([key, value]) => (
-                        <div key={key} className={String(selected.question_data?.correct_answer || '').split(',').map((item) => item.trim()).includes(key) ? 'is-correct' : ''}>
-                          <b>{key}</b><span>{String(value)}</span>
-                        </div>
-                      ))}
-                    </div>
+                    {isStructuredQuestionType(assessmentType(selected)) ? (
+                      <StructuredQuestion
+                        questionType={assessmentType(selected)}
+                        options={selected.question_data?.options}
+                      />
+                    ) : (
+                      <div className="question-option-list">
+                        {Object.entries(selected.question_data?.options || {}).map(([key, value]) => (
+                          <div key={key} className={String(selected.question_data?.correct_answer || '').split(',').map((item) => item.trim()).includes(key) ? 'is-correct' : ''}>
+                            <b>{key}</b><span>{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="question-answer-key">
                       <span>Đáp án</span>
                       <b>{selected.question_data?.correct_answer || 'Chưa có đáp án'}</b>

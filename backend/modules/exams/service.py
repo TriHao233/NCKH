@@ -50,6 +50,15 @@ def _exam_status(exam: dict) -> str:
     return STATUS_ALIASES.get(raw_status, raw_status.upper())
 
 
+def variant_header(exam: dict, variant: dict) -> dict:
+    return (
+        variant.get("header")
+        or exam.get("legacy_variant_header")
+        or (exam.get("finalized_snapshot") or {}).get("header")
+        or exam["header"]
+    )
+
+
 def _matrix_cell_dict(cell: MatrixCell) -> dict:
     return {
         "chapter_id": object_id(cell.chapter_id, "chapter_id") if cell.chapter_id else None,
@@ -223,7 +232,11 @@ class ExamService:
 
     def duplicate_exam(self, exam_id: str, current_user: CurrentUser) -> dict:
         source = self._get_for_user_or_404(exam_id, current_user)
-        snapshot = source.get("finalized_snapshot") or {}
+        snapshot = (
+            source.get("finalized_snapshot") or {}
+            if _exam_status(source) in LOCKED_EXAM_STATUSES
+            else {}
+        )
         now = utc_now()
         clone = {
             "_id": ObjectId(),
@@ -315,14 +328,17 @@ class ExamService:
         exam = self._get_for_user_or_404(exam_id, current_user)
         current_status = _exam_status(exam)
         target_status = payload.status.value
-        if current_status == "ARCHIVED":
+        if current_status == "ARCHIVED" and target_status != "DRAFT":
             raise ValueError("Đề thi đã lưu trữ")
         if target_status == current_status:
             return serialize_exam(exam, self.repository.count_variants(exam_id))
         if target_status == "DRAFT":
-            if current_status == "FINALIZED":
-                raise ValueError("Đề thi đã chốt, không thể quay lại nháp")
             updates = {"status": ExamStatus.DRAFT.value}
+            if current_status in LOCKED_EXAM_STATUSES and self.repository.count_variants(exam_id):
+                if not exam.get("legacy_variant_header"):
+                    updates["legacy_variant_header"] = deepcopy(
+                        (exam.get("finalized_snapshot") or {}).get("header") or exam["header"]
+                    )
         elif target_status == "READY":
             if current_status == "FINALIZED":
                 raise ValueError("Đề thi đã chốt")
@@ -367,10 +383,7 @@ class ExamService:
         return serialize_exam(exam, self.repository.count_variants(exam_id))
 
     def delete_exam(self, exam_id: str, current_user: CurrentUser) -> None:
-        exam = self._get_for_user_or_404(exam_id, current_user)
-        self._assert_mutable(exam)
-        if self.repository.count_variants(exam_id) > 0:
-            raise ValueError("Không thể xoá đề thi đã có mã đề, hãy xoá mã đề trước")
+        self._get_for_user_or_404(exam_id, current_user)
         self.repository.delete(exam_id)
 
     def save_matrix(self, exam_id: str, payload: ExamMatrixRequest, current_user: CurrentUser) -> dict:
@@ -645,6 +658,7 @@ class ExamVariantService:
             "schema_version": SCHEMA_VERSION,
             "exam_id": object_id(exam_id, "exam_id"),
             "exam_code": payload.exam_code,
+            "header": deepcopy((exam.get("finalized_snapshot") or {}).get("header") or exam["header"]),
             "questions": variant_questions,
             "answer_key": answer_key,
             "created_at": utc_now(),
@@ -685,7 +699,7 @@ class ExamVariantService:
             )
         return json_safe(
             {
-                "header": exam["header"],
+                "header": variant_header(exam, variant),
                 "exam_code": variant["exam_code"],
                 "questions": questions,
             }

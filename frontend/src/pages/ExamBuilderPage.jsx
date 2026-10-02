@@ -18,6 +18,7 @@ import {
   updateExam,
 } from '../api/exams';
 import { listSubjects } from '../api/catalog';
+import StructuredQuestion, { isStructuredQuestionType } from '../components/StructuredQuestion';
 import { BLOOM_LEVELS, DIFFICULTIES, questionTypeLabel } from '../constants/generationEnums';
 import { EXAM_BLOOM_LEVELS, examBloomLevel, examMatrixError, normalizeExamMatrix } from '../utils/examMatrix';
 import '../css/ExamBuilderPage.css';
@@ -119,7 +120,10 @@ function ExamBuilderPage() {
   const locked = isExamLocked(exam);
 
   const handleStatusChange = async (targetStatus) => {
-    if (targetStatus === 'FINALIZED' && !window.confirm('Chốt đề thi và khóa ma trận/danh sách câu hỏi?')) {
+    if (targetStatus === 'FINALIZED' && !window.confirm('Chốt đề thi để tạo mã đề? Bạn vẫn có thể mở chỉnh sau.')) {
+      return;
+    }
+    if (targetStatus === 'DRAFT' && locked && !window.confirm('Mở chỉnh đề thi? Các mã đề đã tạo vẫn giữ nội dung cũ; thay đổi mới chỉ áp dụng cho mã đề tạo sau khi chốt lại.')) {
       return;
     }
     if (targetStatus === 'ARCHIVED' && !window.confirm('Lưu trữ đề thi này?')) {
@@ -202,7 +206,7 @@ function ExamBuilderPage() {
             />
             {locked && (
               <p className="locked-note">
-                Đề thi đã {statusValue === 'ARCHIVED' ? 'lưu trữ' : 'chốt'}; thông tin, ma trận và danh sách câu hỏi đang được khóa.
+                Đề thi đã {statusValue === 'ARCHIVED' ? 'lưu trữ' : 'chốt'}. Chọn “Mở chỉnh” để sửa thông tin, ma trận hoặc câu hỏi; mã đề đã tạo vẫn giữ bản cũ.
               </p>
             )}
 
@@ -268,6 +272,11 @@ function LifecycleBar({ exam, status, onStatusChange }) {
       </div>
       <div className="lifecycle-actions">
         {status === 'READY' && (
+          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('DRAFT')}>
+            Mở chỉnh
+          </button>
+        )}
+        {['FINALIZED', 'ARCHIVED'].includes(status) && (
           <button type="button" className="btn btn--outline" onClick={() => onStatusChange('DRAFT')}>
             Mở chỉnh
           </button>
@@ -777,6 +786,7 @@ function QuestionsBlock({ exam, chapters, onSaved, readOnly, matrixDirty, onBusy
                         <span className="qpi-tag qpi-tag--type">{questionTypeLabel((q.classification?.assessment_type || '').toLowerCase()) || 'Trắc nghiệm'}</span>
                       </div>
                       <div className="qpi-content">{q.content}</div>
+                      <StructuredQuestion questionType={q.classification?.assessment_type} options={q.question_data?.options} />
                     </div>
                   </label>
                 );
@@ -815,6 +825,10 @@ function QuestionsBlock({ exam, chapters, onSaved, readOnly, matrixDirty, onBusy
           <div className="question-pool-item" key={ref.question_id}>
             <span className="qpl-num">Câu {index + 1}</span>
             <span className="qpl-content">{ref.content_snapshot?.content}</span>
+            <StructuredQuestion
+              questionType={ref.content_snapshot?.classification?.assessment_type}
+              options={ref.content_snapshot?.question_data?.options}
+            />
             <button type="button" className="icon-btn icon-btn--danger" onClick={() => handleRemove(ref.question_id)} disabled={readOnly || busy} title="Xoá câu khỏi đề">×</button>
           </div>
         ))}
@@ -987,6 +1001,8 @@ function ExportSection({ exam, onSaved, onStatusChange }) {
           <div className="locked-note export-status-note">
             {status === 'ARCHIVED' ? (
               <span>Đề đã lưu trữ. Bạn vẫn có thể xem trước và xuất các mã đề đã tạo.</span>
+            ) : variants.length > 0 && status === 'DRAFT' ? (
+              <span>Mã đề cũ vẫn có thể xuất. Chốt lại đề sau khi sửa để tạo mã đề mới.</span>
             ) : (
               <>
                 <span>
@@ -1126,7 +1142,9 @@ function ExportSection({ exam, onSaved, onStatusChange }) {
                 {preview.questions.map((q) => (
                   <div className="preview-question" key={q.number}>
                     <p><b>Câu {q.number}.</b> {q.content}</p>
-                    {q.options.map((opt) => (
+                    {isStructuredQuestionType(q.question_type) ? (
+                      <StructuredQuestion questionType={q.question_type} options={q.options} />
+                    ) : q.options.map((opt) => (
                       <div className="preview-option" key={opt.label}>{opt.label}. {opt.text}</div>
                     ))}
                   </div>
