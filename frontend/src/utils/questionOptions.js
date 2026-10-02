@@ -40,7 +40,10 @@ export function optionEntriesForQuestion({ questionType, rawOptions }) {
       { key: 'B', value: 'Sai' },
     ];
   }
-  if (['trac_nghiem', 'tinh_huong', 'nhieu_lua_chon'].includes(normalizedType)) {
+  if (normalizedType === 'ghep_cot') {
+    return ['1', '2', '3', 'a', 'b', 'c', 'd'].map((key) => ({ key, value: '' }));
+  }
+  if (['trac_nghiem', 'tinh_huong', 'nhieu_lua_chon', 'sap_xep'].includes(normalizedType)) {
     return DEFAULT_OPTION_KEYS.map((key) => ({ key, value: '' }));
   }
   return [];
@@ -69,6 +72,24 @@ export function validateQuestionAnswer({ questionType, rawOptions, correctAnswer
   const entries = optionEntriesForQuestion({ questionType: normalizedType, rawOptions });
   if (entries.some((entry) => !entry.value.trim())) {
     return 'Các lựa chọn không được để trống.';
+  }
+  if (normalizedType === 'sap_xep') {
+    const answers = correctAnswerValues(correctAnswer);
+    const keys = entries.map((entry) => entry.key);
+    if (keys.length < 4 || answers.length !== keys.length || new Set(answers).size !== keys.length || answers.some((key) => !keys.includes(key))) {
+      return 'Câu sắp xếp cần ít nhất 4 bước; đáp án phải liệt kê mỗi khóa đúng một lần, ví dụ: B, A, D, C.';
+    }
+  }
+  if (normalizedType === 'ghep_cot') {
+    const keys = entries.map((entry) => entry.key);
+    const numbered = keys.filter((key) => /^\d+$/.test(key));
+    const letters = keys.filter((key) => /^[a-z]+$/i.test(key));
+    const pairs = correctAnswerValues(correctAnswer).map((value) => value.match(/^(\d+)\s*-\s*([a-z])$/i));
+    if (numbered.length < 3 || letters.length < numbered.length + 1 || pairs.length !== numbered.length
+      || pairs.some((pair) => !pair || !numbered.includes(pair[1]) || !letters.includes(pair[2]))
+      || new Set(pairs.filter(Boolean).map((pair) => pair[1])).size !== numbered.length) {
+      return 'Câu ghép đôi cần ít nhất 3 mục số, thêm 1 mục chữ gây nhiễu và đủ cặp đáp án, ví dụ: 1-b, 2-a, 3-c.';
+    }
   }
   return null;
 }

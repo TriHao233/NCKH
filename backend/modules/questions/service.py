@@ -557,7 +557,16 @@ class QuestionService:
     ) -> dict | None:
         pair = self.repository.find_pair(question_id)
         self._ensure_read_access(pair, current_user)
-        return serialize_question(*pair) if pair else None
+        return self._serialize_for_user(*pair, current_user) if pair else None
+
+    def _serialize_for_user(self, question: dict, version: dict, current_user: CurrentUser | None) -> dict:
+        response = serialize_question(question, version)
+        if current_user:
+            response["can_edit"] = self._can_manage_all(current_user) or (
+                has_permission(current_user, "questions.manage_own")
+                and self._owns_question(question, version, current_user.id)
+            )
+        return response
 
     def duplicate(self, question_id: str, current_user: CurrentUser) -> dict | None:
         pair = self.repository.find_pair(question_id)
@@ -758,7 +767,7 @@ class QuestionService:
             pairs, total = list_result
             status_counts = {}
         return {
-            "items": [serialize_question(question, version) for question, version in pairs],
+            "items": [self._serialize_for_user(question, version, current_user) for question, version in pairs],
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -1267,7 +1276,21 @@ class QuestionService:
         if not pair:
             return False
         self._ensure_write_access(pair, current_user)
-        return self.repository.archive(question_id)
+        question, version = pair
+        before = {"lifecycle_status": question.get("lifecycle_status")}
+        archived = self.repository.archive(question_id)
+        if archived:
+            record_audit_event(
+                action="question.archive",
+                entity_type="question",
+                entity_id=question["_id"],
+                actor_user_id=current_user.id if current_user else None,
+                actor_role=current_user.role if current_user else None,
+                before=before,
+                after={"lifecycle_status": "ARCHIVED"},
+                metadata={"version_id": str(version["_id"]), "label": question.get("question_code")},
+            )
+        return archived
 
 
 def _transactional(notifications: list[dict] | None) -> dict:

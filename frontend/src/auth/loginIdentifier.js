@@ -52,6 +52,9 @@ function readableErrorDetail(value) {
 }
 
 export function loginErrorMessage(error, demoLoginEnabled = false) {
+  if (error?.code === 'auth/user-disabled') {
+    return 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên để được hỗ trợ.';
+  }
   if (error?.code === 'auth/not-configured') {
     return 'Firebase web app chưa khởi tạo được với project nckh-e6817. Vui lòng rebuild frontend hoặc dùng tài khoản demo admin/reviewer.';
   }

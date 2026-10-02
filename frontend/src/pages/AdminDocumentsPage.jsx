@@ -5,7 +5,7 @@ import { faChevronLeft, faChevronRight, faRotateRight, faUpload } from '@fortawe
 import { listAdminDocuments } from '../api/adminOverview';
 import { listSubjects } from '../api/catalog';
 import { chunkDocument } from '../api/chunk';
-import { deleteDocument, listDocumentPages, reindexDocument, updateDocument } from '../api/documents';
+import { deleteDocument, getDocument, listDocumentPages, reindexDocument, updateDocument, updateDocumentSharing } from '../api/documents';
 import { getOcrStatus, uploadSourceDocument } from '../api/ocr';
 import { listUsers } from '../api/users';
 import { pollJob } from '../hooks/useJobPoll';
@@ -97,6 +97,9 @@ function AdminDocumentsPage() {
   const [editorError, setEditorError] = useState('');
   const [preview, setPreview] = useState(null);
   const [upload, setUpload] = useState(null);
+  const [sharing, setSharing] = useState(null);
+  const [sharingError, setSharingError] = useState('');
+  const [deleteConfirmation, setDeleteConfirmation] = useState(null);
   const uploadAbortRef = useRef(null);
 
   const owners = useMemo(
@@ -161,7 +164,7 @@ function AdminDocumentsPage() {
   const refreshAll = useCallback(() => Promise.all([fetchDocuments(), fetchCounts()]), [fetchDocuments, fetchCounts]);
 
   const selected = documents.find((document) => document.id === selectedId) || null;
-  const overlayOpen = Boolean(editor || preview || upload);
+  const overlayOpen = Boolean(editor || preview || upload || sharing || deleteConfirmation);
   useEffect(() => {
     if (!selected || overlayOpen) return undefined;
     const handleKeyDown = (event) => {
@@ -199,8 +202,43 @@ function AdminDocumentsPage() {
   };
 
   const handleDelete = async (document) => {
-    if (!window.confirm(`Xóa tài liệu "${document.title}"? Tài liệu sẽ không còn dùng được để sinh câu hỏi.`)) return;
-    if (await runAction(() => deleteDocument(document.id), 'Đã xóa tài liệu.')) setSelectedId('');
+    if (await runAction(() => deleteDocument(document.id), 'Đã lưu trữ tài liệu khỏi danh sách sử dụng.')) {
+      setSelectedId('');
+      setDeleteConfirmation(null);
+    }
+  };
+
+  const openSharing = async (document) => {
+    setBusy(true);
+    setSharingError('');
+    try {
+      const detail = await getDocument(document.id);
+      setSharing({ id: document.id, title: document.title, ownerId: detail.uploaded_by_user_id || '', scope: detail.shared_scope || 'PRIVATE', userIds: detail.shared_with_user_ids || [] });
+    } catch (err) {
+      setNotice({ type: 'error', text: err.message || 'Không tải được thông tin chia sẻ' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSharing = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setSharingError('');
+    try {
+      await updateDocumentSharing(sharing.id, {
+        shared_scope: sharing.scope,
+        shared_with_user_ids: sharing.userIds,
+        ...(sharing.ownerId ? { owner_user_id: sharing.ownerId } : {}),
+      });
+      setSharing(null);
+      setNotice({ type: 'success', text: 'Đã lưu chia sẻ và chủ sở hữu tài liệu.' });
+      await refreshAll();
+    } catch (err) {
+      setSharingError(err.message || 'Không lưu được chia sẻ');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleReindex = (document) => runAction(() => reindexDocument(document.id), 'Đã đưa yêu cầu lập chỉ mục lại vào hàng tác vụ.');
@@ -445,7 +483,8 @@ function AdminDocumentsPage() {
                   Lập chỉ mục lại
                 </button>
               )}
-              <button type="button" className="jobs-secondary-button qbank-danger" disabled={busy} onClick={() => handleDelete(selected)}>Xóa</button>
+              <button type="button" className="jobs-secondary-button" disabled={busy} onClick={() => openSharing(selected)}>Chia sẻ / chuyển sở hữu</button>
+              <button type="button" className="jobs-secondary-button qbank-danger" disabled={busy} onClick={() => { setNotice(null); setDeleteConfirmation(selected); }}>Xóa</button>
             </div>
 
             <section className="qbank-section">
@@ -479,6 +518,29 @@ function AdminDocumentsPage() {
               </p>
             </section>
           </aside>
+        </div>
+      )}
+
+      {sharing && (
+        <div className="modal-overlay">
+          <form className="qbank-dialog qbank-dialog--narrow" role="dialog" aria-modal="true" aria-label="Chia sẻ và chuyển sở hữu tài liệu" onSubmit={saveSharing}>
+            <h2>Chia sẻ {sharing.title}</h2>
+            <label className="qbank-field"><span>Phạm vi</span><select value={sharing.scope} onChange={(event) => setSharing({ ...sharing, scope: event.target.value })}><option value="PRIVATE">Riêng tư</option><option value="SUBJECT">Chia sẻ theo môn</option></select></label>
+            <label className="qbank-field"><span>Chủ sở hữu tài liệu</span><select value={sharing.ownerId} onChange={(event) => setSharing({ ...sharing, ownerId: event.target.value })}><option value="">Không đổi chủ sở hữu</option>{owners.filter((owner) => owner.is_active !== false || owner.id === sharing.ownerId).map((owner) => <option key={owner.id} value={owner.id}>{owner.display_name || owner.email}</option>)}</select></label>
+            <div className="qbank-field"><span>Chia sẻ riêng cho giảng viên</span>{users.filter((user) => user.role === 'Teacher' && (user.is_active !== false || sharing.userIds.includes(user.id))).map((user) => <label className="qbank-check" key={user.id}><input type="checkbox" checked={sharing.userIds.includes(user.id)} onChange={() => setSharing({ ...sharing, userIds: sharing.userIds.includes(user.id) ? sharing.userIds.filter((id) => id !== user.id) : [...sharing.userIds, user.id] })} />{user.display_name || user.email}</label>)}</div>
+            {sharingError && <p className="qbank-note qbank-note--error" role="alert">{sharingError}</p>}
+            <div className="qbank-dialog-actions"><button type="button" className="jobs-secondary-button" disabled={busy} onClick={() => setSharing(null)}>Hủy</button><button type="submit" className="jobs-primary-button" disabled={busy}>{busy ? 'Đang lưu...' : 'Lưu chia sẻ'}</button></div>
+          </form>
+        </div>
+      )}
+
+      {deleteConfirmation && (
+        <div className="modal-overlay">
+          <div className="qbank-dialog qbank-dialog--narrow" role="dialog" aria-modal="true" aria-label="Xác nhận xóa tài liệu">
+            <h2>Xóa {deleteConfirmation.title}?</h2><p>Tài liệu sẽ được lưu trữ và không còn dùng để sinh câu hỏi.</p>
+            {notice?.type === 'error' && <p role="alert" className="qbank-note qbank-note--error">{notice.text}</p>}
+            <div className="qbank-dialog-actions"><button type="button" className="jobs-secondary-button" disabled={busy} onClick={() => setDeleteConfirmation(null)}>Hủy</button><button type="button" className="jobs-primary-button" disabled={busy} onClick={() => handleDelete(deleteConfirmation)}>Xác nhận xóa</button></div>
+          </div>
         </div>
       )}
 

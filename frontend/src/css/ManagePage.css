@@ -373,7 +373,9 @@
   color: #15803D;
   font-size: 0.78rem;
   font-weight: 700;
+  white-space: pre-line;
 }
+.manage-page .question-exchange-message--error { color: #b91c1c; }
 .manage-page .bulk-action-bar {
   display: flex;
   flex-wrap: wrap;

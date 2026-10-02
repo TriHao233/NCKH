@@ -89,6 +89,15 @@ function emptyCell() {
   return { chapter_id: '', cognitive_level: 'nhan_biet', difficulty: 'de', count: 1 };
 }
 
+function normalizedMatrixCell(cell) {
+  return {
+    chapter_id: cell.chapter_id || null,
+    cognitive_level: cell.cognitive_level,
+    difficulty: cell.difficulty,
+    count: Number(cell.count) || 0,
+  };
+}
+
 function ExamBuilderPage() {
   const { examId } = useParams();
   const navigate = useNavigate();
@@ -97,6 +106,9 @@ function ExamBuilderPage() {
   const [error, setError] = useState('');
   const [step, setStep] = useState('info');
   const [subjects, setSubjects] = useState([]);
+  const [pendingStatus, setPendingStatus] = useState(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState('');
 
   const fetchExam = useCallback(async () => {
     setLoading(true);
@@ -124,18 +136,27 @@ function ExamBuilderPage() {
   const statusValue = examStatus(exam);
   const locked = isExamLocked(exam);
 
-  const handleStatusChange = async (targetStatus) => {
-    if (targetStatus === 'FINALIZED' && !window.confirm('Chốt đề thi và khóa ma trận/danh sách câu hỏi?')) {
+  const handleStatusChange = (targetStatus) => {
+    setStatusError('');
+    if (['FINALIZED', 'ARCHIVED'].includes(targetStatus)) {
+      setPendingStatus(targetStatus);
       return;
     }
-    if (targetStatus === 'ARCHIVED' && !window.confirm('Lưu trữ đề thi này?')) {
-      return;
-    }
+    applyStatusChange(targetStatus);
+  };
+
+  const applyStatusChange = async (targetStatus) => {
+    if (statusSaving) return;
+    setStatusSaving(true);
+    setStatusError('');
     try {
       const updated = await updateExamStatus(exam.id, targetStatus);
       setExam(updated);
+      setPendingStatus(null);
     } catch (err) {
-      alert('Cập nhật trạng thái đề thi thất bại: ' + err.message);
+      setStatusError('Cập nhật trạng thái đề thi thất bại: ' + err.message);
+    } finally {
+      setStatusSaving(false);
     }
   };
 
@@ -175,7 +196,19 @@ function ExamBuilderPage() {
               exam={exam}
               status={statusValue}
               onStatusChange={handleStatusChange}
+              busy={statusSaving || Boolean(pendingStatus)}
             />
+            {pendingStatus && (
+              <section className="card" role="alertdialog" aria-modal="false" aria-labelledby="exam-status-confirmation">
+                <h3 id="exam-status-confirmation">{pendingStatus === 'FINALIZED' ? 'Xác nhận chốt đề' : 'Xác nhận lưu trữ đề'}</h3>
+                <p>{pendingStatus === 'FINALIZED' ? 'Chốt đề sẽ khóa thông tin, ma trận và danh sách câu hỏi. Bạn vẫn có thể tạo mã đề và xuất đề.' : 'Đề sẽ chuyển sang trạng thái lưu trữ.'}</p>
+                <div className="step-actions">
+                  <button type="button" className="btn btn--outline" disabled={statusSaving} onClick={() => setPendingStatus(null)}>Hủy</button>
+                  <button type="button" className="btn btn--primary" disabled={statusSaving} onClick={() => applyStatusChange(pendingStatus)}>{statusSaving ? 'Đang lưu...' : 'Xác nhận'}</button>
+                </div>
+              </section>
+            )}
+            {statusError && <p className="exam-error" role="alert">{statusError}</p>}
             {locked && (
               <p className="locked-note">
                 Đề thi đã {statusValue === 'ARCHIVED' ? 'lưu trữ' : 'chốt'}; thông tin, ma trận và danh sách câu hỏi đang được khóa.
@@ -195,7 +228,7 @@ function ExamBuilderPage() {
   );
 }
 
-function LifecycleBar({ exam, status, onStatusChange }) {
+function LifecycleBar({ exam, status, onStatusChange, busy }) {
   const selectedCount = exam.questions?.length || 0;
   const target = Number(exam.question_count) || 0;
   const hasExactQuestionCount = selectedCount === target;
@@ -221,22 +254,22 @@ function LifecycleBar({ exam, status, onStatusChange }) {
       </div>
       <div className="lifecycle-actions">
         {status === 'READY' && (
-          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('DRAFT')}>
+          <button type="button" className="btn btn--outline" disabled={busy} onClick={() => onStatusChange('DRAFT')}>
             Mở chỉnh
           </button>
         )}
         {status === 'DRAFT' && (
-          <button type="button" className="btn btn--outline" disabled={!canReady} onClick={() => onStatusChange('READY')}>
+          <button type="button" className="btn btn--outline" disabled={busy || !canReady} onClick={() => onStatusChange('READY')}>
             Đánh dấu sẵn sàng
           </button>
         )}
         {status === 'READY' && (
-          <button type="button" className="btn btn--primary" disabled={!canFinalize} onClick={() => onStatusChange('FINALIZED')}>
+          <button type="button" className="btn btn--primary" disabled={busy || !canFinalize} onClick={() => onStatusChange('FINALIZED')}>
             Chốt đề
           </button>
         )}
         {canArchive && (
-          <button type="button" className="btn btn--outline" onClick={() => onStatusChange('ARCHIVED')}>
+          <button type="button" className="btn btn--outline" disabled={busy} onClick={() => onStatusChange('ARCHIVED')}>
             Lưu trữ
           </button>
         )}
@@ -356,25 +389,24 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
   const [checking, setChecking] = useState(false);
 
   const updateCell = (index, patch) => {
+    setAvailability(null);
     setCells((current) => current.map((cell, i) => (i === index ? { ...cell, ...patch } : cell)));
   };
-  const addRow = () => setCells((current) => [...current, emptyCell()]);
-  const removeRow = (index) => setCells((current) => (
-    current.length <= 1 ? current : current.filter((_, i) => i !== index)
-  ));
+  const addRow = () => { setAvailability(null); setCells((current) => [...current, emptyCell()]); };
+  const removeRow = (index) => {
+    setAvailability(null);
+    setCells((current) => current.length <= 1 ? current : current.filter((_, i) => i !== index));
+  };
 
   const totalCount = cells.reduce((sum, cell) => sum + Number(cell.count || 0), 0);
   const targetCount = Number(exam.question_count) || 0;
   const matrixOver = targetCount > 0 && totalCount > targetCount;
   const matrixUnder = targetCount > 0 && totalCount < targetCount;
+  const normalizedCells = cells.map(normalizedMatrixCell);
+  const matrixSaved = JSON.stringify(normalizedCells) === JSON.stringify((exam.matrix || []).map(normalizedMatrixCell));
 
   const handleSave = async () => {
     if (readOnly) return;
-    const normalizedCells = cells.map((cell) => ({
-      ...cell,
-      chapter_id: cell.chapter_id || null,
-      count: Number(cell.count) || 0,
-    }));
     const invalidCell = normalizedCells.findIndex((cell) => cell.count <= 0);
     if (invalidCell >= 0) {
       alert(`Dòng ${invalidCell + 1} có số câu không hợp lệ (phải ≥ 1).`);
@@ -393,6 +425,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
   };
 
   const handleCheck = async () => {
+    if (!matrixSaved || saving) return;
     setChecking(true);
     try {
       const result = await getMatrixAvailability(exam.id);
@@ -431,7 +464,7 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
             {cells.map((cell, index) => (
               <tr key={index}>
                 <td>
-                  <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly}>
+                  <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly || saving || checking}>
                     <option value="">Tất cả chương</option>
                     {chapters.map((chapter) => (
                       <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
@@ -441,24 +474,24 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
                   </select>
                 </td>
                 <td>
-                  <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly}>
+                  <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly || saving || checking}>
                     {COGNITIVE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
                   </select>
                 </td>
                 <td>
-                  <select className="field-select" value={cell.difficulty} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly}>
+                  <select className="field-select" value={cell.difficulty} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly || saving || checking}>
                     {DIFFICULTIES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
                   </select>
                 </td>
                 <td>
-                  <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly} />
+                  <input type="number" min={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly || saving || checking} />
                 </td>
                 <td>
                   <button
                     type="button"
                     className="icon-btn icon-btn--danger"
                     onClick={() => removeRow(index)}
-                    disabled={readOnly || cells.length <= 1}
+                    disabled={readOnly || saving || checking || cells.length <= 1}
                     title={cells.length <= 1 ? 'Cần giữ ít nhất một dòng' : 'Xoá dòng'}
                   >
                     ×
@@ -470,14 +503,15 @@ function MatrixStep({ exam, chapters, onSaved, readOnly }) {
         </table>
       </div>
       <div className="step-actions">
-        <button type="button" className="btn btn--outline" onClick={addRow} disabled={readOnly}>+ Thêm nhóm</button>
-        <button type="button" className="btn btn--outline" onClick={handleCheck} disabled={checking}>
+        <button type="button" className="btn btn--outline" onClick={addRow} disabled={readOnly || saving || checking}>+ Thêm nhóm</button>
+        <button type="button" className="btn btn--outline" onClick={handleCheck} disabled={checking || saving || !matrixSaved}>
           {checking ? 'Đang kiểm tra...' : 'Kiểm tra đủ câu hỏi'}
         </button>
-        <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving || readOnly}>
+        <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving || checking || readOnly}>
           {saving ? 'Đang lưu...' : 'Lưu ma trận'}
         </button>
       </div>
+      {!matrixSaved && <p className="step-desc">Ma trận có thay đổi chưa lưu. Lưu ma trận trước khi kiểm tra số câu hỏi phù hợp.</p>}
       {availability && (
         <div className="availability-list">
           {availability.map((item, index) => (

@@ -79,6 +79,7 @@ export const ROUTE_PERMISSION_KEYS = Object.freeze({
   "/nhat-ky-he-thong": Object.freeze(["admin.audit"]),
   "/quan-ly-job": Object.freeze(["admin.jobs"]),
   "/quan-ly-moodle": Object.freeze(["admin.moodle"]),
+  "/lich-cong-viec": Object.freeze(["reviews.manage"]),
 });
 
 export const PROTECTED_ROUTE_ROLES = Object.freeze({
@@ -128,8 +129,10 @@ export function rolesForPath(pathname) {
 
 export function permissionsForUser(userOrRole) {
   const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
-  const explicit = typeof userOrRole === "string" ? [] : (userOrRole?.permissions || []);
-  return Array.from(new Set([...(ROLE_DEFAULT_PERMISSIONS[role] || []), ...explicit]));
+  const explicit = typeof userOrRole === "string" ? null : userOrRole?.permissions;
+  return Array.from(new Set(Array.isArray(explicit) && role !== 'Admin'
+    ? explicit
+    : ROLE_DEFAULT_PERMISSIONS[role] || []));
 }
 
 export function permissionsForPath(pathname) {
@@ -143,19 +146,24 @@ export function canAccessPath(userOrRole, pathname) {
   const roles = rolesForPath(pathname);
   if (!roles) return true;
   const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
-  if (roles.includes(role)) return true;
+  if (role === 'Admin' && roles.includes(role)) return true;
   const requiredPermissions = permissionsForPath(pathname);
-  if (!requiredPermissions?.length) return false;
+  if (!requiredPermissions?.length) return roles.includes(role);
+  if (role !== 'Admin' && requiredPermissions.some((permission) => permission.startsWith('admin.'))) return false;
   const permissions = permissionsForUser(userOrRole);
   return requiredPermissions.every((permission) => permissions.includes(permission));
 }
 
-export function landingPathForRole(role, requestedPath) {
+export function landingPathForRole(userOrRole, requestedPath) {
+  const role = typeof userOrRole === "string" ? userOrRole : userOrRole?.role;
   const requestedPathname = typeof requestedPath === "string"
     ? requestedPath.split("?")[0]
     : null;
-  if (requestedPathname && canAccessPath(role, requestedPathname)) {
+  if (requestedPathname && canAccessPath(userOrRole, requestedPathname)) {
     return requestedPath;
   }
-  return ROLE_LANDING_PATHS[role] || "/trang-chu";
+  const landing = ROLE_LANDING_PATHS[role];
+  return landing && canAccessPath(userOrRole, landing)
+    ? landing
+    : canAccessPath(userOrRole, '/ho-so') ? '/ho-so' : '/trang-chu';
 }

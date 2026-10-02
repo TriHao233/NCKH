@@ -325,6 +325,8 @@ function waitingTime(value) {
   const submitted = new Date(value);
   if (Number.isNaN(submitted.getTime())) return '--';
   const hoursWaiting = Math.max(0, (Date.now() - submitted.getTime()) / 3600000);
+  if (hoursWaiting < 1 / 60) return 'dưới 1 phút';
+  if (hoursWaiting < 1) return `${Math.floor(hoursWaiting * 60)} phút`;
   if (hoursWaiting < 24) return `${Math.max(1, Math.floor(hoursWaiting))} giờ`;
   return `${Math.floor(hoursWaiting / 24)} ngày`;
 }

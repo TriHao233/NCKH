@@ -20,9 +20,10 @@ function uniqueTexts(values) {
 export function evaluationInsights(evaluation, components) {
   const scores = evaluation?.scores || {};
   const passMin = evaluation?.policy?.thresholds?.pass_min ?? 0.7;
+  const notApplicable = new Set(metadataGuardrailInsights(evaluation).notApplicable);
   const scored = (components || [])
     .map((component) => ({ ...component, score: numericScore(scores[component.key]) }))
-    .filter((component) => component.score !== null);
+    .filter((component) => component.score !== null && !notApplicable.has(component.key));
   const values = scored.map((component) => component.score);
   const spread = values.length ? Math.max(...values) - Math.min(...values) : null;
   return {
@@ -72,6 +73,7 @@ export function mergeAiSuggestionsIntoDraft(draft, evaluation, timestamp = Date.
   const feedback = evaluation.feedback || {};
   const evidence = evaluation.evidence || {};
   const scores = evaluation.scores || {};
+  const notApplicable = new Set(metadataGuardrailInsights(evaluation).notApplicable);
   const severity = VALID_SEVERITIES.has(String(feedback.severity || '').toUpperCase())
     ? String(feedback.severity).toUpperCase()
     : 'MEDIUM';
@@ -107,6 +109,7 @@ export function mergeAiSuggestionsIntoDraft(draft, evaluation, timestamp = Date.
     ...draft,
     overallNote,
     criteria: (draft.criteria || []).map((criterion) => {
+      if (notApplicable.has(criterion.key)) return criterion;
       const value = numericScore(scores[criterion.key]);
       if (value === null) return criterion;
       return {

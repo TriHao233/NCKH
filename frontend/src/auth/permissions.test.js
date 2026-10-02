@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ROLE_DEFAULT_PERMISSIONS, ASSIGNABLE_PERMISSIONS, assignablePermissions, hasEffectivePermission, PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
+import { ROLE_DEFAULT_PERMISSIONS, ASSIGNABLE_PERMISSIONS, assignablePermissions, hasEffectivePermission, permissionsForUser, PROTECTED_ROUTE_ROLES, canAccessPath, landingPathForRole, rolesForPath } from "./permissions.js";
 
 const PROTECTED_APP_ROUTES = [
   "/sinh-cau-hoi",
@@ -62,7 +62,7 @@ test("teacher cannot access reviewer or admin-only routes", () => {
 test("explicit permissions can grant access outside the base role", () => {
   assert.equal(
     canAccessPath({ role: "Teacher", permissions: ["admin.users"] }, "/quan-ly-nguoi-dung"),
-    true,
+    false,
   );
   assert.equal(
     canAccessPath({ role: "Reviewer", permissions: ["questions.generate"] }, "/sinh-cau-hoi"),
@@ -104,4 +104,23 @@ test('effective reviewer permissions respect revokes and retain legacy fallback'
   assert.equal(hasEffectivePermission({ role: 'Reviewer', permissions: ['reviews.manage'] }, 'reviews.manage'), true);
   assert.equal(hasEffectivePermission({ role: 'Reviewer' }, 'reviews.manage'), true);
   assert.equal(hasEffectivePermission(null, 'reviews.manage'), false);
+});
+
+test('revoked permissions block role routes, menus and direct URLs', () => {
+  for (const [role, path] of [
+    ['Teacher', '/sinh-cau-hoi'], ['Teacher', '/quan-ly'],
+    ['Teacher', '/quan-ly-tai-lieu'], ['Teacher', '/quan-ly-hoc-phan'],
+    ['Teacher', '/lam-de-thi/abc123'], ['Reviewer', '/kiem-duyet'],
+    ['Reviewer', '/lich-cong-viec'],
+  ]) assert.equal(canAccessPath({ role, permissions: [] }, path), false, path);
+  assert.deepEqual(permissionsForUser({ role: 'Teacher', permissions: [] }), []);
+  assert.equal(canAccessPath({ role: 'Reviewer', permissions: [] }, '/ho-so'), true);
+  assert.equal(canAccessPath({ role: 'Admin', permissions: [] }, '/quan-ly'), true);
+});
+
+test('login landing uses effective permissions for revokes and grants', () => {
+  assert.equal(landingPathForRole({ role: 'Reviewer', permissions: [] }, '/kiem-duyet?status=PENDING'), '/ho-so');
+  assert.equal(landingPathForRole({ role: 'Teacher', permissions: [] }), '/ho-so');
+  assert.equal(landingPathForRole({ role: 'Reviewer', permissions: ['questions.generate'] }, '/sinh-cau-hoi'), '/sinh-cau-hoi');
+  assert.equal(landingPathForRole(null), '/trang-chu');
 });

@@ -67,7 +67,7 @@ function LoginPage() {
 
   useEffect(() => {
     if (!loading && user) {
-      navigate(landingPathForRole(user.role, requestedPath), { replace: true });
+      navigate(landingPathForRole(user, requestedPath), { replace: true });
     }
   }, [loading, navigate, requestedPath, user]);
 
@@ -85,7 +85,7 @@ function LoginPage() {
         if (!active || !result?.user) return;
         setIsLoading(true);
         const appUser = await login(result.user);
-        navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
+        navigate(landingPathForRole(appUser, requestedPath), { replace: true });
       })
       .catch(async (error) => {
         if (!active) return;
@@ -115,7 +115,7 @@ function LoginPage() {
       }
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await login(result.user);
-      navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
+      navigate(landingPathForRole(appUser, requestedPath), { replace: true });
     } catch (error) {
       if (auth) {
         await signOut(auth).catch(() => {});
@@ -177,7 +177,7 @@ function LoginPage() {
       const appUser = demoUsername
         ? await loginWithDemoSession(userCredential.appUser)
         : await login(userCredential.user);
-      navigate(landingPathForRole(appUser.role, requestedPath), { replace: true });
+      navigate(landingPathForRole(appUser, requestedPath), { replace: true });
     } catch (error) {
       if (auth) {
         await signOut(auth).catch(() => {});

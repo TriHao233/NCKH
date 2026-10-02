@@ -69,7 +69,7 @@ function DangKy() {
       }
       const result = await signInWithPopup(auth, googleProvider);
       const appUser = await login(result.user);
-      navigate(landingPathForRole(appUser.role), { replace: true });
+      navigate(landingPathForRole(appUser), { replace: true });
     } catch (error) {
       if (auth) {
         await signOut(auth).catch(() => {});

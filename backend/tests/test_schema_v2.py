@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock
+from unittest import mock
 
 from bson import ObjectId
 from docx import Document
@@ -116,6 +117,7 @@ from modules.users.schemas import (
     PublicRegisterRequest,
     RoleEnum,
     UserAdminUpdateRequest,
+    UserCreateRequest,
     UserImportRequest,
     UserInviteRequest,
 )
@@ -343,6 +345,8 @@ class FakeUserRepository:
             "display_name": data["display_name"],
             "role": data.get("role", "Teacher"),
             "permissions": data.get("permissions") or [],
+            "permission_grants": data.get("permission_grants") or [],
+            "permission_revokes": data.get("permission_revokes") or [],
             "profile": data.get("profile") or {"school": "", "address": "", "avatar": ""},
             "is_active": True,
             "created_at": now,
@@ -1506,6 +1510,8 @@ class SchemaV2Tests(unittest.TestCase):
         service = QuestionService(repository=repository, references=object())
 
         self.assertEqual(service.get(str(question_id), shared_teacher)["id"], str(question_id))
+        self.assertFalse(service.get(str(question_id), shared_teacher)["can_edit"])
+        self.assertTrue(service.get(str(question_id), owner)["can_edit"])
         with self.assertRaises(PermissionError):
             service.update(
                 str(question_id),
@@ -5606,6 +5612,62 @@ class SchemaV2Tests(unittest.TestCase):
         )
         self.assertNotIn(str(teacher["_id"]), {item["id"] for item in result["items"]})
         self.assertNotIn(str(inactive_reviewer["_id"]), {item["id"] for item in result["items"]})
+
+    def test_user_creation_preserves_explicit_empty_permissions_and_audits_without_secrets(self):
+        admin = _current_user("Admin")
+        for request_type in (UserCreateRequest, UserInviteRequest):
+            for explicit_empty in (False, True):
+                with self.subTest(request_type=request_type.__name__, explicit_empty=explicit_empty):
+                    payload = {"email": "qa-empty@example.com", "display_name": "QA Empty", "role": "Teacher"}
+                    if request_type is UserCreateRequest:
+                        payload["password"] = "test-only-password"
+                    if explicit_empty:
+                        payload["permissions"] = []
+                    service = UserService(FakeUserRepository([]), FakeIdentityGateway(), FakeSessions())
+                    with mock.patch("modules.users.service.record_audit_event") as audit:
+                        if request_type is UserCreateRequest:
+                            result = service.create_user(request_type(**payload), admin)
+                        else:
+                            result = service.invite_user(request_type(**payload), admin)["user"]
+                    expected = [] if explicit_empty else list(effective_permissions({"role": "Teacher"}))
+                    self.assertEqual(result["permissions"], expected)
+                    self.assertEqual(audit.call_args.kwargs["actor_user_id"], admin.id)
+                    self.assertNotIn("test-only-password", repr(audit.call_args))
+                    self.assertNotIn("reset_link", audit.call_args.kwargs["after"])
+
+    def test_archive_audit_only_records_success_and_keeps_the_before_state(self):
+        owner = _current_user("Teacher")
+        for kind in ("question", "document"):
+            for succeeds in (False, True):
+                with self.subTest(kind=kind, succeeds=succeeds):
+                    record = {"_id": ObjectId(), "created_by_user_id": owner.id, "uploaded_by_user_id": owner.id,
+                              "lifecycle_status": "ACTIVE", "status": "READY", "title": "QA Archive", "question_code": "Q-QA"}
+                    version = {"_id": ObjectId(), "created_by_user_id": owner.id}
+
+                    class Repository:
+                        def find_pair(self, _id):
+                            return record, version
+
+                        def find_by_id(self, _id):
+                            return record
+
+                        def archive(self, _id):
+                            if succeeds:
+                                record.update(lifecycle_status="ARCHIVED", status="ARCHIVED")
+                            return succeeds
+
+                    service = QuestionService(Repository(), None) if kind == "question" else DocumentService(Repository())
+                    with mock.patch(f"modules.{kind}s.service.record_audit_event") as audit:
+                        self.assertEqual(service.archive(str(record["_id"]), owner), succeeds)
+                    if not succeeds:
+                        audit.assert_not_called()
+                        continue
+                    kwargs = audit.call_args.kwargs
+                    self.assertEqual(kwargs["action"], f"{kind}.archive")
+                    self.assertEqual(kwargs["actor_user_id"], owner.id)
+                    field = "lifecycle_status" if kind == "question" else "status"
+                    self.assertEqual(kwargs["before"][field], "ACTIVE" if kind == "question" else "READY")
+                    self.assertEqual(kwargs["after"][field], "ARCHIVED")
 
     def test_user_service_invites_resets_and_imports_users(self):
         admin = _current_user("Admin")

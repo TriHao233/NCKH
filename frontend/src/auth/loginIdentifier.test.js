@@ -29,6 +29,7 @@ test('login identifier validation blocks non-email values before Firebase', () =
 });
 
 test('Firebase invalid-email is converted to a user-facing login message', () => {
+  assert.match(loginErrorMessage({ code: 'auth/user-disabled' }), /Tài khoản đã bị khóa/);
   assert.match(
     loginErrorMessage({ code: 'auth/invalid-email', message: 'Firebase raw message' }, false),
     /Email không hợp lệ/,

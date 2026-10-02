@@ -115,9 +115,10 @@ class UserService:
             raise
         return serialize_user(user)
 
-    def create_user(self, payload: UserCreateRequest) -> dict:
+    def create_user(self, payload: UserCreateRequest, actor: CurrentUser | None = None) -> dict:
         overrides = permission_overrides(
-            payload.role.value, self._normalize_permissions(payload.permissions) or None
+            payload.role.value,
+            self._normalize_permissions(payload.permissions) if "permissions" in payload.model_fields_set else None,
         )
         self._ensure_email_available(str(payload.email))
         firebase_user = self.identity.create_user(
@@ -143,6 +144,15 @@ class UserService:
                 self.repository.delete_by_id(user["_id"])
             self.identity.delete_user(firebase_user.uid)
             raise
+        record_audit_event(
+            action="user.create",
+            entity_type="user",
+            entity_id=user["_id"],
+            actor_user_id=actor.id if actor else None,
+            actor_role=actor.role if actor else None,
+            after=self._user_audit_snapshot(user),
+            metadata={"email": str(payload.email), "role": payload.role.value, "label": str(payload.email)},
+        )
         return serialize_user(user)
 
     def _ensure_email_available(self, email: str) -> None:
@@ -180,7 +190,8 @@ class UserService:
         actor: CurrentUser | None = None,
     ) -> dict:
         overrides = permission_overrides(
-            payload.role.value, self._normalize_permissions(payload.permissions) or None
+            payload.role.value,
+            self._normalize_permissions(payload.permissions) if "permissions" in payload.model_fields_set else None,
         )
         self._ensure_email_available(str(payload.email))
         temporary_password = secrets.token_urlsafe(18)

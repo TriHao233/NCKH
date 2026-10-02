@@ -106,9 +106,24 @@ class DocumentService:
         return serialize_document(record) if record else None
 
     def archive(self, document_id: str, current_user: CurrentUser | None = None) -> bool:
+        record = self.repository.find_by_id(document_id)
+        if not record:
+            return False
         if current_user:
-            self._ensure_manage_access(self.repository.find_by_id(document_id), current_user)
-        return self.repository.archive(document_id)
+            self._ensure_manage_access(record, current_user)
+        before = {"status": record.get("status"), "title": record.get("title")}
+        archived = self.repository.archive(document_id)
+        if archived:
+            record_audit_event(
+                action="document.archive",
+                entity_type="document",
+                entity_id=record["_id"],
+                actor_user_id=current_user.id if current_user else None,
+                actor_role=current_user.role if current_user else None,
+                before=before,
+                after={"status": "ARCHIVED", "title": record.get("title")},
+            )
+        return archived
 
     def update_sharing(
         self,

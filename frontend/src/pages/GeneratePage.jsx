@@ -23,7 +23,7 @@ import {
   toBackendQuestionType,
 } from '../constants/generationEnums';
 import { pollJob, watchJob } from '../hooks/useJobPoll';
-import { buildGenerationRequest } from '../utils/generationRequest';
+import { buildGenerationRequest, isDocumentOcrReady, isDocumentIndexed } from '../utils/generationRequest';
 import { modelPresentation } from '../utils/modelPresentation';
 import { formatChoices, mapGeneratedQuestions } from '../utils/mapGeneratedQuestion';
 import {
@@ -165,36 +165,6 @@ function documentPipeline(document) {
 
 function normalizeStatus(status) {
   return String(status || '').toUpperCase();
-}
-
-function isUnavailableDocument(document) {
-  const pipeline = documentPipeline(document);
-  const blockedStatuses = new Set(['FAILED', 'CANCELLED', 'ARCHIVED']);
-  return (
-    blockedStatuses.has(normalizeStatus(document?.status))
-    || blockedStatuses.has(normalizeStatus(pipeline.ocr_status))
-    || blockedStatuses.has(normalizeStatus(pipeline.chunk_status))
-    || blockedStatuses.has(normalizeStatus(pipeline.index_status))
-  );
-}
-
-function isDocumentOcrReady(document) {
-  if (isUnavailableDocument(document)) return false;
-  const pipeline = documentPipeline(document);
-  return (
-    normalizeStatus(document?.status) === 'READY' ||
-    normalizeStatus(pipeline.ocr_status) === 'COMPLETED' ||
-    Boolean(document?.current_processing?.ocr_job_id && Number(document?.page_count) > 0)
-  );
-}
-
-function isDocumentIndexed(document) {
-  if (isUnavailableDocument(document)) return false;
-  const pipeline = documentPipeline(document);
-  return (
-    normalizeStatus(document?.status) === 'READY' ||
-    (normalizeStatus(pipeline.chunk_status) === 'COMPLETED' && normalizeStatus(pipeline.index_status) === 'COMPLETED')
-  );
 }
 
 function reusableDocumentLabel(document) {

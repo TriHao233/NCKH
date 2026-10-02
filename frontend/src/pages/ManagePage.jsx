@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -47,8 +47,8 @@ import {
 } from '../api/documents';
 import { listSubjects, saveSubject } from '../api/catalog';
 import { listTeacherOptions } from '../api/users';
-import { permissionsForUser } from '../auth/permissions';
-import { BLOOM_LEVELS, QUESTION_TYPES, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
+import { permissionsForUser, hasEffectivePermission } from '../auth/permissions';
+import { BLOOM_LEVELS, QUESTION_TYPES, allowedBloomLevels, difficultyLabel, questionTypeLabel } from '../constants/generationEnums';
 import { AuthContext } from '../context/AuthContext';
 import {
   SINGLE_CHOICE_TYPES,
@@ -458,6 +458,8 @@ function renderChoiceEditor({
         ))}
         <label className="draft-edit-field">
           <span>Đáp án đúng</span>
+          {questionType === 'ghep_cot' && <small>Ghép mục số với mục chữ, ví dụ: 1-b, 2-a, 3-c.</small>}
+          {questionType === 'sap_xep' && <small>Liệt kê đủ các khóa theo thứ tự, ví dụ: B, A, D, C.</small>}
           <input
             className="field-input"
             value={correctAnswer}
@@ -484,9 +486,11 @@ function ManagePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useContext(AuthContext);
-  const canEditQuestions = ['Admin', 'Teacher'].includes(user?.role);
-  const canManageDocuments = ['Admin', 'Teacher'].includes(user?.role);
-  const canReviewQuestions = ['Admin', 'Reviewer'].includes(user?.role);
+  const canEditQuestions = hasEffectivePermission(user, 'questions.manage_own');
+  const canManageDocuments = hasEffectivePermission(user, 'documents.manage_own');
+  const canReviewQuestions = hasEffectivePermission(user, 'reviews.manage');
+  const canShareBank = hasEffectivePermission(user, 'questions.share_bank');
+  const canExportMoodle = hasEffectivePermission(user, 'questions.export_moodle');
   const permissions = permissionsForUser(user);
   const canCreateSubjects = permissions.includes('catalog.subjects.manage_own');
 
@@ -538,6 +542,8 @@ function ManagePage() {
   const [questionExportFormat, setQuestionExportFormat] = useState('csv');
   const [questionExchangeBusy, setQuestionExchangeBusy] = useState('');
   const [questionExchangeMessage, setQuestionExchangeMessage] = useState('');
+  const [pendingQuestionImport, setPendingQuestionImport] = useState(null);
+  const [questionExchangeError, setQuestionExchangeError] = useState(false);
   // Các khối phụ trợ mặc định đóng để danh sách câu hỏi luôn là trọng tâm.
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [coverageOpen, setCoverageOpen] = useState(false);
@@ -581,6 +587,8 @@ function ManagePage() {
 
   const [creatingQuestion, setCreatingQuestion] = useState(false);
   const [newQuestionType, setNewQuestionType] = useState(QUESTION_TYPES[0]?.backend || '');
+  const [newBloomLevel, setNewBloomLevel] = useState('1');
+  const [newDifficulty, setNewDifficulty] = useState('trung_binh');
   const [newContent, setNewContent] = useState('');
   const [newRawOptions, setNewRawOptions] = useState(null);
   const [newCorrectAnswer, setNewCorrectAnswer] = useState('');
@@ -597,6 +605,8 @@ function ManagePage() {
   const [savingDoc, setSavingDoc] = useState(false);
   const [teacherOptions, setTeacherOptions] = useState([]);
   const [sharingDraft, setSharingDraft] = useState(null);
+  const [archiveConfirmation, setArchiveConfirmation] = useState(null);
+  const [archiveError, setArchiveError] = useState('');
   const [sharingSaving, setSharingSaving] = useState(false);
   const [sharingError, setSharingError] = useState('');
 
@@ -1075,17 +1085,23 @@ function ManagePage() {
     { key: 'chapters', label: 'Chương', rows: questionCoverage.chapters, gapCount: questionCoverage.gaps.chapters },
     { key: 'clos', label: 'CLO', rows: questionCoverage.clos, gapCount: questionCoverage.gaps.clos },
   ];
+  const canWriteDocument = (document) => canManageDocuments && (user?.role === 'Admin' || refId(document.uploaded_by_user_id) === refId(user?.id || user?._id));
+  const canWriteQuestion = useCallback((question) => canEditQuestions && (typeof question.can_edit === 'boolean' ? question.can_edit : (
+    user?.role === 'Admin'
+    || (question.author_user_ids || []).includes(refId(user?.id || user?._id))
+    || documents.some((document) => document.id === question.document_id && refId(document.uploaded_by_user_id) === refId(user?.id || user?._id))
+  )), [canEditQuestions, user, documents]);
   const selectedQuestions = useMemo(() => {
     const currentPageById = new Map(questions.map((question) => [question.id, question]));
     return selectedQuestionIds
       .map((id) => currentPageById.get(id) || selectedQuestionCache[id])
-      .filter(Boolean);
-  }, [questions, selectedQuestionCache, selectedQuestionIds]);
+      .filter((question) => question && canWriteQuestion(question));
+  }, [questions, selectedQuestionCache, selectedQuestionIds, canWriteQuestion]);
   const selectedSubmittableQuestions = useMemo(
     () => filterSubmittableQuestions(selectedQuestions, SUBMITTABLE_REVIEW_STATUSES),
     [selectedQuestions],
   );
-  const filteredQuestionIds = useMemo(() => filtered.map((question) => question.id), [filtered]);
+  const filteredQuestionIds = useMemo(() => filtered.filter(canWriteQuestion).map((question) => question.id), [filtered, canWriteQuestion]);
   const allFilteredSelected = filteredQuestionIds.length > 0
     && filteredQuestionIds.every((questionId) => selectedQuestionIds.includes(questionId));
   const questionPageCount = Math.max(1, Math.ceil(questionTotal / QUESTIONS_PER_PAGE));
@@ -1206,15 +1222,15 @@ function ManagePage() {
   };
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`Đưa câu hỏi "${item.question_code}" vào lưu trữ? Câu hỏi sẽ bị ẩn khỏi ngân hàng.`)) {
-      return;
-    }
+    setArchiveError('');
     setDeletingId(item.id);
     try {
       await deleteQuestion(item.id);
       await fetchQuestions(searchTerm);
+      setArchiveConfirmation(null);
+      setWorkflowMessage(`Đã lưu trữ ${item.question_code}.`);
     } catch (error) {
-      alert('Xoá câu hỏi thất bại: ' + error.message);
+      setArchiveError('Xoá câu hỏi thất bại: ' + error.message);
     } finally {
       setDeletingId(null);
     }
@@ -1271,7 +1287,7 @@ function ManagePage() {
       } else {
         await updateDocumentSharing(sharingDraft.item.id, {
           ...payload,
-          owner_user_id: sharingDraft.ownerUserId || null,
+          ...(user?.role === 'Admin' && sharingDraft.ownerUserId ? { owner_user_id: sharingDraft.ownerUserId } : {}),
         });
         await fetchDocuments();
       }
@@ -1354,11 +1370,12 @@ function ManagePage() {
         const result = await listQuestions(questionListRequest({ page, pageSize, search: searchTerm }));
         allQuestions.push(...(result.items || []));
       }
-      setSelectedQuestionIds(allQuestions.map((question) => question.id));
-      setSelectedQuestionCache(Object.fromEntries(allQuestions.map((question) => [question.id, question])));
+      const writableQuestions = allQuestions.filter(canWriteQuestion);
+      setSelectedQuestionIds(writableQuestions.map((question) => question.id));
+      setSelectedQuestionCache(Object.fromEntries(writableQuestions.map((question) => [question.id, question])));
       setBulkActionReport({
         tone: 'success',
-        title: `Đã chọn toàn bộ ${allQuestions.length} câu hỏi khớp bộ lọc.`,
+        title: `Đã chọn ${writableQuestions.length} câu hỏi có quyền chỉnh sửa khớp bộ lọc.`,
         failures: [],
       });
     } catch (error) {
@@ -1435,7 +1452,6 @@ function ManagePage() {
 
   const handleBulkArchive = async () => {
     if (selectedQuestions.length === 0) return;
-    if (!window.confirm(`Xóa ${selectedQuestions.length} câu hỏi đã chọn? Các câu hỏi sẽ được đưa vào lưu trữ và ẩn khỏi ngân hàng.`)) return;
     setBulkActionBusy('archive');
     try {
       const results = await Promise.allSettled(
@@ -1450,6 +1466,7 @@ function ManagePage() {
       removeQuestionsFromSelection(successfulIds);
       await fetchQuestions(searchTerm);
       setWorkflowMessage(`Đã lưu trữ ${summary.success}/${selectedQuestions.length} câu hỏi.`);
+      setArchiveConfirmation(null);
       setBulkActionReport({
         tone: summary.failed > 0 ? 'warning' : 'success',
         title: `Lưu trữ: ${summary.success} thành công, ${summary.failed} thất bại.`,
@@ -1512,6 +1529,7 @@ function ManagePage() {
       return;
     }
     setQuestionExchangeBusy('export');
+    setQuestionExchangeError(false);
     try {
       let exportableQuestions = selectedQuestions;
       if (exportableQuestions.length === 0) {
@@ -1560,6 +1578,7 @@ function ManagePage() {
       }
       setQuestionExchangeMessage(`Đã xuất ${exportableQuestions.length} câu hỏi (${QUESTION_BANK_EXPORT_FORMATS.find((item) => item.value === questionExportFormat)?.label || questionExportFormat}).`);
     } catch (error) {
+      setQuestionExchangeError(true);
       setQuestionExchangeMessage(error.message || 'Không xuất được ngân hàng câu hỏi.');
     } finally {
       setQuestionExchangeBusy('');
@@ -1571,31 +1590,51 @@ function ManagePage() {
     event.target.value = '';
     if (!file) return;
 
+    setPendingQuestionImport(null);
+    setQuestionExchangeError(false);
     setQuestionExchangeBusy('import');
     setQuestionExchangeMessage('');
     try {
       const parsed = await parseQuestionBankImportFile(file, { subjects });
+      setQuestionExchangeError(false);
       if (parsed.errors.length > 0) {
+        setQuestionExchangeError(true);
         const preview = parsed.errors.slice(0, 6).join('\n');
         const suffix = parsed.errors.length > 6 ? `\n... và ${parsed.errors.length - 6} lỗi khác` : '';
-        alert(`Không nhập được file này:\n${preview}${suffix}`);
+        setQuestionExchangeMessage(`Không nhập được file này:\n${preview}${suffix}`);
         return;
       }
       if (parsed.items.length === 0) {
-        alert('File không có câu hỏi hợp lệ để nhập.');
+        setQuestionExchangeError(true);
+        setQuestionExchangeMessage('File không có câu hỏi hợp lệ để nhập.');
         return;
       }
-      if (!window.confirm(`Tạo ${parsed.items.length} câu hỏi từ file "${file.name}"?`)) return;
+      setPendingQuestionImport({ items: parsed.items, filename: file.name });
+    } catch (error) {
+      setQuestionExchangeError(true);
+      setQuestionExchangeMessage('Nhập ngân hàng câu hỏi thất bại: ' + error.message);
+    } finally {
+      setQuestionExchangeBusy('');
+    }
+  };
+
+  const confirmQuestionBankImport = async () => {
+    if (!pendingQuestionImport || questionExchangeBusy) return;
+    const { items, filename } = pendingQuestionImport;
+    setQuestionExchangeError(false);
+    setQuestionExchangeBusy('import');
+    setQuestionExchangeMessage('');
+    try {
 
       // Throttle: chạy tối đa 4 request song song để tránh bùng nổ request khi file lớn.
       const IMPORT_CONCURRENCY = 4;
-      const results = new Array(parsed.items.length);
+      const results = new Array(items.length);
       let cursor = 0;
       const runWorker = async () => {
-        while (cursor < parsed.items.length) {
+        while (cursor < items.length) {
           const index = cursor;
           cursor += 1;
-          const item = parsed.items[index];
+          const item = items[index];
           try {
             await createQuestion(item.payload);
             results[index] = { status: 'fulfilled', value: item.rowNumber };
@@ -1605,16 +1644,16 @@ function ManagePage() {
         }
       };
       await Promise.all(
-        Array.from({ length: Math.min(IMPORT_CONCURRENCY, parsed.items.length) }, () => runWorker()),
+        Array.from({ length: Math.min(IMPORT_CONCURRENCY, items.length) }, () => runWorker()),
       );
       const summary = summarizeBulkSettled(results);
       await fetchQuestions(searchTerm);
-      setQuestionExchangeMessage(`Đã nhập ${summary.success}/${parsed.items.length} câu hỏi từ ${file.name}.`);
-      if (summary.failed > 0) {
-        alert(`Có ${summary.failed} câu hỏi nhập thất bại. Lỗi đầu tiên: ${summary.firstError}`);
-      }
+      setPendingQuestionImport(null);
+      setQuestionExchangeError(summary.failed > 0);
+      setQuestionExchangeMessage(`Đã nhập ${summary.success}/${items.length} câu hỏi từ ${filename}.${summary.failed > 0 ? ` Có ${summary.failed} câu hỏi nhập thất bại. Lỗi đầu tiên: ${summary.firstError}` : ''}`);
     } catch (error) {
-      alert('Nhập ngân hàng câu hỏi thất bại: ' + error.message);
+      setQuestionExchangeError(true);
+      setQuestionExchangeMessage('Nhập ngân hàng câu hỏi thất bại: ' + error.message);
     } finally {
       setQuestionExchangeBusy('');
     }
@@ -1637,15 +1676,14 @@ function ManagePage() {
   };
 
   const handleDeleteDocument = async (doc) => {
-    if (!window.confirm(`Xoá tài liệu "${doc.title}"? Hành động này sẽ lưu trữ tài liệu và ẩn khỏi danh sách.`)) {
-      return;
-    }
+    setArchiveError('');
     setDeletingDocId(doc.id);
     try {
       await deleteDocument(doc.id);
       await fetchDocuments();
+      setArchiveConfirmation(null);
     } catch (error) {
-      alert('Xoá tài liệu thất bại: ' + error.message);
+      setArchiveError('Xoá tài liệu thất bại: ' + error.message);
     } finally {
       setDeletingDocId(null);
     }
@@ -1799,6 +1837,8 @@ function ManagePage() {
 
   const openCreateQuestion = () => {
     setNewQuestionType(QUESTION_TYPES[0]?.backend || '');
+    setNewBloomLevel('1');
+    setNewDifficulty('trung_binh');
     setNewContent('');
     setNewRawOptions(null);
     setNewCorrectAnswer('');
@@ -1845,6 +1885,8 @@ function ManagePage() {
       await createQuestion({
         content: newContent.trim(),
         question_type: newQuestionType,
+        bloom_level: Number(newBloomLevel),
+        difficulty: newDifficulty,
         question_data: {
           options: newRawOptions,
           correct_answer: newCorrectAnswer,
@@ -2046,7 +2088,7 @@ function ManagePage() {
             <button
               type="button"
               className="btn btn--primary"
-              disabled={!canReviewQuestions || approvedForPublication.length === 0}
+              disabled={!canReviewQuestions || !canExportMoodle || approvedForPublication.length === 0}
               onClick={() => handlePublishMoodle(approvedForPublication[0])}
             >
               <FontAwesomeIcon icon={faArrowsRotate} />
@@ -2387,7 +2429,14 @@ function ManagePage() {
               )}
 
               {questionExchangeMessage && (
-                <p className="question-exchange-message">{questionExchangeMessage}</p>
+                <p className={`question-exchange-message${questionExchangeError ? ' question-exchange-message--error' : ''}`} role={questionExchangeError ? 'alert' : 'status'}>{questionExchangeMessage}</p>
+              )}
+              {pendingQuestionImport && (
+                <section className="question-filter-panel" role="alertdialog" aria-modal="false" aria-label="Xác nhận nhập câu hỏi">
+                  <p>Tạo {pendingQuestionImport.items.length} câu hỏi từ file “{pendingQuestionImport.filename}”?</p>
+                  <button type="button" className="btn btn--outline" disabled={Boolean(questionExchangeBusy)} onClick={() => setPendingQuestionImport(null)}>Hủy nhập</button>
+                  <button type="button" className="btn btn--primary" disabled={Boolean(questionExchangeBusy)} onClick={confirmQuestionBankImport}>{questionExchangeBusy === 'import' ? 'Đang nhập...' : 'Xác nhận nhập'}</button>
+                </section>
               )}
 
               {canEditQuestions && (
@@ -2443,7 +2492,7 @@ function ManagePage() {
                       type="button"
                       className="btn btn--outline btn--danger"
                       disabled={selectedQuestions.length === 0 || Boolean(bulkActionBusy)}
-                      onClick={handleBulkArchive}
+                      onClick={() => { setArchiveError(''); setArchiveConfirmation({ kind: 'bulk' }); }}
                     >
                       Xóa tất cả đã chọn
                     </button>
@@ -2484,6 +2533,7 @@ function ManagePage() {
                             <label className="question-select">
                               <input
                                 type="checkbox"
+                                disabled={!canWriteQuestion(item)}
                                 checked={selectedQuestionIds.includes(item.id)}
                                 onChange={() => toggleQuestionSelection(item.id)}
                                 aria-label={`Chọn ${item.question_code}`}
@@ -2556,7 +2606,7 @@ function ManagePage() {
                               title={SUBMITTABLE_REVIEW_STATUSES.has(item.review_status)
                                 ? 'Gửi câu hỏi này đi duyệt'
                                 : 'Câu hỏi không ở trạng thái có thể gửi duyệt'}
-                              disabled={workflowBusyId === item.id || !SUBMITTABLE_REVIEW_STATUSES.has(item.review_status)}
+                              disabled={!canWriteQuestion(item) || workflowBusyId === item.id || !SUBMITTABLE_REVIEW_STATUSES.has(item.review_status)}
                               onClick={() => handleSubmitForReview(item)}
                             >
                               Gửi duyệt
@@ -2577,7 +2627,7 @@ function ManagePage() {
                               <button
                                 type="button"
                                 className="mini-action"
-                                disabled={workflowBusyId === item.id || item.review_status !== 'APPROVED' || item.publication_status === 'PUBLISHED'}
+                                disabled={!canExportMoodle || workflowBusyId === item.id || item.review_status !== 'APPROVED' || item.publication_status === 'PUBLISHED'}
                                 onClick={() => handlePublishMoodle(item)}
                               >
                                 Mô phỏng
@@ -2595,18 +2645,18 @@ function ManagePage() {
                               >
                                 <FontAwesomeIcon icon={faClone} />
                               </button>
-                              <button type="button" className="icon-btn" title="Chia sẻ" onClick={() => openSharing('question', item)}>
+                              {canShareBank && <button type="button" className="icon-btn" title="Chia sẻ" disabled={!canWriteQuestion(item)} onClick={() => openSharing('question', item)}>
                                 <FontAwesomeIcon icon={faShareNodes} />
-                              </button>
-                              <button type="button" className="icon-btn" title="Chỉnh sửa" onClick={() => openEdit(item)}>
+                              </button>}
+                              <button type="button" className="icon-btn" title="Chỉnh sửa" disabled={!canWriteQuestion(item)} onClick={() => openEdit(item)}>
                                 <FontAwesomeIcon icon={faPen} />
                               </button>
                               <button
                                 type="button"
                                 className="icon-btn icon-btn--danger"
                                 title="Đưa vào lưu trữ"
-                                disabled={deletingId === item.id}
-                                onClick={() => handleDelete(item)}
+                                disabled={!canWriteQuestion(item) || deletingId === item.id}
+                                onClick={() => { setArchiveError(''); setArchiveConfirmation({ kind: 'question', item }); }}
                               >
                                 <FontAwesomeIcon icon={faTrashCan} />
                               </button>
@@ -2714,7 +2764,7 @@ function ManagePage() {
                                             type="button"
                                             className="icon-btn doc-job-action"
                                             title="Chạy lại tác vụ"
-                                            disabled={!canRetryDocumentJob(job) || Boolean(documentJobActionKey)}
+                                            disabled={!canWriteDocument(d) || !canRetryDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleRetryDocumentJob(d, job)}
                                           >
                                             <FontAwesomeIcon icon={faPlay} />
@@ -2723,7 +2773,7 @@ function ManagePage() {
                                             type="button"
                                             className="icon-btn icon-btn--danger doc-job-action"
                                             title="Hủy tác vụ"
-                                            disabled={!canCancelDocumentJob(job) || Boolean(documentJobActionKey)}
+                                            disabled={!canWriteDocument(d) || !canCancelDocumentJob(job) || Boolean(documentJobActionKey)}
                                             onClick={() => handleCancelDocumentJob(d, job)}
                                           >
                                             <FontAwesomeIcon icon={faXmark} />
@@ -2750,7 +2800,7 @@ function ManagePage() {
                                     {(documentPagesById[d.id] || []).map((page) => (
                                       <div className="doc-page-row" key={page.id}>
                                         <b>Trang {page.page_number}</b>
-                                        {canEditDocumentOcr(d) ? (
+                                        {canWriteDocument(d) && canEditDocumentOcr(d) ? (
                                           <>
                                             <textarea
                                               value={ocrPageDrafts[page.id] ?? pageTextPreview(page)}
@@ -2808,23 +2858,25 @@ function ManagePage() {
                               type="button"
                               className="icon-btn doc-reindex-btn"
                               title="Re-index"
-                              disabled={!canReindexDocument(d) || Boolean(documentJobActionKey)}
+                              disabled={!canWriteDocument(d) || !canReindexDocument(d) || Boolean(documentJobActionKey)}
                               onClick={() => handleReindexDocument(d)}
                             >
                               <FontAwesomeIcon icon={faArrowsRotate} />
                             </button>
-                            <button
+                            {canShareBank && <button
                               type="button"
                               className="icon-btn doc-share-btn"
                               title="Chia sẻ/chuyển giao"
+                              disabled={!canWriteDocument(d)}
                               onClick={() => openSharing('document', d)}
                             >
                               <FontAwesomeIcon icon={faShareNodes} />
-                            </button>
+                            </button>}
                             <button
                               type="button"
                               className="icon-btn doc-edit-btn"
                               title="Sửa tài liệu"
+                              disabled={!canWriteDocument(d)}
                               onClick={() => openEditDocument(d)}
                             >
                               <FontAwesomeIcon icon={faPen} />
@@ -2833,8 +2885,8 @@ function ManagePage() {
                               type="button"
                               className="icon-btn icon-btn--danger doc-delete-btn"
                               title="Xoá tài liệu"
-                              disabled={deletingDocId === d.id}
-                              onClick={() => handleDeleteDocument(d)}
+                              disabled={!canWriteDocument(d) || deletingDocId === d.id}
+                              onClick={() => { setArchiveError(''); setArchiveConfirmation({ kind: 'document', item: d }); }}
                             >
                               <FontAwesomeIcon icon={faTrashCan} />
                             </button>
@@ -2903,7 +2955,7 @@ function ManagePage() {
 	                      ) : (
 	                        <p>Chưa tải được phản hồi mới nhất. Chọn lại Chi tiết nếu cần làm mới.</p>
 	                      )}
-	                      {canEditQuestions && (
+                      {canWriteQuestion(selectedQuestion) && (
 	                        <button type="button" className="mini-action mini-action--approve" onClick={() => openEdit(selectedQuestion)}>
 	                          Sửa câu hỏi
 	                        </button>
@@ -2934,7 +2986,7 @@ function ManagePage() {
                                     <span>{version.change_note || version.origin}</span>
                                     <small>{formatDateTime(version.created_at)}</small>
                                   </div>
-                                  {canEditQuestions && version.version !== selectedQuestion.current_version && (
+                                  {canWriteQuestion(selectedQuestion) && version.version !== selectedQuestion.current_version && (
                                     <button
                                       type="button"
                                       className="mini-action"
@@ -3064,6 +3116,20 @@ function ManagePage() {
         </div>
       </section>
 
+      {archiveConfirmation && (
+        <div className="modal-overlay">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Xác nhận lưu trữ">
+            <h3>Lưu trữ {archiveConfirmation.kind === 'bulk' ? `${selectedQuestions.length} câu hỏi đã chọn` : archiveConfirmation.item.question_code || archiveConfirmation.item.title}?</h3>
+            <p>Dữ liệu sẽ được đưa vào lưu trữ và ẩn khỏi danh sách sử dụng.</p>
+            {archiveError && <p className="manage-error" role="alert">{archiveError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" disabled={Boolean(deletingId || deletingDocId || bulkActionBusy)} onClick={() => setArchiveConfirmation(null)}>Hủy</button>
+              <button type="button" className="btn btn--primary" disabled={Boolean(deletingId || deletingDocId || bulkActionBusy)} onClick={() => archiveConfirmation.kind === 'bulk' ? handleBulkArchive() : archiveConfirmation.kind === 'question' ? handleDelete(archiveConfirmation.item) : handleDeleteDocument(archiveConfirmation.item)}>Xác nhận lưu trữ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {sharingDraft && (
         <div className="modal-overlay" onClick={() => !sharingSaving && setSharingDraft(null)}>
           <form className="modal-card sharing-modal" onClick={(e) => e.stopPropagation()} onSubmit={submitSharing}>
@@ -3084,7 +3150,7 @@ function ManagePage() {
                 <option value="SUBJECT">Chia sẻ theo môn</option>
               </select>
             </div>
-            {sharingDraft.kind === 'document' && (
+            {sharingDraft.kind === 'document' && user?.role === 'Admin' && (
               <div className="field-group">
                 <label className="field-label">Chủ sở hữu tài liệu</label>
                 <select
@@ -3461,16 +3527,22 @@ function ManagePage() {
 
       {creatingQuestion && (
         <div className="modal-overlay" onClick={closeCreateQuestion}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreateQuestion}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label="Thêm câu hỏi thủ công" onClick={(e) => e.stopPropagation()} onSubmit={handleCreateQuestion}>
             <h3 className="profile-card-title">Thêm câu hỏi thủ công</h3>
 
             <div className="field-group">
               <label className="field-label">Loại câu hỏi</label>
               <select
                 className="field-select"
+                aria-label="Loại câu hỏi"
                 value={newQuestionType}
                 onChange={(e) => {
                   setNewQuestionType(e.target.value);
+                  const typeId = QUESTION_TYPES.find((type) => type.backend === e.target.value)?.id;
+                  const allowed = allowedBloomLevels(typeId);
+                  if (!allowed.some((bloom) => String(bloom.level) === newBloomLevel)) {
+                    setNewBloomLevel(String(allowed[0]?.level || 1));
+                  }
                   setNewRawOptions(null);
                   setNewCorrectAnswer('');
                 }}
@@ -3478,6 +3550,21 @@ function ManagePage() {
                 {QUESTION_TYPES.map((type) => (
                   <option key={type.backend} value={type.backend}>{type.label}</option>
                 ))}
+              </select>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="new-question-bloom">Mức nhận thức Bloom</label>
+              <select id="new-question-bloom" className="field-select" value={newBloomLevel} onChange={(e) => setNewBloomLevel(e.target.value)}>
+                {allowedBloomLevels(QUESTION_TYPES.find((type) => type.backend === newQuestionType)?.id).map((bloom) => (
+                  <option key={bloom.level} value={String(bloom.level)}>{bloom.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="new-question-difficulty">Độ khó ước lượng</label>
+              <select id="new-question-difficulty" className="field-select" value={newDifficulty} onChange={(e) => setNewDifficulty(e.target.value)}>
+                {DIFFICULTIES.map((difficulty) => <option key={difficulty.value} value={difficulty.value}>{difficulty.label}</option>)}
               </select>
             </div>
 

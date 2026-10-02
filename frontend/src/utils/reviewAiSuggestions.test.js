@@ -37,6 +37,20 @@ test('evaluation insights fall back to the default pass threshold of 0.7', () =>
   assert.deepEqual(insights.weakCriteria.map((item) => item.key), ['answer_relevancy']);
 });
 
+test('non-applicable CLO does not become a weak criterion or overwrite the review draft', () => {
+  const evaluation = {
+    scores: { faithfulness: 0.8, answer_relevancy: 0.8, bloom_alignment: 0.8, clo_alignment: 0 },
+    evidence: { metadata_guardrail: { not_applicable: ['clo_alignment'] } },
+  };
+  const insights = evaluationInsights(evaluation, [...components, { key: 'clo_alignment' }]);
+  assert.deepEqual(insights.weakCriteria, []);
+  assert.equal(insights.uniformScores, true);
+
+  const criterion = { key: 'clo_alignment', rating: 'NO_DATA', note: 'Không áp dụng' };
+  const merged = mergeAiSuggestionsIntoDraft({ criteria: [criterion], issues: [] }, evaluation);
+  assert.deepEqual(merged.criteria, [criterion]);
+});
+
 test('AI suggestions populate a revision draft without saving a decision', () => {
   const draft = {
     overallNote: '',

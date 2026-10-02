@@ -268,11 +268,11 @@ def list_reviewer_options(
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreateRequest,
-    _admin: CurrentUser = Depends(require_permissions("admin.users")),
+    admin: CurrentUser = Depends(require_permissions("admin.users")),
     service: UserService = Depends(get_user_service),
 ):
     try:
-        return service.create_user(payload)
+        return service.create_user(payload, admin)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

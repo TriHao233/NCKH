@@ -72,6 +72,7 @@ function DocumentManagePage() {
   const [busyId, setBusyId] = useState('');
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState(null);
 
   const subjectById = useMemo(
     () => new Map(subjects.map((subject) => [idOf(subject), subject])),
@@ -145,12 +146,13 @@ function DocumentManagePage() {
   };
 
   const removeDocument = async (document) => {
-    if (!window.confirm(`Xóa tài liệu “${document.title}” khỏi danh sách sử dụng?`)) return;
+    setError('');
     setBusyId(document.id);
     try {
       await deleteDocument(document.id);
       setNotice('Đã xóa tài liệu khỏi danh sách sử dụng.');
       await loadDocuments();
+      setDeleteConfirmation(null);
     } catch (err) {
       setError(err.message || 'Không thể xóa tài liệu');
     } finally {
@@ -210,13 +212,13 @@ function DocumentManagePage() {
           <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Tìm theo tên tài liệu hoặc tên file gốc (nhấn Enter hoặc Tìm)" />
           <button type="submit" className="document-search-btn">Tìm</button>
         </form>
-        <select value={subjectId} onChange={(event) => { setPage(1); setSubjectId(event.target.value); }}>
+        <select aria-label="Lọc học phần" value={subjectId} onChange={(event) => { setPage(1); setSubjectId(event.target.value); }}>
           <option value="">Tất cả học phần</option>
           {subjects.filter((item) => item.is_active !== false).map((subject) => (
             <option key={idOf(subject)} value={idOf(subject)}>{subject.subject_name}</option>
           ))}
         </select>
-        <select value={status} onChange={(event) => { setPage(1); setStatus(event.target.value); }}>
+        <select aria-label="Lọc trạng thái tài liệu" value={status} onChange={(event) => { setPage(1); setStatus(event.target.value); }}>
           {STATUS_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </section>
@@ -252,7 +254,7 @@ function DocumentManagePage() {
                 <button type="button" onClick={() => openPreview(document)}><FontAwesomeIcon icon={faFileLines} /> Xem OCR</button>
                 <button type="button" disabled={!manageable} onClick={() => openEdit(document)}><FontAwesomeIcon icon={faPen} /> Chỉnh sửa</button>
                 <button type="button" disabled={!manageable || !canReindex || busyId === document.id} onClick={() => reindex(document)} title={!canReindex ? 'Tài liệu cần chunk thành công trước' : ''}><FontAwesomeIcon icon={faArrowsRotate} /> Re-index</button>
-                <button type="button" className="danger" disabled={!manageable || busyId === document.id} onClick={() => removeDocument(document)}><FontAwesomeIcon icon={faTrashCan} /> Xóa</button>
+                <button type="button" className="danger" disabled={!manageable || busyId === document.id} onClick={() => { setError(''); setDeleteConfirmation(document); }}><FontAwesomeIcon icon={faTrashCan} /> Xóa</button>
               </div>
             </article>
           );
@@ -268,10 +270,20 @@ function DocumentManagePage() {
         </nav>
       )}
 
+      {deleteConfirmation && (
+        <div className="document-modal-backdrop">
+          <section className="document-modal" role="dialog" aria-modal="true" aria-label="Xác nhận xóa tài liệu">
+            <h2>Xóa {deleteConfirmation.title}?</h2><p>Tài liệu sẽ được lưu trữ và ẩn khỏi danh sách sử dụng.</p>
+            {error && <p className="document-error" role="alert">{error}</p>}
+            <div className="document-modal-actions"><button type="button" disabled={Boolean(busyId)} onClick={() => setDeleteConfirmation(null)}>Hủy</button><button type="button" className="primary" disabled={Boolean(busyId)} onClick={() => removeDocument(deleteConfirmation)}>Xác nhận xóa</button></div>
+          </section>
+        </div>
+      )}
+
       {editing && (
         <div className="document-modal-backdrop" onClick={() => !saving && setEditing(null)}>
-          <form className="document-modal" onSubmit={saveEdit} onClick={(event) => event.stopPropagation()}>
-            <div className="document-modal-head"><h2>Chỉnh sửa tài liệu</h2><button type="button" onClick={() => setEditing(null)}><FontAwesomeIcon icon={faXmark} /></button></div>
+          <form className="document-modal" role="dialog" aria-modal="true" aria-label="Chỉnh sửa tài liệu" onSubmit={saveEdit} onClick={(event) => event.stopPropagation()}>
+            <div className="document-modal-head"><h2>Chỉnh sửa tài liệu</h2><button type="button" aria-label="Đóng chỉnh sửa tài liệu" disabled={saving} onClick={() => setEditing(null)}><FontAwesomeIcon icon={faXmark} /></button></div>
             <label>Tên tài liệu<input value={editTitle} maxLength={300} onChange={(event) => setEditTitle(event.target.value)} required /></label>
             <p className="document-origin-note">Tên file gốc được giữ nguyên để đảm bảo truy vết: <b>{editing.original_filename}</b></p>
             <fieldset>
@@ -293,8 +305,8 @@ function DocumentManagePage() {
 
       {preview && (
         <div className="document-modal-backdrop" onClick={() => setPreview(null)}>
-          <section className="document-modal document-preview" onClick={(event) => event.stopPropagation()}>
-            <div className="document-modal-head"><div><h2>{preview.document.title}</h2><p>Nội dung đã OCR</p></div><button type="button" onClick={() => setPreview(null)}><FontAwesomeIcon icon={faXmark} /></button></div>
+          <section className="document-modal document-preview" role="dialog" aria-modal="true" aria-label="Nội dung đã OCR" onClick={(event) => event.stopPropagation()}>
+            <div className="document-modal-head"><div><h2>{preview.document.title}</h2><p>Nội dung đã OCR</p></div><button type="button" aria-label="Đóng nội dung OCR" onClick={() => setPreview(null)}><FontAwesomeIcon icon={faXmark} /></button></div>
             <div className="document-preview-pages">
               {previewLoading ? <p>Đang tải nội dung…</p> : preview.pages.map((item) => (
                 <article key={item.id}><b>Trang {item.page_number || item.unit_number || '—'}</b><p>{item.cleaned_text || item.raw_text || 'Trang chưa có nội dung.'}</p></article>

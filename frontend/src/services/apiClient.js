@@ -16,7 +16,7 @@ export class ApiError extends Error {
 
 export async function apiRequest(
   path,
-  { method = "GET", body, headers = {}, authRequired = true, signal } = {},
+  { method = "GET", body, headers = {}, authRequired = true, signal, responseType = "json" } = {},
 ) {
   const requestHeaders = { Accept: "application/json", ...headers };
   let demoToken = null;
@@ -73,6 +73,8 @@ export async function apiRequest(
   } else if (response.status === 401 && firebaseUser && auth.currentUser?.uid === firebaseUser.uid) {
     globalThis.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
   }
+
+  if (response.ok && responseType === 'response') return response;
 
   const isJson = response.headers
     .get("content-type")

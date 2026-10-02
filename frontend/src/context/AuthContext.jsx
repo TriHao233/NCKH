@@ -78,8 +78,12 @@ export const AuthProvider = ({ children }) => {
             if (demoSession?.user) {
                 localStorage.setItem("userInfo", JSON.stringify(demoSession.user));
                 setUser(demoSession.user);
-                apiRequest("/users/me").catch((error) => {
-                    if (active && (error?.status === 401 || error?.status === 403)) {
+                apiRequest("/users/me").then((currentUser) => {
+                    if (!active || readDemoSession()?.token !== demoSession.token) return;
+                    saveDemoSession(demoSession.token, currentUser);
+                    persistUser(currentUser);
+                }).catch((error) => {
+                    if (active && readDemoSession()?.token === demoSession.token && (error?.status === 401 || error?.status === 403)) {
                         clearDemoSession();
                         localStorage.removeItem("userInfo");
                         setUser(null);
@@ -104,9 +108,13 @@ export const AuthProvider = ({ children }) => {
                         setUser(demoSession.user);
                     }
                     try {
-                        await apiRequest("/users/me");
+                        const currentUser = await apiRequest("/users/me");
+                        if (active && generation === authGeneration.current && readDemoSession()?.token === demoSession.token) {
+                            saveDemoSession(demoSession.token, currentUser);
+                            persistUser(currentUser);
+                        }
                     } catch (error) {
-                        if (error?.status === 401 || error?.status === 403) {
+                        if (active && generation === authGeneration.current && readDemoSession()?.token === demoSession.token && (error?.status === 401 || error?.status === 403)) {
                             clearDemoSession();
                             localStorage.removeItem("userInfo");
                             if (active && generation === authGeneration.current) setUser(null);

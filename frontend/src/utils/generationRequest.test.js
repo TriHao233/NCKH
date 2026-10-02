@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildGenerationRequest } from './generationRequest.js';
+import { buildGenerationRequest, isDocumentIndexed, isDocumentOcrReady } from './generationRequest.js';
+
+test('READY metadata alone cannot skip OCR or indexing', () => {
+  assert.equal(isDocumentOcrReady({ status: 'READY', page_count: 1 }), false);
+  assert.equal(isDocumentIndexed({ status: 'READY' }), false);
+  const pipeline_summary = { ocr_status: 'COMPLETED', chunk_status: 'COMPLETED', index_status: 'COMPLETED' };
+  assert.equal(isDocumentOcrReady({ pipeline_summary }), true);
+  assert.equal(isDocumentIndexed({ pipeline_summary }), false);
+  assert.equal(isDocumentIndexed({ pipeline_summary, current_processing: { chunk_set_id: 'chunks', vector_collection_id: 'vectors' } }), true);
+});
+
+test('a failed pipeline is never offered as a reusable generation source', () => {
+  const document = {
+    status: 'READY', page_count: 1,
+    current_processing: { ocr_job_id: 'ocr', chunk_set_id: 'chunks', vector_collection_id: 'vectors' },
+    pipeline_summary: { ocr_status: 'COMPLETED', chunk_status: 'COMPLETED', index_status: 'FAILED' },
+  };
+  assert.equal(isDocumentOcrReady(document), false);
+  assert.equal(isDocumentIndexed(document), false);
+});
 
 test('buildGenerationRequest uses backend defaults and keeps instruction separate from heading', () => {
   const questionPlan = [{

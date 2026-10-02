@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { parseCsvRows } from '../utils/questionBankExchange';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronLeft,
@@ -87,16 +88,12 @@ function formatDate(value) {
 }
 
 function parseImportRows(text) {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [email = '', displayName, role = 'Teacher', permissions = ''] = line.split(',').map((part) => part.trim());
+  return parseCsvRows(text).map((cells) => {
+      const [email = '', displayName, role = 'Teacher', permissions = ''] = cells.map((part) => part.trim());
       return {
         email,
         display_name: displayName || email,
-        role: ROLE_LABEL[role] ? role : 'Teacher',
+        role: cells.length <= 4 ? role : '',
         permissions: role === 'Admin' ? [] : permissions
           ? assignablePermissions(permissions.split('|').map((item) => item.trim()).filter(Boolean))
           : permissionsForRole(ROLE_LABEL[role] ? role : 'Teacher'),
@@ -122,6 +119,8 @@ function UsersAdminPage() {
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [creating, setCreating] = useState(false);
   const [inviteResult, setInviteResult] = useState(null);
+  const [formError, setFormError] = useState('');
+  const [activeConfirmation, setActiveConfirmation] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
   const [importing, setImporting] = useState(false);
@@ -223,7 +222,7 @@ function UsersAdminPage() {
   };
 
   const importRows = useMemo(() => parseImportRows(importText), [importText]);
-  const importValidCount = importRows.filter((row) => EMAIL_RE.test(row.email)).length;
+  const importValidCount = importRows.filter((row) => EMAIL_RE.test(row.email) && Object.hasOwn(ROLE_LABEL, row.role)).length;
   const importInvalidCount = importRows.length - importValidCount;
 
   const copyToClipboard = async (text, key) => {
@@ -237,6 +236,7 @@ function UsersAdminPage() {
   };
 
   const openCreate = (mode = 'direct') => {
+    setFormError('');
     setCreateMode(mode);
     setInviteResult(null);
     setCreateForm({
@@ -249,18 +249,20 @@ function UsersAdminPage() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (creating || inviteResult) return;
+    setFormError('');
     const email = createForm.email.trim();
     const displayName = createForm.display_name.trim();
     if (!email || !displayName) {
-      alert('Vui lòng nhập đầy đủ email và họ tên.');
+      setFormError('Vui lòng nhập đầy đủ email và họ tên.');
       return;
     }
     if (!EMAIL_RE.test(email)) {
-      alert('Email không hợp lệ.');
+      setFormError('Email không hợp lệ.');
       return;
     }
     if (createMode === 'direct' && createForm.password.length < 6) {
-      alert('Mật khẩu phải có ít nhất 6 ký tự.');
+      setFormError('Mật khẩu phải có ít nhất 6 ký tự.');
       return;
     }
     setCreating(true);
@@ -286,13 +288,14 @@ function UsersAdminPage() {
       await refreshAll(1);
       setPage(1);
     } catch (err) {
-      alert('Tạo tài khoản thất bại: ' + err.message);
+      setFormError('Tạo tài khoản thất bại: ' + err.message);
     } finally {
       setCreating(false);
     }
   };
 
   const openEdit = (user) => {
+    setFormError('');
     setEditing(user);
     setEditDisplayName(user.display_name || '');
     setEditRole(user.role);
@@ -309,6 +312,7 @@ function UsersAdminPage() {
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editing) return;
+    setFormError('');
     setSaving(true);
     try {
       await updateUser(editing.id, {
@@ -324,7 +328,7 @@ function UsersAdminPage() {
       setEditing(null);
       await refreshAll();
     } catch (err) {
-      alert('Cập nhật tài khoản thất bại: ' + err.message);
+      setFormError('Cập nhật tài khoản thất bại: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -344,8 +348,9 @@ function UsersAdminPage() {
 
   const handleImportUsers = async (event) => {
     event.preventDefault();
-    if (importRows.length === 0) {
-      alert('Vui lòng nhập ít nhất một dòng CSV.');
+    setFormError('');
+    if (importRows.length === 0 || importInvalidCount > 0) {
+      setFormError('Hãy sửa email, vai trò hoặc số cột không hợp lệ trước khi nhập.');
       return;
     }
     setImporting(true);
@@ -356,7 +361,7 @@ function UsersAdminPage() {
       await refreshAll(1);
       setPage(1);
     } catch (err) {
-      alert('Import tài khoản thất bại: ' + err.message);
+      setFormError('Import tài khoản thất bại: ' + err.message);
     } finally {
       setImporting(false);
     }
@@ -364,10 +369,7 @@ function UsersAdminPage() {
 
   const handleToggleActive = async (user) => {
     const activate = !user.is_active;
-    const confirmMessage = activate
-      ? `Kích hoạt lại tài khoản "${user.display_name}" (${user.email})?`
-      : `Vô hiệu hoá tài khoản "${user.display_name}" (${user.email})?`;
-    if (!window.confirm(confirmMessage)) return;
+    setFormError('');
     setTogglingId(user.id);
     try {
       if (activate) {
@@ -376,8 +378,9 @@ function UsersAdminPage() {
         await deleteUser(user.id);
       }
       await refreshAll();
+      setActiveConfirmation(null);
     } catch (err) {
-      alert((activate ? 'Kích hoạt' : 'Vô hiệu hoá') + ' tài khoản thất bại: ' + err.message);
+      setFormError((activate ? 'Kích hoạt' : 'Vô hiệu hoá') + ' tài khoản thất bại: ' + err.message);
     } finally {
       setTogglingId(null);
     }
@@ -396,13 +399,13 @@ function UsersAdminPage() {
             <FontAwesomeIcon icon={faRotateRight} />
             <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
           </button>
-          <button type="button" className="jobs-secondary-button" onClick={() => setShowImport(true)}>
+          <button type="button" className="jobs-secondary-button" onClick={() => { setFormError(''); setImportResult(null); setShowImport(true); }}>
             <FontAwesomeIcon icon={faFileImport} />
             <span>Import CSV</span>
           </button>
           <button type="button" className="jobs-secondary-button" onClick={() => openCreate('invite')}>
             <FontAwesomeIcon icon={faEnvelope} />
-            <span>Mời qua email</span>
+            <span>Tạo liên kết mời</span>
           </button>
           <button type="button" className="jobs-primary-button" onClick={() => openCreate('direct')}>
             <FontAwesomeIcon icon={faPlus} />
@@ -534,7 +537,7 @@ function UsersAdminPage() {
                           className={u.is_active ? 'danger-action' : ''}
                           title={u.is_active ? 'Vô hiệu hoá tài khoản' : 'Kích hoạt lại tài khoản'}
                           disabled={togglingId === u.id}
-                          onClick={() => handleToggleActive(u)}
+                          onClick={() => { setFormError(''); setActiveConfirmation(u); }}
                         >
                           <FontAwesomeIcon icon={u.is_active ? faLock : faLockOpen} />
                         </button>
@@ -571,6 +574,7 @@ function UsersAdminPage() {
         <div className="modal-overlay" onClick={() => !creating && setShowCreate(false)}>
           <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
             <h3 className="modal-title">{createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}</h3>
+            {formError && <p className="jobs-error" role="alert">{formError}</p>}
 
             <div className="field-group">
               <label className="field-label">Email</label>
@@ -632,6 +636,7 @@ function UsersAdminPage() {
                     {copiedKey === 'invite' ? 'Đã sao chép' : 'Sao chép'}
                   </button>
                 </div>
+                <p>Đã tạo lời mời cho {inviteResult.user?.email}. Sao chép liên kết để gửi cho người nhận.</p>
                 <textarea className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
               </div>
             )}
@@ -640,7 +645,7 @@ function UsersAdminPage() {
               <button type="button" className="btn btn--outline" onClick={() => setShowCreate(false)} disabled={creating}>
                 Huỷ
               </button>
-              <button type="submit" className="btn btn--primary" disabled={creating}>
+              <button type="submit" className="btn btn--primary" disabled={creating || Boolean(inviteResult)}>
                 {creating ? 'Đang lưu...' : (createMode === 'invite' ? 'Tạo link mời' : 'Tạo tài khoản')}
               </button>
             </div>
@@ -652,23 +657,24 @@ function UsersAdminPage() {
         <div className="modal-overlay" onClick={() => !importing && setShowImport(false)}>
           <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleImportUsers}>
             <h3 className="modal-title">Import người dùng</h3>
+            {formError && <p className="jobs-error" role="alert">{formError}</p>}
             <div className="field-group">
               <label className="field-label">CSV</label>
               <textarea
                 className="field-input"
                 rows={8}
                 value={importText}
-                onChange={(e) => setImportText(e.target.value)}
+                onChange={(e) => { setImportText(e.target.value); setImportResult(null); setFormError(''); }}
                 placeholder="email@ctu.edu.vn,Nguyễn Văn A,Teacher,questions.generate|questions.manage_own"
               />
               <p className="field-hint">Mỗi dòng: email, họ tên, vai trò (Teacher/Reviewer/Admin), quyền cách nhau bởi dấu "|" (tuỳ chọn).</p>
               {importRows.length > 0 && (
                 <p className={`field-hint ${importInvalidCount > 0 ? 'field-hint--warn' : ''}`}>
-                  {importRows.length} dòng ({importValidCount} hợp lệ{importInvalidCount > 0 ? `, ${importInvalidCount} thiếu email hợp lệ` : ''})
+                  {importRows.length} dòng ({importValidCount} hợp lệ{importInvalidCount > 0 ? `, ${importInvalidCount} sai email, vai trò hoặc số cột` : ''})
                 </p>
               )}
             </div>
-            {importText.split(/\r?\n/).some((line) => (line.split(',')[3] || '').split('|').some((key) => key.trim() && !assignablePermissions([key.trim()]).length)) && <p className="field-hint field-hint--warn">Quyền không hợp lệ hoặc chỉ dành cho Admin sẽ bị bỏ khỏi CSV trước khi gửi.</p>}
+            {parseCsvRows(importText).some((cells) => (cells[3] || '').split('|').some((key) => key.trim() && !assignablePermissions([key.trim()]).length)) && <p className="field-hint field-hint--warn">Quyền không hợp lệ hoặc chỉ dành cho Admin sẽ bị bỏ khỏi CSV trước khi gửi.</p>}
             {importResult && (
               <div className="users-result-box">
                 <b>{importResult.created} tạo thành công, {importResult.failed} lỗi</b>
@@ -681,11 +687,26 @@ function UsersAdminPage() {
               <button type="button" className="btn btn--outline" onClick={() => setShowImport(false)} disabled={importing}>
                 Đóng
               </button>
-              <button type="submit" className="btn btn--primary" disabled={importing || importRows.length === 0}>
+              <button type="submit" className="btn btn--primary" disabled={importing || importRows.length === 0 || importInvalidCount > 0 || Boolean(importResult)}>
                 {importing ? 'Đang import...' : 'Import'}
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {activeConfirmation && (
+        <div className="modal-overlay" onClick={() => !togglingId && setActiveConfirmation(null)}>
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Xác nhận trạng thái tài khoản" onClick={(event) => event.stopPropagation()}>
+            <h3 className="modal-title">{activeConfirmation.is_active ? 'Vô hiệu hoá tài khoản' : 'Kích hoạt lại tài khoản'}</h3>
+            <p>{activeConfirmation.display_name} · {activeConfirmation.email}</p>
+            {activeConfirmation.is_active && <p>Phiên đăng nhập sẽ bị thu hồi. Dữ liệu của tài khoản vẫn được giữ lại.</p>}
+            {formError && <p className="jobs-error" role="alert">{formError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" disabled={Boolean(togglingId)} onClick={() => setActiveConfirmation(null)}>Hủy</button>
+              <button type="button" className="btn btn--primary" disabled={Boolean(togglingId)} onClick={() => handleToggleActive(activeConfirmation)}>{togglingId ? 'Đang lưu...' : 'Xác nhận'}</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -715,6 +736,7 @@ function UsersAdminPage() {
         <div className="modal-overlay" onClick={closeEdit}>
           <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
             <h3 className="modal-title">Chỉnh sửa tài khoản</h3>
+            {formError && <p className="jobs-error" role="alert">{formError}</p>}
 
             <div className="field-group">
               <label className="field-label">Email</label>

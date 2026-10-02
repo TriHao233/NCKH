@@ -10,6 +10,7 @@ import {
   listQuestionVersions,
   listQuestions,
   updateQuestion,
+  updateQuestionSharing,
 } from '../api/questions';
 import { listSubjects } from '../api/catalog';
 import { listUsers } from '../api/users';
@@ -122,6 +123,9 @@ function AdminQuestionBankPage() {
   const [editor, setEditor] = useState(null);
   const [editorError, setEditorError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [archiveConfirmation, setArchiveConfirmation] = useState(null);
+  const [sharing, setSharing] = useState(null);
+  const [sharingError, setSharingError] = useState('');
   const [exportFormat, setExportFormat] = useState('xlsx');
   const [exporting, setExporting] = useState(false);
 
@@ -224,13 +228,13 @@ function AdminQuestionBankPage() {
   }, [linkedQuestionId]);
 
   useEffect(() => {
-    if (!selected || editor) return undefined;
+    if (!selected || editor || archiveConfirmation || sharing) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') closeDetail();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selected, editor, closeDetail]);
+  }, [selected, editor, archiveConfirmation, sharing, closeDetail]);
 
   const updateFilter = (field, value) => {
     setFilters((current) => ({ ...current, [field]: value }));
@@ -265,15 +269,35 @@ function AdminQuestionBankPage() {
   };
 
   const handleArchive = async (question) => {
-    if (!window.confirm(`Đưa câu hỏi ${question.question_code} vào lưu trữ? Câu hỏi sẽ không còn trong ngân hàng và không dùng được cho đề thi mới.`)) return;
     setSaving(true);
     try {
       await deleteQuestion(question.id);
       setNotice({ type: 'success', text: `Đã lưu trữ ${question.question_code}.` });
+      setArchiveConfirmation(null);
       closeDetail();
       await fetchQuestions();
     } catch (err) {
       setNotice({ type: 'error', text: err.message || 'Lưu trữ câu hỏi thất bại' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveSharing = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setSharingError('');
+    try {
+      const updated = await updateQuestionSharing(sharing.id, {
+        shared_scope: sharing.scope,
+        shared_with_user_ids: sharing.userIds,
+      });
+      setSelected(updated);
+      setSharing(null);
+      setNotice({ type: 'success', text: 'Đã lưu chia sẻ câu hỏi.' });
+      await fetchQuestions();
+    } catch (err) {
+      setSharingError(err.message || 'Không lưu được chia sẻ');
     } finally {
       setSaving(false);
     }
@@ -535,7 +559,8 @@ function AdminQuestionBankPage() {
               <button type="button" className="jobs-primary-button" onClick={() => { setEditorError(''); setEditor({ question: detail }); }} disabled={saving}>Sửa</button>
               <Link className="jobs-secondary-button" to={`/kiem-duyet?questionId=${detail.id}`}>Mở kiểm duyệt</Link>
               <Link className="jobs-secondary-button" to={`/duyet-ai?questionId=${detail.id}`}>Xem thẩm định AI</Link>
-              <button type="button" className="jobs-secondary-button qbank-danger" onClick={() => handleArchive(detail)} disabled={saving}>Lưu trữ</button>
+              <button type="button" className="jobs-secondary-button" disabled={saving} onClick={() => { setSharingError(''); setSharing({ id: detail.id, scope: detail.shared_scope || 'PRIVATE', userIds: detail.shared_with_user_ids || [] }); }}>Chia sẻ</button>
+              <button type="button" className="jobs-secondary-button qbank-danger" onClick={() => { setNotice(null); setArchiveConfirmation(detail); }} disabled={saving}>Lưu trữ</button>
             </div>
 
             <section className="qbank-section">
@@ -634,6 +659,29 @@ function AdminQuestionBankPage() {
               ))}
             </section>
           </aside>
+        </div>
+      )}
+
+      {sharing && (
+        <div className="modal-overlay">
+          <form className="qbank-dialog qbank-dialog--narrow" role="dialog" aria-modal="true" aria-label="Chia sẻ câu hỏi" onSubmit={saveSharing}>
+            <h2>Chia sẻ câu hỏi</h2>
+            <label className="qbank-field"><span>Phạm vi</span><select value={sharing.scope} onChange={(event) => setSharing({ ...sharing, scope: event.target.value })}><option value="PRIVATE">Riêng tư</option><option value="SUBJECT">Chia sẻ theo môn</option></select></label>
+            <div className="qbank-field"><span>Chia sẻ riêng cho giảng viên</span>{users.filter((user) => user.role === 'Teacher' && (user.is_active !== false || sharing.userIds.includes(user.id))).map((user) => <label className="qbank-check" key={user.id}><input type="checkbox" checked={sharing.userIds.includes(user.id)} onChange={() => setSharing({ ...sharing, userIds: sharing.userIds.includes(user.id) ? sharing.userIds.filter((id) => id !== user.id) : [...sharing.userIds, user.id] })} />{user.display_name || user.email}</label>)}</div>
+            {sharingError && <p className="qbank-note qbank-note--error" role="alert">{sharingError}</p>}
+            <div className="qbank-dialog-actions"><button type="button" className="jobs-secondary-button" disabled={saving} onClick={() => setSharing(null)}>Hủy</button><button type="submit" className="jobs-primary-button" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu chia sẻ'}</button></div>
+          </form>
+        </div>
+      )}
+
+      {archiveConfirmation && (
+        <div className="modal-overlay">
+          <div className="qbank-dialog qbank-dialog--narrow" role="dialog" aria-modal="true" aria-label="Xác nhận lưu trữ câu hỏi">
+            <h2>Lưu trữ {archiveConfirmation.question_code}?</h2>
+            <p>Câu hỏi sẽ bị ẩn khỏi ngân hàng và không dùng được cho đề thi mới.</p>
+            {notice?.type === 'error' && <p className="qbank-note qbank-note--error" role="alert">{notice.text}</p>}
+            <div className="qbank-dialog-actions"><button type="button" className="jobs-secondary-button" disabled={saving} onClick={() => setArchiveConfirmation(null)}>Hủy</button><button type="button" className="jobs-primary-button" disabled={saving} onClick={() => handleArchive(archiveConfirmation)}>Xác nhận lưu trữ</button></div>
+          </div>
         </div>
       )}
 
