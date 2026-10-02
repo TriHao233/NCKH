@@ -68,7 +68,7 @@ prompts/
 /artifacts/
 /frontend/test-results/
 
-# Generated outputs (existing tracked files stay tracked)
+# Generated outputs and local verification artifacts
 /output/
 .pytest_cache/
 .ruff_cache/
