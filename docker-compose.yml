@@ -20,7 +20,7 @@ services:
       DOCLING_URL: http://docling:5001
       DOCLING_OCR_PRESET: tesseract
       DOCLING_OCR_LANGUAGES: vie
-      DOCLING_TIMEOUT: "600"
+      DOCLING_TIMEOUT: "1200"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"
@@ -102,7 +102,7 @@ services:
       DOCLING_URL: http://docling:5001
       DOCLING_OCR_PRESET: tesseract
       DOCLING_OCR_LANGUAGES: vie
-      DOCLING_TIMEOUT: "600"
+      DOCLING_TIMEOUT: "1200"
       MONGO_URI: mongodb://mongodb:27017/?replicaSet=rs0
       POSTGRES_DSN: postgresql://${POSTGRES_USER:-nckh}:${POSTGRES_PASSWORD:-nckh_local_dev_only}@postgres:5432/${POSTGRES_DB:-nckh}
       REQUIRE_MONGO_TRANSACTIONS: "true"

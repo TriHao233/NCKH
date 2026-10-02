@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Iterable
 
+from core.text_normalization import normalize_source_text
 from modules.generation.schemas import GeneratedQuestion, GenerationRejection
 
 
@@ -29,8 +29,8 @@ class DuplicateStats:
 
 
 def normalize_exact_text(value: str) -> str:
-    """Normalize only representation details; accents and punctuation stay intact."""
-    normalized = unicodedata.normalize("NFC", str(value or "")).casefold()
+    """Normalize representation and known font artifacts; keep accents intact."""
+    normalized = normalize_source_text(str(value or "")).casefold()
     return re.sub(r"\s+", " ", normalized).strip()
 
 

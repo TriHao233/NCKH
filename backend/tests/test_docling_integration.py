@@ -93,6 +93,30 @@ class DoclingIntegrationTests(unittest.TestCase):
         self.assertEqual(result[3]['text'], 'third')
         self.assertEqual(result[3]['structured_blocks'][0]['page_number'], 3)
 
+    def test_docling_large_subset_is_batched_and_keeps_source_pages(self):
+        self.fixture(['scan'] * 5)
+        batch_lengths = []
+
+        def convert(path):
+            count = len(docling_engine.PdfReader(path).pages)
+            batch_lengths.append(count)
+            return {
+                'pages': [{'page_number': n, 'text': f'batch {len(batch_lengths)} page {n}'}
+                          for n in range(1, count + 1)],
+                'structured_blocks': [{'page_number': count, 'block_type': 'code', 'content': 'x = 1;'}],
+                'raw_document': {'batch': len(batch_lengths)},
+            }
+
+        with patch.object(docling_engine, 'settings', SimpleNamespace(docling_page_batch_size=2)), \
+                patch.object(docling_engine, 'ocr_pdf', side_effect=convert):
+            result = docling_engine.ocr_pdf_pages(str(self.path), [5, 1, 3, 2, 4])
+
+        self.assertEqual(batch_lengths, [2, 2, 1])
+        self.assertEqual(sorted(result), [1, 2, 3, 4, 5])
+        self.assertEqual(result[3]['text'], 'batch 2 page 1')
+        self.assertEqual(result[4]['structured_blocks'][0]['page_number'], 4)
+        self.assertEqual([page for page in result if 'raw_document' in result[page]], [1, 3, 5])
+
     def test_tesseract_request_uses_vietnamese_language_code(self):
         settings = SimpleNamespace(docling_ocr_preset='tesseract', docling_ocr_backend='onnxruntime', docling_ocr_languages=['vie'])
         with patch.object(docling_engine, 'settings', settings):

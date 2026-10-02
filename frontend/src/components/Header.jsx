@@ -191,12 +191,10 @@ const Header = () => {
     label: 'Quản trị',
     items: [
       { path: '/tong-quan', label: 'Tổng quan' },
-      { path: '/kiem-duyet', label: 'Kiểm duyệt' },
       { path: '/quan-ly', label: 'Câu hỏi' },
       { path: '/duyet-ai', label: 'Thẩm định AI' },
+      { path: '/kiem-duyet', label: 'Kiểm duyệt' },
       { path: '/lam-de-thi', label: 'Xem đề thi' },
-      { path: '/danh-muc', label: 'Danh mục' },
-      { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
       { path: '/quan-ly-moodle', label: 'Moodle' },
     ],
   };
@@ -230,7 +228,7 @@ const Header = () => {
 
   return (
     <header
-      className={`navbar ${role === 'Admin' ? 'navbar--admin' : ''}`}
+      className="navbar"
       id="navbar"
       style={{ '--header-background': `url("${import.meta.env.BASE_URL}images/header-background.png")` }}
     >

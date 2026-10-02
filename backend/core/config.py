@@ -206,6 +206,7 @@ class Settings(BaseModel):
     pdf_ocr_engine: str = os.getenv("PDF_OCR_ENGINE", "easyocr").strip().lower()
     docling_url: str = os.getenv("DOCLING_URL", "http://localhost:5001").rstrip("/")
     docling_timeout: int = int(os.getenv("DOCLING_TIMEOUT", "600"))
+    docling_page_batch_size: int = int(os.getenv("DOCLING_PAGE_BATCH_SIZE", "20"))
     docling_poll_seconds: float = float(os.getenv("DOCLING_POLL_SECONDS", "0.5"))
     docling_ocr_preset: str = os.getenv("DOCLING_OCR_PRESET", "tesseract").strip().lower()
     docling_ocr_backend: str = os.getenv("DOCLING_OCR_BACKEND", "onnxruntime").strip().lower()

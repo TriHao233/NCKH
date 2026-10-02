@@ -59,6 +59,27 @@ class GenerationPostProcessingTests(unittest.TestCase):
         self.assertTrue(contains_exact_text(context, quote))
         self.assertFalse(contains_exact_text(context, "Giải thuật đạt tính hiệu quả."))
 
+    def test_grounding_accepts_known_pdf_font_artifacts(self):
+        source = "Số thập phân đƣợc mã bằng nhị phân và ngƣợc lại."
+        item = candidate(
+            question="Số thập phân được mã bằng nhị phân.",
+            source_context="Số thập phân được mã bằng nhị phân và ngược lại.",
+            source_keywords=["được mã bằng nhị phân"],
+            correct_answer="A",
+            false_mutation=None,
+        )
+        errors = validate_source_grounding(
+            item, context_text=f"Nội dung: {source}",
+            question_type="dung_sai", candidate_index=1,
+        )
+        self.assertEqual(errors, [])
+        item["source_context"] = "Số thập phân được mã bằng tám bit."
+        errors = validate_source_grounding(
+            item, context_text=f"Nội dung: {source}",
+            question_type="dung_sai", candidate_index=1,
+        )
+        self.assertIn("SOURCE_CONTEXT_NOT_IN_CONTENT", {error.code for error in errors})
+
     def test_grounding_accepts_exact_keyword_and_controlled_false_mutation(self):
         errors = validate_source_grounding(
             candidate(),

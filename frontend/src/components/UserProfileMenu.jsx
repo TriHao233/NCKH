@@ -11,6 +11,8 @@ import {
   faFileLines,
   faClockRotateLeft,
   faEnvelope,
+  faLayerGroup,
+  faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -120,7 +122,7 @@ const UserProfileMenu = () => {
             </>
           )}
 
-          {['Admin', 'Reviewer'].includes(user.role) && (
+          {user.role === 'Reviewer' && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
               Lịch công việc
@@ -131,11 +133,19 @@ const UserProfileMenu = () => {
             <>
               <Link to="/lien-he?tab=all" className="dropdown-item" onClick={() => setIsOpen(false)}>
                 <FontAwesomeIcon icon={faEnvelope} className="dropdown-icon" />
-                Xem liên hệ
+                Quản lý liên hệ
+              </Link>
+              <Link to="/danh-muc" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faLayerGroup} className="dropdown-icon" />
+                Quản lý mô hình
+              </Link>
+              <Link to="/quan-ly-nguoi-dung" className="dropdown-item" onClick={() => setIsOpen(false)}>
+                <FontAwesomeIcon icon={faUsers} className="dropdown-icon" />
+                Quản lý người dùng
               </Link>
               <Link to="/nhat-ky-he-thong" className="dropdown-item" onClick={() => setIsOpen(false)}>
                 <FontAwesomeIcon icon={faClockRotateLeft} className="dropdown-icon" />
-                Lịch sử dùng
+                Lịch sử hoạt động
               </Link>
               <Link to="/quan-ly-job" className="dropdown-item" onClick={() => setIsOpen(false)}>
                 <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />

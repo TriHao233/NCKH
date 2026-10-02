@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.text_normalization import normalize_source_text
 from modules.documents.ingest.models import (
     ContentBlock,
     ParseContext,
@@ -28,6 +29,14 @@ def make_block(
     validation_notes: list[str] | None = None,
 ) -> ContentBlock:
     normalized, transformation_log = normalize_unicode(content)
+    if block_type not in {"code", "formula"}:
+        corrected = normalize_source_text(normalized)
+        if corrected != normalized:
+            transformation_log.append({
+                "operation": "vietnamese_pdf_font_normalization_v1",
+                "semantic_change": False,
+            })
+            normalized = corrected
     return ContentBlock(
         block_id=stable_block_id(context, location_key, index, normalized),
         block_type=block_type,
