@@ -341,8 +341,8 @@ function AdminJobsPage() {
       <section className="jobs-header">
         <div>
           <span>Quản trị hệ thống</span>
-          <h1>Hàng đợi hệ thống</h1>
-          <p>Theo dõi hàng đợi sinh câu hỏi, đánh giá chất lượng và xử lý tài liệu.</p>
+          <h1>Tác vụ hệ thống</h1>
+          <p>Theo dõi các tác vụ sinh câu hỏi, đánh giá chất lượng và xử lý tài liệu.</p>
         </div>
         <div className="jobs-header-actions">
           <button

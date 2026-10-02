@@ -258,7 +258,7 @@ function AdminMoodlePage() {
       <section className="moodle-header">
         <div>
           <span>Quản trị hệ thống</span>
-          <h1>Moodle target</h1>
+          <h1>Moodle</h1>
           <p>Quản lý site, course, category và theo dõi publication Moodle theo mode MOCK hoặc REST API.</p>
         </div>
         <button type="button" className="moodle-primary-button" onClick={() => { loadTargets(); loadPublications(); }} disabled={loading || publicationsLoading}>

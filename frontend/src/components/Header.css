@@ -109,8 +109,76 @@
   width: calc(100% - 48px);
 }
 
-.navbar--admin .nav-section-links {
-  gap: 18px;
+/* Menu Quản trị dùng menu thả xuống nên không được cắt phần tràn. */
+.navbar--admin .nav-menu {
+  gap: 20px;
+  overflow: visible;
+}
+
+.nav-dropdown {
+  position: relative;
+}
+
+.nav-dropdown-toggle {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.nav-dropdown-toggle:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 4px;
+}
+
+.nav-dropdown-chevron {
+  font-size: 0.7em;
+  transition: transform 0.2s ease;
+}
+
+.nav-dropdown-toggle[aria-expanded='true'] .nav-dropdown-chevron {
+  transform: rotate(180deg);
+}
+
+.nav-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #eaf3fc;
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(5, 40, 90, 0.16);
+  transform: translateX(-50%);
+}
+
+.nav-dropdown-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  color: var(--text, #13253f);
+  font-size: 0.9rem;
+  font-weight: 650;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.nav-dropdown-link:hover,
+.nav-dropdown-link--active {
+  background: #eaf4ff;
+  color: var(--primary, #0c78d4);
+}
+
+.nav-dropdown-link:focus-visible {
+  outline: 2px solid #084a8c;
+  outline-offset: -2px;
 }
 
 .nav-section {
@@ -736,16 +804,4 @@
     right: 12px;
     width: min(260px, calc(100vw - 24px));
   }
-}
-
-/* Menu Quản trị có 8 mục: thu gọn khoảng cách để vừa một hàng trên desktop.
-   Từ 1280px trở xuống header đã chuyển sang menu thu gọn nên không áp dụng. */
-@media (min-width: 1281px) {
-  .navbar--admin .nav-section-links { gap: 8px; }
-  .navbar--admin .nav-link { gap: 5px; font-size: 0.9rem; }
-}
-
-@media (min-width: 1281px) and (max-width: 1366px) {
-  .navbar--admin .nav-link { font-size: 0.8rem; }
-  .navbar--admin .nav-link-icon { display: none; }
 }

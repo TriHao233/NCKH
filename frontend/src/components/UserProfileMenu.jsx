@@ -9,8 +9,6 @@ import {
   faListCheck,
   faBook,
   faFileLines,
-  faClockRotateLeft,
-  faEnvelope,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { buildFallbackAvatar, normalizeAvatarUrl } from '../utils/avatarUrl';
@@ -63,7 +61,6 @@ const UserProfileMenu = () => {
   };
   const displayName = user.display_name || 'Người dùng';
   const displayRole = roleLabel[user.role] || user.role || 'Người dùng';
-  const canOpenSettings = user.role === 'Admin';
   
   // Tự động generate avatar dựa trên tên người dùng
   const avatarUrl = normalizeAvatarUrl(user.profile?.avatar) || buildFallbackAvatar(displayName);
@@ -120,30 +117,14 @@ const UserProfileMenu = () => {
             </>
           )}
 
-          {['Admin', 'Reviewer'].includes(user.role) && (
+          {/* Quản trị viên mở các mục này từ thanh điều hướng chính. */}
+          {user.role === 'Reviewer' && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />
               Lịch công việc
             </Link>
           )}
 
-          {canOpenSettings && (
-            <>
-              <Link to="/lien-he?tab=all" className="dropdown-item" onClick={() => setIsOpen(false)}>
-                <FontAwesomeIcon icon={faEnvelope} className="dropdown-icon" />
-                Xem liên hệ
-              </Link>
-              <Link to="/nhat-ky-he-thong" className="dropdown-item" onClick={() => setIsOpen(false)}>
-                <FontAwesomeIcon icon={faClockRotateLeft} className="dropdown-icon" />
-                Lịch sử dùng
-              </Link>
-              <Link to="/quan-ly-job" className="dropdown-item" onClick={() => setIsOpen(false)}>
-                <FontAwesomeIcon icon={faListCheck} className="dropdown-icon" />
-                Tác vụ hệ thống
-              </Link>
-            </>
-          )}
-          
           <div className="dropdown-divider"></div>
           
           <button className="dropdown-item text-danger" onClick={handleLogout}>

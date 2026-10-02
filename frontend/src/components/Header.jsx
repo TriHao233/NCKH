@@ -6,7 +6,7 @@ import {
   faCircleInfo, faHouse, faWandMagicSparkles, faFilePen, faBookOpen,
   faEnvelope, faClipboardCheck, faChartLine, faLayerGroup, faUsers,
   faClockRotateLeft, faListCheck, faGraduationCap, faCircleQuestion,
-  faRobot, faChartColumn,
+  faRobot, faChevronDown, faDatabase, faGear, faFileLines, faCalendarCheck,
 } from '@fortawesome/free-solid-svg-icons';
 import { AuthContext } from '../context/AuthContext';
 import { canAccessPath, hasEffectivePermission } from '../auth/permissions';
@@ -25,19 +25,20 @@ const navIcons = {
   'Sinh câu hỏi': faWandMagicSparkles,
   'Làm đề thi': faFilePen,
   'Đề thi': faFilePen,
-  'Xem đề thi': faFilePen,
   'Hướng dẫn': faBookOpen,
   'Liên hệ': faEnvelope,
   'Hàng kiểm duyệt': faClipboardCheck,
   'Kiểm duyệt': faClipboardCheck,
-  'Tác vụ': faListCheck,
+  'Lịch công việc': faCalendarCheck,
   'Tổng quan': faChartLine,
-  'Danh mục': faLayerGroup,
+  'Ngân hàng': faDatabase,
+  'Tài liệu': faFileLines,
   'Người dùng': faUsers,
-  'Nhật ký': faClockRotateLeft,
-  'Lịch sử': faClockRotateLeft,
-  'Hàng đợi': faListCheck,
-  'Thống kê': faChartColumn,
+  'Tài khoản': faUsers,
+  'Hệ thống': faGear,
+  'Cấu hình': faLayerGroup,
+  'Tác vụ hệ thống': faListCheck,
+  'Nhật ký hệ thống': faClockRotateLeft,
   'Moodle': faGraduationCap,
   'Câu hỏi': faCircleQuestion,
   'Thẩm định AI': faRobot,
@@ -55,6 +56,7 @@ const Header = () => {
   const signedIn = Boolean(user) && !loading;
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [openNavGroup, setOpenNavGroup] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -173,34 +175,52 @@ const Header = () => {
         { path: '/kiem-duyet', label: 'Hàng kiểm duyệt', requires: 'reviews.manage' },
       ],
     },
+  ];
+  // Menu Quản trị: 5 nhóm theo tần suất dùng; nhóm nhiều mục mở thành menu thả xuống.
+  const adminNavGroups = [
     {
-      id: 'admin',
-      label: 'Quản trị',
+      id: 'overview',
+      label: 'Tổng quan',
+      items: [{ path: '/tong-quan', label: 'Tổng quan' }],
+    },
+    {
+      id: 'review',
+      label: 'Kiểm duyệt',
       items: [
-        { path: '/tong-quan', label: 'Tổng quan' },
-        { path: '/danh-muc', label: 'Danh mục' },
-        { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
-        { path: '/nhat-ky-he-thong', label: 'Nhật ký' },
-        { path: '/quan-ly-job', label: 'Hàng đợi' },
+        { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+        { path: '/duyet-ai', label: 'Thẩm định AI' },
+        { path: '/lich-cong-viec', label: 'Lịch công việc' },
+      ],
+    },
+    {
+      id: 'bank',
+      label: 'Ngân hàng',
+      items: [
+        { path: '/quan-ly', label: 'Câu hỏi' },
+        { path: '/lam-de-thi', label: 'Đề thi' },
+        { path: '/quan-ly-tai-lieu', label: 'Tài liệu' },
+      ],
+    },
+    {
+      id: 'people',
+      label: 'Người dùng',
+      items: [
+        { path: '/quan-ly-nguoi-dung', label: 'Tài khoản' },
+        { path: '/lien-he', label: 'Liên hệ' },
+      ],
+    },
+    {
+      id: 'system',
+      label: 'Hệ thống',
+      items: [
+        { path: '/danh-muc', label: 'Cấu hình' },
         { path: '/quan-ly-moodle', label: 'Moodle' },
+        { path: '/quan-ly-job', label: 'Tác vụ hệ thống' },
+        { path: '/nhat-ky-he-thong', label: 'Nhật ký hệ thống' },
       ],
     },
   ];
-  const adminNavGroup = {
-    id: 'admin',
-    label: 'Quản trị',
-    items: [
-      { path: '/tong-quan', label: 'Tổng quan' },
-      { path: '/kiem-duyet', label: 'Kiểm duyệt' },
-      { path: '/quan-ly', label: 'Câu hỏi' },
-      { path: '/duyet-ai', label: 'Thẩm định AI' },
-      { path: '/lam-de-thi', label: 'Xem đề thi' },
-      { path: '/danh-muc', label: 'Danh mục' },
-      { path: '/quan-ly-nguoi-dung', label: 'Người dùng' },
-      { path: '/quan-ly-moodle', label: 'Moodle' },
-    ],
-  };
-  const roleNavGroups = role === 'Admin' ? [adminNavGroup] : navGroups;
+  const roleNavGroups = role === 'Admin' ? adminNavGroups : navGroups;
   const visibleNavGroups = roleNavGroups
     .map((group) => ({
       ...group,
@@ -212,12 +232,31 @@ const Header = () => {
       return group.isPublic || group.id === 'public' || (signedIn && group.items.length > 0);
     });
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
+  const isPathActive = (path) => location.pathname === path
+    || location.pathname.startsWith(`${path}/`);
 
   useEffect(() => {
     const activeLink = navMenuRef.current?.querySelector('.nav-link--active');
     activeLink?.scrollIntoView({ block: 'nearest', inline: 'center' });
     setMobileNavOpen(false);
+    setOpenNavGroup(null);
   }, [location.pathname, role, signedIn]);
+
+  useEffect(() => {
+    if (!openNavGroup) return undefined;
+    const handleClick = (event) => {
+      if (navMenuRef.current && !navMenuRef.current.contains(event.target)) setOpenNavGroup(null);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setOpenNavGroup(null);
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openNavGroup]);
 
   useEffect(() => {
     if (!mobileNavOpen) return undefined;
@@ -246,7 +285,38 @@ const Header = () => {
         </div>
 
         <nav className="nav-menu" aria-label="Điều hướng chính" ref={navMenuRef}>
-          {visibleNavGroups.map((group) => (
+          {visibleNavGroups.map((group) => (role === 'Admin' && group.items.length > 1 ? (
+            <div key={group.id} className={`nav-section nav-section--${group.id} nav-dropdown`}>
+              <button
+                type="button"
+                className={`nav-link nav-dropdown-toggle ${group.items.some((link) => isPathActive(link.path)) ? 'nav-link--active' : ''}`}
+                aria-haspopup="true"
+                aria-expanded={openNavGroup === group.id}
+                aria-controls={openNavGroup === group.id ? `nav-dropdown-${group.id}` : undefined}
+                onClick={() => setOpenNavGroup((current) => (current === group.id ? null : group.id))}
+              >
+                <FontAwesomeIcon icon={navIcons[group.label]} className="nav-link-icon" aria-hidden="true" />
+                <span>{group.label}</span>
+                <FontAwesomeIcon icon={faChevronDown} className="nav-dropdown-chevron" aria-hidden="true" />
+              </button>
+              {openNavGroup === group.id && (
+                <div className="nav-dropdown-panel" id={`nav-dropdown-${group.id}`}>
+                  {group.items.map((link) => (
+                    <Link
+                      key={link.path}
+                      to={link.path}
+                      className={`nav-dropdown-link ${isPathActive(link.path) ? 'nav-dropdown-link--active' : ''}`}
+                      aria-current={isPathActive(link.path) ? 'page' : undefined}
+                      onClick={() => setOpenNavGroup(null)}
+                    >
+                      <FontAwesomeIcon icon={navIcons[link.label]} className="nav-link-icon" aria-hidden="true" />
+                      <span>{link.label}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
             <div
               key={group.id}
               className={`nav-section nav-section--${group.id}`}
@@ -254,8 +324,7 @@ const Header = () => {
               {showSectionLabels && <span className="nav-section-label">{group.label}</span>}
               <div className="nav-section-links">
                 {group.items.map((link) => {
-                  const isActive = location.pathname === link.path
-                    || location.pathname.startsWith(`${link.path}/`);
+                  const isActive = isPathActive(link.path);
                   return (
                     <Link
                       key={link.path}
@@ -270,7 +339,7 @@ const Header = () => {
                 })}
               </div>
             </div>
-          ))}
+          )))}
         </nav>
 
         <div className="nav-actions">
@@ -358,11 +427,12 @@ const Header = () => {
           >
             {visibleNavGroups.map((group) => (
               <section className="mobile-nav-section" key={group.id}>
-                <span className="mobile-nav-section-label">{group.label}</span>
+                {!(role === 'Admin' && group.items.length === 1) && (
+                  <span className="mobile-nav-section-label">{group.label}</span>
+                )}
                 <div className="mobile-nav-links">
                   {group.items.map((link) => {
-                    const isActive = location.pathname === link.path
-                      || location.pathname.startsWith(`${link.path}/`);
+                    const isActive = isPathActive(link.path);
                     return (
                       <Link
                         key={link.path}
