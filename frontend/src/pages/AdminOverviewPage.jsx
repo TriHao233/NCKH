@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBookOpen,
-  faClipboardCheck,
   faDatabase,
   faPlugCircleCheck,
   faRotateRight,
@@ -13,44 +12,6 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { getAdminOverview, listAdminDocuments } from '../api/adminOverview';
 import '../css/AdminOverviewPage.css';
-
-const JOB_TYPE_LABEL = {
-  generation: 'Sinh câu hỏi',
-  Generation: 'Sinh câu hỏi',
-  evaluation: 'Đánh giá',
-  Evaluation: 'Đánh giá',
-  document: 'Tài liệu',
-  DOCUMENT: 'Tài liệu',
-};
-
-const ACTION_LABEL = {
-  'user.admin_update': 'Cập nhật người dùng',
-  'user.deactivate': 'Khóa người dùng',
-  'QUESTION_EVALUATED': 'Đánh giá câu hỏi',
-  'QUESTION_APPROVED': 'Duyệt câu hỏi',
-  'QUESTION_REJECTED': 'Từ chối câu hỏi',
-  'QUESTION_NEEDS_REVISION': 'Yêu cầu sửa',
-  'QUESTION_REVIEW_CLAIMED': 'Nhận kiểm duyệt',
-  'QUESTION_REVIEW_RELEASED': 'Trả câu kiểm duyệt',
-  'admin.job_retry': 'Chạy lại tác vụ',
-  'admin.job_cancel': 'Hủy tác vụ',
-  'admin.moodle_target_save': 'Lưu cấu hình Moodle',
-  'admin.moodle_target_deactivate': 'Tắt cấu hình Moodle',
-  'admin.moodle_target_check': 'Kiểm tra cấu hình Moodle',
-  'auth.demo_login': 'Đăng nhập demo',
-  'user.password_reset': 'Đặt lại mật khẩu',
-};
-
-const ENTITY_TYPE_LABEL = {
-  'user': 'Người dùng',
-  'QUESTION': 'Câu hỏi',
-  'question': 'Câu hỏi',
-  'generation': 'Sinh câu hỏi',
-  'evaluation': 'Đánh giá',
-  'document': 'Tài liệu',
-  'moodle_target': 'Cấu hình Moodle',
-  'subject': 'Môn học',
-};
 
 function formatNumber(value) {
   return new Intl.NumberFormat('vi-VN').format(value || 0);
@@ -86,13 +47,6 @@ function formatCurrency(value) {
     currency: 'USD',
     maximumFractionDigits: value < 1 ? 4 : 2,
   }).format(value);
-}
-
-function compactId(value) {
-  if (!value) return 'Chưa có';
-  const text = String(value);
-  if (text.length <= 12) return text;
-  return `${text.slice(0, 6)}...${text.slice(-4)}`;
 }
 
 function AdminOverviewPage() {
@@ -146,6 +100,7 @@ function AdminOverviewPage() {
       {
         key: 'users',
         label: 'Người dùng hoạt động',
+        path: '/quan-ly-nguoi-dung',
         value: users.active,
         detail: `${formatNumber(users.teachers)} giảng viên · ${formatNumber(users.reviewers)} người duyệt`,
         icon: faUsers,
@@ -153,6 +108,7 @@ function AdminOverviewPage() {
       {
         key: 'questions',
         label: 'Câu hỏi đang dùng',
+        path: '/quan-ly',
         value: questions.total,
         detail: `${formatNumber(questions.pending)} chờ duyệt · ${formatNumber(questions.approved)} đã duyệt`,
         icon: faBookOpen,
@@ -160,13 +116,15 @@ function AdminOverviewPage() {
       {
         key: 'documents',
         label: 'Tài liệu',
+        path: '/quan-ly-tai-lieu',
         value: documents.total,
         detail: `${formatNumber(documents.processing)} đang xử lý · ${formatNumber(documents.failed)} lỗi`,
         icon: faDatabase,
       },
       {
         key: 'jobs',
-        label: 'Hàng đợi cần xử lý',
+        label: 'Tác vụ cần xử lý',
+        path: '/quan-ly-job?status=retryable',
         value: jobs.failed,
         detail: `${formatNumber(jobs.active)} đang chạy · ${formatNumber(jobs.long_running)} quá ngưỡng`,
         icon: faServer,
@@ -174,6 +132,7 @@ function AdminOverviewPage() {
       {
         key: 'moodle',
         label: 'Ghi mô phỏng Moodle',
+        path: '/quan-ly-moodle',
         value: moodle.publications?.total,
         detail: `${formatNumber(moodle.publications?.simulated)} lượt mô phỏng · ${formatNumber(moodle.active_targets)} cấu hình hoạt động`,
         icon: faPlugCircleCheck,
@@ -182,11 +141,8 @@ function AdminOverviewPage() {
   }, [overview]);
 
   const attention = overview?.attention || [];
-  const recentJobs = overview?.recent_jobs || [];
-  const recentAudit = overview?.recent_audit || [];
   const quality = overview?.questions?.quality || {};
   const publications = overview?.moodle?.publications || {};
-  const jobBreakdown = overview?.jobs?.breakdown || [];
   const modelPerformance = overview?.model_performance || [];
   const modelUsage = overview?.model_usage_summary || {};
 
@@ -196,7 +152,7 @@ function AdminOverviewPage() {
         <div>
           <span>Quản trị hệ thống</span>
           <h1>Tổng quan vận hành</h1>
-          <p>Theo dõi sức khỏe hệ thống, hàng đợi, kiểm duyệt và mô phỏng Moodle trong một màn hình.</p>
+          <p>Chỉ số chính và việc cần xử lý. Bấm vào từng ô để mở trang chi tiết.</p>
         </div>
         <button type="button" className="overview-primary-button" onClick={loadOverview} disabled={loading}>
           <FontAwesomeIcon icon={faRotateRight} />
@@ -208,59 +164,23 @@ function AdminOverviewPage() {
 
       <section className="overview-stats" aria-label="Chỉ số vận hành">
         {stats.map((item) => (
-          <article className={`overview-stat overview-stat--${item.key}`} key={item.key}>
+          <Link className={`overview-stat overview-stat--${item.key}`} to={item.path} key={item.key}>
             <FontAwesomeIcon icon={item.icon} />
             <div>
               <span>{item.label}</span>
               <b>{formatNumber(item.value)}</b>
               <small>{item.detail}</small>
             </div>
-          </article>
+          </Link>
         ))}
       </section>
 
       <section className="overview-grid">
-        <section className="overview-panel overview-panel--wide" aria-label="Giám sát tài liệu">
-          <div className="overview-panel-heading">
-            <div><span>Tài liệu toàn hệ thống · Chỉ đọc</span><h2>Giám sát tài liệu</h2></div>
-            <Link to="/quan-ly-job?kind=document">Xem tác vụ tài liệu</Link>
-          </div>
-          <form className="overview-document-filters" onSubmit={(event) => {
-            event.preventDefault(); setDocumentPage(1);
-            setDocumentFilters({ ...documentFilterDraft, search: documentFilterDraft.search.trim() });
-          }}>
-            <label>Tìm tài liệu<input type="search" maxLength={200} placeholder="Tên tài liệu hoặc tên file" value={documentFilterDraft.search} onChange={(event) => setDocumentFilterDraft({ ...documentFilterDraft, search: event.target.value })} /></label>
-            <label>Trạng thái<select value={documentFilterDraft.status} onChange={(event) => setDocumentFilterDraft({ ...documentFilterDraft, status: event.target.value })}>
-              <option value="">Tất cả</option><option value="UPLOADED">Đã tải lên</option><option value="PROCESSING">Đang xử lý</option><option value="READY">Sẵn sàng</option><option value="FAILED">Lỗi</option>
-            </select></label>
-            <button type="submit" className="overview-primary-button" disabled={documentsLoading}>Lọc</button>
-          </form>
-          {documentsError && <p className="overview-error" role="alert">{documentsError}</p>}
-          <div className="overview-table-wrap" aria-busy={documentsLoading}>
-            <table className="overview-table"><thead><tr><th>Tài liệu</th><th>Người tải</th><th>Học phần</th><th>Trạng thái</th><th>Số trang</th><th>Xử lý / lỗi</th><th>Cập nhật</th></tr></thead><tbody>
-              {(documentData?.items || []).map((item) => <tr key={item.id}>
-                <td><strong>{item.title || item.original_filename}</strong><small>{item.original_filename}</small></td>
-                <td>{item.owner?.display_name || item.owner?.email || 'Chưa có'}<small>{item.owner?.display_name ? item.owner?.email : ''}</small></td>
-                <td>{item.subjects?.map((subject) => subject.name || subject.code || subject.id).join(', ') || 'Chưa gắn học phần'}</td>
-                <td>{({ UPLOADED: 'Đã tải lên', PROCESSING: 'Đang xử lý', READY: 'Sẵn sàng', FAILED: 'Lỗi' })[item.status] || item.status}</td>
-                <td>{item.page_count ?? '—'}</td>
-                <td className="overview-error-cell">{item.error_message || <><span>OCR: {item.pipeline_summary?.ocr_status || '—'}</span><small>Chunk: {item.pipeline_summary?.chunk_status || '—'}</small></>}</td>
-                <td>{formatDateTime(item.updated_at)}</td>
-              </tr>)}
-            </tbody></table>
-            {documentsLoading && <p className="overview-empty">Đang tải tài liệu...</p>}
-            {!documentsLoading && !documentsError && !documentData?.items?.length && <p className="overview-empty">Không có tài liệu phù hợp.</p>}
-          </div>
-          {documentData && <div className="overview-document-pagination"><span>{formatNumber(documentData.total)} tài liệu · Trang {documentPage}</span>
-            <button type="button" disabled={documentsLoading || documentPage <= 1} onClick={() => setDocumentPage((value) => value - 1)}>Trước</button>
-            <button type="button" disabled={documentsLoading || documentPage * documentData.page_size >= documentData.total} onClick={() => setDocumentPage((value) => value + 1)}>Sau</button>
-          </div>}
-        </section>
         <section className="overview-panel overview-panel--attention">
           <div className="overview-panel-heading">
             <div>
               <span>Cần chú ý</span>
-              <h2>Hàng đợi vận hành</h2>
+              <h2>Việc cần xử lý</h2>
             </div>
             <FontAwesomeIcon icon={faTriangleExclamation} />
           </div>
@@ -280,7 +200,7 @@ function AdminOverviewPage() {
               <span>Ngân hàng câu hỏi</span>
               <h2>Trạng thái kiểm duyệt</h2>
             </div>
-            <FontAwesomeIcon icon={faClipboardCheck} />
+            <Link to="/kiem-duyet">Mở hàng kiểm duyệt</Link>
           </div>
           <dl className="overview-breakdown overview-breakdown--three">
             <div>
@@ -316,7 +236,7 @@ function AdminOverviewPage() {
               <span>Chất lượng (Quality)</span>
               <h2>Màu đánh giá</h2>
             </div>
-            <FontAwesomeIcon icon={faClipboardCheck} />
+            <Link to="/duyet-ai">Mở thẩm định AI</Link>
           </div>
           <dl className="overview-breakdown">
             <div>
@@ -344,7 +264,7 @@ function AdminOverviewPage() {
               <span>Mô phỏng Moodle</span>
               <h2>Trạng thái ghi nhận</h2>
             </div>
-            <FontAwesomeIcon icon={faPlugCircleCheck} />
+            <Link to="/quan-ly-moodle">Mở Moodle</Link>
           </div>
           <dl className="overview-breakdown">
             <div>
@@ -364,41 +284,6 @@ function AdminOverviewPage() {
               <dd>{formatNumber(publications.simulated)}</dd>
             </div>
           </dl>
-        </section>
-
-        <section className="overview-panel overview-panel--wide">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Hàng đợi</span>
-              <h2>Tác vụ theo loại</h2>
-            </div>
-            <Link to="/quan-ly-job">Mở hàng đợi</Link>
-          </div>
-          <div className="overview-table-wrap">
-            <table className="overview-table overview-table--compact">
-              <thead>
-                <tr>
-                  <th>Loại</th>
-                  <th>Tổng</th>
-                  <th>Đang chạy</th>
-                  <th>Lỗi</th>
-                  <th>Quá ngưỡng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobBreakdown.map((item) => (
-                  <tr key={item.key}>
-                    <td><strong>{item.label}</strong></td>
-                    <td>{formatNumber(item.total)}</td>
-                    <td>{formatNumber(item.active)}</td>
-                    <td>{formatNumber(item.failed)}</td>
-                    <td>{formatNumber(item.long_running)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!loading && jobBreakdown.length === 0 && <p className="overview-empty">Chưa có tác vụ vận hành.</p>}
-          </div>
         </section>
 
         <section className="overview-panel overview-panel--wide">
@@ -466,59 +351,41 @@ function AdminOverviewPage() {
           </div>
         </section>
 
-        <section className="overview-panel overview-panel--wide">
+        <section className="overview-panel overview-panel--wide" aria-label="Giám sát tài liệu">
           <div className="overview-panel-heading">
-            <div>
-              <span>Tác vụ lỗi gần đây</span>
-              <h2>Hàng đợi cần chạy lại</h2>
-            </div>
-            <Link to="/quan-ly-job?status=retryable">Mở hàng đợi</Link>
+            <div><span>Tài liệu toàn hệ thống · Chỉ đọc</span><h2>Giám sát tài liệu</h2></div>
+            <Link to="/quan-ly-tai-lieu">Mở trang Tài liệu</Link>
           </div>
-          <div className="overview-table-wrap">
-            <table className="overview-table">
-              <thead>
-                <tr>
-                  <th>Loại</th>
-                  <th>Đối tượng</th>
-                  <th>Cập nhật</th>
-                  <th>Lỗi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentJobs.map((job) => (
-                  <tr key={`${job.kind}:${job.id}`}>
-                    <td>
-                      <strong>{JOB_TYPE_LABEL[job.type] || JOB_TYPE_LABEL[job.kind] || job.type || job.kind}</strong>
-                    </td>
-                    <td>{job.entity?.label || compactId(job.entity?.id)}</td>
-                    <td>{formatDateTime(job.updated_at || job.finished_at || job.started_at || job.queued_at)}</td>
-                    <td className="overview-error-cell">{job.error_message || 'Không có'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!loading && recentJobs.length === 0 && <p className="overview-empty">Không có tác vụ cần chạy lại.</p>}
+          <form className="overview-document-filters" onSubmit={(event) => {
+            event.preventDefault(); setDocumentPage(1);
+            setDocumentFilters({ ...documentFilterDraft, search: documentFilterDraft.search.trim() });
+          }}>
+            <label>Tìm tài liệu<input type="search" maxLength={200} placeholder="Tên tài liệu hoặc tên file" value={documentFilterDraft.search} onChange={(event) => setDocumentFilterDraft({ ...documentFilterDraft, search: event.target.value })} /></label>
+            <label>Trạng thái<select value={documentFilterDraft.status} onChange={(event) => setDocumentFilterDraft({ ...documentFilterDraft, status: event.target.value })}>
+              <option value="">Tất cả</option><option value="UPLOADED">Đã tải lên</option><option value="PROCESSING">Đang xử lý</option><option value="READY">Sẵn sàng</option><option value="FAILED">Lỗi</option>
+            </select></label>
+            <button type="submit" className="overview-primary-button" disabled={documentsLoading}>Lọc</button>
+          </form>
+          {documentsError && <p className="overview-error" role="alert">{documentsError}</p>}
+          <div className="overview-table-wrap" aria-busy={documentsLoading}>
+            <table className="overview-table"><thead><tr><th>Tài liệu</th><th>Người tải</th><th>Học phần</th><th>Trạng thái</th><th>Số trang</th><th>Xử lý / lỗi</th><th>Cập nhật</th></tr></thead><tbody>
+              {(documentData?.items || []).map((item) => <tr key={item.id}>
+                <td><strong>{item.title || item.original_filename}</strong><small>{item.original_filename}</small></td>
+                <td>{item.owner?.display_name || item.owner?.email || 'Chưa có'}<small>{item.owner?.display_name ? item.owner?.email : ''}</small></td>
+                <td>{item.subjects?.map((subject) => subject.name || subject.code || subject.id).join(', ') || 'Chưa gắn học phần'}</td>
+                <td>{({ UPLOADED: 'Đã tải lên', PROCESSING: 'Đang xử lý', READY: 'Sẵn sàng', FAILED: 'Lỗi' })[item.status] || item.status}</td>
+                <td>{item.page_count ?? '—'}</td>
+                <td className="overview-error-cell">{item.error_message || <><span>OCR: {item.pipeline_summary?.ocr_status || '—'}</span><small>Chunk: {item.pipeline_summary?.chunk_status || '—'}</small></>}</td>
+                <td>{formatDateTime(item.updated_at)}</td>
+              </tr>)}
+            </tbody></table>
+            {documentsLoading && <p className="overview-empty">Đang tải tài liệu...</p>}
+            {!documentsLoading && !documentsError && !documentData?.items?.length && <p className="overview-empty">Không có tài liệu phù hợp.</p>}
           </div>
-        </section>
-
-        <section className="overview-panel overview-panel--wide">
-          <div className="overview-panel-heading">
-            <div>
-              <span>Nhật ký gần đây</span>
-              <h2>Thay đổi hệ thống</h2>
-            </div>
-            <Link to="/nhat-ky-he-thong">Mở nhật ký</Link>
-          </div>
-          <div className="audit-list-compact">
-            {recentAudit.map((item) => (
-              <article key={item.id}>
-                <strong>{ACTION_LABEL[item.action] || item.action}</strong>
-                <span>{ENTITY_TYPE_LABEL[item.entity?.type] || item.entity?.type || 'đối tượng'} · {item.entity?.label || compactId(item.entity?.id)}</span>
-                <small>{formatDateTime(item.created_at)}</small>
-              </article>
-            ))}
-            {!loading && recentAudit.length === 0 && <p className="overview-empty">Chưa có nhật ký.</p>}
-          </div>
+          {documentData && <div className="overview-document-pagination"><span>{formatNumber(documentData.total)} tài liệu · Trang {documentPage}</span>
+            <button type="button" disabled={documentsLoading || documentPage <= 1} onClick={() => setDocumentPage((value) => value - 1)}>Trước</button>
+            <button type="button" disabled={documentsLoading || documentPage * documentData.page_size >= documentData.total} onClick={() => setDocumentPage((value) => value + 1)}>Sau</button>
+          </div>}
         </section>
       </section>
     </main>

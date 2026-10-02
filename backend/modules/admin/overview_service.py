@@ -221,14 +221,14 @@ class AdminOverviewService:
             },
             {
                 "key": "retryable_jobs",
-                "label": "Job cần xử lý",
+                "label": "Tác vụ cần xử lý",
                 "count": retryable_job_count,
                 "severity": "danger" if retryable_job_count else "neutral",
                 "path": "/quan-ly-job?status=retryable",
             },
             {
                 "key": "long_running_jobs",
-                "label": "Job quá ngưỡng",
+                "label": "Tác vụ quá ngưỡng",
                 "count": long_running_job_count,
                 "severity": "warning" if long_running_job_count else "neutral",
                 "path": "/quan-ly-job?stale_only=true",

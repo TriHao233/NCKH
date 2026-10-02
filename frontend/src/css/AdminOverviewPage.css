@@ -70,6 +70,18 @@
   grid-column: span 1;
 }
 
+a.overview-stat {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+a.overview-stat:hover,
+a.overview-stat:focus-visible {
+  border-color: #0c78d4;
+  box-shadow: 0 8px 22px rgba(5, 40, 90, 0.1);
+}
+
 /* Chỉ số hàng đợi lỗi cần chú ý — chiếm 2 cột và nổi bật hơn thay vì
    xếp ngang hàng đều với 4 chỉ số còn lại */
 .overview-stat--jobs {
@@ -106,9 +118,7 @@
 .overview-stat span,
 .overview-stat small,
 .overview-breakdown dt,
-.overview-table small,
-.audit-list-compact span,
-.audit-list-compact small {
+.overview-table small {
   color: #5c6f89;
   font-size: 0.74rem;
 }
@@ -326,29 +336,6 @@
   overflow-wrap: anywhere;
 }
 
-.audit-list-compact {
-  display: grid;
-  gap: 12px;
-}
-
-.audit-list-compact article {
-  display: grid;
-  grid-template-columns: minmax(190px, 1fr) minmax(160px, 0.8fr) 150px;
-  gap: 10px;
-  align-items: center;
-  min-height: 46px;
-  padding: 10px 12px;
-  border: 1px solid #eaf3fc;
-  border-radius: 8px;
-  background: #fbfdff;
-}
-
-.audit-list-compact strong {
-  color: #003a75;
-  font-size: 0.84rem;
-  overflow-wrap: anywhere;
-}
-
 .overview-document-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 16px; }
 .overview-document-filters label { display: grid; gap: 6px; flex: 1 1 180px; color: #5c6f89; font-size: 0.82rem; }
 .overview-document-filters input, .overview-document-filters select { padding: 10px 12px; border: 1px solid #d4e5f7; border-radius: 8px; font: inherit; min-width: 0; }
@@ -376,8 +363,7 @@
 }
 
 @media (max-width: 920px) {
-  .overview-grid,
-  .audit-list-compact article {
+  .overview-grid {
     grid-template-columns: 1fr;
   }
 }
