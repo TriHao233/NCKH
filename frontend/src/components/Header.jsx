@@ -16,6 +16,8 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from '../api/notifications';
+import { listContactRequests } from '../api/contact';
+import { listQuestions } from '../api/questions';
 import UserProfileMenu from './UserProfileMenu'; 
 import './Header.css';
 
@@ -57,6 +59,7 @@ const Header = () => {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [openNavGroup, setOpenNavGroup] = useState(null);
+  const [pendingCounts, setPendingCounts] = useState({});
   const [notifications, setNotifications] = useState([]);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -96,6 +99,32 @@ const Header = () => {
     return () => window.clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn, user?.id]);
+
+  // Quản trị viên thấy số việc đang chờ ngay trên menu: câu chờ duyệt và yêu cầu liên hệ mới.
+  useEffect(() => {
+    if (!signedIn || role !== 'Admin') {
+      setPendingCounts({});
+      return undefined;
+    }
+    let active = true;
+    const refresh = async () => {
+      const [review, contact] = await Promise.allSettled([
+        listQuestions({ page: 1, pageSize: 1, reviewStatus: 'PENDING' }),
+        listContactRequests({ scope: 'all', status: 'NEW', pageSize: 1 }),
+      ]);
+      if (!active) return;
+      setPendingCounts({
+        '/kiem-duyet': review.status === 'fulfilled' ? review.value.total || 0 : 0,
+        '/lien-he': contact.status === 'fulfilled' ? contact.value.total || 0 : 0,
+      });
+    };
+    refresh();
+    const intervalId = window.setInterval(refresh, 60000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [signedIn, role, user?.id]);
 
   useEffect(() => {
     if (!notificationOpen) return undefined;
@@ -234,6 +263,10 @@ const Header = () => {
   const showSectionLabels = signedIn && visibleNavGroups.length > 1;
   const isPathActive = (path) => location.pathname === path
     || location.pathname.startsWith(`${path}/`);
+  const pendingBadge = (count) => (count > 0
+    ? <span className="nav-badge" aria-label={`${count} việc đang chờ`}>{count > 99 ? '99+' : count}</span>
+    : null);
+  const groupPending = (group) => group.items.reduce((sum, link) => sum + (pendingCounts[link.path] || 0), 0);
 
   useEffect(() => {
     const activeLink = navMenuRef.current?.querySelector('.nav-link--active');
@@ -297,6 +330,7 @@ const Header = () => {
               >
                 <FontAwesomeIcon icon={navIcons[group.label]} className="nav-link-icon" aria-hidden="true" />
                 <span>{group.label}</span>
+                {pendingBadge(groupPending(group))}
                 <FontAwesomeIcon icon={faChevronDown} className="nav-dropdown-chevron" aria-hidden="true" />
               </button>
               {openNavGroup === group.id && (
@@ -311,6 +345,7 @@ const Header = () => {
                     >
                       <FontAwesomeIcon icon={navIcons[link.label]} className="nav-link-icon" aria-hidden="true" />
                       <span>{link.label}</span>
+                      {pendingBadge(pendingCounts[link.path])}
                     </Link>
                   ))}
                 </div>
@@ -443,6 +478,7 @@ const Header = () => {
                       >
                         <FontAwesomeIcon icon={navIcons[link.label]} className="nav-link-icon" aria-hidden="true" />
                         <span>{link.label}</span>
+                        {pendingBadge(pendingCounts[link.path])}
                       </Link>
                     );
                   })}

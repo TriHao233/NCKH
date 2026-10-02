@@ -4,6 +4,7 @@ import { getCatalogOverview } from '../api/catalog';
 import ModelsTab from '../components/catalog/ModelsTab';
 import PolicyTab from '../components/catalog/PolicyTab';
 import PromptsTab from '../components/catalog/PromptsTab';
+import ReviewPolicyTab from '../components/catalog/ReviewPolicyTab';
 import SubjectsTab from '../components/catalog/SubjectsTab';
 import '../css/CatalogAdminPage.css';
 
@@ -12,6 +13,7 @@ const CONFIG_TABS = [
   { id: 'models', label: 'Mô hình AI' },
   { id: 'prompts', label: 'Mẫu prompt' },
   { id: 'policy', label: 'Tiêu chí đánh giá' },
+  { id: 'review', label: 'Kiểm duyệt' },
 ];
 const EMPTY_CATALOG = { subjects: [], ai_models: [], prompt_templates: [], evaluation_policies: [], runtime_config: {} };
 
@@ -105,6 +107,7 @@ function CatalogAdminPage() {
           {tab === 'policy' && (
             <PolicyTab policies={catalog.evaluation_policies} fallbackPolicy={runtimeConfig.active_evaluation_policy} {...tabProps} />
           )}
+          {tab === 'review' && <ReviewPolicyTab subjects={catalog.subjects} notify={notify} />}
         </section>
       )}
       {toast && (

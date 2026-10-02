@@ -131,6 +131,24 @@
   outline-offset: 4px;
 }
 
+.nav-badge {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+  padding: 0 5px;
+}
+
+.nav-dropdown-link .nav-badge,
+.mobile-nav-link .nav-badge {
+  margin-left: auto;
+}
+
 .nav-dropdown-chevron {
   font-size: 0.7em;
   transition: transform 0.2s ease;

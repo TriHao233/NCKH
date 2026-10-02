@@ -1573,6 +1573,16 @@
   max-width: 1480px;
 }
 
+.review-policy-summary {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 14px;
+  padding-left: 20px;
+  color: #17324d;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 .review-workspace-tabs {
   display: flex;
   gap: 6px;

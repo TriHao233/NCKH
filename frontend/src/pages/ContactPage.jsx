@@ -709,27 +709,6 @@ function AdminContactOverview({ reloadKey }) {
   );
 }
 
-function AdminContactSidebar() {
-  return <aside className="admin-contact-sidebar" aria-label="Thông tin và hướng dẫn liên hệ">
-    <section className="admin-contact-sidecard">
-      <h2><span className="admin-contact-sidecard__icon" aria-hidden="true">⌂</span>Thông tin liên hệ</h2>
-      <strong><span>Trường Công Nghệ Thông Tin</span><span>&amp; Truyền Thông</span></strong>
-      <p>Đại học Cần Thơ</p>
-      <div className="admin-contact-sidecard__line"><IconPin /><span>Khu II, Đường 3/2, phường Xuân Khánh, quận Ninh Kiều, TP Cần Thơ</span></div>
-      <div className="admin-contact-sidecard__line admin-contact-sidecard__line--email"><IconEmail /><span><a href="mailto:vnglinh23@gmail.com">vnglinh23@gmail.com</a><small>Email tiếp nhận liên hệ</small></span></div>
-    </section>
-    <section className="admin-contact-sidecard">
-      <h2><span className="admin-contact-sidecard__icon" aria-hidden="true">?</span>Quy trình xử lý</h2>
-      <ol className="admin-contact-steps">
-        <li><strong>Tiếp nhận</strong><span>Đọc yêu cầu và kiểm tra nội dung người gửi cung cấp.</span></li>
-        <li><strong>Phân loại</strong><span>Điều chỉnh loại liên hệ khi cần để dễ theo dõi.</span></li>
-        <li><strong>Phản hồi</strong><span>Trao đổi trực tiếp trong từng yêu cầu.</span></li>
-        <li><strong>Hoàn tất</strong><span>Cập nhật trạng thái sau khi đã xử lý.</span></li>
-      </ol>
-    </section>
-  </aside>;
-}
-
 function ContactPage() {
   const { user, loading: authLoading } = useContext(AuthContext);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -822,7 +801,7 @@ function ContactPage() {
               </summary>
               <PublicContactInfo teacherView />
             </details>
-          ) : isAdmin ? <AdminContactSidebar /> : <PublicContactInfo />}
+          ) : isAdmin ? null : <PublicContactInfo />}
 
           <div className="contact-right">
             {!canUseTickets ? (
