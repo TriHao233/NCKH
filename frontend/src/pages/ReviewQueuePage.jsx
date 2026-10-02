@@ -1024,6 +1024,12 @@ function ReviewQueuePage() {
     setPage(1);
   };
 
+  const updateAssignmentFilter = (value) => {
+    setOverdueOnly(value === 'overdue');
+    setAssignmentFilter(value === 'overdue' ? 'all' : value);
+    setPage(1);
+  };
+
   const updateSubjectFilter = (value) => {
     setSubjectFilter(value);
     setChapterFilter('all');
@@ -1576,19 +1582,20 @@ function ReviewQueuePage() {
   const availableReviewTemplates = reviewDraft
     ? templatesForDecision(reviewTemplates, reviewDraft.decision)
     : [];
-  const activeAdvancedFilterCount = [
-    assignmentFilter !== 'all',
-    waitingFilter !== 'all',
-    overdueOnly,
-    typeFilter !== 'all',
-    bloomFilter !== 'all',
-    colorFilter !== 'all',
+  const activeAiFilterCount = [colorFilter !== 'all', evaluationStatusFilter !== 'all'].filter(Boolean).length;
+  const activeDetailFilterCount = [
     chapterFilter !== 'all',
     cloFilter !== 'all',
-    evaluationStatusFilter !== 'all',
     creatorFilter !== 'all',
     sourcePresenceFilter !== 'all',
     secondaryStatusFilter !== 'all',
+  ].filter(Boolean).length;
+  const activeAdvancedFilterCount = activeAiFilterCount + activeDetailFilterCount + [
+    waitingFilter !== 'all',
+    typeFilter !== 'all',
+    bloomFilter !== 'all',
+    Boolean(submittedFromFilter),
+    Boolean(submittedToFilter),
     sortMode !== 'priority',
   ].filter(Boolean).length;
   const switchWorkspaceView = (view) => {
@@ -1632,9 +1639,9 @@ function ReviewQueuePage() {
     }
   };
   const resetAdvancedFilters = () => {
-    setAssignmentFilter('all');
     setWaitingFilter('all');
-    setOverdueOnly(false);
+    setSubmittedFromFilter('');
+    setSubmittedToFilter('');
     setTypeFilter('all');
     setBloomFilter('all');
     setColorFilter('all');
@@ -1881,7 +1888,7 @@ function ReviewQueuePage() {
           <b>{statusFilter === 'PENDING' ? total : (dashboardWorkload.pending || 0)}</b>
           <span>Chờ duyệt</span>
         </button>
-        <button type="button" onClick={() => updateFilter(setAssignmentFilter)('mine')}>
+        <button type="button" onClick={() => updateAssignmentFilter('mine')}>
           <b>{assignmentFilter === 'mine' ? total : (dashboardWorkload.mine || 0)}</b>
           <span>Của tôi</span>
         </button>
@@ -1906,99 +1913,155 @@ function ReviewQueuePage() {
         <div className="review-list-panel">
           <div className="review-filters">
             <div className="review-filter-primary">
-              <input
-                aria-label="Tìm câu hỏi"
-                placeholder="Tìm mã hoặc nội dung câu hỏi..."
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-              <select aria-label="Môn học" value={subjectFilter} onChange={(event) => updateSubjectFilter(event.target.value)}>
-                <option value="all">Tất cả môn học</option>
-                {catalogSubjects.map((subject) => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.subject_code} - {subject.subject_name}
-                  </option>
-                ))}
-              </select>
-              <select aria-label="Trạng thái kiểm duyệt" value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
-                {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-              <button type="button" className={showAdvancedFilters ? 'is-active' : ''} onClick={() => setShowAdvancedFilters((value) => !value)}>
-                Bộ lọc nâng cao{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ''}
+              <label className="review-filter-search">
+                Tìm câu hỏi
+                <input
+                  placeholder="Mã hoặc nội dung câu hỏi..."
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                />
+              </label>
+              <label>
+                Môn học
+                <select aria-label="Môn học" value={subjectFilter} onChange={(event) => updateSubjectFilter(event.target.value)}>
+                  <option value="all">Tất cả môn học</option>
+                  {catalogSubjects.map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.subject_code} - {subject.subject_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Trạng thái
+                <select aria-label="Trạng thái kiểm duyệt" value={statusFilter} onChange={(event) => updateFilter(setStatusFilter)(event.target.value)}>
+                  {Object.entries(REVIEW_STATUS_LABEL).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Phân công
+                <select aria-label="Phân công" value={overdueOnly ? 'overdue' : assignmentFilter} onChange={(event) => updateAssignmentFilter(event.target.value)}>
+                  {Object.entries(ASSIGNMENT_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  <option value="overdue">Quá hạn giữ câu</option>
+                </select>
+              </label>
+            </div>
+            <div className="review-filter-actions">
+              <button type="button" className={showAdvancedFilters ? 'is-active' : ''} aria-expanded={showAdvancedFilters} aria-controls="review-extra-filters" onClick={() => setShowAdvancedFilters((value) => !value)}>
+                {showAdvancedFilters ? 'Thu gọn bộ lọc' : 'Bộ lọc thêm'}{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ''}
               </button>
+              {activeAdvancedFilterCount > 0 && <button type="button" className="review-filter-reset" onClick={resetAdvancedFilters}>Xóa bộ lọc thêm</button>}
             </div>
-            <div className="review-date-range">
-              <span>Ngày gửi duyệt</span>
-              <label>
-                Từ
-                <input type="date" value={submittedFromFilter} max={submittedToFilter || undefined} onChange={(event) => updateFilter(setSubmittedFromFilter)(event.target.value)} />
-              </label>
-              <label>
-                Đến
-                <input type="date" value={submittedToFilter} min={submittedFromFilter || undefined} onChange={(event) => updateFilter(setSubmittedToFilter)(event.target.value)} />
-              </label>
-            </div>
-            <div className="review-filter-advanced" hidden={!showAdvancedFilters}>
-              <select value={assignmentFilter} onChange={(event) => updateFilter(setAssignmentFilter)(event.target.value)}>
-                {Object.entries(ASSIGNMENT_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <select value={waitingFilter} onChange={(event) => updateFilter(setWaitingFilter)(event.target.value)}>
-                <option value="all">Mọi mức ưu tiên</option>
-                <option value="24">Chờ từ 24 giờ</option>
-                <option value="72">Chờ từ 3 ngày</option>
-                <option value="168">Chờ từ 7 ngày</option>
-              </select>
-              <label className="review-filter-toggle">
-                <input type="checkbox" checked={overdueOnly} onChange={(event) => updateFilter(setOverdueOnly)(event.target.checked)} />
-                Quá hạn giữ câu
-              </label>
-              <select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
-                <option value="all">Mọi dạng câu hỏi</option>
-                {QUESTION_TYPES.map((type) => <option key={type.backend} value={type.backend}>{type.label}</option>)}
-              </select>
-              <select value={bloomFilter} onChange={(event) => updateFilter(setBloomFilter)(event.target.value)}>
-                <option value="all">Mọi cấp Bloom</option>
-                {BLOOM_LEVELS.map((level) => <option key={level.level} value={level.level}>{level.label}</option>)}
-              </select>
-              <select value={colorFilter} onChange={(event) => updateFilter(setColorFilter)(event.target.value)}>
-                {Object.entries(COLOR_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <select value={chapterFilter} onChange={(event) => updateFilter(setChapterFilter)(event.target.value)} disabled={subjectFilter === 'all'}>
-                <option value="all">Mọi chương</option>
-                {chapterFilterOptions.map((chapter) => <option key={childId(chapter)} value={childId(chapter)}>{chapter.chapter_code} - {chapter.chapter_name}</option>)}
-              </select>
-              <select value={cloFilter} onChange={(event) => updateFilter(setCloFilter)(event.target.value)} disabled={subjectFilter === 'all'}>
-                <option value="all">Mọi CLO</option>
-                {cloFilterOptions.map((clo) => <option key={childId(clo)} value={childId(clo)}>{clo.clo_code}</option>)}
-              </select>
-              <select value={evaluationStatusFilter} onChange={(event) => updateFilter(setEvaluationStatusFilter)(event.target.value)}>
-                <option value="all">Mọi kết quả do AI đánh giá</option>
-                {Object.entries(EVALUATION_STATUS_LABEL).filter(([value]) => value !== 'RUNNING').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-              <select value={sourcePresenceFilter} onChange={(event) => updateFilter(setSourcePresenceFilter)(event.target.value)}>
-                <option value="all">Mọi tình trạng nguồn</option>
-                <option value="WITH_SOURCE">Có nguồn tham chiếu</option>
-                <option value="MISSING_SOURCE">Thiếu nguồn tham chiếu</option>
-              </select>
-              <select value={secondaryStatusFilter} onChange={(event) => updateFilter(setSecondaryStatusFilter)(event.target.value)}>
-                <option value="all">Mọi vòng kiểm duyệt</option>
-                <option value="AWAITING_SECONDARY">Cần duyệt lần hai</option>
-                <option value="COMPLETED">Đã duyệt lần hai</option>
-              </select>
-              <select value={creatorFilter} onChange={(event) => updateFilter(setCreatorFilter)(event.target.value)}>
-                <option value="all">Mọi người gửi duyệt</option>
-                {teacherOptions.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.display_name || teacher.email}</option>)}
-              </select>
-              <select value={sortMode} onChange={(event) => updateFilter(setSortMode)(event.target.value)}>
-                <option value="priority">Ưu tiên cần xử lý</option>
-                <option value="oldest">Gửi lâu nhất</option>
-                <option value="newest">Gửi mới nhất</option>
-                <option value="ai_lowest">Xếp câu có điểm thấp trước</option>
-                <option value="updated">Cập nhật gần nhất</option>
-              </select>
-              <button type="button" className="review-filter-reset" onClick={resetAdvancedFilters}>Xóa bộ lọc nâng cao</button>
+            <div id="review-extra-filters" className="review-filter-advanced" hidden={!showAdvancedFilters}>
+              <fieldset className="review-date-range">
+                <legend>Ngày gửi duyệt</legend>
+                <label>
+                  Từ
+                  <input type="date" value={submittedFromFilter} max={submittedToFilter || undefined} onChange={(event) => updateFilter(setSubmittedFromFilter)(event.target.value)} />
+                </label>
+                <label>
+                  Đến
+                  <input type="date" value={submittedToFilter} min={submittedFromFilter || undefined} onChange={(event) => updateFilter(setSubmittedToFilter)(event.target.value)} />
+                </label>
+              </fieldset>
+              <div className="review-filter-fields">
+                <label>
+                  Thời gian chờ
+                  <select aria-label="Thời gian chờ" value={waitingFilter} onChange={(event) => updateFilter(setWaitingFilter)(event.target.value)}>
+                    <option value="all">Tất cả</option>
+                    <option value="24">Chờ từ 24 giờ</option>
+                    <option value="72">Chờ từ 3 ngày</option>
+                    <option value="168">Chờ từ 7 ngày</option>
+                  </select>
+                </label>
+                <label>
+                  Dạng câu hỏi
+                  <select aria-label="Dạng câu hỏi" value={typeFilter} onChange={(event) => updateFilter(setTypeFilter)(event.target.value)}>
+                    <option value="all">Mọi dạng câu hỏi</option>
+                    {QUESTION_TYPES.map((type) => <option key={type.backend} value={type.backend}>{type.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Cấp Bloom
+                  <select aria-label="Cấp Bloom" value={bloomFilter} onChange={(event) => updateFilter(setBloomFilter)(event.target.value)}>
+                    <option value="all">Mọi cấp Bloom</option>
+                    {BLOOM_LEVELS.map((level) => <option key={level.level} value={level.level}>{level.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Sắp xếp
+                  <select aria-label="Sắp xếp" value={sortMode} onChange={(event) => updateFilter(setSortMode)(event.target.value)}>
+                    <option value="priority">Ưu tiên cần xử lý</option>
+                    <option value="oldest">Gửi lâu nhất</option>
+                    <option value="newest">Gửi mới nhất</option>
+                    <option value="ai_lowest">Điểm AI thấp nhất</option>
+                    <option value="updated">Cập nhật gần nhất</option>
+                  </select>
+                </label>
+              </div>
+              <details className="review-filter-group">
+                <summary>Chất lượng & AI{activeAiFilterCount > 0 && <span>{activeAiFilterCount} đang dùng</span>}</summary>
+                <div className="review-filter-fields">
+                  <label>
+                    Mức chất lượng
+                    <select aria-label="Mức chất lượng" value={colorFilter} onChange={(event) => updateFilter(setColorFilter)(event.target.value)}>
+                      {Object.entries(COLOR_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Kết quả AI
+                    <select aria-label="Kết quả AI" value={evaluationStatusFilter} onChange={(event) => updateFilter(setEvaluationStatusFilter)(event.target.value)}>
+                      <option value="all">Tất cả</option>
+                      {Object.entries(EVALUATION_STATUS_LABEL).filter(([value]) => value !== 'RUNNING').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </details>
+              <details className="review-filter-group">
+                <summary>Tra cứu chi tiết{activeDetailFilterCount > 0 && <span>{activeDetailFilterCount} đang dùng</span>}</summary>
+                <div className="review-filter-fields">
+                  <label>
+                    Chương
+                    <select aria-label="Chương" value={chapterFilter} onChange={(event) => updateFilter(setChapterFilter)(event.target.value)} disabled={subjectFilter === 'all'}>
+                      <option value="all">Mọi chương</option>
+                      {chapterFilterOptions.map((chapter) => <option key={childId(chapter)} value={childId(chapter)}>{chapter.chapter_code} - {chapter.chapter_name}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    CLO
+                    <select aria-label="CLO" value={cloFilter} onChange={(event) => updateFilter(setCloFilter)(event.target.value)} disabled={subjectFilter === 'all'}>
+                      <option value="all">Mọi CLO</option>
+                      {cloFilterOptions.map((clo) => <option key={childId(clo)} value={childId(clo)}>{clo.clo_code}</option>)}
+                    </select>
+                  </label>
+                  {subjectFilter === 'all' && <p className="review-filter-hint">Chọn môn học để lọc theo chương và CLO.</p>}
+                  <label>
+                    Nguồn tham chiếu
+                    <select aria-label="Nguồn tham chiếu" value={sourcePresenceFilter} onChange={(event) => updateFilter(setSourcePresenceFilter)(event.target.value)}>
+                      <option value="all">Mọi tình trạng nguồn</option>
+                      <option value="WITH_SOURCE">Có nguồn tham chiếu</option>
+                      <option value="MISSING_SOURCE">Thiếu nguồn tham chiếu</option>
+                    </select>
+                  </label>
+                  <label>
+                    Vòng kiểm duyệt
+                    <select aria-label="Vòng kiểm duyệt" value={secondaryStatusFilter} onChange={(event) => updateFilter(setSecondaryStatusFilter)(event.target.value)}>
+                      <option value="all">Mọi vòng kiểm duyệt</option>
+                      <option value="AWAITING_SECONDARY">Cần duyệt lần hai</option>
+                      <option value="COMPLETED">Đã duyệt lần hai</option>
+                    </select>
+                  </label>
+                  <label>
+                    Người gửi duyệt
+                    <select aria-label="Người gửi duyệt" value={creatorFilter} onChange={(event) => updateFilter(setCreatorFilter)(event.target.value)}>
+                      <option value="all">Mọi người gửi duyệt</option>
+                      {teacherOptions.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.display_name || teacher.email}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </details>
             </div>
           </div>
 

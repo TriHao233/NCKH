@@ -32,7 +32,7 @@
 .page-main .admin-overview-page :is(.overview-header, .overview-stats, .overview-grid, .overview-error),
 .page-main .admin-ai-review-page :is(.ai-review-toolbar, .ai-review-summary, .ai-review-layout),
 .page-main .catalog-page :is(.catalog-header, .catalog-grid, .catalog-error),
-.page-main .review-page :is(.review-toolbar, .review-dashboard, .review-summary, .review-layout, .review-workspace-tabs) {
+.page-main .review-page :is(.review-toolbar, .review-dashboard, .review-summary, .review-layout) {
   width: 100%;
   max-width: var(--workspace-max);
 }
