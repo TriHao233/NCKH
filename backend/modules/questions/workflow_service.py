@@ -4105,6 +4105,15 @@ class QuestionWorkflowService:
             if answers:
                 return f"::{code}:: {content} {{{' '.join(answers)}{feedback}}}\n"
 
+        if qtype == "sap_xep" and isinstance(options, dict):
+            steps = "; ".join(
+                f"{key}. {value}" for key, value in sorted(options.items(), key=lambda item: (0, int(item[0])) if str(item[0]).isdigit() else (1, str(item[0])))
+            )
+            prompt = cls._gift_escape(f"{version.get('content')} Các bước: {steps}. Ghi thứ tự mã bước, cách nhau bằng dấu phẩy.")
+            keys = [part.strip() for part in str(correct_answer or "").split(",") if part.strip()]
+            answers = " ".join(f"={cls._gift_escape(value)}" for value in dict.fromkeys([",".join(keys), ", ".join(keys)]))
+            return f"::{code}:: {prompt} {{{answers}{feedback}}}\n"
+
         if isinstance(options, dict):
             correct_keys = set(cls._answer_keys(correct_answer))
             multiple = qtype == "nhieu_lua_chon" and len(correct_keys) > 1
@@ -4174,6 +4183,20 @@ class QuestionWorkflowService:
     <name><text>{code}</text></name>
     <questiontext format="html"><text>{content}</text></questiontext>
 {subquestions}
+  </question>"""
+
+        if qtype == "sap_xep" and isinstance(options, dict):
+            steps = "; ".join(
+                f"{key}. {value}" for key, value in sorted(options.items(), key=lambda item: (0, int(item[0])) if str(item[0]).isdigit() else (1, str(item[0])))
+            )
+            prompt = cls._xml_text(f"{version.get('content')} Các bước: {steps}. Ghi thứ tự mã bước, cách nhau bằng dấu phẩy.")
+            keys = [part.strip() for part in str(correct_answer or "").split(",") if part.strip()]
+            answers = "\n".join(answer_node(value, 100) for value in dict.fromkeys([",".join(keys), ", ".join(keys)]))
+            return f"""  <question type="shortanswer">
+    <name><text>{code}</text></name>
+    <questiontext format="html"><text>{prompt}</text></questiontext>
+    <usecase>0</usecase>
+{answers}
   </question>"""
 
         if isinstance(options, dict):

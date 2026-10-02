@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8" />
 <style>
+  {{ font_faces|safe }}
   @page { size: A4; margin: 20mm 20mm 20mm 30mm; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { font-family: "Times New Roman", "Liberation Serif", serif; font-size: 13pt; line-height: 1.35; color: #000; }
+  body { font-family: "Exam Times New Roman", "Times New Roman", "Liberation Serif", serif; font-size: 13pt; line-height: 1.3; color: #000; }
   .masthead { display: table; width: 100%; table-layout: fixed; margin-bottom: 7mm; }
   .masthead > div { display: table-cell; width: 50%; vertical-align: top; text-align: center; }
   .masthead p { margin: 0; }
   .school { font-weight: bold; text-transform: uppercase; }
-  .faculty { font-size: 12pt; }
   .masthead-rule { width: 48mm; margin: 2mm auto 0; border-top: 1px solid #000; }
   .masthead-right { font-weight: bold; }
   .exam-title { text-align: center; margin: 0 0 5mm; }
-  .exam-title h1 { margin: 0; font-size: 15pt; line-height: 1.25; text-transform: uppercase; }
+  .exam-title h1 { margin: 0; font-size: inherit; line-height: inherit; text-transform: uppercase; }
   .exam-title p { margin: 1mm 0 0; }
   .exam-meta { display: table; width: 100%; margin-bottom: 5mm; }
   .exam-meta > div { display: table-cell; width: 50%; vertical-align: bottom; }
@@ -24,14 +24,19 @@
   .candidate-row { display: table; width: 100%; margin-bottom: 2mm; }
   .candidate-row > div { display: table-cell; width: 50%; }
   .candidate-row > div + div { padding-left: 7mm; }
-  .instructions { text-align: center; font-style: italic; font-size: 11pt; margin: 3mm 0 6mm; }
+  .instructions { text-align: center; font-style: italic; margin: 3mm 0 6mm; }
   .question { break-inside: avoid; page-break-inside: avoid; margin: 0 0 4mm; }
   .q-content { margin: 0 0 1mm; text-align: justify; overflow-wrap: anywhere; white-space: pre-line; }
   .option { margin: 0 0 0.5mm 7mm; padding-left: 6mm; text-indent: -6mm; overflow-wrap: anywhere; white-space: pre-line; }
   .option.correct { font-weight: bold; text-decoration: underline; }
+  .matching-columns { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; margin: 1mm 0 2mm; }
+  .matching-column { display: table-cell; width: 50%; vertical-align: top; border: 1px solid #000; padding: 2mm; }
+  .matching-column + .matching-column { border-left: 0; }
+  .matching-column p { margin: 0 0 1mm; overflow-wrap: anywhere; }
+  .structured-label { font-weight: bold; margin: 0 0 1mm; }
   .end-marker { text-align: center; font-weight: bold; margin-top: 7mm; }
-  .answer-heading { text-align: center; font-size: 14pt; font-weight: bold; margin: 0 0 4mm; }
-  .answer-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12pt; }
+  .answer-heading { text-align: center; font-size: inherit; font-weight: bold; margin: 0 0 4mm; }
+  .answer-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: inherit; }
   .answer-table th, .answer-table td { border: 1px solid #000; text-align: center; padding: 1.5mm 0; }
   .answer-table tr { break-inside: avoid; page-break-inside: avoid; }
   .answer-table .row-label { width: 18mm; font-weight: bold; }
@@ -69,9 +74,15 @@
   {% for q in questions %}
   <div class="question">
     <p class="q-content"><strong>Câu {{ q.number }}.</strong> {{ q.content }}</p>
-    {% for opt in q.options %}
-    <p class="option{% if show_answers and opt.correct %} correct{% endif %}">{{ opt.label }}. {{ opt.text }}</p>
-    {% endfor %}
+    {% if q.question_type == 'ghep_cot' %}
+    <div class="matching-columns">
+      <div class="matching-column"><p class="structured-label">Cột số</p>{% for opt in q.numbered_options %}<p>{{ opt.label }}. {{ opt.text }}</p>{% endfor %}</div>
+      <div class="matching-column"><p class="structured-label">Cột chữ</p>{% for opt in q.lettered_options %}<p>{{ opt.label }}. {{ opt.text }}</p>{% endfor %}</div>
+    </div>
+    {% else %}
+    {% if q.question_type == 'sap_xep' %}<p class="structured-label">Các bước cần sắp xếp:</p>{% endif %}
+    {% for opt in q.options %}<p class="option{% if show_answers and opt.correct %} correct{% endif %}">{{ opt.label }}. {{ opt.text }}</p>{% endfor %}
+    {% endif %}
   </div>
   {% endfor %}
   <div class="end-marker">— HẾT —</div>

@@ -63,3 +63,24 @@ test('binary missing-file errors preserve the session and JSON requests still pa
   assert.equal((await api.apiRequest('/questions')).total, 3);
   assert.deepEqual(api.expired, []);
 });
+
+test('blob exports preserve arbitrary binary bytes after Firebase token refresh', async () => {
+  const user = { uid: 'test-user', getIdToken: async (refresh) => refresh ? 'fresh' : 'old' };
+  const bytes = new Uint8Array([0, 255, 128, 13, 10]);
+  const api = client({ auth: { currentUser: user, authStateReady: async () => {} }, responses: [
+    new Response('', { status: 401 }), new Response(bytes),
+  ] });
+  const blob = await api.apiRequest('/export/pdf', { responseType: 'blob' });
+  assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), bytes);
+  assert.deepEqual(api.calls.map((call) => call.headers.Authorization), ['Bearer old', 'Bearer fresh']);
+});
+
+test('blob exports use demo authentication and reject expired sessions', async () => {
+  const api = client({ demo: { Authorization: 'Bearer demo.test' }, responses: [
+    new Response(new Uint8Array([80, 75])), Response.json({ detail: 'Expired' }, { status: 401 }),
+  ] });
+  assert.deepEqual(new Uint8Array(await (await api.apiRequest('/export', { responseType: 'blob' })).arrayBuffer()), new Uint8Array([80, 75]));
+  await assert.rejects(api.apiRequest('/export', { responseType: 'blob' }), { status: 401 });
+  assert.equal(api.calls[0].headers.Authorization, 'Bearer demo.test');
+  assert.equal(api.expired.at(-1).token, 'Bearer demo.test');
+});

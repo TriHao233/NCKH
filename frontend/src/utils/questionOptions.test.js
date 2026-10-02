@@ -1,25 +1,36 @@
-import assert from 'node:assert/strict';
 import test from 'node:test';
+import assert from 'node:assert/strict';
 import { optionEntriesForQuestion, validateQuestionAnswer } from './questionOptions.js';
 
-test('manual matching and ordering expose editable items before options exist', () => {
+test('structured editors provide empty steps and two matching columns', () => {
+  assert.deepEqual(optionEntriesForQuestion({ questionType: 'sap_xep' }).map((item) => item.key), ['1', '2', '3', '4']);
   assert.deepEqual(optionEntriesForQuestion({ questionType: 'ghep_cot' }).map((item) => item.key), ['1', '2', '3', 'a', 'b', 'c', 'd']);
-  assert.deepEqual(optionEntriesForQuestion({ questionType: 'sap_xep' }).map((item) => item.key), ['A', 'B', 'C', 'D']);
-  assert.match(validateQuestionAnswer({ questionType: 'sap_xep', correctAnswer: 'A, B, C, D' }), /không được để trống/);
 });
 
-test('ordering must include every actual step once', () => {
-  const question = { questionType: 'sap_xep', rawOptions: { A: 'Nhập', B: 'Kiểm tra', C: 'Xử lý', D: 'Xuất' } };
-  assert.equal(validateQuestionAnswer({ ...question, correctAnswer: 'A, B, C, D' }), null);
+test('ordering answer is a complete permutation of the displayed steps', () => {
+  const options = { 1: 'A', 2: 'B', 3: 'C', 4: 'D' };
+  assert.equal(validateQuestionAnswer({ questionType: 'sap_xep', rawOptions: options, correctAnswer: '2, 4, 1, 3' }), null);
+  assert.match(validateQuestionAnswer({ questionType: 'sap_xep', rawOptions: options, correctAnswer: '2, 2, 1, 3' }), /mỗi bước/);
+});
+
+test('matching answer uses each numbered item and distinct lettered items', () => {
+  const options = { 1: 'A', 2: 'B', 3: 'C', a: 'X', b: 'Y', c: 'Z', d: 'Nhiễu' };
+  assert.equal(validateQuestionAnswer({ questionType: 'ghep_cot', rawOptions: options, correctAnswer: '1-b, 2-a, 3-c' }), null);
+  assert.match(validateQuestionAnswer({ questionType: 'ghep_cot', rawOptions: options, correctAnswer: '1-b, 2-b, 3-c' }), /khác nhau/);
+});
+
+test('structured answers reject missing items, unknown keys and insufficient options', () => {
+  const steps = { A: 'Nhập', B: 'Kiểm tra', C: 'Xử lý', D: 'Xuất' };
+  assert.equal(validateQuestionAnswer({ questionType: 'sap_xep', rawOptions: steps, correctAnswer: 'B, A, D, C' }), null);
   for (const correctAnswer of ['A, B, C', 'A, B, C, C', 'A, B, C, E']) {
-    assert.match(validateQuestionAnswer({ ...question, correctAnswer }), /mỗi khóa đúng một lần/);
+    assert.match(validateQuestionAnswer({ questionType: 'sap_xep', rawOptions: steps, correctAnswer }), /mỗi bước/);
   }
-});
-
-test('matching requires complete pairs and a distractor', () => {
-  const question = { questionType: 'ghep_cot', rawOptions: { 1: 'Một', 2: 'Hai', 3: 'Ba', a: 'First', b: 'Second', c: 'Third', d: 'Fourth' } };
-  assert.equal(validateQuestionAnswer({ ...question, correctAnswer: '1-a, 2-b, 3-c' }), null);
+  assert.match(validateQuestionAnswer({ questionType: 'sap_xep', rawOptions: { 1: 'A', 2: 'B', 3: 'C' }, correctAnswer: '1, 2, 3' }), /ít nhất 4 bước/);
+  assert.match(validateQuestionAnswer({ questionType: 'sap_xep', correctAnswer: '1, 2, 3, 4' }), /không được để trống/);
+  const pairs = { 1: 'Một', 2: 'Hai', 3: 'Ba', a: 'First', b: 'Second', c: 'Third', d: 'Fourth' };
   for (const correctAnswer of ['1-a, 2-b', '1-a, 1-b, 3-c', '1-a, 2-b, 3-z']) {
-    assert.match(validateQuestionAnswer({ ...question, correctAnswer }), /đủ cặp đáp án/);
+    assert.match(validateQuestionAnswer({ questionType: 'ghep_cot', rawOptions: pairs, correctAnswer }), /ghép mỗi mục/);
   }
+  const { d: _distractor, ...withoutDistractor } = pairs;
+  assert.match(validateQuestionAnswer({ questionType: 'ghep_cot', rawOptions: withoutDistractor, correctAnswer: '1-a, 2-b, 3-c' }), /gây nhiễu/);
 });

@@ -864,10 +864,15 @@ def _check_type_format(item: dict, question_type: str) -> str | None:
     elif question_type == "ghep_cot":
         if not isinstance(options, dict):
             return "ghep_cot phải có options dạng object"
-        numeric_keys = [k for k in options if str(k).isdigit()]
-        alpha_keys = [k for k in options if str(k).isalpha()]
-        if len(numeric_keys) < 3 or len(alpha_keys) < len(numeric_keys) + 1:
-            return "ghep_cot cần tối thiểu 3 mục đánh số và số mục chữ phải nhiều hơn số mục số ít nhất 1 (distractor)"
+        stripped_keys = [str(k).strip() for k in options.keys() if str(k).strip()]
+        numeric_keys = [k for k in stripped_keys if k[0].isdigit()]
+        alpha_keys = [k for k in stripped_keys if k[0].isalpha()]
+        if len(numeric_keys) < 2 or len(alpha_keys) < len(numeric_keys):
+            return "ghep_cot cần ít nhất 2 mục đánh số và số mục chữ không ít hơn số mục số"
+        normalized_answer = re.sub(r"[–—]", "-", correct_answer)
+        if normalized_answer != correct_answer:
+            item["correct_answer"] = normalized_answer
+            correct_answer = normalized_answer
         if not re.search(r"\d+\s*-\s*[a-zA-Z]", correct_answer):
             return "ghep_cot: correct_answer phải theo định dạng '1-b, 2-a, ...'"
 

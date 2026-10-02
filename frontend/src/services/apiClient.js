@@ -75,6 +75,7 @@ export async function apiRequest(
   }
 
   if (response.ok && responseType === 'response') return response;
+  if (response.ok && responseType === 'blob') return response.blob();
 
   const isJson = response.headers
     .get("content-type")

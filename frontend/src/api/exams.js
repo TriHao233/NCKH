@@ -95,15 +95,14 @@ export function getVariantPreview(examId, variantId) {
 
 async function downloadVariantExport(examId, variantId, format, type) {
   const params = new URLSearchParams({ type });
-  const response = await apiRequest(
+  const blob = await apiRequest(
     `/exams/${examId}/variants/${variantId}/export/${format}?${params.toString()}`,
-    { responseType: 'response' },
+    { responseType: 'blob' },
   );
-  const blob = await response.blob();
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${type}.${format}`;
+  link.download = `${variantId}_${type}.${format}`;
   document.body.appendChild(link);
   link.click();
   link.remove();

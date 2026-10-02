@@ -1159,6 +1159,24 @@
   font-weight: 900;
 }
 
+.generate-page .draft-item-answer-key {
+  padding: 8px 10px;
+  border: 1px solid var(--gen-green);
+  border-radius: var(--gen-radius-sm);
+  background: var(--gen-green-wash);
+  color: var(--gen-green);
+  font-weight: 800;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.generate-page .draft-muted {
+  color: var(--gen-muted);
+  font-style: italic;
+  font-weight: 500;
+}
+
 .generate-page .draft-item-evidence {
   margin: 0;
   padding: var(--gen-space-xs);

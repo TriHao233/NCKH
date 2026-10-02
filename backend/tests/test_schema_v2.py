@@ -68,6 +68,7 @@ from modules.exams.pdf_service import render_exam_docx
 from modules.ocr.ocr import extract_docx_pages
 from modules.exams.schemas import (
     AddQuestionsManualRequest,
+    ExamHeaderConfig,
     ExamMatrixRequest,
     ExamStatusUpdateRequest,
     ExamUpdateRequest,
@@ -189,6 +190,7 @@ class FakeExamRepository:
         return exam
 
     def delete(self, exam_id):
+        self.variants = [variant for variant in self.variants if str(variant["exam_id"]) != str(exam_id)]
         return self.exams.pop(str(exam_id), None) is not None
 
     def count_variants(self, exam_id):
@@ -5205,7 +5207,7 @@ class SchemaV2Tests(unittest.TestCase):
         self.assertEqual(availability[0]["available"], 1)
         self.assertFalse(availability[0]["sufficient"])
 
-    def test_finalized_exam_cannot_be_hard_deleted_or_edited(self):
+    def test_finalized_exam_requires_reopening_before_edit_and_can_be_deleted(self):
         owner = _current_user("Teacher")
         exam = _exam_doc(owner.id)
         question_id = ObjectId()
@@ -5243,7 +5245,7 @@ class SchemaV2Tests(unittest.TestCase):
                 },
             }
         )
-        repository = FakeExamRepository([exam])
+        repository = FakeExamRepository([exam], [{"exam_id": exam["_id"], "exam_code": "101"}])
         service = ExamService(repository, FakeExamQuestionRepository())
 
         with self.assertRaises(ValueError):
@@ -5260,10 +5262,40 @@ class SchemaV2Tests(unittest.TestCase):
             )
         with self.assertRaises(ValueError):
             service.remove_question(str(exam["_id"]), str(question_id), owner)
-        with self.assertRaises(ValueError):
-            service.delete_exam(str(exam["_id"]), owner)
-
         self.assertIsNotNone(repository.find(exam["_id"]))
+        reopened = service.update_status(
+            str(exam["_id"]), ExamStatusUpdateRequest(status="DRAFT"), owner,
+        )
+        self.assertEqual(reopened["status"], "DRAFT")
+        self.assertEqual(repository.find(exam["_id"])["legacy_variant_header"], exam["header"])
+        edited = service.update_exam(str(exam["_id"]), ExamUpdateRequest(name="Đã sửa"), owner)
+        self.assertEqual(edited["name"], "Đã sửa")
+        service.delete_exam(str(exam["_id"]), owner)
+        self.assertIsNone(repository.find(exam["_id"]))
+        self.assertEqual(repository.count_variants(exam["_id"]), 0)
+
+    def test_reopening_keeps_old_variant_header_after_exam_changes(self):
+        owner = _current_user("Teacher")
+        exam = _exam_doc(owner.id)
+        old_header = {**exam["header"], "school_name": "Trường cũ"}
+        exam.update(status="ARCHIVED", header=old_header, finalized_snapshot={"header": old_header})
+        variant = {
+            "_id": ObjectId(), "exam_id": exam["_id"], "exam_code": "101",
+            "questions": [], "answer_key": {}, "created_at": datetime.now(timezone.utc),
+        }
+        repository = FakeExamRepository([exam], [variant])
+        service = ExamService(repository, FakeExamQuestionRepository())
+        service.update_status(str(exam["_id"]), ExamStatusUpdateRequest(status="DRAFT"), owner)
+        service.update_exam(
+            str(exam["_id"]),
+            ExamUpdateRequest(header=ExamHeaderConfig(**{**old_header, "school_name": "Trường mới"})),
+            owner,
+        )
+        preview = ExamVariantService(repository, FakeExamVariantRepository([variant])).build_preview(
+            str(exam["_id"]), str(variant["_id"]), owner,
+        )
+        self.assertEqual(preview["header"]["school_name"], "Trường cũ")
+        self.assertEqual(repository.find(exam["_id"])["header"]["school_name"], "Trường mới")
 
     def test_duplicate_exam_creates_editable_draft_without_variants(self):
         owner = _current_user("Teacher")
