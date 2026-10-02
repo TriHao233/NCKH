@@ -166,14 +166,22 @@ function AdminJobsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionKey, setActionKey] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [actionNotice, setActionNotice] = useState(null);
+  const [pendingCancel, setPendingCancel] = useState(null);
   const [exportKey, setExportKey] = useState('');
   const [selectedKey, setSelectedKey] = useState('');
 
-  useEffect(() => {
-    fetchAllUsers()
-      .then((items) => setUsers(items.sort((left, right) => String(left.display_name || left.email).localeCompare(String(right.display_name || right.email), 'vi'))))
-      .catch(() => setUsers([]));
+  const fetchUsers = useCallback(async () => {
+    try {
+      const items = await fetchAllUsers();
+      setUsers(items.sort((left, right) => String(left.display_name || left.email).localeCompare(String(right.display_name || right.email), 'vi')));
+    } catch {
+      setUsers([]);
+    }
   }, []);
+
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   useEffect(() => {
     const filters = parseJobFilters(location.search);
@@ -222,6 +230,8 @@ function AdminJobsPage() {
   useEffect(() => {
     fetchJobs();
   }, [fetchJobs]);
+
+  const refreshPage = () => Promise.allSettled([fetchJobs(), fetchUsers()]);
 
   useEffect(() => {
     if (!jobs.length) {
@@ -295,25 +305,31 @@ function AdminJobsPage() {
   const handleRetry = async (job) => {
     const key = `retry:${jobKey(job)}`;
     setActionKey(key);
+    setActionError('');
+    setActionNotice(null);
     try {
-      await retryAdminJob(job.kind, job.id);
+      const result = await retryAdminJob(job.kind, job.id);
+      const retriedId = result?.job?.job_id || result?.job?.id || result?.job?._id;
+      setActionNotice({ kind: job.kind, jobId: retriedId && String(retriedId), text: 'Đã gửi yêu cầu chạy lại tác vụ.' });
       await fetchJobs();
     } catch (err) {
-      window.alert(err.message || 'Chạy lại tác vụ thất bại');
+      setActionError(err.message || 'Chạy lại tác vụ thất bại');
     } finally {
       setActionKey('');
     }
   };
 
   const handleCancel = async (job) => {
-    if (!window.confirm(`Hủy tác vụ ${compactId(job.id)}?`)) return;
+    if (actionKey) return;
     const key = `cancel:${jobKey(job)}`;
     setActionKey(key);
+    setActionError('');
     try {
       await cancelAdminJob(job.kind, job.id);
+      setPendingCancel(null);
       await fetchJobs();
     } catch (err) {
-      window.alert(err.message || 'Hủy tác vụ thất bại');
+      setActionError(err.message || 'Hủy tác vụ thất bại');
     } finally {
       setActionKey('');
     }
@@ -388,7 +404,7 @@ function AdminJobsPage() {
             <FontAwesomeIcon icon={faFileExcel} />
             <span>{exportKey === 'jobs-xlsx' ? 'Đang xuất' : 'Xuất XLSX'}</span>
           </button>
-          <button type="button" className="jobs-primary-button" onClick={fetchJobs} disabled={loading}>
+          <button type="button" className="jobs-primary-button" onClick={refreshPage} disabled={loading}>
             <FontAwesomeIcon icon={faRotateRight} />
             <span>{loading ? 'Đang tải' : 'Làm mới'}</span>
           </button>
@@ -397,19 +413,19 @@ function AdminJobsPage() {
 
       <section className="jobs-summary" aria-label="Số tác vụ theo tình trạng">
         <button type="button" className="summary-tile" onClick={showAllJobs}>
-          <b>{summary.total}</b>
+          <b>{error ? '—' : summary.total}</b>
           <span>Tổng tác vụ</span>
         </button>
         <button type="button" className="summary-tile summary-tile--active" onClick={showActiveJobs}>
-          <b>{summary.active}</b>
+          <b>{error ? '—' : summary.active}</b>
           <span>Đang chạy</span>
         </button>
         <button type="button" className="summary-tile summary-tile--danger" onClick={showRetryableJobs}>
-          <b>{summary.failed}</b>
+          <b>{error ? '—' : summary.failed}</b>
           <span>Cần xử lý</span>
         </button>
         <button type="button" className="summary-tile summary-tile--warning" onClick={showLongRunningJobs}>
-          <b>{summary.long_running}</b>
+          <b>{error ? '—' : summary.long_running}</b>
           <span>Quá lâu</span>
         </button>
       </section>
@@ -480,14 +496,40 @@ function AdminJobsPage() {
         </label>
       </section>
 
-      {error && <p className="jobs-error">{error}</p>}
+      {error && <p className="jobs-error" role="alert">{error}</p>}
+      {actionError && <p className="jobs-error" role="alert">{actionError}</p>}
+      {actionNotice && (
+        <section className="job-detail-panel" role="status">
+          <p>{actionNotice.text}</p>
+          {actionNotice.jobId && (
+            <button type="button" onClick={() => {
+              setKindFilter(actionNotice.kind);
+              setStatusFilter('all');
+              setStaleOnly(false);
+              setSearchInput(actionNotice.jobId);
+              setSearchTerm(actionNotice.jobId);
+              setPage(1);
+            }}>Xem tác vụ vừa chạy lại</button>
+          )}
+        </section>
+      )}
+      {pendingCancel && (
+        <section className="job-detail-panel" role="alertdialog" aria-labelledby="job-cancel-title">
+          <h2 id="job-cancel-title">Hủy tác vụ {compactId(pendingCancel.id)}?</h2>
+          <p>Tác vụ sẽ dừng xử lý. Bạn có thể chạy lại nếu cần.</p>
+          <div className="row-actions">
+            <button type="button" disabled={Boolean(actionKey)} onClick={() => setPendingCancel(null)}>Giữ tác vụ</button>
+            <button type="button" disabled={Boolean(actionKey)} onClick={() => handleCancel(pendingCancel)}>{actionKey ? 'Đang hủy...' : 'Xác nhận hủy'}</button>
+          </div>
+        </section>
+      )}
 
       <section className="jobs-layout">
         <div className="jobs-table-panel">
           <div className="jobs-table-header">
             <div>
               <h2>Danh sách tác vụ</h2>
-              <span>{total} kết quả</span>
+              <span>{error ? 'Chưa tải được dữ liệu' : `${total} kết quả`}</span>
             </div>
           </div>
           <div className="jobs-table-wrap">
@@ -510,7 +552,15 @@ function AdminJobsPage() {
                     <tr
                       key={key}
                       className={selectedKey === key ? 'is-selected' : ''}
+                      tabIndex={0}
+                      aria-label={`Xem tác vụ ${job.id}`}
                       onClick={() => setSelectedKey(key)}
+                      onKeyDown={(event) => {
+                        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                          event.preventDefault();
+                          setSelectedKey(key);
+                        }
+                      }}
                     >
                       <td>
                         <strong>{KIND_LABEL[job.kind] || job.kind}</strong>
@@ -537,6 +587,7 @@ function AdminJobsPage() {
                           <button
                             type="button"
                             title="Chạy lại tác vụ"
+                            aria-label={`Chạy lại tác vụ ${job.id}`}
                             disabled={!job.can_retry || Boolean(actionKey)}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -548,10 +599,13 @@ function AdminJobsPage() {
                           <button
                             type="button"
                             title="Hủy tác vụ"
+                            aria-label={`Hủy tác vụ ${job.id}`}
                             disabled={!job.can_cancel || Boolean(actionKey)}
                             onClick={(event) => {
                               event.stopPropagation();
-                              handleCancel(job);
+                              setActionError('');
+                              setActionNotice(null);
+                              setPendingCancel(job);
                             }}
                           >
                             <FontAwesomeIcon icon={faBan} />
@@ -563,7 +617,7 @@ function AdminJobsPage() {
                 })}
               </tbody>
             </table>
-            {!loading && jobs.length === 0 && (
+            {!loading && !error && jobs.length === 0 && (
               <p className="jobs-empty">Không có tác vụ phù hợp với bộ lọc hiện tại.</p>
             )}
             {loading && (
@@ -571,11 +625,11 @@ function AdminJobsPage() {
             )}
           </div>
           <div className="jobs-pagination">
-            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+            <button type="button" aria-label="Trang trước" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
               <FontAwesomeIcon icon={faChevronLeft} />
             </button>
             <span>Trang {page} / {pageCount}</span>
-            <button type="button" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
+            <button type="button" aria-label="Trang sau" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
               <FontAwesomeIcon icon={faChevronRight} />
             </button>
           </div>

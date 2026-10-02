@@ -15,7 +15,7 @@ from db.bson_json import restore as _restore
 from db.copy_business_data import normalized, projected_rows, upsert
 from core.postgres_audit import write_postgres_audit_event
 from modules.documents.repository import (
-    MongoDocumentRepository, compact_raw_extraction, json_safe, object_id, utc_now,
+    MongoDocumentRepository, compact_raw_extraction, document_pipeline_summary, json_safe, object_id, utc_now,
 )
 
 
@@ -78,6 +78,7 @@ class PostgresDocumentRepository:
         current = record.setdefault("current_processing", {})
         current["chunk_set_id"] = (ObjectId(row["active_chunk_set_id"])
                                    if row["active_chunk_set_id"] else None)
+        record["pipeline_summary"] = document_pipeline_summary(record)
         return record
 
     @staticmethod

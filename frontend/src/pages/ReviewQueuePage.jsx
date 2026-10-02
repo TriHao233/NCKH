@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   renewQuestionReview, getReviewPolicy, autoAssignReviews,
@@ -41,6 +41,7 @@ import {
   answerGuardrailInsights,
   evaluationInsights,
   metadataGuardrailInsights,
+  currentVersionEvaluation,
   mergeAiSuggestionsIntoDraft,
 } from '../utils/reviewAiSuggestions';
 import { hasEffectivePermission } from '../auth/permissions';
@@ -533,6 +534,49 @@ function ReviewQueuePage() {
   const [reviewerFilterError, setReviewerFilterError] = useState('');
   const [selected, setSelected] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
+  const [evaluationRefreshError, setEvaluationRefreshError] = useState('');
+  const pendingEvaluationIds = useMemo(() => {
+    const ids = new Set(questions.filter(isEvaluationBusy).map((question) => question.id));
+    if (selected?.id && isEvaluationBusy(selected)) ids.add(selected.id);
+    return [...ids].sort().join(',');
+  }, [questions, selected]);
+  useEffect(() => {
+    setEvaluationRefreshError('');
+    if (!pendingEvaluationIds) return undefined;
+    const questionIds = pendingEvaluationIds.split(',');
+    let active = true;
+    let running = false;
+    const refreshEvaluation = async () => {
+      if (!active || running) return;
+      running = true;
+      try {
+        const results = await Promise.allSettled(questionIds.map((id) => getQuestion(id)));
+        if (active) {
+          const refreshed = new Map(results.filter((result) => result.status === 'fulfilled' && result.value)
+            .map((result) => [result.value.id, result.value]));
+          const failed = results.find((result) => result.status === 'rejected');
+          setEvaluationRefreshError(failed ? failed.reason?.message || 'Không cập nhật được trạng thái đánh giá AI.' : '');
+          setSelected((current) => refreshed.get(current?.id) || current);
+          setQuestions((current) => current.map((item) => refreshed.get(item.id) || item));
+        }
+      } catch (err) {
+        if (active) setEvaluationRefreshError(err.message || 'Không cập nhật được trạng thái đánh giá AI.');
+      } finally {
+        running = false;
+      }
+    };
+    refreshEvaluation();
+    const interval = window.setInterval(refreshEvaluation, 3000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [pendingEvaluationIds]);
+  useEffect(() => {
+    if (!selected?.id || ['QUEUED', 'PROCESSING', 'RUNNING'].includes(selected.evaluation_status)) return undefined;
+    let active = true;
+    listQuestionEvaluations(selected.id).then((result) => {
+      if (active) setEvaluations(result.items || []);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [selected?.id, selected?.current_version_id, selected?.evaluation_status]);
   const [reviews, setReviews] = useState([]);
   const [comments, setComments] = useState([]);
   const [commentBody, setCommentBody] = useState('');
@@ -552,6 +596,8 @@ function ReviewQueuePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [busyId, setBusyId] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [pendingBulkEvaluation, setPendingBulkEvaluation] = useState(null);
+  const [bulkEvaluationError, setBulkEvaluationError] = useState('');
   const [reviewDraft, setReviewDraft] = useState(null);
   const [serverReviewDraft, setServerReviewDraft] = useState(null);
   const [draftSaveState, setDraftSaveState] = useState('');
@@ -579,14 +625,33 @@ function ReviewQueuePage() {
   selectedRef.current = selected;
   const lockTimeout = reviewPolicy?.lock_timeout_minutes || 30;
   const lockLostMessage = 'Bạn không còn giữ câu này — người khác đã nhận. Bản nháp đánh giá vẫn được lưu.';
-  const applyRenewedQuestion = (fresh) => {
+  const applyRenewedQuestion = useCallback((fresh) => {
     setSelected((current) => current?.id === fresh.id ? fresh : current);
     setQuestions((current) => current.map((item) => item.id === fresh.id ? fresh : item));
-  };
+  }, []);
+  const refreshAssignmentAfterError = useCallback(async (question, err) => {
+    if (![403, 409].includes(err.status)) return;
+    try {
+      const fresh = await getQuestion(question.id);
+      applyRenewedQuestion(fresh);
+      try {
+        setDashboard(await getReviewDashboard());
+        setDashboardError('');
+      } catch (dashboardErr) {
+        setDashboardError(dashboardErr.message || 'Không tải được tổng quan người duyệt');
+      }
+      return fresh;
+    } catch {
+      // Keep the action error and locally saved draft when the refresh also fails.
+    }
+  }, [applyRenewedQuestion]);
   const renewExpiredReview = async (question) => {
     if (assignmentOf(question).status === 'IN_REVIEW' && isAssignmentMine(question, user) && isReviewLockExpired(assignmentOf(question))) {
       try { const fresh = await renewQuestionReview(question.id); applyRenewedQuestion(fresh); }
-      catch (err) { throw new Error([400, 403, 409].includes(err.status) ? lockLostMessage : err.message); }
+      catch (err) {
+        await refreshAssignmentAfterError(question, err);
+        throw new Error([400, 403, 409].includes(err.status) ? lockLostMessage : err.message);
+      }
     }
   };
   useEffect(() => {
@@ -610,14 +675,19 @@ function ReviewQueuePage() {
       running = true;
       try { const fresh = await renewQuestionReview(question.id); if (!stopped) applyRenewedQuestion(fresh); }
       catch (err) {
-        if (!stopped && [400, 403, 409].includes(err.status)) { stopped = true; window.clearInterval(interval); setError(lockLostMessage); }
+        if (!stopped && [400, 403, 409].includes(err.status)) {
+          stopped = true;
+          window.clearInterval(interval);
+          await refreshAssignmentAfterError(question, err);
+          if (selectedRef.current?.id === question.id) setError(lockLostMessage);
+        }
         else if (!stopped) setError(err.message || 'Không gia hạn được câu. Vui lòng thử lại.');
       } finally { running = false; }
     };
     const interval = window.setInterval(renew, renewIntervalMs(lockTimeout));
     document.addEventListener('visibilitychange', renew);
     return () => { stopped = true; window.clearInterval(interval); document.removeEventListener('visibilitychange', renew); };
-  }, [selected?.id, selected?.review_status, selected?.review_assignment?.status, selected?.review_assignment?.reviewer_user_id, user?.id, lockTimeout]);
+  }, [selected?.id, selected?.review_status, selected?.review_assignment?.status, selected?.review_assignment?.reviewer_user_id, user?.id, lockTimeout, applyRenewedQuestion, refreshAssignmentAfterError]);
 
 
   const fetchQuestions = async () => {
@@ -941,8 +1011,9 @@ function ReviewQueuePage() {
     catalogFilterError,
     teacherFilterError,
     reviewerFilterError,
+    evaluationRefreshError,
     error,
-  ].filter(Boolean))), [catalogFilterError, teacherFilterError, reviewerFilterError, error]);
+  ].filter(Boolean))), [catalogFilterError, teacherFilterError, reviewerFilterError, evaluationRefreshError, error]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -1115,20 +1186,21 @@ function ReviewQueuePage() {
 
   const refreshAfterAction = async (question) => {
     const [items] = await Promise.all([fetchQuestions(), fetchDashboard()]);
-    const fresh = items.find((item) => item.id === question.id);
-    if (fresh) {
-      await loadHistory(fresh);
-    }
+    const fresh = items.find((item) => item.id === question.id) || await getQuestion(question.id);
+    await loadHistory(fresh);
   };
 
   const claimReview = async (question) => {
     setBusyId(question.id);
+    setError('');
     try {
       if (assignmentOf(question).status === 'IN_REVIEW' && isAssignmentMine(question, user)) {
         const fresh = await renewQuestionReview(question.id); applyRenewedQuestion(fresh);
       } else { await claimQuestionReview(question.id); await refreshAfterAction(question); }
     } catch (err) {
-      alert('Nhận câu kiểm duyệt thất bại: ' + err.message);
+      const fresh = await refreshAssignmentAfterError(question, err);
+      setError(fresh && isAssignmentMine(question, user) && !isAssignmentMine(fresh, user)
+        ? lockLostMessage : err.message || 'Nhận câu kiểm duyệt thất bại');
     } finally {
       setBusyId('');
     }
@@ -1136,11 +1208,13 @@ function ReviewQueuePage() {
 
   const releaseReview = async (question) => {
     setBusyId(question.id);
+    setError('');
     try {
       await releaseQuestionReview(question.id);
       await refreshAfterAction(question);
     } catch (err) {
-      alert('Trả câu kiểm duyệt thất bại: ' + err.message);
+      await refreshAssignmentAfterError(question, err);
+      setError(err.message || 'Trả câu kiểm duyệt thất bại');
     } finally {
       setBusyId('');
     }
@@ -1325,7 +1399,9 @@ function ReviewQueuePage() {
       setReviewDraft(null);
       await refreshAfterAction(selected);
     } catch (err) {
-      setReviewFormError(err.message || 'Kiểm duyệt thất bại');
+      const fresh = await refreshAssignmentAfterError(selected, err);
+      setReviewFormError(fresh && isAssignmentMine(selected, user) && !isAssignmentMine(fresh, user)
+        ? lockLostMessage : err.message || 'Kiểm duyệt thất bại');
     } finally {
       setBusyId('');
     }
@@ -1362,19 +1438,34 @@ function ReviewQueuePage() {
   const runBulkEvaluate = async () => {
     const targets = questions.filter((question) => canQueueEvaluation(question)).slice(0, 10);
     if (targets.length === 0) return;
-    if (!window.confirm(`Gửi ${targets.length} câu đang lọc để AI hỗ trợ đánh giá?`)) return;
+    setBulkEvaluationError('');
+    setPendingBulkEvaluation({ targets, modelCode: evaluationModelCode });
+  };
+
+  const applyBulkEvaluate = async () => {
+    if (!pendingBulkEvaluation?.targets.length || bulkBusy || pendingBulkEvaluation.blockedByConflict) return;
+    const { targets, modelCode } = pendingBulkEvaluation;
+    let sentCount = 0;
     setBulkBusy(true);
+    setBulkEvaluationError('');
     try {
       for (const question of targets) {
         await autoEvaluateQuestion(question.id, {
           expected_version: question.current_version,
           fallback_to_heuristic: false,
-          ...(evaluationModelCode ? { evaluator_model_code: evaluationModelCode } : {}),
+          ...(modelCode ? { evaluator_model_code: modelCode } : {}),
         });
+        sentCount += 1;
       }
       await Promise.all([fetchQuestions(), fetchDashboard()]);
+      setPendingBulkEvaluation(null);
     } catch (err) {
-      alert('Đánh giá hàng loạt dừng lại: ' + err.message);
+      const failedQuestion = targets[sentCount];
+      const blockedByConflict = err.status === 409;
+      setPendingBulkEvaluation({ targets: targets.slice(sentCount), modelCode, blockedByConflict });
+      setBulkEvaluationError(`Đã gửi ${sentCount}/${targets.length} câu. ${failedQuestion?.question_code || failedQuestion?.id || 'Đánh giá hàng loạt'}: ${err.message}`
+        + (blockedByConflict ? ' Hãy đóng hộp thoại và kiểm tra lại danh sách trước khi gửi lại.' : ''));
+      await Promise.all([fetchQuestions(), fetchDashboard()]);
     } finally {
       setBulkBusy(false);
     }
@@ -1396,7 +1487,7 @@ function ReviewQueuePage() {
   const dashboardDecisions = dashboard?.decisions || {};
   const dashboardSubjects = dashboard?.subjects || [];
   const dashboardCalibration = dashboard?.calibration || {};
-  const latestEvaluation = evaluations[0];
+  const latestEvaluation = currentVersionEvaluation(evaluations, selected);
   const mentionOptions = useMemo(() => {
     const map = new Map();
     [...teacherOptions, ...reviewerOptions].forEach((option) => {
@@ -1444,7 +1535,7 @@ function ReviewQueuePage() {
   const hasCurrentEvaluationError = Boolean(qualitySummary.error);
   const latestEvidence = qualitySummary.evidence || latestEvaluation?.evidence || {};
   const latestFeedback = latestEvaluation?.feedback || qualitySummary.feedback || {};
-  const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || {});
+  const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || qualitySummary.scores || {});
   // Khi có tiêu chí không áp dụng, backend lưu thêm trọng số đã chia lại.
   const latestWeights = latestEvaluation?.policy?.effective_weights || latestEvaluation?.policy?.weights || {};
   const latestEvaluationForInsights = latestEvaluation
@@ -1585,7 +1676,7 @@ function ReviewQueuePage() {
                 </select>
               </label>
             )}
-            <button type="button" className="btn btn--outline" disabled={bulkBusy || questions.length === 0} onClick={runBulkEvaluate}>
+            <button type="button" className="btn btn--outline" disabled={bulkBusy || !questions.some(canQueueEvaluation)} onClick={runBulkEvaluate}>
               Đánh giá danh sách bằng AI
             </button>
           </div>
@@ -1634,6 +1725,29 @@ function ReviewQueuePage() {
             </tbody></table></div>
           </>}
         </section>
+      )}
+      {pendingBulkEvaluation && (
+        <div className="review-modal-backdrop">
+          <form
+            className="review-modal review-modal--compact"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Xác nhận đánh giá AI hàng loạt"
+            onSubmit={(event) => { event.preventDefault(); applyBulkEvaluate(); }}
+          >
+            <div className="review-modal__head">
+              <h2>Gửi {pendingBulkEvaluation.targets.length} câu để AI hỗ trợ đánh giá?</h2>
+            </div>
+            <div className="review-form-section">
+              <p>Các câu sẽ được đưa vào hàng đợi đánh giá bằng mô hình đã chọn.</p>
+              {bulkEvaluationError && <p role="alert" className="manage-error">{bulkEvaluationError}</p>}
+            </div>
+            <div className="review-modal__foot">
+              <button type="button" disabled={bulkBusy} onClick={() => setPendingBulkEvaluation(null)}>Hủy</button>
+              <button type="submit" disabled={bulkBusy || pendingBulkEvaluation.blockedByConflict}>{bulkBusy ? 'Đang gửi...' : 'Xác nhận đánh giá AI'}</button>
+            </div>
+          </form>
+        </div>
       )}
       {autoDraft && <div className="review-modal-backdrop"><form className="review-modal" onSubmit={runAutoAssignment}>
         <div className="review-modal__head"><h2>Tự chia việc kiểm duyệt</h2></div><div className="review-form-section">
@@ -1900,8 +2014,18 @@ function ReviewQueuePage() {
               {questions.map((question) => (
                 <article
                   key={question.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Xem câu hỏi ${question.question_code}: ${question.content}`}
+                  aria-pressed={selected?.id === question.id}
                   className={`review-row ${selected?.id === question.id ? 'review-row--active' : ''}`}
                   onClick={() => loadHistory(question)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      loadHistory(question);
+                    }
+                  }}
                 >
                   <div>
                     <div className="review-row__meta">
@@ -2528,12 +2652,12 @@ function ReviewQueuePage() {
                     </div>
                     <label>
                       <span>Người duyệt</span>
-                      <select value={item.rating} onChange={(event) => updateCriterion(item.key, { rating: event.target.value })}>
+                      <select aria-label={`Đánh giá ${item.label}`} value={item.rating} onChange={(event) => updateCriterion(item.key, { rating: event.target.value })}>
                         {Object.entries(CRITERION_RATING_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                       </select>
                     </label>
-                    <input value={item.note} onChange={(event) => updateCriterion(item.key, { note: event.target.value })} placeholder="Lý do hoặc ghi chú" />
-                    <select value={item.source_chunk_id} onChange={(event) => updateCriterion(item.key, { source_chunk_id: event.target.value })}>
+                    <input aria-label={`Ghi chú tiêu chí ${item.label}`} value={item.note} onChange={(event) => updateCriterion(item.key, { note: event.target.value })} placeholder="Lý do hoặc ghi chú" />
+                    <select aria-label={`Nguồn tiêu chí ${item.label}`} value={item.source_chunk_id} onChange={(event) => updateCriterion(item.key, { source_chunk_id: event.target.value })}>
                       <option value="">Không gắn nguồn</option>
                       {sourceItems.map((source, index) => (
                         <option key={source.chunk_id || index} value={source.chunk_id || ''}>Nguồn #{source.citation_order} · {pageRangeLabel(source.page_range)}</option>
@@ -2562,6 +2686,7 @@ function ReviewQueuePage() {
                       <span>{item.label}</span>
                     </label>
                     <input
+                      aria-label={`Ghi chú kiểm tra ${item.label}`}
                       value={item.note}
                       onChange={(event) => updateChecklistItem(item.key, { note: event.target.value })}
                       placeholder="Ghi chú"
@@ -2577,6 +2702,7 @@ function ReviewQueuePage() {
                   <h3>Mẫu nhận xét</h3>
                   <div>
                     <input
+                      aria-label="Tên mẫu nhận xét"
                       value={templateTitle}
                       onChange={(event) => setTemplateTitle(event.target.value)}
                       placeholder="Tên mẫu"
@@ -2619,6 +2745,7 @@ function ReviewQueuePage() {
                   </label>
                   {reviewDraft.secondaryRequired && (
                     <textarea
+                      aria-label="Lý do cần duyệt lần hai"
                       value={reviewDraft.secondaryReason}
                       onChange={(event) => updateReviewDraft({ secondaryReason: event.target.value })}
                       rows={2}
@@ -2652,11 +2779,13 @@ function ReviewQueuePage() {
               {reviewDraft.issues.map((issue) => (
                 <div className="review-issue-row" key={issue.id}>
                   <input
+                    aria-label="Tiêu đề lỗi"
                     value={issue.title}
                     onChange={(event) => updateReviewIssue(issue.id, { title: event.target.value })}
                     placeholder="Tiêu đề lỗi"
                   />
                   <select
+                    aria-label="Mức nghiêm trọng của lỗi"
                     value={issue.severity}
                     onChange={(event) => updateReviewIssue(issue.id, { severity: event.target.value })}
                   >
@@ -2665,6 +2794,7 @@ function ReviewQueuePage() {
                     <option value="HIGH">Nghiêm trọng</option>
                   </select>
                   <select
+                    aria-label="Nguồn tham chiếu của lỗi"
                     value={issue.source_chunk_id}
                     onChange={(event) => updateReviewIssue(issue.id, { source_chunk_id: event.target.value })}
                   >
@@ -2676,6 +2806,7 @@ function ReviewQueuePage() {
                     ))}
                   </select>
                   <input
+                    aria-label="Trang có lỗi"
                     type="number"
                     min="1"
                     value={issue.page_number}
@@ -2683,6 +2814,7 @@ function ReviewQueuePage() {
                     placeholder="Trang"
                   />
                   <textarea
+                    aria-label="Chi tiết lỗi"
                     value={issue.detail}
                     onChange={(event) => updateReviewIssue(issue.id, { detail: event.target.value })}
                     placeholder="Chi tiết"
@@ -2693,11 +2825,11 @@ function ReviewQueuePage() {
               ))}
             </section>
 
-            {reviewFormError && <p className="review-form-error">{reviewFormError}</p>}
+            {reviewFormError && <p className="review-form-error" role="alert">{reviewFormError}</p>}
             <div className="review-modal__foot">
               <button type="button" className="review-draft-delete" onClick={discardReviewDraft}>Xóa bản nháp</button>
               <button type="button" onClick={() => setReviewDraft(null)}>Đóng, tiếp tục sau</button>
-              <button type="submit" className="detail-action-primary" disabled={busyId === selected?.id}>
+              <button type="submit" className="detail-action-primary" disabled={busyId === selected?.id || !canReviewQuestion(selected)}>
                 Lưu kết quả kiểm duyệt
               </button>
             </div>

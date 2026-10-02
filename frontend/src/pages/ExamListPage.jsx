@@ -35,6 +35,7 @@ function ExamListPage() {
   const [subjects, setSubjects] = useState([]);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [createError, setCreateError] = useState('');
   const [deletingId, setDeletingId] = useState(null);
   const [duplicatingId, setDuplicatingId] = useState(null);
   const [page, setPage] = useState(1);
@@ -70,6 +71,7 @@ function ExamListPage() {
   }, []);
 
   const openCreate = () => {
+    setCreateError('');
     setName('');
     setExamTitle('');
     setSubjectId('');
@@ -84,13 +86,14 @@ function ExamListPage() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    setCreateError('');
     if (!name.trim() || !examTitle.trim() || !subjectId) {
-      alert('Vui lòng nhập đầy đủ tên đề thi, tên kỳ thi và môn học.');
+      setCreateError('Vui lòng nhập đầy đủ tên đề thi, tên kỳ thi và môn học.');
       return;
     }
     const questionCountNumber = Number(questionCount);
     if (!Number.isInteger(questionCountNumber) || questionCountNumber < 1 || questionCountNumber > 200) {
-      alert('Số lượng câu hỏi phải là số nguyên từ 1 đến 200.');
+      setCreateError('Số lượng câu hỏi phải là số nguyên từ 1 đến 200.');
       return;
     }
     setSaving(true);
@@ -105,7 +108,7 @@ function ExamListPage() {
       setCreating(false);
       navigate(`/lam-de-thi/${exam.id}`);
     } catch (err) {
-      alert('Tạo đề thi thất bại: ' + err.message);
+      setCreateError('Tạo đề thi thất bại: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -220,22 +223,22 @@ function ExamListPage() {
 
       {creating && (
         <div className="modal-overlay" onClick={closeCreate}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label="Tạo đề thi mới" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
             <h3 className="profile-card-title">Tạo đề thi mới</h3>
 
             <div className="field-group">
-              <label className="field-label">Tên đề thi</label>
-              <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Đề thi cuối kỳ - Cấu trúc dữ liệu" />
+              <label className="field-label" htmlFor="exam-create-name">Tên đề thi</label>
+              <input id="exam-create-name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Đề thi cuối kỳ - Cấu trúc dữ liệu" />
             </div>
 
             <div className="field-group">
-              <label className="field-label">Tên kỳ thi</label>
-              <input className="field-input" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} placeholder="Thi cuối học kỳ I 2025-2026" />
+              <label className="field-label" htmlFor="exam-create-title">Tên kỳ thi</label>
+              <input id="exam-create-title" className="field-input" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} placeholder="Thi cuối học kỳ I 2025-2026" />
             </div>
 
             <div className="field-group">
-              <label className="field-label">Môn học/học phần</label>
-              <select className="field-select" value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+              <label className="field-label" htmlFor="exam-create-subject">Môn học/học phần</label>
+              <select id="exam-create-subject" className="field-select" value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
                 <option value="">Chọn môn học</option>
                 {subjects.map((subject) => (
                   <option key={refId(subject)} value={refId(subject)}>
@@ -246,8 +249,9 @@ function ExamListPage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Số lượng câu hỏi</label>
+              <label className="field-label" htmlFor="exam-create-count">Số lượng câu hỏi</label>
               <input
+                id="exam-create-count"
                 type="number"
                 min={1}
                 max={200}
@@ -257,6 +261,7 @@ function ExamListPage() {
               />
             </div>
 
+            {createError && <p className="exam-error" role="alert">{createError}</p>}
             <div className="modal-actions">
               <button type="button" className="btn btn--outline" onClick={closeCreate} disabled={saving}>Huỷ</button>
               <button type="submit" className="btn btn--primary" disabled={saving}>

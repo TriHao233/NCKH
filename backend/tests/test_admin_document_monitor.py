@@ -11,6 +11,7 @@ from main import app
 from modules.admin.overview_service import AdminOverviewService
 from modules.admin.overview_router import get_admin_overview_service
 from modules.documents.postgres_repository import PostgresDocumentRepository
+from modules.documents.repository import document_pipeline_summary, serialize_document
 from test_schema_v2 import InMemoryCollection, _current_user
 
 
@@ -75,3 +76,24 @@ def test_document_monitor_route_is_admin_only_and_validates_filters():
         client.close()
         app.dependency_overrides.clear()
         app.dependency_overrides.update(previous)
+
+
+def test_legacy_document_reports_completed_steps_without_claiming_index_readiness():
+    db, row = database()
+    row.update(status="UPLOADED", current_processing={"ocr_status": "completed", "chunk_status": "completed"},
+               pipeline_summary={"demo_seed": True, "chunks": 1, "vectorized_chunks": 0})
+    db.documents = InMemoryCollection([row])
+    expected = {"ocr_status": "COMPLETED", "chunk_status": "COMPLETED", "index_status": "NOT_STARTED"}
+    for item in (serialize_document(row), AdminOverviewService(db).list_documents(1, 20, None, None)["items"][0]):
+        assert item["status"] == "UPLOADED"
+        assert all(item["pipeline_summary"][key] == value for key, value in expected.items())
+    assert "ocr_status" not in row["pipeline_summary"]  # serialization must not mutate stored data
+
+
+def test_current_pipeline_failure_overrides_legacy_completed_status():
+    summary = document_pipeline_summary({
+        "current_processing": {"ocr_status": "completed", "chunk_status": "completed"},
+        "pipeline_summary": {"chunk_status": "FAILED", "index_status": "PROCESSING"},
+    })
+    assert summary["chunk_status"] == "FAILED"
+    assert summary["index_status"] == "PROCESSING"

@@ -129,6 +129,7 @@ function InfoTab({ user, onProfileUpdated }) {
 
   const handleChange = (field) => (e) => {
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
+    setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
   const handleUseDefaultAvatar = () => {
@@ -219,7 +220,7 @@ function InfoTab({ user, onProfileUpdated }) {
       </div>
 
       {banner && (
-        <div className={`profile-banner profile-banner--${banner.type}`}>{banner.message}</div>
+        <div className={`profile-banner profile-banner--${banner.type}`} role={banner.type === 'error' ? 'alert' : 'status'}>{banner.message}</div>
       )}
 
       <div className="profile-form-section profile-form-section--avatar">
@@ -290,13 +291,13 @@ function InfoTab({ user, onProfileUpdated }) {
 
         <div className="field-row-2">
           <div className="field-group">
-            <label className="field-label">Email</label>
-            <input className="field-input" value={user?.email || ''} disabled />
+            <label className="field-label" htmlFor="profile-account-email">Email</label>
+            <input id="profile-account-email" className="field-input" value={user?.email || ''} disabled />
             <span className="field-hint">Không thể thay đổi email tại đây.</span>
           </div>
           <div className="field-group">
-            <label className="field-label">Vai trò</label>
-            <input className="field-input" value={ROLE_LABELS[user?.role] || user?.role || ''} disabled />
+            <label className="field-label" htmlFor="profile-account-role">Vai trò</label>
+            <input id="profile-account-role" className="field-input" value={ROLE_LABELS[user?.role] || user?.role || ''} disabled />
             <span className="field-hint">Chỉ quản trị viên mới thay đổi được vai trò.</span>
           </div>
         </div>
@@ -305,8 +306,9 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section">
         <h4><FontAwesomeIcon icon={faBriefcase} /> Thông tin công tác</h4>
         <div className="field-group">
-          <label className="field-label">Đơn vị công tác</label>
+          <label className="field-label" htmlFor="profile-school">Đơn vị công tác</label>
           <input
+            id="profile-school"
             className="field-input"
             value={form.school}
             onChange={handleChange('school')}
@@ -317,8 +319,9 @@ function InfoTab({ user, onProfileUpdated }) {
         </div>
 
         <div className="field-group">
-          <label className="field-label">Địa chỉ</label>
+          <label className="field-label" htmlFor="profile-address">Địa chỉ</label>
           <input
+            id="profile-address"
             className="field-input"
             placeholder="Chưa cập nhật"
             value={form.address}
@@ -333,8 +336,9 @@ function InfoTab({ user, onProfileUpdated }) {
       <div className="profile-form-section">
         <h4><FontAwesomeIcon icon={faFileLines} /> Thông báo qua email</h4>
         <div className="field-group">
-          <label className="field-label">Email nhận thông báo</label>
+          <label className="field-label" htmlFor="profile-notification-email">Email nhận thông báo</label>
           <input
+            id="profile-notification-email"
             className="field-input"
             type="email"
             placeholder={`Để trống để dùng ${user?.email || 'email đăng nhập'}`}
@@ -363,12 +367,13 @@ function InfoTab({ user, onProfileUpdated }) {
         <h4><FontAwesomeIcon icon={faFileLines} /> Thông tin khác</h4>
         <div className="field-row-2">
           <div className="field-group">
-            <label className="field-label">Trạng thái tài khoản</label>
-            <input className="field-input" value={user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động'} disabled />
+            <label className="field-label" htmlFor="profile-account-status">Trạng thái tài khoản</label>
+            <input id="profile-account-status" className="field-input" value={user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động'} disabled />
           </div>
           <div className="field-group">
-            <label className="field-label">Ngày tham gia</label>
+            <label className="field-label" htmlFor="profile-joined-at">Ngày tham gia</label>
             <input
+              id="profile-joined-at"
               className="field-input"
               value={user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—'}
               disabled

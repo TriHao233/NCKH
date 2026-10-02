@@ -34,6 +34,29 @@ const ACTION_OPTIONS = [
   { value: 'QUESTION_NEEDS_REVISION', label: 'Yêu cầu sửa' },
   { value: 'QUESTION_REVIEW_CLAIMED', label: 'Nhận kiểm duyệt' },
   { value: 'QUESTION_REVIEW_RELEASED', label: 'Trả câu kiểm duyệt' },
+  { value: 'QUESTION_REVIEW_ASSIGNED', label: 'Phân công kiểm duyệt' },
+  { value: 'QUESTION_COMMENT_ADDED', label: 'Thêm bình luận câu hỏi' },
+  { value: 'QUESTION_COMMENT_UPDATED', label: 'Sửa bình luận câu hỏi' },
+  { value: 'QUESTION_COMMENT_DELETED', label: 'Xóa bình luận câu hỏi' },
+  { value: 'catalog.subject_create', label: 'Tạo học phần' },
+  { value: 'catalog.subject_update', label: 'Sửa học phần' },
+  { value: 'catalog.subject_deactivate', label: 'Ngừng dùng học phần' },
+  { value: 'catalog.chapter_create', label: 'Tạo chương' },
+  { value: 'catalog.chapter_update', label: 'Sửa chương' },
+  { value: 'catalog.clo_create', label: 'Tạo chuẩn đầu ra' },
+  { value: 'catalog.clo_update', label: 'Sửa chuẩn đầu ra' },
+  { value: 'catalog.ai_model_create', label: 'Thêm mô hình AI' },
+  { value: 'catalog.ai_model_update', label: 'Sửa mô hình AI' },
+  { value: 'catalog.ai_model_activate', label: 'Bật mô hình AI' },
+  { value: 'catalog.ai_model_deactivate', label: 'Khóa mô hình AI' },
+  { value: 'catalog.prompt_create', label: 'Tạo mẫu prompt' },
+  { value: 'catalog.prompt_update', label: 'Sửa mẫu prompt' },
+  { value: 'catalog.prompt_activate', label: 'Bật mẫu prompt' },
+  { value: 'catalog.prompt_deactivate', label: 'Tắt mẫu prompt' },
+  { value: 'catalog.evaluation_policy_create', label: 'Tạo tiêu chí đánh giá' },
+  { value: 'catalog.evaluation_policy_update', label: 'Sửa tiêu chí đánh giá' },
+  { value: 'catalog.evaluation_policy_activate', label: 'Áp dụng tiêu chí đánh giá' },
+  { value: 'catalog.evaluation_policy_deactivate', label: 'Ngừng dùng tiêu chí đánh giá' },
   { value: 'QUESTION_SUBMITTED_FOR_REVIEW', label: 'Câu hỏi được gửi duyệt' },
   { value: 'question.submit_review', label: 'Gửi duyệt câu hỏi' },
   { value: 'question.sharing_update', label: 'Đổi chia sẻ câu hỏi' },
@@ -65,6 +88,9 @@ const ENTITY_OPTIONS = [
   { value: 'question', label: 'Câu hỏi (soạn, chia sẻ)' },
   { value: 'QUESTION', label: 'Câu hỏi (kiểm duyệt)' },
   { value: 'document', label: 'Tài liệu' },
+  { value: 'subject', label: 'Học phần' },
+  { value: 'chapter', label: 'Chương' },
+  { value: 'clo', label: 'Chuẩn đầu ra' },
   { value: 'generation', label: 'Tác vụ sinh câu hỏi' },
   { value: 'evaluation', label: 'Tác vụ đánh giá' },
   { value: 'ai_model', label: 'Mô hình AI' },
@@ -420,8 +446,16 @@ function AdminAuditPage() {
                 {logs.map((log) => (
                   <tr
                     key={log.id}
+                    tabIndex={0}
+                    aria-label={`Xem nhật ký ${actionLabel(log.action)} ${formatDateTime(log.created_at)}`}
                     className={selectedId === log.id ? 'is-selected' : ''}
                     onClick={() => setSelectedId(log.id)}
+                    onKeyDown={(event) => {
+                      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                        event.preventDefault();
+                        setSelectedId(log.id);
+                      }
+                    }}
                   >
                     <td>
                       <span>{formatDateTime(log.created_at)}</span>
@@ -448,11 +482,11 @@ function AdminAuditPage() {
             )}
           </div>
           <div className="jobs-pagination">
-            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+            <button type="button" aria-label="Trang trước" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
               <FontAwesomeIcon icon={faChevronLeft} />
             </button>
             <span>Trang {page} / {pageCount}</span>
-            <button type="button" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
+            <button type="button" aria-label="Trang sau" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
               <FontAwesomeIcon icon={faChevronRight} />
             </button>
           </div>

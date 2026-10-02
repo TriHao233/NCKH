@@ -559,11 +559,11 @@ function UsersAdminPage() {
             )}
           </div>
           <div className="jobs-pagination">
-            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+            <button type="button" aria-label="Trang trước" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))}>
               <FontAwesomeIcon icon={faChevronLeft} />
             </button>
             <span>Trang {page} / {pageCount}</span>
-            <button type="button" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
+            <button type="button" aria-label="Trang sau" disabled={page >= pageCount || loading} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>
               <FontAwesomeIcon icon={faChevronRight} />
             </button>
           </div>
@@ -572,13 +572,13 @@ function UsersAdminPage() {
 
       {showCreate && (
         <div className="modal-overlay" onClick={() => !creating && setShowCreate(false)}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label={createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'} onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
             <h3 className="modal-title">{createMode === 'invite' ? 'Mời tài khoản mới' : 'Tạo tài khoản bằng mật khẩu'}</h3>
             {formError && <p className="jobs-error" role="alert">{formError}</p>}
 
             <div className="field-group">
-              <label className="field-label">Email</label>
-              <input
+              <label className="field-label" htmlFor="users-create-form-email">Email</label>
+              <input id="users-create-form-email"
                 className="field-input"
                 type="email"
                 value={createForm.email}
@@ -588,8 +588,8 @@ function UsersAdminPage() {
 
             {createMode === 'direct' && (
               <div className="field-group">
-                <label className="field-label">Mật khẩu</label>
-                <input
+                <label className="field-label" htmlFor="users-create-form-password">Mật khẩu</label>
+                <input id="users-create-form-password"
                   className="field-input"
                   type="password"
                   value={createForm.password}
@@ -600,8 +600,8 @@ function UsersAdminPage() {
             )}
 
             <div className="field-group">
-              <label className="field-label">Họ và tên</label>
-              <input
+              <label className="field-label" htmlFor="users-create-form-display-name">Họ và tên</label>
+              <input id="users-create-form-display-name"
                 className="field-input"
                 value={createForm.display_name}
                 onChange={(e) => setCreateForm({ ...createForm, display_name: e.target.value })}
@@ -609,8 +609,8 @@ function UsersAdminPage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Vai trò</label>
-              <select
+              <label className="field-label" htmlFor="users-create-form-role">Vai trò</label>
+              <select id="users-create-form-role"
                 className="field-select"
                 value={createForm.role}
                 onChange={(e) => setCreateForm({
@@ -637,7 +637,7 @@ function UsersAdminPage() {
                   </button>
                 </div>
                 <p>Đã tạo lời mời cho {inviteResult.user?.email}. Sao chép liên kết để gửi cho người nhận.</p>
-                <textarea className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
+                <textarea aria-label="Liên kết đặt mật khẩu cho tài khoản được mời" className="field-input" readOnly value={inviteResult.reset_link} rows={3} />
               </div>
             )}
 
@@ -655,12 +655,12 @@ function UsersAdminPage() {
 
       {showImport && (
         <div className="modal-overlay" onClick={() => !importing && setShowImport(false)}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleImportUsers}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label="Import người dùng" onClick={(e) => e.stopPropagation()} onSubmit={handleImportUsers}>
             <h3 className="modal-title">Import người dùng</h3>
             {formError && <p className="jobs-error" role="alert">{formError}</p>}
             <div className="field-group">
-              <label className="field-label">CSV</label>
-              <textarea
+              <label className="field-label" htmlFor="users-import-text">CSV</label>
+              <textarea id="users-import-text"
                 className="field-input"
                 rows={8}
                 value={importText}
@@ -722,7 +722,7 @@ function UsersAdminPage() {
                 {copiedKey === 'reset' ? 'Đã sao chép' : 'Sao chép'}
               </button>
             </div>
-            <textarea className="field-input" readOnly rows={4} value={resetResult.reset_link} />
+            <textarea aria-label="Liên kết đặt lại mật khẩu" className="field-input" readOnly rows={4} value={resetResult.reset_link} />
             <div className="modal-actions">
               <button type="button" className="btn btn--primary" onClick={() => setResetResult(null)}>
                 Đóng
@@ -734,18 +734,18 @@ function UsersAdminPage() {
 
       {editing && (
         <div className="modal-overlay" onClick={closeEdit}>
-          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label="Chỉnh sửa tài khoản" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
             <h3 className="modal-title">Chỉnh sửa tài khoản</h3>
             {formError && <p className="jobs-error" role="alert">{formError}</p>}
 
             <div className="field-group">
-              <label className="field-label">Email</label>
-              <input className="field-input" value={editing.email} disabled />
+              <label className="field-label" htmlFor="users-editing-email">Email</label>
+              <input id="users-editing-email" className="field-input" value={editing.email} disabled />
             </div>
 
             <div className="field-group">
-              <label className="field-label">Họ và tên</label>
-              <input
+              <label className="field-label" htmlFor="users-edit-display-name">Họ và tên</label>
+              <input id="users-edit-display-name"
                 className="field-input"
                 value={editDisplayName}
                 onChange={(e) => setEditDisplayName(e.target.value)}
@@ -753,8 +753,8 @@ function UsersAdminPage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Vai trò</label>
-              <select
+              <label className="field-label" htmlFor="users-edit-role">Vai trò</label>
+              <select id="users-edit-role"
                 className="field-select"
                 value={editRole}
                 onChange={(e) => {

@@ -29,6 +29,7 @@ function formatDateTime(value) {
 function PolicyTab({ policies, fallbackPolicy, saving, run }) {
   const [form, setForm] = useState(null);
   const [formError, setFormError] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
 
   const sorted = useMemo(() => [...policies].sort((left, right) => (
     String(left.policy_name).localeCompare(String(right.policy_name)) || right.version - left.version
@@ -53,22 +54,28 @@ function PolicyTab({ policies, fallbackPolicy, saving, run }) {
       setFormError(problem);
       return;
     }
-    if (!window.confirm('Lưu thành phiên bản mới và áp dụng ngay cho các lượt AI chấm tiếp theo? Những câu đã chấm giữ nguyên kết quả.')) return;
+    setConfirmation({ type: 'save' });
+  };
+
+  const applySave = async () => {
     const outcome = await run(
       () => saveEvaluationPolicy({ ...formToPayload(form), create_new_version: true, is_active: true }),
       'Đã lưu và áp dụng bộ tiêu chí mới.',
       { quiet: true },
     );
-    if (outcome.ok) setForm(null);
+    if (outcome.ok) { setForm(null); setConfirmation(null); }
     else setFormError(outcome.error?.message || 'Lưu bộ tiêu chí thất bại');
   };
 
   const handleActivate = (policy) => {
-    if (!window.confirm(`Chuyển sang dùng phiên bản ${policy.version}? Các lượt AI chấm tiếp theo sẽ theo phiên bản này.`)) return;
-    run(
+    setConfirmation({ type: 'activate', policy });
+  };
+  const applyActivation = async (policy) => {
+    const outcome = await run(
       () => activateEvaluationPolicy({ policy_name: policy.policy_name, version: policy.version, is_active: true }),
       `Đã chuyển sang dùng phiên bản ${policy.version}.`,
     );
+    if (outcome.ok) setConfirmation(null);
   };
 
   const total = form ? weightTotal(form) : 0;
@@ -151,7 +158,19 @@ function PolicyTab({ policies, fallbackPolicy, saving, run }) {
         </div>
       </section>
 
-      {form && (
+      {confirmation && (
+        <CatalogModal title="Xác nhận áp dụng tiêu chí" onClose={() => !saving && setConfirmation(null)}>
+          <p>{confirmation.type === 'save'
+            ? 'Lưu thành phiên bản mới và áp dụng cho các lượt AI chấm tiếp theo? Những câu đã chấm giữ nguyên kết quả.'
+            : `Chuyển sang dùng phiên bản ${confirmation.policy.version}? Các lượt AI chấm tiếp theo sẽ theo phiên bản này.`}</p>
+          {formError && <p className="catalog-form-error" role="alert">{formError}</p>}
+          <div className="catalog-form-actions">
+            <button type="button" disabled={saving} onClick={() => setConfirmation(null)}>Hủy</button>
+            <button type="button" disabled={saving} onClick={() => confirmation.type === 'save' ? applySave() : applyActivation(confirmation.policy)}>{saving ? 'Đang lưu...' : 'Xác nhận'}</button>
+          </div>
+        </CatalogModal>
+      )}
+      {form && !confirmation && (
         <CatalogModal title="Sửa tiêu chí đánh giá" onClose={() => setForm(null)} wide>
           <form className="catalog-form" onSubmit={handleSave}>
             <label className="catalog-field">

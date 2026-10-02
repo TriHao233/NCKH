@@ -412,6 +412,7 @@ function renderChoiceEditor({
             <span className="draft-option-key">{entry.key}</span>
             <input
               className="field-input"
+              aria-label={`Nội dung lựa chọn ${entry.key}`}
               value={entry.value}
               onChange={(event) => onOptionChange(entry.key, event.target.value)}
             />
@@ -435,6 +436,7 @@ function renderChoiceEditor({
             <span className="draft-option-key">{entry.key}</span>
             <input
               className="field-input"
+              aria-label={`Nội dung lựa chọn ${entry.key}`}
               value={entry.value}
               onChange={(event) => onOptionChange(entry.key, event.target.value)}
             />
@@ -452,6 +454,7 @@ function renderChoiceEditor({
             <span className="draft-option-key">{entry.key}</span>
             <input
               className="field-input"
+              aria-label={`Nội dung lựa chọn ${entry.key}`}
               value={entry.value}
               onChange={(event) => onOptionChange(entry.key, event.target.value)}
             />
@@ -562,6 +565,7 @@ function ManagePage() {
   const [selectedQuestionIds, setSelectedQuestionIds] = useState([]);
   const [selectedQuestionCache, setSelectedQuestionCache] = useState({});
   const [bulkActionBusy, setBulkActionBusy] = useState('');
+  const [pendingBulkSubmit, setPendingBulkSubmit] = useState(null);
   const [bulkActionReport, setBulkActionReport] = useState(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkEditDraft, setBulkEditDraft] = useState({
@@ -584,6 +588,8 @@ function ManagePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [workflowMessage, setWorkflowMessage] = useState('');
   const [restoringVersionId, setRestoringVersionId] = useState('');
+  const [pendingRestore, setPendingRestore] = useState(null);
+  const [restoreError, setRestoreError] = useState('');
   const [openedDeepLinkId, setOpenedDeepLinkId] = useState('');
 
   const [creatingQuestion, setCreatingQuestion] = useState(false);
@@ -599,6 +605,8 @@ function ManagePage() {
   const [newSourceContext, setNewSourceContext] = useState('');
   const [newCloIds, setNewCloIds] = useState([]);
   const [creatingSaving, setCreatingSaving] = useState(false);
+  const [newQuestionError, setNewQuestionError] = useState('');
+  const [editQuestionError, setEditQuestionError] = useState('');
 
   const [editingDoc, setEditingDoc] = useState(null);
   const [editDocTitle, setEditDocTitle] = useState('');
@@ -1162,6 +1170,7 @@ function ManagePage() {
   const editingRevisionIssues = editingRevisionReview ? reviewIssuesOf(editingRevisionReview) : [];
 
   const openEdit = async (item) => {
+    setEditQuestionError('');
     setEditing(item);
     setEditContent(item.content || '');
     setEditRawOptions(item.question_data?.options ?? null);
@@ -1183,8 +1192,9 @@ function ManagePage() {
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editing) return;
+    setEditQuestionError('');
     if (!editContent.trim()) {
-      alert('Nội dung câu hỏi không được để trống.');
+      setEditQuestionError('Nội dung câu hỏi không được để trống.');
       return;
     }
     const answerValidationError = validateQuestionAnswer({
@@ -1193,7 +1203,7 @@ function ManagePage() {
       correctAnswer: editCorrectAnswer,
     });
     if (answerValidationError) {
-      alert(answerValidationError);
+      setEditQuestionError(answerValidationError);
       return;
     }
     setSaving(true);
@@ -1216,7 +1226,7 @@ function ManagePage() {
       setEditing(null);
       await fetchQuestions(searchTerm);
     } catch (error) {
-      alert('Cập nhật câu hỏi thất bại: ' + error.message);
+      setEditQuestionError('Cập nhật câu hỏi thất bại: ' + error.message);
     } finally {
       setSaving(false);
     }
@@ -1419,20 +1429,22 @@ function ManagePage() {
     }));
   };
 
-  const handleBulkSubmit = async () => {
-    if (selectedSubmittableQuestions.length === 0) {
-      alert('Không có câu hỏi đã chọn nào ở trạng thái có thể gửi duyệt.');
-      return;
-    }
-    if (!window.confirm(`Gửi duyệt ${selectedSubmittableQuestions.length} câu hỏi đã chọn?`)) return;
+  const handleBulkSubmit = () => {
+    if (selectedSubmittableQuestions.length === 0) return;
+    setPendingBulkSubmit([...selectedSubmittableQuestions]);
+  };
+
+  const applyBulkSubmit = async () => {
+    if (!pendingBulkSubmit?.length || bulkActionBusy) return;
+    const submittedQuestions = pendingBulkSubmit;
     setBulkActionBusy('submit');
     try {
       const results = await Promise.allSettled(
-        selectedSubmittableQuestions.map((question) => (
+        submittedQuestions.map((question) => (
           submitQuestionForReview(question.id).then(() => question.id)
         )),
       );
-      const summary = summarizeBulkSettled(results, selectedSubmittableQuestions);
+      const summary = summarizeBulkSettled(results, submittedQuestions);
       const successfulIds = new Set(
         results
           .filter((result) => result.status === 'fulfilled')
@@ -1440,12 +1452,13 @@ function ManagePage() {
       );
       removeQuestionsFromSelection(successfulIds);
       await fetchQuestions(searchTerm);
-      setWorkflowMessage(`Đã gửi duyệt ${summary.success}/${selectedSubmittableQuestions.length} câu hỏi.`);
+      setWorkflowMessage(`Đã gửi duyệt ${summary.success}/${submittedQuestions.length} câu hỏi.`);
       setBulkActionReport({
         tone: summary.failed > 0 ? 'warning' : 'success',
         title: `Gửi duyệt: ${summary.success} thành công, ${summary.failed} thất bại.`,
         failures: summary.failures,
       });
+      setPendingBulkSubmit(null);
     } finally {
       setBulkActionBusy('');
     }
@@ -1837,6 +1850,7 @@ function ManagePage() {
   const newLearningOutcomes = (newSubject?.learning_outcomes || []).filter((clo) => clo.is_active !== false);
 
   const openCreateQuestion = () => {
+    setNewQuestionError('');
     setNewQuestionType(QUESTION_TYPES[0]?.backend || '');
     setNewBloomLevel('1');
     setNewDifficulty('trung_binh');
@@ -1864,8 +1878,9 @@ function ManagePage() {
 
   const handleCreateQuestion = async (e) => {
     e.preventDefault();
+    setNewQuestionError('');
     if (!newContent.trim()) {
-      alert('Nội dung câu hỏi không được để trống.');
+      setNewQuestionError('Nội dung câu hỏi không được để trống.');
       return;
     }
     const answerValidationError = validateQuestionAnswer({
@@ -1874,11 +1889,11 @@ function ManagePage() {
       correctAnswer: newCorrectAnswer,
     });
     if (answerValidationError) {
-      alert(answerValidationError);
+      setNewQuestionError(answerValidationError);
       return;
     }
     if (newDocumentId && !newSourceContext.trim()) {
-      alert('Câu hỏi gắn tài liệu cần có đoạn minh chứng trích nguyên văn từ tài liệu.');
+      setNewQuestionError('Câu hỏi gắn tài liệu cần có đoạn minh chứng trích nguyên văn từ tài liệu.');
       return;
     }
     setCreatingSaving(true);
@@ -1901,7 +1916,7 @@ function ManagePage() {
       setCreatingQuestion(false);
       await fetchQuestions(searchTerm);
     } catch (error) {
-      alert('Tạo câu hỏi thất bại: ' + error.message);
+      setNewQuestionError('Tạo câu hỏi thất bại: ' + error.message);
     } finally {
       setCreatingSaving(false);
     }
@@ -1942,8 +1957,9 @@ function ManagePage() {
 
   const refreshAfterWorkflow = async (message, item) => {
     setWorkflowMessage(message);
-    await fetchQuestions(searchTerm);
-    await loadWorkflowHistory(item, { keepMessage: true });
+    const items = await fetchQuestions(searchTerm);
+    const fresh = items.find((question) => question.id === item.id) || await getQuestion(item.id);
+    await loadWorkflowHistory(fresh, { keepMessage: true });
   };
 
   const handleAutoEvaluate = async (item) => {
@@ -1961,18 +1977,22 @@ function ManagePage() {
     }
   };
 
-  const handleRestoreVersion = async (version) => {
+  const handleRestoreVersion = (version) => {
     if (!selectedQuestion || !version) return;
     if (version.version === selectedQuestion.current_version) return;
-    if (!window.confirm(`Khôi phục ${selectedQuestion.question_code} về nội dung version ${version.version}?`)) {
-      return;
-    }
+    setRestoreError('');
+    setPendingRestore({ question: selectedQuestion, version });
+  };
+
+  const applyRestoreVersion = async () => {
+    if (!pendingRestore || restoringVersionId) return;
+    const { question, version } = pendingRestore;
     const classification = versionClassification(version);
     const subjectId = refId(classification.subject?.id || classification.subject);
     const chapterId = refId(classification.chapter?.id || classification.chapter);
     const questionType = normalizeQuestionType(classification.assessment_type);
     const payload = {
-      expected_version: selectedQuestion.current_version,
+      expected_version: question.current_version,
       content: version.content,
       question_data: version.question_data || {},
       bloom_level: classification.bloom?.level || undefined,
@@ -1986,13 +2006,15 @@ function ManagePage() {
     if (chapterId) payload.chapter_id = chapterId;
 
     setRestoringVersionId(version.id);
+    setRestoreError('');
     try {
-      const updated = await updateQuestion(selectedQuestion.id, payload);
+      const updated = await updateQuestion(question.id, payload);
+      setPendingRestore(null);
       setWorkflowMessage(`Đã tạo version ${updated.current_version} từ version ${version.version}. Cần đánh giá và kiểm duyệt lại.`);
       await fetchQuestions(searchTerm);
       await loadWorkflowHistory(updated, { keepMessage: true });
     } catch (error) {
-      setWorkflowMessage(error.message || 'Khôi phục version thất bại');
+      setRestoreError(error.message || 'Khôi phục version thất bại');
     } finally {
       setRestoringVersionId('');
     }
@@ -2521,6 +2543,7 @@ function ManagePage() {
               )}
 
               {questionsError && <p className="manage-error">{questionsError}</p>}
+              {!selectedQuestion && workflowMessage && <p className="workflow-message" role="status">{workflowMessage}</p>}
 
               {questionsLoading ? (
                 <p className="empty-note">Đang tải danh sách câu hỏi...</p>
@@ -2930,7 +2953,7 @@ function ManagePage() {
                       ))}
                     </div>
                   )}
-	                  {workflowMessage && <p className="workflow-message">{workflowMessage}</p>}
+                  {workflowMessage && <p className="workflow-message" role="status">{workflowMessage}</p>}
 	                  {selectedQuestion.review_status === 'NEEDS_REVISION' && (
 	                    <div className="revision-feedback-panel">
 	                      <div className="revision-feedback-head">
@@ -3117,6 +3140,33 @@ function ManagePage() {
         </div>
       </section>
 
+      {pendingBulkSubmit && (
+        <div className="modal-overlay">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Xác nhận gửi duyệt hàng loạt">
+            <h3>Gửi duyệt {pendingBulkSubmit.length} câu hỏi đã chọn?</h3>
+            <p>Các câu hỏi được gửi sẽ vào hàng kiểm duyệt và được AI đánh giá.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" disabled={Boolean(bulkActionBusy)} onClick={() => setPendingBulkSubmit(null)}>Hủy</button>
+              <button type="button" className="btn btn--primary" disabled={Boolean(bulkActionBusy)} onClick={applyBulkSubmit}>{bulkActionBusy ? 'Đang gửi...' : 'Xác nhận gửi duyệt'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingRestore && (
+        <div className="modal-overlay">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-label="Xác nhận khôi phục phiên bản">
+            <h3>Khôi phục {pendingRestore.question.question_code} từ phiên bản {pendingRestore.version.version}?</h3>
+            <p>Thao tác tạo một phiên bản mới, giữ lịch sử cũ và yêu cầu đánh giá, kiểm duyệt lại.</p>
+            {restoreError && <p className="manage-error" role="alert">{restoreError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" disabled={Boolean(restoringVersionId)} onClick={() => setPendingRestore(null)}>Hủy</button>
+              <button type="button" className="btn btn--primary" disabled={Boolean(restoringVersionId)} onClick={applyRestoreVersion}>{restoringVersionId ? 'Đang khôi phục...' : 'Xác nhận khôi phục'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {archiveConfirmation && (
         <div className="modal-overlay">
           <div className="modal-card" role="dialog" aria-modal="true" aria-label="Xác nhận lưu trữ">
@@ -3138,8 +3188,8 @@ function ManagePage() {
               Chia sẻ {sharingDraft.kind === 'question' ? sharingDraft.item.question_code : sharingDraft.item.title}
             </h3>
             <div className="field-group">
-              <label className="field-label">Phạm vi</label>
-              <select
+              <label className="field-label" htmlFor="question-sharing-draft-shared-scope">Phạm vi</label>
+              <select id="question-sharing-draft-shared-scope"
                 className="field-select"
                 value={sharingDraft.sharedScope}
                 onChange={(event) => setSharingDraft((current) => ({
@@ -3153,8 +3203,8 @@ function ManagePage() {
             </div>
             {sharingDraft.kind === 'document' && user?.role === 'Admin' && (
               <div className="field-group">
-                <label className="field-label">Chủ sở hữu tài liệu</label>
-                <select
+                <label className="field-label" htmlFor="question-sharing-draft-owner-user-id">Chủ sở hữu tài liệu</label>
+                <select id="question-sharing-draft-owner-user-id"
                   className="field-select"
                   value={sharingDraft.ownerUserId}
                   onChange={(event) => setSharingDraft((current) => ({
@@ -3274,8 +3324,8 @@ function ManagePage() {
             <h3 className="profile-card-title">Sửa hàng loạt {selectedQuestions.length} câu hỏi</h3>
 
             <div className="field-group">
-              <label className="field-label">Mức nhận thức Bloom</label>
-              <select
+              <label className="field-label" htmlFor="question-bulk-edit-draft-bloom-level">Mức nhận thức Bloom</label>
+              <select id="question-bulk-edit-draft-bloom-level"
                 className="field-select"
                 value={bulkEditDraft.bloomLevel}
                 onChange={(e) => setBulkEditDraft((current) => ({ ...current, bloomLevel: e.target.value }))}
@@ -3290,8 +3340,8 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Độ khó ước lượng</label>
-              <select
+              <label className="field-label" htmlFor="question-bulk-edit-draft-difficulty">Độ khó ước lượng</label>
+              <select id="question-bulk-edit-draft-difficulty"
                 className="field-select"
                 value={bulkEditDraft.difficulty}
                 onChange={(e) => setBulkEditDraft((current) => ({ ...current, difficulty: e.target.value }))}
@@ -3363,6 +3413,7 @@ function ManagePage() {
 	        <div className="modal-overlay" onClick={closeEdit}>
 	          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
 	            <h3 className="profile-card-title">Chỉnh sửa câu hỏi {editing.question_code}</h3>
+            {editQuestionError && <p className="manage-error" role="alert">{editQuestionError}</p>}
 	            {editing.review_status === 'NEEDS_REVISION' && (
 	              <div className="revision-feedback-panel revision-feedback-panel--modal">
 	                <div className="revision-feedback-head">
@@ -3392,8 +3443,8 @@ function ManagePage() {
 	            )}
 
             <div className="field-group">
-              <label className="field-label">Nội dung câu hỏi</label>
-              <textarea
+              <label className="field-label" htmlFor="question-edit-content">Nội dung câu hỏi</label>
+              <textarea id="question-edit-content"
                 className="field-input"
                 rows={3}
                 value={editContent}
@@ -3409,8 +3460,8 @@ function ManagePage() {
                     options={editRawOptions || entriesToOptions(optionEntriesForQuestion({ questionType: questionAssessmentType(editing), rawOptions: null }))}
                     onOptionChange={updateEditOption}
                   />
-                  <label className="field-label">Đáp án đúng</label>
-                  <input className="field-input" value={editCorrectAnswer} onChange={(event) => setEditCorrectAnswer(event.target.value)} />
+                  <label className="field-label" htmlFor="question-edit-correct-answer">Đáp án đúng</label>
+                  <input id="question-edit-correct-answer" className="field-input" value={editCorrectAnswer} onChange={(event) => setEditCorrectAnswer(event.target.value)} />
                 </>
               ) : (
                 <>
@@ -3448,8 +3499,8 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Giải thích</label>
-              <textarea
+              <label className="field-label" htmlFor="question-edit-explanation">Giải thích</label>
+              <textarea id="question-edit-explanation"
                 className="field-input"
                 rows={2}
                 value={editExplanation}
@@ -3458,8 +3509,8 @@ function ManagePage() {
             </div>
 
 	            <div className="field-group">
-	              <label className="field-label">Ghi chú thay đổi</label>
-	              <input
+	              <label className="field-label" htmlFor="question-edit-change-note">Ghi chú thay đổi</label>
+	              <input id="question-edit-change-note"
 	                className="field-input"
 	                placeholder={editing.review_status === 'NEEDS_REVISION' ? 'Chỉnh sửa theo phản hồi kiểm duyệt' : 'Cập nhật câu hỏi'}
 	                value={editChangeNote}
@@ -3554,10 +3605,11 @@ function ManagePage() {
         <div className="modal-overlay" onClick={closeCreateQuestion}>
           <form className="modal-card" role="dialog" aria-modal="true" aria-label="Thêm câu hỏi thủ công" onClick={(e) => e.stopPropagation()} onSubmit={handleCreateQuestion}>
             <h3 className="profile-card-title">Thêm câu hỏi thủ công</h3>
+            {newQuestionError && <p className="manage-error" role="alert">{newQuestionError}</p>}
 
             <div className="field-group">
-              <label className="field-label">Loại câu hỏi</label>
-              <select
+              <label className="field-label" htmlFor="question-new-question-type">Loại câu hỏi</label>
+              <select id="question-new-question-type"
                 className="field-select"
                 aria-label="Loại câu hỏi"
                 value={newQuestionType}
@@ -3594,8 +3646,8 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Nội dung câu hỏi</label>
-              <textarea
+              <label className="field-label" htmlFor="question-new-content">Nội dung câu hỏi</label>
+              <textarea id="question-new-content"
                 className="field-input"
                 rows={3}
                 value={newContent}
@@ -3614,8 +3666,8 @@ function ManagePage() {
                       setNewRawOptions(entriesToOptions(entries.map((entry) => entry.key === key ? { ...entry, value } : entry)));
                     }}
                   />
-                  <label className="field-label">Đáp án đúng</label>
-                  <input className="field-input" value={newCorrectAnswer} onChange={(event) => setNewCorrectAnswer(event.target.value)} />
+                  <label className="field-label" htmlFor="question-new-correct-answer">Đáp án đúng</label>
+                  <input id="question-new-correct-answer" className="field-input" value={newCorrectAnswer} onChange={(event) => setNewCorrectAnswer(event.target.value)} />
                 </>
               ) : (
                 <>
@@ -3645,8 +3697,8 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Môn học</label>
-              <select
+              <label className="field-label" htmlFor="question-new-subject-id">Môn học</label>
+              <select id="question-new-subject-id"
                 className="field-select"
                 value={newSubjectId}
                 onChange={(e) => {
@@ -3691,8 +3743,8 @@ function ManagePage() {
 
             {canManageDocuments && (
               <div className="field-group">
-                <label className="field-label">Tài liệu nguồn (tuỳ chọn)</label>
-                <select
+                <label className="field-label" htmlFor="question-new-document-id">Tài liệu nguồn (tuỳ chọn)</label>
+                <select id="question-new-document-id"
                   className="field-select"
                   value={newDocumentId}
                   onChange={(e) => {
@@ -3707,8 +3759,8 @@ function ManagePage() {
                 </select>
                 {newDocumentId && (
                   <>
-                    <label className="field-label">Đoạn minh chứng nguồn</label>
-                    <textarea
+                    <label className="field-label" htmlFor="question-new-source-context">Đoạn minh chứng nguồn</label>
+                    <textarea id="question-new-source-context"
                       className="field-input"
                       rows={4}
                       value={newSourceContext}
@@ -3723,8 +3775,8 @@ function ManagePage() {
             )}
 
             <div className="field-group">
-              <label className="field-label">Giải thích</label>
-              <textarea
+              <label className="field-label" htmlFor="question-new-explanation">Giải thích</label>
+              <textarea id="question-new-explanation"
                 className="field-input"
                 rows={2}
                 value={newExplanation}
@@ -3750,8 +3802,8 @@ function ManagePage() {
             <h3 className="profile-card-title">Sửa tài liệu</h3>
 
             <div className="field-group">
-              <label className="field-label">Tên tài liệu</label>
-              <input
+              <label className="field-label" htmlFor="question-edit-doc-title">Tên tài liệu</label>
+              <input id="question-edit-doc-title"
                 className="field-input"
                 value={editDocTitle}
                 onChange={(e) => setEditDocTitle(e.target.value)}
@@ -3759,8 +3811,8 @@ function ManagePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Môn học</label>
-              <select
+              <label className="field-label" htmlFor="question-edit-doc-subject-id">Môn học</label>
+              <select id="question-edit-doc-subject-id"
                 className="field-select"
                 value={editDocSubjectId}
                 onChange={(e) => setEditDocSubjectId(e.target.value)}

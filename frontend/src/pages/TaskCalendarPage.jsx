@@ -7,6 +7,7 @@ import {
   updateCalendarTask,
 } from '../api/users';
 import { AuthContext } from '../context/AuthContext';
+import { calendarDateTimeInput } from '../utils/calendarTime';
 import '../css/TaskCalendarPage.css';
 
 const PRIORITY_LABEL = { low: 'Thấp', medium: 'Trung bình', high: 'Cao' };
@@ -62,7 +63,7 @@ function TaskModal({ initial, onClose, onSave, onDelete }) {
     title: initial?.title || '',
     description: initial?.description || '',
     priority: initial?.priority || 'medium',
-    due_date: initial?.due_date ? new Date(initial.due_date).toISOString().slice(0, 16) : '',
+    due_date: calendarDateTimeInput(initial?.due_date),
     status: initial?.status === 'done' ? 'done' : 'todo',
   }));
   const [error, setError] = useState(null);
@@ -103,18 +104,19 @@ function TaskModal({ initial, onClose, onSave, onDelete }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
+      <form className="modal-card" role="dialog" aria-modal="true" aria-label={isEdit ? 'Sửa việc cần làm' : 'Tạo việc mới'} onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
         <h3 className="profile-card-title">{isEdit ? 'Sửa việc cần làm' : 'Tạo việc mới'}</h3>
-        {error && <div className="profile-banner profile-banner--error">{error}</div>}
+        {error && <div className="profile-banner profile-banner--error" role="alert">{error}</div>}
 
         <div className="field-group">
-          <label className="field-label">Tiêu đề</label>
-          <input className="field-input" value={form.title} onChange={handleChange('title')} disabled={isSaving} />
+          <label className="field-label" htmlFor="calendar-task-title">Tiêu đề</label>
+          <input id="calendar-task-title" className="field-input" value={form.title} onChange={handleChange('title')} disabled={isSaving} />
         </div>
 
         <div className="field-group">
-          <label className="field-label">Mô tả ngắn</label>
+          <label className="field-label" htmlFor="calendar-task-description">Mô tả ngắn</label>
           <textarea
+            id="calendar-task-description"
             className="field-input"
             rows={3}
             value={form.description}
@@ -125,16 +127,17 @@ function TaskModal({ initial, onClose, onSave, onDelete }) {
 
         <div className="field-row-2">
           <div className="field-group">
-            <label className="field-label">Mức ưu tiên</label>
-            <select className="field-select" value={form.priority} onChange={handleChange('priority')} disabled={isSaving}>
+            <label className="field-label" htmlFor="calendar-task-priority">Mức ưu tiên</label>
+            <select id="calendar-task-priority" className="field-select" value={form.priority} onChange={handleChange('priority')} disabled={isSaving}>
               <option value="low">Thấp</option>
               <option value="medium">Trung bình</option>
               <option value="high">Cao</option>
             </select>
           </div>
           <div className="field-group">
-            <label className="field-label">Hạn hoàn thành</label>
+            <label className="field-label" htmlFor="calendar-task-deadline">Hạn hoàn thành</label>
             <input
+              id="calendar-task-deadline"
               className="field-input"
               type="datetime-local"
               value={form.due_date}
@@ -146,8 +149,8 @@ function TaskModal({ initial, onClose, onSave, onDelete }) {
 
         {isEdit && (
           <div className="field-group">
-            <label className="field-label">Trạng thái</label>
-            <select className="field-select" value={form.status} onChange={handleChange('status')} disabled={isSaving}>
+            <label className="field-label" htmlFor="calendar-task-status">Trạng thái</label>
+            <select id="calendar-task-status" className="field-select" value={form.status} onChange={handleChange('status')} disabled={isSaving}>
               <option value="todo">Cần làm</option>
               <option value="done">Đã xong</option>
             </select>
@@ -187,9 +190,24 @@ function TaskModal({ initial, onClose, onSave, onDelete }) {
   );
 }
 
+function taskClickProps(item, onClick) {
+  return {
+    role: 'button',
+    tabIndex: 0,
+    'aria-label': item.title,
+    onClick: () => onClick(item),
+    onKeyDown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onClick(item);
+      }
+    },
+  };
+}
+
 function EventRow({ item, onClick }) {
   return (
-    <div className={`calendar-item calendar-item--${item.status}`} onClick={() => onClick(item)}>
+    <div className={`calendar-item calendar-item--${item.status}`} {...taskClickProps(item, onClick)}>
       <div className="calendar-item-main">
         <div className="calendar-item-meta-row">
           <span className={`status-badge status--${item.status}`}>{STATUS_LABEL[item.status]}</span>
@@ -366,13 +384,13 @@ function TaskCalendarPage() {
               <div className="list-card-header">
                 <h3>Danh sách việc</h3>
                 <div className="list-toolbar">
-                  <select className="field-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                  <select aria-label="Lọc trạng thái công việc" className="field-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                     <option value="all">Tất cả trạng thái</option>
                     <option value="todo">Cần làm</option>
                     <option value="overdue">Quá hạn</option>
                     <option value="done">Đã xong</option>
                   </select>
-                  <select className="field-select" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+                  <select aria-label="Lọc mức ưu tiên công việc" className="field-select" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
                     <option value="all">Tất cả ưu tiên</option>
                     <option value="high">Cao</option>
                     <option value="medium">Trung bình</option>
@@ -405,7 +423,7 @@ function TaskCalendarPage() {
                       <div key={day.toISOString()} className="week-day">
                         <div className="week-day-label">{day.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}</div>
                         {itemsByDay(day).map((item) => (
-                          <div key={item.id} className={`week-day-event week-day-event--${item.status}`} onClick={() => handleEventClick(item)}>
+                          <div key={item.id} className={`week-day-event week-day-event--${item.status}`} {...taskClickProps(item, handleEventClick)}>
                             {item.title}
                           </div>
                         ))}
@@ -430,7 +448,7 @@ function TaskCalendarPage() {
                         <div key={day.toISOString()} className={`month-cell ${inMonth ? '' : 'month-cell--muted'}`}>
                           <div className="month-cell-date">{day.getDate()}</div>
                           {dayItems.slice(0, 3).map((item) => (
-                            <div key={item.id} className={`month-cell-event month-cell-event--${item.status}`} onClick={() => handleEventClick(item)}>
+                            <div key={item.id} className={`month-cell-event month-cell-event--${item.status}`} {...taskClickProps(item, handleEventClick)}>
                               {item.title}
                             </div>
                           ))}
@@ -454,7 +472,7 @@ function TaskCalendarPage() {
                 <h3>Sắp đến hạn</h3>
                 {upcoming.length === 0 && <p className="side-note">Không có việc nào sắp đến hạn.</p>}
                 {upcoming.map((item) => (
-                  <div key={item.id} className="side-mini-item" onClick={() => handleEventClick(item)}>
+                  <div key={item.id} className="side-mini-item" {...taskClickProps(item, handleEventClick)}>
                     <span>{item.title}</span>
                     <span className="side-mini-date">{formatDate(item.due_date)}</span>
                   </div>
@@ -465,7 +483,7 @@ function TaskCalendarPage() {
                 <h3>Quá hạn</h3>
                 {overdueList.length === 0 && <p className="side-note">Không có việc quá hạn.</p>}
                 {overdueList.map((item) => (
-                  <div key={item.id} className="side-mini-item side-mini-item--overdue" onClick={() => handleEventClick(item)}>
+                  <div key={item.id} className="side-mini-item side-mini-item--overdue" {...taskClickProps(item, handleEventClick)}>
                     <span>{item.title}</span>
                     <span className="side-mini-date">{formatDate(item.due_date || item.date)}</span>
                   </div>

@@ -1,5 +1,11 @@
 const VALID_SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH']);
 
+export function currentVersionEvaluation(evaluations, question) {
+  const versionId = question?.current_version_id;
+  if (!versionId) return undefined;
+  return (evaluations || []).find((item) => item.question_version_id === versionId);
+}
+
 function numericScore(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }

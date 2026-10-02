@@ -8,6 +8,7 @@ from core.dependencies import CurrentUser, has_permission
 from modules.documents.repository import (
     ACTIVE_DOCUMENT_JOB_STATUSES,
     DocumentRepository,
+    document_pipeline_summary,
     RETRYABLE_DOCUMENT_JOB_STATUSES,
     RETRYABLE_DOCUMENT_JOB_TYPES,
     object_id,
@@ -304,7 +305,7 @@ class DocumentService:
         if not record:
             raise LookupError("Không tìm thấy tài liệu")
         self._ensure_manage_access(record, current_user)
-        summary = record.get("pipeline_summary") or {}
+        summary = document_pipeline_summary(record)
         current_processing = record.get("current_processing") or {}
         if not current_processing.get("chunk_set_id") or summary.get("chunk_status") != "COMPLETED":
             raise ValueError("Tài liệu cần chunk thành công trước khi re-index")
@@ -359,7 +360,7 @@ class DocumentService:
 
     @staticmethod
     def _ensure_ocr_editable(document: dict) -> None:
-        summary = document.get("pipeline_summary") or {}
+        summary = document_pipeline_summary(document)
         blocking_statuses = {"QUEUED", "PROCESSING", "COMPLETED"}
         if summary.get("chunk_status") in blocking_statuses or summary.get("index_status") in blocking_statuses:
             raise ValueError("Chỉ sửa OCR trước khi chunk/index hoặc sau khi chunk/index lỗi/hủy")

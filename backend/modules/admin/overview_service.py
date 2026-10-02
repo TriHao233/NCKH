@@ -14,6 +14,7 @@ from modules.admin.moodle_service import MoodleTargetService
 from modules.catalog.postgres_subject_repository import subject_records
 from modules.users.store import users_by_ids
 from modules.documents.store import get_document_repository
+from modules.documents.repository import document_pipeline_summary
 
 
 def utc_now() -> datetime:
@@ -199,7 +200,7 @@ class AdminOverviewService:
                 "owner": {"id": owner_id, "display_name": owner.get("display_name"), "email": owner.get("email")},
                 "subjects": [{"id": item, "name": subjects.get(str(item), {}).get("subject_name"),
                               "code": subjects.get(str(item), {}).get("subject_code")} for item in item_subjects],
-                "pipeline_summary": row.get("pipeline_summary") or {},
+                "pipeline_summary": document_pipeline_summary(row),
                 "error_message": error.get("message") or error.get("detail"),
                 "created_at": row.get("created_at"), "updated_at": row.get("updated_at"),
             })

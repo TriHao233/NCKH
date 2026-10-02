@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   answerGuardrailInsights,
+  currentVersionEvaluation,
   evaluationInsights,
   metadataGuardrailInsights,
   mergeAiSuggestionsIntoDraft,
@@ -13,6 +14,15 @@ const components = [
   { key: 'answer_relevancy', label: 'Đáp án phù hợp' },
   { key: 'bloom_alignment', label: 'Đúng Bloom' },
 ];
+
+test('current evaluation excludes previous question versions and missing version IDs', () => {
+  const old = { question_version_id: 'v1', scores: { overall: 0.95 } };
+  const current = { question_version_id: 'v2', scores: { overall: 0.3 } };
+  assert.equal(currentVersionEvaluation([old, current], { current_version_id: 'v2' }), current);
+  assert.equal(currentVersionEvaluation([old], { current_version_id: 'v2' }), undefined);
+  assert.equal(currentVersionEvaluation([{}], {}), undefined);
+  assert.equal(currentVersionEvaluation([], { current_version_id: 'v2' }), undefined);
+});
 
 test('evaluation insights identify weak and suspiciously uniform scores', () => {
   const weak = evaluationInsights({

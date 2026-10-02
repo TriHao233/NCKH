@@ -344,6 +344,11 @@
   background: #f0f8ff;
 }
 
+.review-row:focus-visible {
+  outline: 3px solid #0c78d4;
+  outline-offset: 3px;
+}
+
 .review-row__meta {
   display: flex;
   flex-wrap: wrap;

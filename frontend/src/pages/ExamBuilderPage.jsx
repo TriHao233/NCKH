@@ -21,6 +21,7 @@ import { listSubjects } from '../api/catalog';
 import StructuredQuestion, { isStructuredQuestionType } from '../components/StructuredQuestion';
 import { BLOOM_LEVELS, DIFFICULTIES, questionTypeLabel } from '../constants/generationEnums';
 import { EXAM_BLOOM_LEVELS, examBloomLevel, examMatrixError, normalizeExamMatrix } from '../utils/examMatrix';
+import { suggestVariantCodes } from '../utils/examVariantCodes';
 import '../css/ExamBuilderPage.css';
 
 function refId(value) {
@@ -334,12 +335,16 @@ function InfoSection({ exam, onSaved, readOnly }) {
 
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   const setHeader = (key, value) => setForm((f) => ({ ...f, header: { ...f.header, [key]: value } }));
+  const [saveMessage, setSaveMessage] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   const handleSave = async (e) => {
     e.preventDefault();
     if (readOnly || saving) return;
+    setSaveMessage('');
+    setSaveError('');
     if (!form.name.trim() || !form.exam_title.trim()) {
-      alert('Vui lòng nhập tên đề thi và tên kỳ thi.');
+      setSaveError('Vui lòng nhập tên đề thi và tên kỳ thi.');
       return;
     }
     setSaving(true);
@@ -351,9 +356,9 @@ function InfoSection({ exam, onSaved, readOnly }) {
         header: { ...form.header, duration_minutes: Number(form.header.duration_minutes) },
       });
       onSaved(updated);
-      alert('Đã lưu thông tin đề thi.');
+      setSaveMessage('Đã lưu thông tin đề thi.');
     } catch (err) {
-      alert('Lưu thất bại: ' + err.message);
+      setSaveError('Lưu thất bại: ' + err.message);
     } finally {
       setSaving(false);
     }
@@ -361,21 +366,23 @@ function InfoSection({ exam, onSaved, readOnly }) {
 
   return (
     <form onSubmit={handleSave} className="section-form">
+      {saveError && <p className="exam-error" role="alert">{saveError}</p>}
+      {saveMessage && <p role="status">{saveMessage}</p>}
       <div className="section-block">
         <h3 className="step-title">1. Thông tin cơ bản</h3>
         <p className="step-desc">Nhập tên đề thi, kỳ thi và số câu dự kiến.</p>
         <div className="field-grid field-grid--2">
           <div className="field-group">
-            <label className="field-label">Tên đề thi</label>
-            <input required maxLength={300} className="field-input" value={form.name} onChange={(e) => setField('name', e.target.value)} disabled={readOnly || saving} />
+            <label className="field-label" htmlFor="exam-builder-field-1">Tên đề thi</label>
+            <input id="exam-builder-field-1" required maxLength={300} className="field-input" value={form.name} onChange={(e) => setField('name', e.target.value)} disabled={readOnly || saving} />
           </div>
           <div className="field-group">
-            <label className="field-label">Tên kỳ thi</label>
-            <input required maxLength={300} className="field-input" value={form.exam_title} onChange={(e) => setField('exam_title', e.target.value)} disabled={readOnly || saving} />
+            <label className="field-label" htmlFor="exam-builder-field-2">Tên kỳ thi</label>
+            <input id="exam-builder-field-2" required maxLength={300} className="field-input" value={form.exam_title} onChange={(e) => setField('exam_title', e.target.value)} disabled={readOnly || saving} />
           </div>
           <div className="field-group">
-            <label className="field-label">Số lượng câu hỏi</label>
-            <input required type="number" min={1} max={200} step={1} className="field-input" value={form.question_count} onChange={(e) => setField('question_count', e.target.value)} disabled={readOnly || saving} />
+            <label className="field-label" htmlFor="exam-builder-field-3">Số lượng câu hỏi</label>
+            <input id="exam-builder-field-3" required type="number" min={1} max={200} step={1} className="field-input" value={form.question_count} onChange={(e) => setField('question_count', e.target.value)} disabled={readOnly || saving} />
           </div>
         </div>
       </div>
@@ -385,36 +392,36 @@ function InfoSection({ exam, onSaved, readOnly }) {
         <p className="step-desc">Thông tin hiển thị trên đầu đề thi khi in giấy.</p>
         <div className="field-grid field-grid--2">
           <div className="field-group">
-            <label className="field-label">Trường / Đại học</label>
-            <input className="field-input" value={form.header.school_name || ''} onChange={(e) => setHeader('school_name', e.target.value)} disabled={readOnly} />
+            <label className="field-label" htmlFor="exam-builder-field-4">Trường / Đại học</label>
+            <input id="exam-builder-field-4" className="field-input" value={form.header.school_name || ''} onChange={(e) => setHeader('school_name', e.target.value)} disabled={readOnly} />
           </div>
           <div className="field-group">
-            <label className="field-label">Khoa / Bộ môn</label>
-            <input className="field-input" value={form.header.faculty_name || ''} onChange={(e) => setHeader('faculty_name', e.target.value)} disabled={readOnly} />
+            <label className="field-label" htmlFor="exam-builder-field-5">Khoa / Bộ môn</label>
+            <input id="exam-builder-field-5" className="field-input" value={form.header.faculty_name || ''} onChange={(e) => setHeader('faculty_name', e.target.value)} disabled={readOnly} />
           </div>
           <div className="field-group">
-            <label className="field-label">Tên kỳ thi (in trên đầu trang)</label>
-            <input className="field-input" value={form.header.exam_name || ''} onChange={(e) => setHeader('exam_name', e.target.value)} disabled={readOnly} />
+            <label className="field-label" htmlFor="exam-builder-field-6">Tên kỳ thi (in trên đầu trang)</label>
+            <input id="exam-builder-field-6" className="field-input" value={form.header.exam_name || ''} onChange={(e) => setHeader('exam_name', e.target.value)} disabled={readOnly} />
           </div>
           <div className="field-group">
-            <label className="field-label">Môn học / học phần</label>
-            <input className="field-input" value={form.header.subject_name || ''} onChange={(e) => setHeader('subject_name', e.target.value)} disabled={readOnly} />
+            <label className="field-label" htmlFor="exam-builder-field-7">Môn học / học phần</label>
+            <input id="exam-builder-field-7" className="field-input" value={form.header.subject_name || ''} onChange={(e) => setHeader('subject_name', e.target.value)} disabled={readOnly} />
           </div>
           <div className="field-group">
-            <label className="field-label">Thời gian làm bài (phút)</label>
-            <input required type="number" min={1} max={600} className="field-input" value={form.header.duration_minutes ?? 60} onChange={(e) => setHeader('duration_minutes', e.target.value)} disabled={readOnly || saving} />
+            <label className="field-label" htmlFor="exam-builder-field-8">Thời gian làm bài (phút)</label>
+            <input id="exam-builder-field-8" required type="number" min={1} max={600} className="field-input" value={form.header.duration_minutes ?? 60} onChange={(e) => setHeader('duration_minutes', e.target.value)} disabled={readOnly || saving} />
           </div>
           <div className="field-group">
-            <label className="field-label">Lớp</label>
-            <input className="field-input" value={form.header.class_name || ''} onChange={(e) => setHeader('class_name', e.target.value)} disabled={readOnly} placeholder="Tuỳ chọn" />
+            <label className="field-label" htmlFor="exam-builder-field-9">Lớp</label>
+            <input id="exam-builder-field-9" className="field-input" value={form.header.class_name || ''} onChange={(e) => setHeader('class_name', e.target.value)} disabled={readOnly} placeholder="Tuỳ chọn" />
           </div>
           <div className="field-group">
-            <label className="field-label">Phòng thi</label>
-            <input className="field-input" value={form.header.room || ''} onChange={(e) => setHeader('room', e.target.value)} disabled={readOnly} placeholder="Tuỳ chọn" />
+            <label className="field-label" htmlFor="exam-builder-field-10">Phòng thi</label>
+            <input id="exam-builder-field-10" className="field-input" value={form.header.room || ''} onChange={(e) => setHeader('room', e.target.value)} disabled={readOnly} placeholder="Tuỳ chọn" />
           </div>
           <div className="field-group">
-            <label className="field-label">Ngày thi</label>
-            <input className="field-input" value={form.header.exam_date || ''} onChange={(e) => setHeader('exam_date', e.target.value)} disabled={readOnly} placeholder="dd/mm/yyyy" />
+            <label className="field-label" htmlFor="exam-builder-field-11">Ngày thi</label>
+            <input id="exam-builder-field-11" className="field-input" value={form.header.exam_date || ''} onChange={(e) => setHeader('exam_date', e.target.value)} disabled={readOnly} placeholder="dd/mm/yyyy" />
           </div>
         </div>
       </div>
@@ -526,7 +533,7 @@ function MatrixBlock({ exam, chapters, onSaved, readOnly, onDirtyChange, onBusyC
             {cells.map((cell, index) => (
               <tr key={index}>
                 <td>
-                  <select className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly || saving || checking}>
+                  <select aria-label={`Chương nhóm ${index + 1}`} className="field-select" value={cell.chapter_id || ''} onChange={(e) => updateCell(index, { chapter_id: e.target.value })} disabled={readOnly || saving || checking}>
                     <option value="">Tất cả chương</option>
                     {chapters.map((chapter) => (
                       <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
@@ -536,18 +543,18 @@ function MatrixBlock({ exam, chapters, onSaved, readOnly, onDirtyChange, onBusyC
                   </select>
                 </td>
                 <td>
-                  <select className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly || saving || checking}>
+                  <select aria-label={`Mức nhận thức Bloom nhóm ${index + 1}`} className="field-select" value={cell.cognitive_level} onChange={(e) => updateCell(index, { cognitive_level: e.target.value })} disabled={readOnly || saving || checking}>
                     {COGNITIVE_LEVELS.map((lvl) => <option key={lvl.value} value={lvl.value}>{lvl.label}</option>)}
                   </select>
                 </td>
                 <td>
-                  <select className="field-select" value={cell.difficulty || ''} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly || saving || checking}>
+                  <select aria-label={`Độ khó nhóm ${index + 1}`} className="field-select" value={cell.difficulty || ''} onChange={(e) => updateCell(index, { difficulty: e.target.value })} disabled={readOnly || saving || checking}>
                     <option value="">Tất cả độ khó</option>
                     {DIFFICULTIES.map((difficulty) => <option key={difficulty.id} value={difficulty.id}>{difficulty.label}</option>)}
                   </select>
                 </td>
                 <td>
-                  <input type="number" min={1} max={200} step={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly || saving || checking} />
+                  <input aria-label={`Số câu nhóm ${index + 1}`} type="number" min={1} max={200} step={1} className="field-input matrix-count" value={cell.count} onChange={(e) => updateCell(index, { count: e.target.value })} disabled={readOnly || saving || checking} />
                 </td>
                 <td>
                   <button
@@ -765,10 +772,11 @@ function QuestionsBlock({ exam, chapters, onSaved, readOnly, matrixDirty, onBusy
             <input
               className="field-input"
               placeholder="Tìm nội dung câu hỏi..."
+              aria-label="Tìm câu hỏi đã duyệt"
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
             />
-            <select className="field-select" value={chapterFilter} onChange={(event) => setChapterFilter(event.target.value)}>
+            <select aria-label="Lọc chương câu hỏi" className="field-select" value={chapterFilter} onChange={(event) => setChapterFilter(event.target.value)}>
               <option value="">Tất cả chương</option>
               {chapters.map((chapter) => (
                 <option key={chapter._id || chapter.id} value={chapter._id || chapter.id}>
@@ -776,7 +784,7 @@ function QuestionsBlock({ exam, chapters, onSaved, readOnly, matrixDirty, onBusy
                 </option>
               ))}
             </select>
-            <select className="field-select" value={cognitiveFilter} onChange={(event) => setCognitiveFilter(event.target.value)}>
+            <select aria-label="Lọc mức nhận thức câu hỏi" className="field-select" value={cognitiveFilter} onChange={(event) => setCognitiveFilter(event.target.value)}>
               <option value="">Tất cả mức</option>
               {COGNITIVE_LEVELS.map((level) => (
                 <option key={level.value} value={level.value}>{level.label}</option>
@@ -900,27 +908,8 @@ function ExportSection({ exam, onSaved, onStatusChange }) {
 
   // Chỉnh lại số lượng mã đề cần tạo và các input mã khi remainingSlots thay đổi
   useEffect(() => {
-    const existingCodes = new Set(variants.map((v) => (v.exam_code || '').trim()));
     const safeCount = Math.min(Math.max(1, desiredCount), Math.max(1, remainingSlots || 1));
-    setCodeDrafts((prev) => {
-      const next = [];
-      let suggestIdx = 0;
-      for (let i = 0; i < safeCount; i += 1) {
-        if (prev[i] && !existingCodes.has(prev[i].trim())) {
-          next.push(prev[i]);
-        } else {
-          // gợi ý mã đề mặc định chưa trùng
-          let candidate = '';
-          while (suggestIdx < DEFAULT_VARIANT_CODES.length && !candidate) {
-            const c = DEFAULT_VARIANT_CODES[suggestIdx];
-            suggestIdx += 1;
-            if (!existingCodes.has(c)) candidate = c;
-          }
-          next.push(candidate);
-        }
-      }
-      return next;
-    });
+    setCodeDrafts((prev) => suggestVariantCodes(prev, variants.map((v) => v.exam_code), DEFAULT_VARIANT_CODES, safeCount));
   }, [desiredCount, remainingSlots, variants]);
 
   useEffect(() => {
@@ -1082,6 +1071,7 @@ function ExportSection({ exam, onSaved, onStatusChange }) {
                 <div className="variant-code-row" key={index}>
                   <span className="variant-code-label">Mã đề #{index + 1}</span>
                   <input
+                    aria-label={`Mã đề số ${index + 1}`}
                     className="field-input"
                     placeholder={DEFAULT_VARIANT_CODES[index] || 'VD: 132'}
                     value={code}
@@ -1117,8 +1107,8 @@ function ExportSection({ exam, onSaved, onStatusChange }) {
         ) : (
           <>
             <div className="field-group">
-              <label className="field-label">Chọn mã đề để xem trước và xuất</label>
-              <select className="field-select" value={previewId} onChange={(e) => setPreviewId(e.target.value)}>
+              <label className="field-label" htmlFor="exam-builder-field-12">Chọn mã đề để xem trước và xuất</label>
+              <select id="exam-builder-field-12" className="field-select" value={previewId} onChange={(e) => setPreviewId(e.target.value)}>
                 {variants.map((v) => <option key={v.id} value={v.id}>Mã đề {v.exam_code}</option>)}
               </select>
             </div>

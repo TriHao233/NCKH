@@ -151,7 +151,7 @@ def ensure_document_pipeline(db, teacher: dict, subject: dict, now: datetime) ->
         "uploaded_by_user_id": teacher["_id"],
         "title": "Demo Reviewer Flow - Cấu trúc dữ liệu",
         "original_filename": DEMO_DOCUMENT_FILENAME,
-        "status": "READY",
+        "status": "UPLOADED",
         "current_version": 1,
         "page_count": 1,
         "artifacts": [
@@ -170,6 +170,9 @@ def ensure_document_pipeline(db, teacher: dict, subject: dict, now: datetime) ->
             "chunk_status": "completed",
         },
         "pipeline_summary": {
+            "ocr_status": "COMPLETED",
+            "chunk_status": "COMPLETED",
+            "index_status": "NOT_STARTED",
             "ocr_pages": 1,
             "chunks": 1,
             "vectorized_chunks": 0,

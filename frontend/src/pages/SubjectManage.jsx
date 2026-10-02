@@ -81,6 +81,8 @@ function SubjectManage() {
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [pendingDeactivate, setPendingDeactivate] = useState(null);
+  const [deactivateError, setDeactivateError] = useState('');
 
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
@@ -194,12 +196,14 @@ function SubjectManage() {
   const activeClos = sortActiveChildren(selectedSubject?.learning_outcomes || []);
 
   const openCreateSubject = () => {
+    setError('');
     setEditingSubject(null);
     setSubjectForm(EMPTY_SUBJECT);
     setSubjectModalOpen(true);
   };
 
   const openEditSubject = (subject) => {
+    setError('');
     setEditingSubject(subject);
     setSubjectForm({
       subject_code: subject.subject_code || '',
@@ -245,24 +249,24 @@ function SubjectManage() {
     }
   };
 
-  const handleDeactivate = async (subject) => {
-    const used = usageTotal(subject.usage_counts);
-    const warning = used > 0
-      ? `\n\nHọc phần này đang gắn với ${used} tài liệu/câu hỏi/đề thi. Dữ liệu đó vẫn được giữ nguyên.`
-      : '';
-    const confirmed = window.confirm(
-      `Ngừng sử dụng học phần "${subject.subject_name}"?`
-      + `\nHọc phần sẽ bị ẩn khỏi các danh sách chọn nhưng có thể bật lại bất cứ lúc nào.${warning}`,
-    );
-    if (!confirmed) return;
+  const handleDeactivate = (subject) => {
+    setDeactivateError('');
+    setPendingDeactivate(subject);
+  };
+
+  const confirmDeactivate = async (event) => {
+    event.preventDefault();
+    const subject = pendingDeactivate;
+    if (!subject || busyId) return;
     setBusyId(refId(subject));
-    setError('');
+    setDeactivateError('');
     try {
       await deactivateSubject(refId(subject));
       setNotice('Đã ngừng sử dụng học phần.');
+      setPendingDeactivate(null);
       await fetchSubjects();
     } catch (err) {
-      setError(err.message || 'Không thể ngừng sử dụng học phần');
+      setDeactivateError(err.message || 'Không thể ngừng sử dụng học phần');
     } finally {
       setBusyId(null);
     }
@@ -285,6 +289,7 @@ function SubjectManage() {
   };
 
   const openChildModal = (subject, mode, item = null) => {
+    setError('');
     if (mode === 'chapter') {
       setChapterForm(item ? {
         chapter_code: item.chapter_code || '',
@@ -409,7 +414,7 @@ function SubjectManage() {
             <div><b>{stats.questions}</b><span>Câu hỏi đã gắn</span></div>
           </div>
 
-          {error && <p className="subject-alert subject-alert--error">{error}</p>}
+          {error && !subjectModalOpen && !childModal && <p className="subject-alert subject-alert--error" role="alert">{error}</p>}
           {notice && <p className="subject-alert subject-alert--ok">{notice}</p>}
 
           <div className="subject-shell">
@@ -679,14 +684,33 @@ function SubjectManage() {
         </div>
       </section>
 
+      {pendingDeactivate && (
+        <div className="modal-overlay">
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label="Ngừng sử dụng học phần" onSubmit={confirmDeactivate}>
+            <h3 className="modal-title">Ngừng sử dụng học phần "{pendingDeactivate.subject_name}"?</h3>
+            <p>Học phần sẽ bị ẩn khỏi các danh sách chọn nhưng có thể bật lại bất cứ lúc nào.</p>
+            {usageTotal(pendingDeactivate.usage_counts) > 0 && (
+              <p>Học phần này đang gắn với {usageTotal(pendingDeactivate.usage_counts)} tài liệu/câu hỏi/đề thi. Dữ liệu đó vẫn được giữ nguyên.</p>
+            )}
+            {deactivateError && <p className="subject-alert subject-alert--error" role="alert">{deactivateError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn--outline" onClick={() => setPendingDeactivate(null)} disabled={Boolean(busyId)}>Hủy</button>
+              <button type="submit" className="btn btn--danger" disabled={Boolean(busyId)}>{busyId ? 'Đang lưu...' : 'Xác nhận ngừng dùng'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {subjectModalOpen && (
         <div className="modal-overlay" onClick={closeSubjectModal}>
-          <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={handleSubmitSubject}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label={editingSubject ? 'Sửa học phần' : 'Thêm học phần mới'} onClick={(event) => event.stopPropagation()} onSubmit={handleSubmitSubject}>
             <h3 className="modal-title">{editingSubject ? 'Sửa học phần' : 'Thêm học phần mới'}</h3>
+            {error && <p className="subject-alert subject-alert--error" role="alert">{error}</p>}
 
             <div className="field-group">
-              <label className="field-label">Mã học phần</label>
+              <label className="field-label" htmlFor="subject-code">Mã học phần</label>
               <input
+                id="subject-code"
                 className="field-input"
                 value={subjectForm.subject_code}
                 maxLength={40}
@@ -696,8 +720,9 @@ function SubjectManage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Tên học phần</label>
+              <label className="field-label" htmlFor="subject-name">Tên học phần</label>
               <input
+                id="subject-name"
                 className="field-input"
                 value={subjectForm.subject_name}
                 maxLength={200}
@@ -707,8 +732,9 @@ function SubjectManage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Mô tả</label>
+              <label className="field-label" htmlFor="subject-description">Mô tả</label>
               <textarea
+                id="subject-description"
                 className="field-input field-textarea"
                 rows={3}
                 value={subjectForm.description}
@@ -738,7 +764,8 @@ function SubjectManage() {
 
       {childModal && (
         <div className="modal-overlay" onClick={closeChildModal}>
-          <form className="modal-card" onClick={(event) => event.stopPropagation()} onSubmit={handleSubmitChild}>
+          <form className="modal-card" role="dialog" aria-modal="true" aria-label={childModal.mode === 'chapter' ? 'Chương học phần' : 'Chuẩn đầu ra học phần'} onClick={(event) => event.stopPropagation()} onSubmit={handleSubmitChild}>
+            {error && <p className="subject-alert subject-alert--error" role="alert">{error}</p>}
             <h3 className="modal-title">
               {childModal.mode === 'chapter'
                 ? (childModal.itemId ? 'Sửa chương' : 'Thêm chương')
@@ -748,8 +775,9 @@ function SubjectManage() {
             {childModal.mode === 'chapter' ? (
               <>
                 <div className="field-group">
-                  <label className="field-label">Mã chương</label>
+                  <label className="field-label" htmlFor="chapter-code">Mã chương</label>
                   <input
+                    id="chapter-code"
                     className="field-input"
                     value={chapterForm.chapter_code}
                     maxLength={40}
@@ -758,8 +786,9 @@ function SubjectManage() {
                   />
                 </div>
                 <div className="field-group">
-                  <label className="field-label">Tên chương</label>
+                  <label className="field-label" htmlFor="chapter-name">Tên chương</label>
                   <input
+                    id="chapter-name"
                     className="field-input"
                     value={chapterForm.chapter_name}
                     maxLength={200}
@@ -768,8 +797,9 @@ function SubjectManage() {
                   />
                 </div>
                 <div className="field-group">
-                  <label className="field-label">Thứ tự</label>
+                  <label className="field-label" htmlFor="chapter-order">Thứ tự</label>
                   <input
+                    id="chapter-order"
                     type="number"
                     min={1}
                     className="field-input"
@@ -789,8 +819,9 @@ function SubjectManage() {
             ) : (
               <>
                 <div className="field-group">
-                  <label className="field-label">Mã CLO</label>
+                  <label className="field-label" htmlFor="clo-code">Mã CLO</label>
                   <input
+                    id="clo-code"
                     className="field-input"
                     value={cloForm.clo_code}
                     maxLength={40}
@@ -799,8 +830,9 @@ function SubjectManage() {
                   />
                 </div>
                 <div className="field-group">
-                  <label className="field-label">Mô tả chuẩn đầu ra</label>
+                  <label className="field-label" htmlFor="clo-description">Mô tả chuẩn đầu ra</label>
                   <textarea
+                    id="clo-description"
                     className="field-input field-textarea"
                     rows={3}
                     maxLength={500}
@@ -810,8 +842,9 @@ function SubjectManage() {
                   />
                 </div>
                 <div className="field-group">
-                  <label className="field-label">Trọng số mục tiêu (0 - 1)</label>
+                  <label className="field-label" htmlFor="clo-weight">Trọng số mục tiêu (0 - 1)</label>
                   <input
+                    id="clo-weight"
                     type="number"
                     min={0}
                     max={1}

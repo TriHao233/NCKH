@@ -63,6 +63,20 @@ def compact_raw_extraction(value: dict | None) -> dict:
     return json_safe(compact)
 
 
+def document_pipeline_summary(document: dict) -> dict:
+    """Read legacy step statuses without treating READY as proof of indexing."""
+    summary = dict(document.get("pipeline_summary") or {})
+    current = document.get("current_processing") or {}
+    for step in ("ocr", "chunk", "index"):
+        key = f"{step}_status"
+        value = summary.get(key) or current.get(key)
+        if value:
+            summary[key] = str(value).upper()
+    if summary.get("demo_seed") and not summary.get("index_status"):
+        summary["index_status"] = "NOT_STARTED"
+    return summary
+
+
 def serialize_document(document: dict) -> dict:
     return json_safe(
         {
@@ -81,7 +95,7 @@ def serialize_document(document: dict) -> dict:
             "artifacts": document.get("artifacts") or [],
             "current_processing": document.get("current_processing") or {},
             "pending_processing": document.get("pending_processing") or {},
-            "pipeline_summary": document.get("pipeline_summary") or {},
+            "pipeline_summary": document_pipeline_summary(document),
             "latest_error": document.get("latest_error"),
             "created_at": document["created_at"],
             "updated_at": document["updated_at"],

@@ -9,6 +9,8 @@ import {
 import { cancelAdminJob } from '../api/adminJobs';
 import { listAvailableAiModels } from '../api/catalog';
 import { questionTypeLabel } from '../constants/generationEnums';
+import { currentVersionEvaluation } from '../utils/reviewAiSuggestions';
+import { questionTypeOf } from '../utils/questionBankView';
 import '../css/AdminAiReviewPage.css';
 
 const EVALUATION_STATUS_LABEL = {
@@ -266,7 +268,7 @@ function AdminAiReviewPage() {
     });
   }, [questions, searchTerm, statusFilter]);
 
-  const latestEvaluation = evaluations[0];
+  const latestEvaluation = currentVersionEvaluation(evaluations, selected);
   const qualitySummary = selected?.quality_summary || {};
   const hasCurrentEvaluationError = Boolean(qualitySummary.error);
   const latestScores = hasCurrentEvaluationError ? {} : (latestEvaluation?.scores || qualitySummary.scores || {});
@@ -462,6 +464,7 @@ function AdminAiReviewPage() {
           <div className="ai-review-filters">
             <input
               value={searchInput}
+              aria-label="Tìm câu hỏi cần thẩm định AI"
               onChange={(event) => setSearchInput(event.target.value)}
               placeholder="Tìm mã hoặc nội dung câu hỏi"
             />
@@ -485,7 +488,7 @@ function AdminAiReviewPage() {
                 >
                   <div>
                     <strong>{question.question_code}</strong>
-                    <span>{questionTypeLabel(question.question_type)} · Version {question.current_version}</span>
+                    <span>{questionTypeLabel(questionTypeOf(question))} · Version {question.current_version}</span>
                   </div>
                   <p>{question.content}</p>
                   <div className="ai-review-row__meta">
@@ -507,7 +510,7 @@ function AdminAiReviewPage() {
               <div className="ai-review-detail-head">
                 <div>
                   <span>{selected.question_code}</span>
-                  <h2>{questionTypeLabel(selected.question_type)}</h2>
+                  <h2>{questionTypeLabel(questionTypeOf(selected))}</h2>
                 </div>
                 <button type="button" className="btn btn--outline" onClick={() => navigate(`/quan-ly?questionId=${selected.id}`)}>
                   Mở bên Câu hỏi

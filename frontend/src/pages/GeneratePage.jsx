@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import QuestionContent from '../components/QuestionContent';
 import StructuredQuestion, { isStructuredQuestionType } from '../components/StructuredQuestion';
@@ -384,26 +384,51 @@ function GeneratePage() {
       : null,
   ].filter(Boolean);
 
+  const applyGenerationProgress = useCallback((status) => {
+    if (status.status === 'queued') setPhase('generate_queued');
+    if (status.status === 'processing') setPhase('generate_processing');
+    const progress = status.progress;
+    if (Array.isArray(progress?.data)) {
+      setDrafts(mapGeneratedQuestions(progress.data));
+      setDraftPage(0);
+    }
+    if (Array.isArray(progress?.summary)) setGenerationSummary(progress.summary);
+    const progressLabel = progress?.total ? ` (${progress.completed || 0}/${progress.total})` : '';
+    const acceptedLabel = Number.isFinite(progress?.generated_questions)
+      ? ` · đã có ${progress.generated_questions} câu hợp lệ` : '';
+    setStatusDetail(`Đang sinh câu hỏi${progressLabel}${acceptedLabel}`);
+  }, []);
+
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useEffect(() => {
-    let saved;
-    try {
-      saved = JSON.parse(sessionStorage.getItem('active-generation-job') || 'null');
-    } catch {
-      return;
-    }
-    if (!saved?.jobId) return;
+  const resumeGeneration = useCallback((saved) => {
+    abortRef.current?.abort();
+    setError('');
+    setStatusDetail('Đang tiếp tục tác vụ sinh câu hỏi...');
     const controller = new AbortController();
+    abortRef.current = controller;
     generationJobRef.current = saved.jobId;
     setActiveJobId(saved.jobId);
     setDocumentId(saved.documentId || null);
+    if (saved.documentId) {
+      setSourceMode('existing');
+      setSelectedDocumentId(saved.documentId);
+    }
+    if (Array.isArray(saved.planItems) && saved.planItems.length > 0) {
+      setPlanItems(saved.planItems.map((item) => createPlanItem(item)));
+    } else if (saved.requestedCount) {
+      setPlanItems([createPlanItem({ count: saved.requestedCount })]);
+    }
+    setTeacherInstruction(saved.instruction || '');
+    setTargetHeading(saved.targetHeading || '');
+    if (saved.modelCode) setSelectedModelCode(saved.modelCode);
     setChunkReady(true);
     setPhase('generate_processing');
     watchJob(getGenerateStatus, saved.jobId, {
       streamStatus: streamGenerateStatus,
       signal: controller.signal,
       timeoutMs: 20 * 60 * 1000,
+      onUpdate: applyGenerationProgress,
     }).then(async (terminal) => {
       const result = terminal.status === 'completed'
         ? await getGenerateStatus(saved.jobId, { signal: controller.signal })
@@ -435,8 +460,20 @@ function GeneratePage() {
       setPhase('failed');
       setError(err.message || 'Không tải được kết quả sinh câu hỏi');
     });
+    return controller;
+  }, [applyGenerationProgress]);
+
+  useEffect(() => {
+    let saved;
+    try {
+      saved = JSON.parse(sessionStorage.getItem('active-generation-job') || 'null');
+    } catch {
+      return undefined;
+    }
+    if (!saved?.jobId) return undefined;
+    const controller = resumeGeneration(saved);
     return () => controller.abort();
-  }, []);
+  }, [resumeGeneration]);
 
   useEffect(() => {
     setDraftPage((current) => Math.min(current, draftPageCount - 1));
@@ -914,6 +951,7 @@ function GeneratePage() {
               <input
                 className="field-input"
                 value={entry.value}
+                aria-label={`Nội dung lựa chọn ${entry.key}`}
                 disabled={disabled}
                 onChange={(e) => updateDraftOption(question, entry.key, e.target.value)}
               />
@@ -939,6 +977,7 @@ function GeneratePage() {
               <input
                 className="field-input"
                 value={entry.value}
+                aria-label={`Nội dung lựa chọn ${entry.key}`}
                 disabled={disabled}
                 onChange={(e) => updateDraftOption(question, entry.key, e.target.value)}
               />
@@ -957,6 +996,7 @@ function GeneratePage() {
               <input
                 className="field-input"
                 value={entry.value}
+                aria-label={`Nội dung lựa chọn ${entry.key}`}
                 disabled={disabled}
                 onChange={(e) => updateDraftOption(question, entry.key, e.target.value)}
               />
@@ -1095,6 +1135,12 @@ function GeneratePage() {
     generationJobRef.current = genJobId;
     sessionStorage.setItem('active-generation-job', JSON.stringify({
       jobId: genJobId, documentId: docId, requestedCount: totalQuestions,
+      planItems: planItems.map(({ questionTypeId, bloomId, difficulty, count, contentMode }) => ({
+        questionTypeId, bloomId, difficulty, count, contentMode,
+      })),
+      instruction: teacherInstruction,
+      targetHeading,
+      modelCode: selectedModelCode,
     }));
     setActiveJobId(genJobId);
 
@@ -1105,27 +1151,7 @@ function GeneratePage() {
       onStreamFallback: () => {
         setStatusDetail('Mất kết nối tiến độ trực tiếp, đang chuyển sang polling...');
       },
-      onUpdate: (status) => {
-        if (status.status === 'queued') setPhase('generate_queued');
-        if (status.status === 'processing') setPhase('generate_processing');
-        const progress = status.progress;
-        if (Array.isArray(progress?.data)) {
-          setDrafts(mapGeneratedQuestions(progress.data));
-          setDraftPage(0);
-        }
-        if (Array.isArray(progress?.summary)) {
-          setGenerationSummary(progress.summary);
-        }
-        const progressLabel = progress?.total
-          ? ` (${progress.completed || 0}/${progress.total})`
-          : '';
-        const acceptedLabel = Number.isFinite(progress?.generated_questions)
-          ? ` · đã có ${progress.generated_questions} câu hợp lệ`
-          : '';
-        setStatusDetail(
-          `Đang sinh câu hỏi${progressLabel}${acceptedLabel}`,
-        );
-      },
+      onUpdate: applyGenerationProgress,
     });
 
     // Read the persisted result once more after the terminal event. This also
@@ -1253,6 +1279,31 @@ function GeneratePage() {
   };
 
   const handleRetry = async () => {
+    const jobId = generationJobRef.current;
+    if (jobId) {
+      try {
+        const status = await getGenerateStatus(jobId);
+        if (['queued', 'processing', 'completed'].includes(status.status)) {
+          let saved;
+          try {
+            saved = JSON.parse(sessionStorage.getItem('active-generation-job') || 'null');
+          } catch {
+            saved = null;
+          }
+          resumeGeneration(saved?.jobId === jobId ? saved : {
+            jobId, documentId, requestedCount: totalQuestions,
+            planItems, instruction: teacherInstruction, targetHeading, modelCode: selectedModelCode,
+          });
+          if (documentsError || subjectsError || modelsError) {
+            await Promise.allSettled([fetchReusableDocuments(), fetchSubjects(), fetchAvailableModels()]);
+          }
+          return;
+        }
+      } catch (err) {
+        setError(err.message || 'Không kiểm tra được tác vụ đang chạy. Vui lòng thử lại.');
+        return;
+      }
+    }
     if (chunkReady && documentId) {
       await runPipeline({ fromGenerateOnly: true });
       return;
@@ -1462,6 +1513,7 @@ function GeneratePage() {
                   <div className="existing-doc-row">
                     <select
                       className="field-select existing-doc-select"
+                      aria-label="Tài liệu đã xử lý"
                       value={selectedDocumentId}
                       disabled={isBusy || documentsLoading}
                       onChange={(e) => handleSelectExistingDocument(e.target.value)}
@@ -1509,6 +1561,7 @@ function GeneratePage() {
                   <select
                     className="field-select"
                     value={selectedSubjectId}
+                    aria-label="Học phần"
                     disabled={isBusy || subjectsLoading}
                     onChange={(e) => setSelectedSubjectId(e.target.value)}
                   >
@@ -1776,8 +1829,9 @@ function GeneratePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Chương hoặc mục cần tập trung</label>
+              <label className="field-label" htmlFor="generation-target-heading">Chương hoặc mục cần tập trung</label>
               <input
+                id="generation-target-heading"
                 className="field-input"
                 value={targetHeading}
                 disabled={isBusy}
@@ -1788,8 +1842,9 @@ function GeneratePage() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Yêu cầu sinh câu hỏi</label>
+              <label className="field-label" htmlFor="generation-instruction">Yêu cầu sinh câu hỏi</label>
               <textarea
+                id="generation-instruction"
                 className="field-textarea"
                 rows="4"
                 maxLength="1200"
