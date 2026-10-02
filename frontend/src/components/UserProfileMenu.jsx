@@ -117,7 +117,14 @@ const UserProfileMenu = () => {
             </>
           )}
 
-          {/* Quản trị viên mở các mục này từ thanh điều hướng chính. */}
+          {user.role === 'Admin' && (
+            <Link to="/huong-dan" className="dropdown-item" onClick={() => setIsOpen(false)}>
+              <FontAwesomeIcon icon={faBook} className="dropdown-icon" />
+              Hướng dẫn
+            </Link>
+          )}
+
+          {/* Quản trị viên mở các mục còn lại từ thanh điều hướng chính. */}
           {user.role === 'Reviewer' && (
             <Link to="/lich-cong-viec" className="dropdown-item" onClick={() => setIsOpen(false)}>
               <FontAwesomeIcon icon={faCalendarCheck} className="dropdown-icon" />

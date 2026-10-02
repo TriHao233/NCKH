@@ -9,15 +9,22 @@ const Footer = () => {
   const { user } = useContext(AuthContext);
   const role = user?.role;
 
-  // Danh sách các liên kết điều hướng nội bộ
-  const footerLinks = [
+  // Danh sách các liên kết điều hướng nội bộ; quản trị viên có bộ liên kết riêng.
+  const footerLinks = (role === 'Admin' ? [
+    { path: '/tong-quan', label: 'Tổng quan' },
+    { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+    { path: '/quan-ly', label: 'Ngân hàng câu hỏi' },
+    { path: '/quan-ly-nguoi-dung', label: 'Tài khoản' },
+    { path: '/huong-dan', label: 'Hướng dẫn' },
+    { path: '/lien-he', label: 'Liên hệ' },
+  ] : [
     { path: '/gioi-thieu', label: 'Giới thiệu' },
     { path: '/trang-chu', label: 'Trang chủ' },
     { path: '/sinh-cau-hoi', label: 'Sinh câu hỏi' },
     { path: '/quan-ly', label: 'Quản lý' },
     { path: '/huong-dan', label: 'Hướng dẫn' },
     { path: '/lien-he', label: 'Liên hệ' },
-  ].filter((link) => !role ? canAccessPath(null, link.path) : canAccessPath(user, link.path));
+  ]).filter((link) => !role ? canAccessPath(null, link.path) : canAccessPath(user, link.path));
 
   return (
     <footer

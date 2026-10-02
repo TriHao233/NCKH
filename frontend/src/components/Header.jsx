@@ -275,7 +275,7 @@ const Header = () => {
     >
       <div className="nav-container">
         <div className="nav-brand">
-          <Link to="/" className="nav-brand-link">
+          <Link to={role === 'Admin' ? '/tong-quan' : '/'} className="nav-brand-link">
             <img 
               src={`${import.meta.env.BASE_URL}images/qbankctu-header-logo.png`}
               alt="QBankCTU - Đại học Cần Thơ"

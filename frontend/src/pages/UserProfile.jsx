@@ -507,12 +507,17 @@ function SecurityTab() {
 }
 
 function ProfileSidebar({ user }) {
-  const quickLinks = [
+  const quickLinks = (user?.role === 'Admin' ? [
+    { path: '/tong-quan', label: 'Tổng quan' },
+    { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
+    { path: '/quan-ly-nguoi-dung', label: 'Tài khoản người dùng' },
+    { path: '/huong-dan', label: 'Hướng dẫn sử dụng' },
+  ] : [
     { path: '/quan-ly', label: 'Quản lý câu hỏi' },
     { path: '/kiem-duyet', label: 'Hàng kiểm duyệt' },
     { path: '/huong-dan', label: 'Hướng dẫn sử dụng' },
     { path: '/lien-he', label: 'Liên hệ hỗ trợ' },
-  ].filter((link) => canAccessPath(user, link.path));
+  ]).filter((link) => canAccessPath(user, link.path));
 
   const displayStatus = user?.is_active ? 'Đang hoạt động' : 'Ngừng hoạt động';
   const joinedAt = user?.created_at ? new Date(user.created_at).toLocaleDateString('vi-VN') : '—';
